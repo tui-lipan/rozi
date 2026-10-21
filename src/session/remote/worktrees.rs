@@ -117,6 +117,7 @@ mod tests {
     fn the_reply_is_found_past_a_login_banner() {
         let reply = HostReply::Removed {
             path: "/src/repo-worktrees/feat".into(),
+            branches: Vec::new(),
         };
         let mut stdout = b"Welcome to workbox!\n".to_vec();
         stdout.extend_from_slice(&serde_json::to_vec(&reply).expect("encodes"));

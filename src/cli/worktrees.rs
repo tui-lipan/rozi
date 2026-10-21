@@ -6,6 +6,7 @@
 
 use super::args::{CliArgs, ListFormat, SessionCommand, WorktreesCli, WorktreesCommand};
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
+use crate::git::worktrees::BranchOutcome;
 use crate::session;
 use crate::session::remote::RemoteTarget;
 use crate::session::worktrees::{HostCall, HostReply, ListedWorktree};
@@ -85,10 +86,15 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                 other => Err(unexpected(other)),
             }
         }
-        WorktreesCommand::Remove { path, force } => {
+        WorktreesCommand::Remove {
+            path,
+            force,
+            delete_branch,
+        } => {
             let call_value = HostCall::Remove {
                 path: path.clone(),
                 force,
+                delete_branch,
             };
             match call(target.as_ref(), call_value).map_err(|message| {
                 if message.starts_with("worktree is locked") {
@@ -100,7 +106,19 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                     message
                 }
             })? {
-                HostReply::Removed { .. } => Ok(None),
+                HostReply::Removed { branches, .. } => {
+                    for outcome in branches {
+                        match &outcome {
+                            BranchOutcome::Deleted { .. } => {
+                                println!("Deleted {}", outcome.subject());
+                            }
+                            BranchOutcome::Kept { reason, .. } => {
+                                eprintln!("warning: kept {}: {reason}", outcome.subject());
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
                 other => Err(unexpected(other)),
             }
         }

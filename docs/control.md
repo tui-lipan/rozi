@@ -283,7 +283,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 21,
-  "session_protocol": 35,
+  "session_protocol": 36,
   "capabilities": [
     "agent-prompt-results",
     "agent-waits",

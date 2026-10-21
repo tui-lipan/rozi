@@ -3,7 +3,7 @@
 //! Paths stay host-native here. A remote client must treat the returned strings as opaque.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::command::{self, WORKTREE_LIST_TIMEOUT, WORKTREE_MUTATION_TIMEOUT};
 
@@ -191,12 +191,112 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
         .ok_or_else(|| "created worktree was not found in Git's worktree list".to_string())
 }
 
+/// Which copies of a removed checkout's branch to delete. Both off keeps the branch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BranchDeletion {
+    /// The local branch, if fully merged.
+    pub local: bool,
+    /// The branch on the remote it tracks, if its fetched tip is merged into the primary checkout.
+    pub remote: bool,
+}
+
+impl BranchDeletion {
+    pub const NONE: Self = Self {
+        local: false,
+        remote: false,
+    };
+
+    pub fn any(self) -> bool {
+        self.local || self.remote
+    }
+
+    /// `local`, `remote`, or both, comma separated.
+    pub fn parse(list: &str) -> Result<Self, String> {
+        let mut selection = Self::NONE;
+        for item in list.split(',').map(str::trim) {
+            match item {
+                "local" => selection.local = true,
+                "remote" => selection.remote = true,
+                other => return Err(format!("unknown branch `{other}`; use local or remote")),
+            }
+        }
+        Ok(selection)
+    }
+}
+
+/// Which copy of a branch an outcome is about.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchCopy {
+    Local,
+    Remote {
+        /// The remote's name, unknown when the branch has no usable upstream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote: Option<String>,
+    },
+}
+
+/// What happened to one copy of a removed checkout's branch.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum BranchOutcome {
+    Deleted {
+        branch: String,
+        copy: BranchCopy,
+    },
+    /// Git or a guard here kept the branch; `reason` says why.
+    Kept {
+        branch: String,
+        copy: BranchCopy,
+        reason: String,
+    },
+}
+
+impl BranchOutcome {
+    /// `branch feat`, `remote branch origin/feat`, or `remote branch feat` when the remote is
+    /// unknown.
+    pub fn subject(&self) -> String {
+        let (Self::Deleted { branch, copy } | Self::Kept { branch, copy, .. }) = self;
+        match copy {
+            BranchCopy::Local => format!("branch {branch}"),
+            BranchCopy::Remote {
+                remote: Some(remote),
+            } => {
+                format!("remote branch {remote}/{branch}")
+            }
+            BranchCopy::Remote { remote: None } => format!("remote branch {branch}"),
+        }
+    }
+}
+
+/// Why a branch has no remote copy to delete, with the remote's name when it is known.
+type NoUpstream = (Option<String>, String);
+
 /// Remove a linked checkout. `force` only relaxes Git's dirty-checkout guard; it never removes a
-/// Rozi session, deletes a branch, or overrides a lock. `unlock_stale` first lifts a lock whose
-/// owner is gone, judged here rather than trusting the caller, and restores it if Git still
-/// refuses. Session-origin protection belongs at the RPC boundary.
-pub fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<(), String> {
+/// Rozi session or overrides a lock. `unlock_stale` first lifts a lock whose owner is gone, judged
+/// here rather than trusting the caller, and restores it if Git still refuses. Session-origin
+/// protection belongs at the RPC boundary.
+///
+/// `delete_branch` then deletes the checkout's branch, never forced: the local branch with
+/// `git branch -d`, the remote one only when it is merged and unchanged since it was fetched. A
+/// failure there never fails the removal, which has already happened; each copy is reported as
+/// [`BranchOutcome::Deleted`] or [`BranchOutcome::Kept`]. A detached checkout has no branch, so
+/// nothing is reported.
+pub fn remove(
+    cwd: &Path,
+    path: &Path,
+    force: bool,
+    unlock_stale: bool,
+    delete_branch: BranchDeletion,
+) -> Result<Vec<BranchOutcome>, String> {
     let worktree = linked_worktree(cwd, path)?;
+    // `cwd` may be the checkout being removed, which Windows will not delete while a process runs
+    // in it, and which is gone for the branch delete afterwards. Run from the primary checkout.
+    let home = list(cwd)?
+        .into_iter()
+        .next()
+        .map_or_else(|| cwd.to_path_buf(), |tree| PathBuf::from(tree.path));
+    let cwd = home.as_path();
     if let Some(lock) = &worktree.lock {
         if !(unlock_stale && lock.stale) {
             return Err(locked_error(lock));
@@ -216,7 +316,194 @@ pub fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Resul
         // Best effort: Git's refusal is the error worth reporting.
         let _ = lock_path(cwd, &worktree.path, &lock.reason);
     }
-    removed
+    removed?;
+    Ok(match worktree.branch {
+        Some(branch) if delete_branch.any() => delete_branches(cwd, branch, delete_branch),
+        _ => Vec::new(),
+    })
+}
+
+/// Delete the selected copies of a branch whose checkout is gone, unless another checkout (the
+/// primary's included) still has it checked out.
+fn delete_branches(cwd: &Path, branch: String, selection: BranchDeletion) -> Vec<BranchOutcome> {
+    // Read before the local branch, and its configuration, are gone.
+    let upstream = selection.remote.then(|| upstream(cwd, &branch));
+    let kept_all = |reason: String| {
+        let mut outcomes = Vec::new();
+        if selection.local {
+            outcomes.push(BranchOutcome::Kept {
+                branch: branch.clone(),
+                copy: BranchCopy::Local,
+                reason: reason.clone(),
+            });
+        }
+        if let Some(upstream) = &upstream {
+            outcomes.push(BranchOutcome::Kept {
+                branch: branch.clone(),
+                copy: remote_copy(upstream),
+                reason,
+            });
+        }
+        outcomes
+    };
+    match list(cwd) {
+        Ok(trees)
+            if trees
+                .iter()
+                .any(|tree| tree.branch.as_ref() == Some(&branch)) =>
+        {
+            return kept_all("it is checked out in another worktree".to_string());
+        }
+        Err(message) => return kept_all(message),
+        Ok(_) => {}
+    }
+    let mut outcomes = Vec::new();
+    if selection.local {
+        outcomes.push(delete_merged_branch(cwd, &branch));
+    }
+    if let Some(upstream) = upstream {
+        outcomes.push(match upstream {
+            Ok(remote) => delete_remote_branch(cwd, &branch, remote),
+            Err((remote, reason)) => BranchOutcome::Kept {
+                branch,
+                copy: BranchCopy::Remote { remote },
+                reason,
+            },
+        });
+    }
+    outcomes
+}
+
+fn remote_copy(upstream: &Result<String, NoUpstream>) -> BranchCopy {
+    BranchCopy::Remote {
+        remote: match upstream {
+            Ok(remote) => Some(remote.clone()),
+            Err((remote, _)) => remote.clone(),
+        },
+    }
+}
+
+/// Delete a local branch unless Git finds it unmerged.
+fn delete_merged_branch(cwd: &Path, branch: &str) -> BranchOutcome {
+    let mut args = argv(&["branch", "-d", "--"]);
+    args.push(branch.into());
+    match command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT) {
+        Ok(_) => BranchOutcome::Deleted {
+            branch: branch.to_string(),
+            copy: BranchCopy::Local,
+        },
+        Err(message) => BranchOutcome::Kept {
+            branch: branch.to_string(),
+            copy: BranchCopy::Local,
+            reason: first_line(&message),
+        },
+    }
+}
+
+/// The remote a branch tracks, when it tracks a same-named branch there. Deleting a differently
+/// named upstream (a feature branch cut from `origin/main`) would be someone else's branch.
+fn upstream(cwd: &Path, branch: &str) -> Result<String, NoUpstream> {
+    let config = |key: &str| -> Option<String> {
+        let args = argv(&["config", "--get", &format!("branch.{branch}.{key}")]);
+        let output = command::checked(cwd, &args, WORKTREE_LIST_TIMEOUT).ok()?;
+        Some(String::from_utf8_lossy(&output).trim().to_string()).filter(|value| !value.is_empty())
+    };
+    let (Some(remote), Some(merge)) = (config("remote"), config("merge")) else {
+        return Err((None, "it has no upstream".to_string()));
+    };
+    if remote == "." {
+        return Err((None, "it tracks a local branch".to_string()));
+    }
+    match merge.strip_prefix("refs/heads/") {
+        Some(name) if name == branch => Ok(remote),
+        _ => {
+            let reason = format!(
+                "its upstream {remote}/{} is named differently",
+                merge.trim_start_matches("refs/heads/")
+            );
+            Err((Some(remote), reason))
+        }
+    }
+}
+
+/// Delete `branch` on `remote` when the fetched tip is merged into the primary checkout's `HEAD`.
+/// The push only goes through while the remote still has that tip, so commits pushed since the
+/// last fetch are never lost.
+fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutcome {
+    let tracking = format!("refs/remotes/{remote}/{branch}");
+    let kept = |reason: String| BranchOutcome::Kept {
+        branch: branch.to_string(),
+        copy: BranchCopy::Remote {
+            remote: Some(remote.clone()),
+        },
+        reason,
+    };
+    let mut args = argv(&["rev-parse", "--verify", "--quiet"]);
+    args.push(format!("{tracking}^{{commit}}").into());
+    let Ok(output) = command::checked(cwd, &args, WORKTREE_LIST_TIMEOUT) else {
+        return kept("it has not been fetched".to_string());
+    };
+    let tip = String::from_utf8_lossy(&output).trim().to_string();
+
+    let mut args = argv(&["merge-base", "--is-ancestor"]);
+    args.push(tip.clone().into());
+    args.push("HEAD".into());
+    match command::run(cwd, &args, WORKTREE_LIST_TIMEOUT) {
+        Ok(output) if output.status == Some(0) => {}
+        Ok(output) if output.status == Some(1) => {
+            return kept("it is not merged into the primary checkout".to_string());
+        }
+        Ok(_) => return kept("its merge state could not be read".to_string()),
+        Err(message) => return kept(message),
+    }
+
+    let mut args = argv(&["push"]);
+    args.push(format!("--force-with-lease=refs/heads/{branch}:{tip}").into());
+    args.push("--".into());
+    args.push(remote.clone().into());
+    args.push(format!(":refs/heads/{branch}").into());
+    match command::checked_remote(cwd, &args) {
+        Ok(_) => BranchOutcome::Deleted {
+            branch: branch.to_string(),
+            copy: BranchCopy::Remote {
+                remote: Some(remote),
+            },
+        },
+        Err(message) => kept(push_reason(&message)),
+    }
+}
+
+/// The line of `git push` output that says why it failed, rather than its progress chatter. A
+/// lease refusal, which means the remote branch moved since it was fetched, is named as such.
+fn push_reason(message: &str) -> String {
+    if let Some(rejected) = message
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("rejected]"))
+    {
+        if rejected.contains("(stale info)") {
+            return "it changed since it was fetched".to_string();
+        }
+        if let Some(reason) = rejected
+            .rsplit_once('(')
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+        {
+            return reason.to_string();
+        }
+    }
+    let line = message
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .unwrap_or_else(|| message.lines().next().unwrap_or_default().trim());
+    let line = line.strip_prefix("fatal: ").unwrap_or(line);
+    line.strip_prefix("error: ").unwrap_or(line).to_string()
+}
+
+/// Git's explanation, without its `error:` prefix and the advice that follows it.
+fn first_line(message: &str) -> String {
+    let line = message.lines().next().unwrap_or_default().trim();
+    line.strip_prefix("error: ").unwrap_or(line).to_string()
 }
 
 /// Lift a linked checkout's lock, whoever holds it. Whether its owner must be gone first is the
@@ -605,10 +892,10 @@ mod tests {
         let tree = create(&repo, "feat/new", "HEAD", &fresh).unwrap();
         assert_eq!(tree.branch.as_deref(), Some("feat/new"));
         std::fs::write(fresh.join("scratch.txt"), b"unsaved").unwrap();
-        assert!(remove(&repo, &fresh, false, false).is_err());
+        assert!(remove(&repo, &fresh, false, false, BranchDeletion::NONE).is_err());
         assert!(fresh.exists());
-        assert!(remove(&repo, &repo, true, false).is_err());
-        remove(&repo, &fresh, true, false).unwrap();
+        assert!(remove(&repo, &repo, true, false, BranchDeletion::NONE).is_err());
+        remove(&repo, &fresh, true, false, BranchDeletion::NONE).unwrap();
         assert!(!fresh.exists());
         assert!(
             list(&repo)
@@ -617,7 +904,330 @@ mod tests {
                 .all(|tree| tree.path != fresh.to_string_lossy())
         );
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/new"]);
-        remove(&repo, &existing, false, false).unwrap();
+        remove(&repo, &existing, false, false, BranchDeletion::NONE).unwrap();
+    }
+
+    fn has_branch(repo: &Path, name: &str) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["show-ref", "--verify", "--quiet"])
+            .arg(format!("refs/heads/{name}"))
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    const LOCAL: BranchDeletion = BranchDeletion {
+        local: true,
+        remote: false,
+    };
+    const REMOTE: BranchDeletion = BranchDeletion {
+        local: false,
+        remote: true,
+    };
+    const BOTH: BranchDeletion = BranchDeletion {
+        local: true,
+        remote: true,
+    };
+
+    fn commit(cwd: &Path, message: &str) {
+        git(
+            cwd,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        );
+    }
+
+    fn deleted(branch: &str, remote: Option<&str>) -> BranchOutcome {
+        BranchOutcome::Deleted {
+            branch: branch.into(),
+            copy: match remote {
+                Some(remote) => BranchCopy::Remote {
+                    remote: Some(remote.into()),
+                },
+                None => BranchCopy::Local,
+            },
+        }
+    }
+
+    fn kept_reason(outcomes: &[BranchOutcome], remote: bool) -> String {
+        outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                BranchOutcome::Kept { copy, reason, .. }
+                    if matches!(copy, BranchCopy::Remote { .. }) == remote =>
+                {
+                    Some(reason.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no kept outcome in {outcomes:?}"))
+    }
+
+    #[test]
+    fn removing_a_checkout_deletes_only_a_merged_local_branch_when_asked() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        commit(&repo, "initial");
+
+        let merged = temp.path().join("merged");
+        create(&repo, "feat/merged", "HEAD", &merged).unwrap();
+        assert_eq!(
+            remove(&repo, &merged, false, false, LOCAL).unwrap(),
+            vec![deleted("feat/merged", None)]
+        );
+        assert!(!has_branch(&repo, "feat/merged"));
+
+        let unmerged = temp.path().join("unmerged");
+        create(&repo, "feat/unmerged", "HEAD", &unmerged).unwrap();
+        commit(&unmerged, "work");
+        let outcomes = remove(&repo, &unmerged, true, false, LOCAL).unwrap();
+        assert!(
+            kept_reason(&outcomes, false).contains("not fully merged"),
+            "{outcomes:?}"
+        );
+        assert!(!unmerged.exists(), "the checkout is removed regardless");
+        assert!(has_branch(&repo, "feat/unmerged"));
+
+        // The checkout being removed may be the directory the caller works in.
+        let current = temp.path().join("current");
+        create(&repo, "feat/current", "HEAD", &current).unwrap();
+        assert_eq!(
+            remove(&current, &current, false, false, LOCAL).unwrap(),
+            vec![deleted("feat/current", None)]
+        );
+        assert!(!has_branch(&repo, "feat/current"));
+
+        let kept = temp.path().join("kept");
+        create(&repo, "feat/kept", "HEAD", &kept).unwrap();
+        assert!(
+            remove(&repo, &kept, false, false, BranchDeletion::NONE)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(has_branch(&repo, "feat/kept"));
+
+        let detached = temp.path().join("detached");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                detached.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            remove(&repo, &detached, false, false, BOTH)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn removing_a_checkout_deletes_a_merged_unchanged_remote_branch_only_when_asked() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let origin = temp.path().join("origin.git");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&origin).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        git(&origin, &["init", "-q", "--bare"]);
+        git(&repo, &["init", "-q"]);
+        commit(&repo, "initial");
+        git(
+            &repo,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        let on_origin = |name: &str| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&origin)
+                .args(["show-ref", "--verify", "--quiet"])
+                .arg(format!("refs/heads/{name}"))
+                .status()
+                .unwrap()
+                .success()
+        };
+        let pushed = |name: &str| {
+            let checkout = temp.path().join(name.replace('/', "-"));
+            create(&repo, name, "HEAD", &checkout).unwrap();
+            git(&checkout, &["push", "-q", "-u", "origin", name]);
+            checkout
+        };
+
+        let merged = pushed("feat/merged");
+        assert_eq!(
+            remove(&repo, &merged, false, false, REMOTE).unwrap(),
+            vec![deleted("feat/merged", Some("origin"))]
+        );
+        assert!(!on_origin("feat/merged"));
+        assert!(
+            has_branch(&repo, "feat/merged"),
+            "only the remote was asked"
+        );
+
+        let both = pushed("feat/both");
+        assert_eq!(
+            remove(&repo, &both, false, false, BOTH).unwrap(),
+            vec![
+                deleted("feat/both", None),
+                deleted("feat/both", Some("origin"))
+            ]
+        );
+        assert!(!on_origin("feat/both") && !has_branch(&repo, "feat/both"));
+
+        let local_only = pushed("feat/local-only");
+        remove(&repo, &local_only, false, false, LOCAL).unwrap();
+        assert!(on_origin("feat/local-only"), "the remote is not touched");
+
+        // Merged into its own upstream, so `-d` allows it; not merged into the primary checkout,
+        // so the remote copy stays.
+        let unmerged = temp.path().join("unmerged");
+        create(&repo, "feat/unmerged", "HEAD", &unmerged).unwrap();
+        commit(&unmerged, "work");
+        git(&unmerged, &["push", "-q", "-u", "origin", "feat/unmerged"]);
+        let outcomes = remove(&repo, &unmerged, false, false, BOTH).unwrap();
+        assert_eq!(outcomes[0], deleted("feat/unmerged", None));
+        assert!(
+            kept_reason(&outcomes, true).contains("not merged"),
+            "{outcomes:?}"
+        );
+        assert!(on_origin("feat/unmerged"));
+
+        // Someone pushed after the last fetch: the lease refuses to drop their commit.
+        let stale = pushed("feat/stale");
+        let other = temp.path().join("other");
+        git(
+            temp.path(),
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git(&other, &["checkout", "-q", "feat/stale"]);
+        commit(&other, "pushed meanwhile");
+        git(&other, &["push", "-q", "origin", "feat/stale"]);
+        let outcomes = remove(&repo, &stale, false, false, REMOTE).unwrap();
+        assert_eq!(
+            kept_reason(&outcomes, true),
+            "it changed since it was fetched",
+            "{outcomes:?}"
+        );
+        assert!(on_origin("feat/stale"));
+
+        let untracked = temp.path().join("untracked");
+        create(&repo, "feat/untracked", "HEAD", &untracked).unwrap();
+        let outcomes = remove(&repo, &untracked, false, false, REMOTE).unwrap();
+        assert_eq!(kept_reason(&outcomes, true), "it has no upstream");
+        assert_eq!(outcomes[0].subject(), "remote branch feat/untracked");
+        assert!(
+            has_branch(&repo, "feat/untracked"),
+            "only the remote was asked"
+        );
+
+        // The local copy goes and the remote one is reported as the remote one, not as the local.
+        let both = temp.path().join("untracked-both");
+        create(&repo, "feat/untracked-both", "HEAD", &both).unwrap();
+        let outcomes = remove(&repo, &both, false, false, BOTH).unwrap();
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        assert_eq!(outcomes[0], deleted("feat/untracked-both", None));
+        assert_eq!(
+            outcomes[1],
+            BranchOutcome::Kept {
+                branch: "feat/untracked-both".into(),
+                copy: BranchCopy::Remote { remote: None },
+                reason: "it has no upstream".into(),
+            }
+        );
+    }
+
+    /// A remote that demands credentials must make the delete fail, never reach an askpass helper.
+    #[cfg(unix)]
+    #[test]
+    fn a_remote_delete_never_runs_an_askpass_helper() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let marker = temp.path().join("asked");
+        let helper = temp.path().join("askpass.sh");
+        std::fs::write(
+            &helper,
+            format!("#!/bin/sh\ntouch '{}'\necho secret\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&repo, &["config", "core.askPass", helper.to_str().unwrap()]);
+
+        // An HTTP remote that answers every request with a request for credentials.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/repo.git", listener.local_addr().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    };
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                    let _ = stream.read(&mut [0; 4096]);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\n\
+                          Content-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                }
+            })
+        };
+        let mut args = argv(&["push", "--"]);
+        args.push(url.into());
+        args.push(":refs/heads/feat".into());
+
+        // Control: without the guard, Git reaches the helper, so the setup does exercise it.
+        let _ = command::checked(&repo, &args, WORKTREE_MUTATION_TIMEOUT);
+        assert!(
+            marker.exists(),
+            "the helper must be reachable for the test to mean anything"
+        );
+        std::fs::remove_file(&marker).unwrap();
+
+        assert!(command::checked_remote(&repo, &args).is_err());
+        assert!(!marker.exists(), "the askpass helper ran");
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
     }
 
     #[test]
@@ -673,7 +1283,7 @@ mod tests {
             })
         );
         // Neither `force` nor `unlock_stale` gets past a running owner's lock.
-        let refused = remove(&repo, &live, true, true).unwrap_err();
+        let refused = remove(&repo, &live, true, true, BranchDeletion::NONE).unwrap_err();
         assert!(
             refused.starts_with("worktree is locked: agent"),
             "{refused}"
@@ -683,7 +1293,7 @@ mod tests {
         assert_eq!(lock_of(&live), None);
         assert!(unlock(&repo, &live).is_err(), "already unlocked");
         assert!(unlock(&repo, &repo).is_err(), "the primary checkout");
-        remove(&repo, &live, false, false).unwrap();
+        remove(&repo, &live, false, false, BranchDeletion::NONE).unwrap();
 
         // The owner has exited, so the lock is stale.
         let mut child = Command::new("git").arg("--version").spawn().unwrap();
@@ -703,14 +1313,14 @@ mod tests {
             ],
         );
         assert!(lock_of(&stale).is_some_and(|lock| lock.stale));
-        let refused = remove(&repo, &stale, false, false).unwrap_err();
+        let refused = remove(&repo, &stale, false, false, BranchDeletion::NONE).unwrap_err();
         assert!(refused.contains("no longer running"), "{refused}");
 
         // Git refuses the dirty checkout, so the lock goes back as it was.
         std::fs::write(stale.join("scratch.txt"), b"unsaved").unwrap();
-        assert!(remove(&repo, &stale, false, true).is_err());
+        assert!(remove(&repo, &stale, false, true, BranchDeletion::NONE).is_err());
         assert_eq!(lock_of(&stale).map(|lock| lock.reason), Some(stale_reason));
-        remove(&repo, &stale, true, true).unwrap();
+        remove(&repo, &stale, true, true, BranchDeletion::NONE).unwrap();
         assert!(!stale.exists());
     }
 

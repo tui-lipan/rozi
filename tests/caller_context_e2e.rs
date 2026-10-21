@@ -66,6 +66,9 @@ fn data(output: Output) -> serde_json::Value {
 #[test]
 fn caller_identity_and_here_work_without_a_ui_and_reject_stale_hints() {
     rozi::test_support::isolate_user_dirs();
+    // These tests share one runtime directory. A parallel sweep can hold the pane's pipe or, on
+    // Windows, observe it as missing and the next `--here` then reports a stale session.
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
     let outside = data(
         cli()
             .args(["context", "--format", "json"])
@@ -186,6 +189,7 @@ fn caller_identity_and_here_work_without_a_ui_and_reject_stale_hints() {
 #[cfg(unix)]
 #[test]
 fn here_prompt_returns_the_exact_agent_outcome_and_terminal_from_the_server() {
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
     use rozi::control::{AgentWaitCondition, CaptureRender};
     use rozi::session::protocol::AgentState;
     use std::time::{Duration, Instant};
@@ -412,6 +416,7 @@ fn caller_ui_stub(
 #[test]
 fn here_prefers_its_displayed_ui_and_falls_back_only_before_a_mutation() {
     rozi::test_support::isolate_user_dirs();
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
     for (displayed, refuse) in [(true, false), (true, true), (false, false)] {
         let server = spawn_listener(ServerSettings::default());
         data(
@@ -645,16 +650,16 @@ impl DiscoveryUi {
                 if worker_stop.load(Ordering::SeqCst) {
                     break;
                 }
-                stream.set_read_timeout(Some(common::io_timeout())).unwrap();
-                stream
-                    .set_write_timeout(Some(common::io_timeout()))
-                    .unwrap();
+                // `is_live` connects and drops. macOS refuses a receive timeout on that
+                // already-closed socket (`EINVAL`) and the worker used to die, so later
+                // probes never saw a UI. A closed probe is not a request.
+                let _ = stream.set_read_timeout(Some(common::io_timeout()));
+                let _ = stream.set_write_timeout(Some(common::io_timeout()));
+                let Ok(cloned) = stream.try_clone() else {
+                    continue;
+                };
                 let mut line = String::new();
-                if BufReader::new(stream.try_clone().unwrap())
-                    .read_line(&mut line)
-                    .unwrap()
-                    == 0
-                {
+                if BufReader::new(cloned).read_line(&mut line).unwrap_or(0) == 0 {
                     continue;
                 }
                 let request: ControlRequest = serde_json::from_str(&line).unwrap();

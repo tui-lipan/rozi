@@ -435,7 +435,7 @@ struct ProfileFileConfig {
 struct WorktreesFileConfig {
     profile: Option<String>,
     directory: Option<String>,
-    delete_branch: Option<bool>,
+    delete_branch: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -953,7 +953,16 @@ fn load_config_from_text_with_extensions(
         config.worktrees.profile = Some(name);
     }
     if let Some(delete_branch) = parsed.worktrees.delete_branch {
-        config.worktrees.delete_branch = delete_branch;
+        // An empty list is the default, spelled out.
+        let parsed = if delete_branch.is_empty() {
+            Ok(crate::git::worktrees::BranchDeletion::NONE)
+        } else {
+            crate::git::worktrees::BranchDeletion::parse(&delete_branch.join(","))
+        };
+        match parsed {
+            Ok(selection) => config.worktrees.delete_branch = selection,
+            Err(message) => warnings.push(format!("Ignored [worktrees] delete_branch: {message}")),
+        }
     }
     if let Some(directory) = non_empty(parsed.worktrees.directory) {
         let expanded = expand_path(&directory);
@@ -2023,12 +2032,40 @@ mod file_tests {
 
     #[test]
     fn worktrees_delete_branch_is_off_unless_set() {
-        let loaded =
-            load_config_from_text("[worktrees]\ndelete_branch = true", Path::new("c.toml"));
-        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        assert!(loaded.config.worktrees.delete_branch);
-        let loaded = load_config_from_text("", Path::new("c.toml"));
-        assert!(!loaded.config.worktrees.delete_branch);
+        use crate::git::worktrees::BranchDeletion;
+        for (text, expected) in [
+            ("", BranchDeletion::NONE),
+            ("delete_branch = []", BranchDeletion::NONE),
+            (
+                "delete_branch = [\"local\"]",
+                BranchDeletion {
+                    local: true,
+                    remote: false,
+                },
+            ),
+            (
+                "delete_branch = [\"remote\", \"local\"]",
+                BranchDeletion {
+                    local: true,
+                    remote: true,
+                },
+            ),
+        ] {
+            let loaded =
+                load_config_from_text(&format!("[worktrees]\n{text}"), Path::new("c.toml"));
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.config.worktrees.delete_branch, expected, "{text}");
+        }
+        let loaded = load_config_from_text(
+            "[worktrees]\ndelete_branch = [\"local\", \"all\"]",
+            Path::new("c.toml"),
+        );
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.config.worktrees.delete_branch,
+            BranchDeletion::NONE,
+            "a bad entry ignores the whole setting"
+        );
     }
 
     #[test]

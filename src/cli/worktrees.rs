@@ -106,15 +106,16 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                     message
                 }
             })? {
-                HostReply::Removed { branch, .. } => {
-                    match branch {
-                        Some(BranchOutcome::Deleted { branch }) => {
-                            println!("Deleted branch {branch}");
+                HostReply::Removed { branches, .. } => {
+                    for outcome in branches {
+                        match &outcome {
+                            BranchOutcome::Deleted { .. } => {
+                                println!("Deleted {}", outcome.subject());
+                            }
+                            BranchOutcome::Kept { reason, .. } => {
+                                eprintln!("warning: kept {}: {reason}", outcome.subject());
+                            }
                         }
-                        Some(BranchOutcome::Kept { branch, reason }) => {
-                            eprintln!("warning: kept branch {branch}: {reason}");
-                        }
-                        None => {}
                     }
                     Ok(None)
                 }

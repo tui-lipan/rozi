@@ -61,7 +61,7 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
             unlock_stale,
             delete_branch,
         )
-        .map(|branch| WorktreeResult::Removed { path, branch }),
+        .map(|branches| WorktreeResult::Removed { path, branches }),
         WorktreeRequest::Unlock { cwd, path } => {
             unlock(Path::new(&cwd), Path::new(&path)).map(|()| WorktreeResult::Unlocked { path })
         }
@@ -138,8 +138,8 @@ fn remove(
     path: &Path,
     force: bool,
     unlock_stale: bool,
-    delete_branch: bool,
-) -> Result<Option<worktrees::BranchOutcome>, String> {
+    delete_branch: worktrees::BranchDeletion,
+) -> Result<Vec<worktrees::BranchOutcome>, String> {
     if !path.is_absolute() {
         return Err("worktree path must be absolute on the session host".to_string());
     }
@@ -183,7 +183,7 @@ pub enum HostCall {
         force: bool,
         /// `None` follows this host's `[worktrees] delete_branch`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        delete_branch: Option<bool>,
+        delete_branch: Option<worktrees::BranchDeletion>,
     },
     Unlock {
         path: String,
@@ -222,8 +222,8 @@ pub enum HostReply {
     },
     Removed {
         path: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        branch: Option<worktrees::BranchOutcome>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        branches: Vec<worktrees::BranchOutcome>,
     },
     Unlocked {
         path: String,
@@ -274,10 +274,10 @@ pub fn run_host_call(call: HostCall) -> HostReply {
                 .map(|primary| PathBuf::from(&primary.path))
                 .ok_or("Git reported no primary worktree")?;
             let delete_branch = delete_branch.unwrap_or_else(configured_delete_branch);
-            let branch = remove(&primary, Path::new(&tree.path), force, false, delete_branch)?;
+            let branches = remove(&primary, Path::new(&tree.path), force, false, delete_branch)?;
             Ok(HostReply::Removed {
                 path: tree.path,
-                branch,
+                branches,
             })
         })(),
         HostCall::Unlock { path } => (|| {
@@ -335,7 +335,7 @@ pub(crate) fn configured_directory() -> Option<PathBuf> {
 }
 
 /// `[worktrees] delete_branch` from this host's config.
-fn configured_delete_branch() -> bool {
+fn configured_delete_branch() -> worktrees::BranchDeletion {
     crate::config::load_config().config.worktrees.delete_branch
 }
 
@@ -537,11 +537,11 @@ mod tests {
             run_host_call(HostCall::Remove {
                 path: nested.to_string_lossy().into_owned(),
                 force: true,
-                delete_branch: Some(false),
+                delete_branch: Some(worktrees::BranchDeletion::NONE),
             }),
             HostReply::Removed {
                 path: worktree.path.clone(),
-                branch: None,
+                branches: Vec::new(),
             }
         );
         assert!(!checkout.exists());
@@ -658,12 +658,15 @@ mod tests {
         let call = HostCall::Remove {
             path: "C:\\code\\repo-worktrees\\feat".into(),
             force: true,
-            delete_branch: Some(true),
+            delete_branch: Some(worktrees::BranchDeletion {
+                local: true,
+                remote: false,
+            }),
         };
         let json = serde_json::to_value(&call).expect("encodes");
         assert_eq!(
             json,
-            serde_json::json!({"op": "remove", "path": "C:\\code\\repo-worktrees\\feat", "force": true, "delete_branch": true})
+            serde_json::json!({"op": "remove", "path": "C:\\code\\repo-worktrees\\feat", "force": true, "delete_branch": {"local": true, "remote": false}})
         );
         let reply = HostReply::Listed {
             worktrees: vec![ListedWorktree {

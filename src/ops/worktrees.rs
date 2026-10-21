@@ -1049,24 +1049,30 @@ pub(crate) fn apply_result(
                     worktree.path,
                 );
             }
-            (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path, branch }) => {
-                if let Some(BranchOutcome::Kept { branch, reason }) = &branch {
-                    // The branch outlived its checkout, which the list alone does not show.
-                    crate::pane::pty_events::notify_info(
-                        ctx,
-                        format!("Kept branch {branch}: {reason}"),
-                    );
+            (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path, branches }) => {
+                for outcome in &branches {
+                    if let BranchOutcome::Kept { reason, .. } = outcome {
+                        // The branch outlived its checkout, which the list alone does not show.
+                        crate::pane::pty_events::notify_info(
+                            ctx,
+                            format!("Kept {}: {reason}", outcome.subject()),
+                        );
+                    }
                 }
                 if picker_here {
                     return refresh(ctx);
                 }
                 // The sidebar row disappearing is the feedback; a toast would repeat it.
                 if !sidebar_here {
-                    let message = match branch {
-                        Some(BranchOutcome::Deleted { branch }) => {
-                            format!("Removed worktree {path} and branch {branch}")
-                        }
-                        _ => format!("Removed worktree {path}"),
+                    let deleted: Vec<_> = branches
+                        .iter()
+                        .filter(|outcome| matches!(outcome, BranchOutcome::Deleted { .. }))
+                        .map(BranchOutcome::subject)
+                        .collect();
+                    let message = if deleted.is_empty() {
+                        format!("Removed worktree {path}")
+                    } else {
+                        format!("Removed worktree {path} and {}", deleted.join(" and "))
                     };
                     crate::pane::pty_events::notify_info(ctx, message);
                 }

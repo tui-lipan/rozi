@@ -60,7 +60,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         note: "",
         rows: &[
             row("--force", "Let Git remove a dirty checkout"),
-            row("--delete-branch", "Also delete its branch if fully merged"),
+            row(
+                "--delete-branch <WHAT>",
+                "Delete merged branches: local, remote,",
+            ),
+            row("", "or local,remote"),
             row("--keep-branch", "Keep its branch (overrides config)"),
         ],
     },
@@ -107,7 +111,7 @@ pub(crate) enum WorktreesCommand {
         path: String,
         force: bool,
         /// `None` follows `[worktrees] delete_branch` on the host.
-        delete_branch: Option<bool>,
+        delete_branch: Option<crate::git::worktrees::BranchDeletion>,
     },
     Unlock {
         path: String,
@@ -197,8 +201,19 @@ pub(super) fn parse(
             }
             "--open" => flags.open = true,
             "--force" => flags.force = true,
-            "--delete-branch" => flags.delete_branch = Some(true),
-            "--keep-branch" => flags.delete_branch = Some(false),
+            "--delete-branch" => {
+                let list = require_value(
+                    iter,
+                    "--delete-branch requires local, remote, or local,remote",
+                )?;
+                let selection = crate::git::worktrees::BranchDeletion::parse(&list)?;
+                once(&mut flags.delete_branch, selection, &arg)?;
+            }
+            "--keep-branch" => once(
+                &mut flags.delete_branch,
+                crate::git::worktrees::BranchDeletion::NONE,
+                &arg,
+            )?,
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown flag `{other}` for worktrees {verb}"));
             }
@@ -285,7 +300,7 @@ struct Flags {
     name: Option<String>,
     open: bool,
     force: bool,
-    delete_branch: Option<bool>,
+    delete_branch: Option<crate::git::worktrees::BranchDeletion>,
 }
 
 impl Flags {
@@ -299,8 +314,7 @@ impl Flags {
             ("--name", self.name.is_some()),
             ("--open", self.open),
             ("--force", self.force),
-            ("--delete-branch", self.delete_branch == Some(true)),
-            ("--keep-branch", self.delete_branch == Some(false)),
+            ("--delete-branch", self.delete_branch.is_some()),
         ];
         match given
             .iter()
@@ -409,16 +423,25 @@ mod tests {
                 cwd: Some("~/src/rozi".into()),
             }
         );
-        for (flag, expected) in [("--delete-branch", true), ("--keep-branch", false)] {
+        for (flags, local, remote) in [
+            (&["--delete-branch", "local"][..], true, false),
+            (&["--delete-branch", "remote"][..], false, true),
+            (&["--delete-branch", "local,remote"][..], true, true),
+            (&["--keep-branch"][..], false, false),
+        ] {
+            let mut args = vec!["worktrees", "remove", "/wt/x"];
+            args.extend_from_slice(flags);
             assert_eq!(
-                command(&["worktrees", "remove", "/wt/x", flag]).command,
+                command(&args).command,
                 WorktreesCommand::Remove {
                     path: "/wt/x".into(),
                     force: false,
-                    delete_branch: Some(expected),
+                    delete_branch: Some(crate::git::worktrees::BranchDeletion { local, remote }),
                 }
             );
         }
+        assert!(parse(&["worktrees", "remove", "/wt/x", "--delete-branch", "all"]).is_err());
+        assert!(parse(&["worktrees", "remove", "/wt/x", "--delete-branch"]).is_err());
         assert_eq!(
             command(&["worktrees", "remove", "/wt/x", "--force"]).command,
             WorktreesCommand::Remove {

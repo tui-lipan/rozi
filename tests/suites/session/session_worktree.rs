@@ -228,7 +228,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
             path: removable_path.clone(),
             force: false,
             unlock_stale: false,
-            delete_branch: false,
+            delete_branch: rozi::git::worktrees::BranchDeletion::NONE,
         }),
         WorktreeResult::Failed { message } if message.contains("writable")
     ));
@@ -269,7 +269,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
                 path: removable_path.clone(),
                 force: true,
                 unlock_stale: false,
-                delete_branch: false,
+                delete_branch: rozi::git::worktrees::BranchDeletion::NONE,
             }
         ),
         WorktreeResult::Failed { message } if message.contains("saved-worktree")
@@ -285,7 +285,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
                 path: removable_path,
                 force: false,
                 unlock_stale: false,
-                delete_branch: false,
+                delete_branch: rozi::git::worktrees::BranchDeletion::NONE,
             }
         ),
         WorktreeResult::Removed { .. }
@@ -346,7 +346,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
             path: checkout_path.clone(),
             force: true,
             unlock_stale: true,
-            delete_branch: false,
+            delete_branch: rozi::git::worktrees::BranchDeletion::NONE,
         }),
         WorktreeResult::Failed { message } if message.contains(&session)
     ));

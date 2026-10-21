@@ -10,6 +10,8 @@ use rozi::session::server::ServerSettings;
 
 use crate::common::spawn_listener;
 
+static DISCOVERY_UIS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn request(command: ControlCommand) -> ControlRequest {
     ControlRequest {
         command,
@@ -479,7 +481,7 @@ fn here_prefers_its_displayed_ui_and_falls_back_only_before_a_mutation() {
 
 #[cfg(unix)]
 #[test]
-fn a_headless_created_pane_discovers_the_ui_that_attaches_later() {
+fn a_headless_created_pane_discovers_a_later_ui_despite_missing_or_stale_sockets() {
     use rozi::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
     use rozi::{AppRoot, Msg};
     use std::time::{Duration, Instant};
@@ -489,6 +491,7 @@ fn a_headless_created_pane_discovers_the_ui_that_attaches_later() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
+            let _discovery = DISCOVERY_UIS.lock().unwrap();
             struct Ui(TestBackend<AppRoot>);
             impl Drop for Ui {
                 fn drop(&mut self) {
@@ -519,6 +522,7 @@ fn a_headless_created_pane_discovers_the_ui_that_attaches_later() {
 printf '%s' "${ROZI_SOCKET-unset}" > "$2"
 while [ ! -f "$3" ]; do sleep 0.02; done
 "$1" --here split --keep-open --argv "$1" --version > "$4.tmp" 2> "$4.err"
+ROZI_SOCKET="$4.dead-socket" "$1" --here split --keep-open --argv "$1" --version > "$4.stale" 2> "$4.stale.err"
 mv "$4.tmp" "$4"
 "#
                 .into(),
@@ -598,11 +602,158 @@ mv "$4.tmp" "$4"
             let output = std::fs::read_to_string(&result).unwrap();
             let reply: serde_json::Value = serde_json::from_str(&output).expect(&output);
             assert_eq!(reply["ok"], true, "{reply}");
+            let stale_output = std::fs::read_to_string(result.with_extension("stale")).unwrap();
+            let stale_reply: serde_json::Value = serde_json::from_str(&stale_output).expect(&stale_output);
+            assert_eq!(stale_reply["ok"], true, "{stale_reply}");
             let panes =
                 run_session_control(server.session(), request(ControlCommand::ListPanes)).unwrap();
-            assert_eq!(panes.data.unwrap().as_array().unwrap().len(), 2);
+            assert_eq!(panes.data.unwrap().as_array().unwrap().len(), 3);
         })
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// Discoverable control endpoints accept liveness connections as well as context probes.
+struct DiscoveryUi {
+    endpoint: rozi::platform::ipc::IpcEndpoint,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mutations: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl DiscoveryUi {
+    fn new(caller: &rozi::session::protocol::PaneRef, displayed: bool, id: u32) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let endpoint = rozi::platform::ipc::EndpointRegistry::control_endpoint(
+            &rozi::control::runtime_dir().unwrap(),
+            id,
+        );
+        let listener = endpoint.bind().unwrap().into_listener();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mutations = Arc::new(AtomicUsize::new(0));
+        let worker_stop = stop.clone();
+        let worker_mutations = mutations.clone();
+        let caller = caller.clone();
+        let thread = std::thread::spawn(move || {
+            while !worker_stop.load(Ordering::SeqCst) {
+                let mut stream = listener.accept().unwrap();
+                if worker_stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                stream.set_read_timeout(Some(common::io_timeout())).unwrap();
+                stream
+                    .set_write_timeout(Some(common::io_timeout()))
+                    .unwrap();
+                let mut line = String::new();
+                if BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap()
+                    == 0
+                {
+                    continue;
+                }
+                let request: ControlRequest = serde_json::from_str(&line).unwrap();
+                let response = if request.command == ControlCommand::Context {
+                    serde_json::json!({"ok":true,"data":{
+                        "displayed_session": if displayed {caller.session_instance.as_str()} else {"another-session"},
+                        "held_sessions":[caller.session_instance]
+                    }})
+                } else {
+                    assert!(displayed, "an unrelated UI must never receive a mutation");
+                    assert_eq!(request.caller_context.as_deref(), Some(&caller));
+                    assert!(matches!(request.command, ControlCommand::NewPane { .. }));
+                    worker_mutations.fetch_add(1, Ordering::SeqCst);
+                    serde_json::json!({"ok":true,"data":{"id":999}})
+                };
+                writeln!(stream, "{response}").unwrap();
+            }
+        });
+        Self {
+            endpoint,
+            stop,
+            mutations,
+            thread: Some(thread),
+        }
+    }
+
+    fn mutations(&self) -> usize {
+        self.mutations.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for DiscoveryUi {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.endpoint.connect();
+        self.thread.take().unwrap().join().unwrap();
+        self.endpoint.remove_stale();
+    }
+}
+
+#[test]
+fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
+    rozi::test_support::isolate_user_dirs();
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
+    let server = spawn_listener(ServerSettings::default());
+    data(
+        cli()
+            .args(["--session", server.session(), "split"])
+            .output()
+            .unwrap(),
+    );
+    let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+        .unwrap()
+        .data
+        .unwrap();
+    let caller: rozi::session::protocol::PaneRef =
+        serde_json::from_value(panes[0]["reference"].clone()).unwrap();
+    let _controller = common::attach_client(server.endpoint(), server.session(), "controller");
+    let matching = DiscoveryUi::new(&caller, true, 1000000001);
+    let unrelated = DiscoveryUi::new(&caller, false, 1000000002);
+    let ask = || {
+        let mut command = cli();
+        command
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str())
+            .args(["--here", "split"]);
+        command
+    };
+    for socket in [
+        None,
+        Some("dead-ui.sock".as_ref()),
+        Some(unrelated.endpoint.path()),
+    ] {
+        let mut command = ask();
+        if let Some(path) = socket {
+            command.env("ROZI_SOCKET", path);
+        }
+        assert_eq!(data(command.output().unwrap())["id"], 999);
+    }
+    assert_eq!(matching.mutations(), 3);
+    assert_eq!(unrelated.mutations(), 0);
+    // No inherited preference and two matching UIs is ambiguous. Neither may get a mutation.
+    let duplicate = DiscoveryUi::new(&caller, true, 1000000003);
+    let ambiguous = ask().output().unwrap();
+    assert!(!ambiguous.status.success());
+    let reply: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
+    assert_eq!(reply["code"], "not-controller");
+    assert_eq!(matching.mutations(), 3);
+    assert_eq!(duplicate.mutations(), 0);
+    // An inherited UI that still matches remains the preferred attachment.
+    assert_eq!(
+        data(
+            ask()
+                .env("ROZI_SOCKET", matching.endpoint.path())
+                .output()
+                .unwrap()
+        )["id"],
+        999
+    );
+    assert_eq!(matching.mutations(), 4);
+    assert_eq!(duplicate.mutations(), 0);
 }

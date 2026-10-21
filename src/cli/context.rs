@@ -6,7 +6,7 @@ use tui_lipan::Result;
 use super::args::control_request;
 use super::control::{discover_socket, read_socket_line};
 use crate::control;
-use crate::platform::ipc::IpcEndpoint;
+use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 
 /// Query identity without interpreting discovery hints as proof. Failure to find the hinted
 /// server is a stale context report, while a live server verifies the pane and fences its instance.
@@ -91,8 +91,8 @@ fn probe_ui_context() -> Option<control::UiContextMetadata> {
     probe_ui_at(&discover_socket(None).ok()?)
 }
 
-/// Use the same UI discovery as `context`, then verify the displayed session before borrowing
-/// attachment authority. A headless-created pane can discover a UI that attached after pane creation.
+/// Prefer the inherited UI when it still displays the caller's session. Otherwise the verified
+/// instance disambiguates discovery, even after a UI replacement or with several UIs running.
 pub(super) fn authority_ui(
     request: &control::ControlRequest,
     caller: &crate::session::protocol::PaneRef,
@@ -100,9 +100,32 @@ pub(super) fn authority_ui(
     if !request.command.uses_ui_authority() {
         return None;
     }
-    let path = discover_socket(None).ok()?;
-    let metadata = probe_ui_at(&path)?;
-    (metadata.displayed_session.as_ref() == Some(&caller.session_instance)).then_some(path)
+    let inherited = std::env::var_os("ROZI_SOCKET")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from);
+    if let Some(path) = &inherited
+        && ui_displays(path, &caller.session_instance)
+    {
+        return Some(path.clone());
+    }
+    let directory = control::runtime_dir().ok()?;
+    let endpoints = EndpointRegistry::list_live_control_endpoints(&directory).ok()?;
+    let mut matching = endpoints.into_iter().filter(|endpoint| {
+        inherited.as_deref() != Some(endpoint.path())
+            && ui_displays(endpoint.path(), &caller.session_instance)
+    });
+    let endpoint = matching.next()?;
+    matching
+        .next()
+        .is_none()
+        .then(|| endpoint.path().to_path_buf())
+}
+
+fn ui_displays(
+    path: &std::path::Path,
+    session: &crate::session::protocol::SessionInstanceId,
+) -> bool {
+    probe_ui_at(path).is_some_and(|metadata| metadata.displayed_session.as_ref() == Some(session))
 }
 
 fn probe_ui_at(path: &std::path::Path) -> Option<control::UiContextMetadata> {

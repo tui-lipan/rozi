@@ -725,8 +725,17 @@ mod tests {
         let mut writer = Some(file);
         let mut command = std::process::Command::new(&path);
         // Keep the write handle open through the first actual exec. Close it only when the
-        // retry waits, reproducing the transient busy window without a timing assertion.
-        let mut child = retry_executable_busy(|| command.spawn(), |_| drop(writer.take())).unwrap();
+        // retry waits, reproducing the transient busy window without a timing assertion. The
+        // wait still sleeps: a test forking on another thread can inherit the writer until it
+        // execs, which is the very race the backoff exists for.
+        let mut child = retry_executable_busy(
+            || command.spawn(),
+            |delay| {
+                drop(writer.take());
+                std::thread::sleep(delay);
+            },
+        )
+        .unwrap();
         assert!(
             writer.is_none(),
             "the initial exec must encounter the held writer"

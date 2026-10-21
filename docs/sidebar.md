@@ -323,7 +323,8 @@ rozi creates a session whose first shell starts in the checkout.
 opens when Git finishes.
 
 To remove a linked checkout, hover it and click `x` twice, or select it in a focused sidebar and
-press `x` twice. The branch is kept. If Git refuses because the checkout has uncommitted changes,
+press `x` twice. The branch is kept unless `[worktrees] delete_branch` is on (see
+[Worktrees](worktrees.md#remove-a-worktree)). If Git refuses because the checkout has uncommitted changes,
 the row asks once more before forcing the removal. A checkout with a stale lock has an `x` too;
 confirming it unlocks the checkout and removes it. The primary checkout, checkouts with any other
 lock, and checkouts a session uses have no `x`.

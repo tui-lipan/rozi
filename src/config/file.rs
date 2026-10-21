@@ -435,6 +435,7 @@ struct ProfileFileConfig {
 struct WorktreesFileConfig {
     profile: Option<String>,
     directory: Option<String>,
+    delete_branch: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -950,6 +951,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(name) = non_empty(parsed.worktrees.profile) {
         config.worktrees.profile = Some(name);
+    }
+    if let Some(delete_branch) = parsed.worktrees.delete_branch {
+        config.worktrees.delete_branch = delete_branch;
     }
     if let Some(directory) = non_empty(parsed.worktrees.directory) {
         let expanded = expand_path(&directory);
@@ -2015,6 +2019,16 @@ mod file_tests {
             loaded.config.worktrees.directory.as_deref(),
             Some("~/worktrees")
         );
+    }
+
+    #[test]
+    fn worktrees_delete_branch_is_off_unless_set() {
+        let loaded =
+            load_config_from_text("[worktrees]\ndelete_branch = true", Path::new("c.toml"));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert!(loaded.config.worktrees.delete_branch);
+        let loaded = load_config_from_text("", Path::new("c.toml"));
+        assert!(!loaded.config.worktrees.delete_branch);
     }
 
     #[test]

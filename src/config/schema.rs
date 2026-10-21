@@ -240,6 +240,8 @@ pub struct WorktreesConfig {
     /// Where new checkouts go by default, as `<directory>/<repo>/<branch>`, on the session host.
     /// `None` puts them beside the repository in `<repo>-worktrees/<branch>`.
     pub directory: Option<String>,
+    /// Delete a removed checkout's branch too, but only when it is fully merged.
+    pub delete_branch: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

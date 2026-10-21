@@ -53,8 +53,15 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
             path,
             force,
             unlock_stale,
-        } => remove(Path::new(&cwd), Path::new(&path), force, unlock_stale)
-            .map(|()| WorktreeResult::Removed { path }),
+            delete_branch,
+        } => remove(
+            Path::new(&cwd),
+            Path::new(&path),
+            force,
+            unlock_stale,
+            delete_branch,
+        )
+        .map(|branch| WorktreeResult::Removed { path, branch }),
         WorktreeRequest::Unlock { cwd, path } => {
             unlock(Path::new(&cwd), Path::new(&path)).map(|()| WorktreeResult::Unlocked { path })
         }
@@ -126,7 +133,13 @@ fn create(
     worktrees::create(cwd, branch, base, &path)
 }
 
-fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<(), String> {
+fn remove(
+    cwd: &Path,
+    path: &Path,
+    force: bool,
+    unlock_stale: bool,
+    delete_branch: bool,
+) -> Result<Option<worktrees::BranchOutcome>, String> {
     if !path.is_absolute() {
         return Err("worktree path must be absolute on the session host".to_string());
     }
@@ -138,7 +151,7 @@ fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<()
             users.join(", ")
         ));
     }
-    worktrees::remove(cwd, &canonical, force, unlock_stale)
+    worktrees::remove(cwd, &canonical, force, unlock_stale, delete_branch)
 }
 
 fn unlock(cwd: &Path, path: &Path) -> Result<(), String> {
@@ -168,6 +181,9 @@ pub enum HostCall {
     Remove {
         path: String,
         force: bool,
+        /// `None` follows this host's `[worktrees] delete_branch`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delete_branch: Option<bool>,
     },
     Unlock {
         path: String,
@@ -206,6 +222,8 @@ pub enum HostReply {
     },
     Removed {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<worktrees::BranchOutcome>,
     },
     Unlocked {
         path: String,
@@ -245,14 +263,22 @@ pub fn run_host_call(call: HostCall) -> HostReply {
                 }
             })
         })(),
-        HostCall::Remove { path, force } => (|| {
+        HostCall::Remove {
+            path,
+            force,
+            delete_branch,
+        } => (|| {
             let (tree, trees) = containing_worktree(&host_path(&path)?)?;
             let primary = trees
                 .first()
                 .map(|primary| PathBuf::from(&primary.path))
                 .ok_or("Git reported no primary worktree")?;
-            remove(&primary, Path::new(&tree.path), force, false)?;
-            Ok(HostReply::Removed { path: tree.path })
+            let delete_branch = delete_branch.unwrap_or_else(configured_delete_branch);
+            let branch = remove(&primary, Path::new(&tree.path), force, false, delete_branch)?;
+            Ok(HostReply::Removed {
+                path: tree.path,
+                branch,
+            })
         })(),
         HostCall::Unlock { path } => (|| {
             let (tree, trees) = containing_worktree(&host_path(&path)?)?;
@@ -306,6 +332,11 @@ pub(crate) fn configured_directory() -> Option<PathBuf> {
         .worktrees
         .directory
         .map(crate::config::expand_path)
+}
+
+/// `[worktrees] delete_branch` from this host's config.
+fn configured_delete_branch() -> bool {
+    crate::config::load_config().config.worktrees.delete_branch
 }
 
 fn list_with_sessions(cwd: &Path) -> Result<HostReply, String> {
@@ -498,6 +529,7 @@ mod tests {
             run_host_call(HostCall::Remove {
                 path: repo_str.clone(),
                 force: true,
+                delete_branch: None,
             }),
             HostReply::Failed { .. }
         ));
@@ -505,9 +537,11 @@ mod tests {
             run_host_call(HostCall::Remove {
                 path: nested.to_string_lossy().into_owned(),
                 force: true,
+                delete_branch: Some(false),
             }),
             HostReply::Removed {
                 path: worktree.path.clone(),
+                branch: None,
             }
         );
         assert!(!checkout.exists());
@@ -624,11 +658,12 @@ mod tests {
         let call = HostCall::Remove {
             path: "C:\\code\\repo-worktrees\\feat".into(),
             force: true,
+            delete_branch: Some(true),
         };
         let json = serde_json::to_value(&call).expect("encodes");
         assert_eq!(
             json,
-            serde_json::json!({"op": "remove", "path": "C:\\code\\repo-worktrees\\feat", "force": true})
+            serde_json::json!({"op": "remove", "path": "C:\\code\\repo-worktrees\\feat", "force": true, "delete_branch": true})
         );
         let reply = HostReply::Listed {
             worktrees: vec![ListedWorktree {

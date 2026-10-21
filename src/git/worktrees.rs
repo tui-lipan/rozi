@@ -191,11 +191,36 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
         .ok_or_else(|| "created worktree was not found in Git's worktree list".to_string())
 }
 
+/// What happened to a removed checkout's branch.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum BranchOutcome {
+    Deleted {
+        branch: String,
+    },
+    /// Git or a guard here kept the branch; `reason` says why.
+    Kept {
+        branch: String,
+        reason: String,
+    },
+}
+
 /// Remove a linked checkout. `force` only relaxes Git's dirty-checkout guard; it never removes a
-/// Rozi session, deletes a branch, or overrides a lock. `unlock_stale` first lifts a lock whose
-/// owner is gone, judged here rather than trusting the caller, and restores it if Git still
-/// refuses. Session-origin protection belongs at the RPC boundary.
-pub fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Result<(), String> {
+/// Rozi session or overrides a lock. `unlock_stale` first lifts a lock whose owner is gone, judged
+/// here rather than trusting the caller, and restores it if Git still refuses. Session-origin
+/// protection belongs at the RPC boundary.
+///
+/// With `delete_branch`, the checkout's branch is deleted afterwards with `git branch -d`, so
+/// unmerged work keeps its branch, even under `force`. A failure there never fails the removal,
+/// which has already happened; it is reported as [`BranchOutcome::Kept`]. A detached checkout has
+/// no branch, so the outcome is `None`.
+pub fn remove(
+    cwd: &Path,
+    path: &Path,
+    force: bool,
+    unlock_stale: bool,
+    delete_branch: bool,
+) -> Result<Option<BranchOutcome>, String> {
     let worktree = linked_worktree(cwd, path)?;
     if let Some(lock) = &worktree.lock {
         if !(unlock_stale && lock.stale) {
@@ -216,7 +241,43 @@ pub fn remove(cwd: &Path, path: &Path, force: bool, unlock_stale: bool) -> Resul
         // Best effort: Git's refusal is the error worth reporting.
         let _ = lock_path(cwd, &worktree.path, &lock.reason);
     }
-    removed
+    removed?;
+    Ok(worktree
+        .branch
+        .filter(|_| delete_branch)
+        .map(|branch| delete_merged_branch(cwd, branch)))
+}
+
+/// Delete a branch whose checkout is gone, unless another checkout (the primary's included) still
+/// has it checked out or Git finds it unmerged.
+fn delete_merged_branch(cwd: &Path, branch: String) -> BranchOutcome {
+    let kept = |reason: String| BranchOutcome::Kept {
+        branch: branch.clone(),
+        reason,
+    };
+    match list(cwd) {
+        Ok(trees)
+            if trees
+                .iter()
+                .any(|tree| tree.branch.as_ref() == Some(&branch)) =>
+        {
+            return kept("it is checked out in another worktree".to_string());
+        }
+        Err(message) => return kept(message),
+        Ok(_) => {}
+    }
+    let mut args = argv(&["branch", "-d", "--"]);
+    args.push(branch.clone().into());
+    match command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT) {
+        Ok(_) => BranchOutcome::Deleted { branch },
+        Err(message) => kept(first_line(&message)),
+    }
+}
+
+/// Git's explanation, without its `error:` prefix and the advice that follows it.
+fn first_line(message: &str) -> String {
+    let line = message.lines().next().unwrap_or_default().trim();
+    line.strip_prefix("error: ").unwrap_or(line).to_string()
 }
 
 /// Lift a linked checkout's lock, whoever holds it. Whether its owner must be gone first is the
@@ -605,10 +666,10 @@ mod tests {
         let tree = create(&repo, "feat/new", "HEAD", &fresh).unwrap();
         assert_eq!(tree.branch.as_deref(), Some("feat/new"));
         std::fs::write(fresh.join("scratch.txt"), b"unsaved").unwrap();
-        assert!(remove(&repo, &fresh, false, false).is_err());
+        assert!(remove(&repo, &fresh, false, false, false).is_err());
         assert!(fresh.exists());
-        assert!(remove(&repo, &repo, true, false).is_err());
-        remove(&repo, &fresh, true, false).unwrap();
+        assert!(remove(&repo, &repo, true, false, false).is_err());
+        remove(&repo, &fresh, true, false, false).unwrap();
         assert!(!fresh.exists());
         assert!(
             list(&repo)
@@ -617,7 +678,84 @@ mod tests {
                 .all(|tree| tree.path != fresh.to_string_lossy())
         );
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/new"]);
-        remove(&repo, &existing, false, false).unwrap();
+        remove(&repo, &existing, false, false, false).unwrap();
+    }
+
+    fn has_branch(repo: &Path, name: &str) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["show-ref", "--verify", "--quiet"])
+            .arg(format!("refs/heads/{name}"))
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    #[test]
+    fn removing_a_checkout_deletes_only_a_fully_merged_branch_when_asked() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let commit = [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+        ];
+        git(
+            &repo,
+            &[commit.as_slice(), &["--allow-empty", "-m", "initial"]].concat(),
+        );
+
+        let merged = temp.path().join("merged");
+        create(&repo, "feat/merged", "HEAD", &merged).unwrap();
+        assert_eq!(
+            remove(&repo, &merged, false, false, true).unwrap(),
+            Some(BranchOutcome::Deleted {
+                branch: "feat/merged".into()
+            })
+        );
+        assert!(!has_branch(&repo, "feat/merged"));
+
+        let unmerged = temp.path().join("unmerged");
+        create(&repo, "feat/unmerged", "HEAD", &unmerged).unwrap();
+        git(
+            &unmerged,
+            &[commit.as_slice(), &["--allow-empty", "-m", "work"]].concat(),
+        );
+        let outcome = remove(&repo, &unmerged, true, false, true).unwrap();
+        let Some(BranchOutcome::Kept { branch, reason }) = outcome else {
+            panic!("an unmerged branch is kept, got {outcome:?}");
+        };
+        assert_eq!(branch, "feat/unmerged");
+        assert!(reason.contains("not fully merged"), "{reason}");
+        assert!(!unmerged.exists(), "the checkout is removed regardless");
+        assert!(has_branch(&repo, "feat/unmerged"));
+
+        let kept = temp.path().join("kept");
+        create(&repo, "feat/kept", "HEAD", &kept).unwrap();
+        assert_eq!(remove(&repo, &kept, false, false, false).unwrap(), None);
+        assert!(has_branch(&repo, "feat/kept"));
+
+        let detached = temp.path().join("detached");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                detached.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(remove(&repo, &detached, false, false, true).unwrap(), None);
     }
 
     #[test]
@@ -673,7 +811,7 @@ mod tests {
             })
         );
         // Neither `force` nor `unlock_stale` gets past a running owner's lock.
-        let refused = remove(&repo, &live, true, true).unwrap_err();
+        let refused = remove(&repo, &live, true, true, false).unwrap_err();
         assert!(
             refused.starts_with("worktree is locked: agent"),
             "{refused}"
@@ -683,7 +821,7 @@ mod tests {
         assert_eq!(lock_of(&live), None);
         assert!(unlock(&repo, &live).is_err(), "already unlocked");
         assert!(unlock(&repo, &repo).is_err(), "the primary checkout");
-        remove(&repo, &live, false, false).unwrap();
+        remove(&repo, &live, false, false, false).unwrap();
 
         // The owner has exited, so the lock is stale.
         let mut child = Command::new("git").arg("--version").spawn().unwrap();
@@ -703,14 +841,14 @@ mod tests {
             ],
         );
         assert!(lock_of(&stale).is_some_and(|lock| lock.stale));
-        let refused = remove(&repo, &stale, false, false).unwrap_err();
+        let refused = remove(&repo, &stale, false, false, false).unwrap_err();
         assert!(refused.contains("no longer running"), "{refused}");
 
         // Git refuses the dirty checkout, so the lock goes back as it was.
         std::fs::write(stale.join("scratch.txt"), b"unsaved").unwrap();
-        assert!(remove(&repo, &stale, false, true).is_err());
+        assert!(remove(&repo, &stale, false, true, false).is_err());
         assert_eq!(lock_of(&stale).map(|lock| lock.reason), Some(stale_reason));
-        remove(&repo, &stale, true, true).unwrap();
+        remove(&repo, &stale, true, true, false).unwrap();
         assert!(!stale.exists());
     }
 

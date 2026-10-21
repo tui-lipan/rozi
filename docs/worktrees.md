@@ -153,6 +153,11 @@ Removal follows these rules:
   removal. Forcing affects only that Git check, never a lock.
 
 In the sidebar's Worktrees tab, the ✕ on a checkout follows the same rules.
+
+Removing a checkout keeps its branch unless `[worktrees] delete_branch` is `true`. Then the branch
+is deleted with the checkout, but only when it is fully merged. An unmerged branch, a branch
+checked out in another worktree, and a detached checkout keep what they have, and rozi reports a
+branch it kept. Forcing a dirty checkout never forces the branch.
 During removal, the checkout shows an animated spinner and `Removing…` in the picker and sidebar
 until the host finishes or reports an error.
 
@@ -192,7 +197,7 @@ rozi worktrees exclude                      # add the in-repository worktree dir
 | `list` | Lists checkouts, with `locked` or `stale-lock` in the state column. With `--format json`, prints a `worktrees` array; each entry includes the `sessions` whose recorded origin is that checkout, and a `lock` that is `null` or holds Git's lock `reason` and whether it is `stale`. |
 | `create <BRANCH>` | Checks out an existing local branch, or creates it from `--base` (`HEAD` by default). Without `--path`, uses the default location. Prints the new checkout's path, or a `worktree` object with `--format json`. `--open` then opens it like `open`, and cannot be combined with `--format json`. |
 | `open <PATH>` | Opens the checkout that contains `PATH`. |
-| `remove <PATH>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. |
+| `remove <PATH>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. `--delete-branch` or `--keep-branch` overrides `[worktrees] delete_branch` for this removal; a branch that is kept is reported on stderr. |
 | `unlock <PATH>` | Removes the lock from the checkout that contains `PATH`, whether or not the lock is stale. |
 | `exclude [DIR]` | Adds the relative `[worktrees] directory`, or `DIR`, to `.git/info/exclude`. |
 
@@ -226,6 +231,7 @@ See [Remote sessions](remote.md).
 | --- | --- |
 | `[worktrees] directory` | Default location for new checkouts, as described in [Create a worktree](#create-a-worktree) |
 | `[worktrees] profile` | Profile that seeds new worktree sessions |
+| `[worktrees] delete_branch` | Delete a removed checkout's branch too, if fully merged |
 
 A relative `directory` must be a single folder name. A nested or escaping value, such as
 `tools/.worktrees` or `../worktrees`, is ignored with a warning; use an absolute path for a location

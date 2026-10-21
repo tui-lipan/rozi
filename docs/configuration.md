@@ -407,6 +407,7 @@ See [Profiles](profiles.md).
 | --- | --- | --- | --- |
 | `directory` | path | none | Where a new checkout goes when you give no path. An absolute path, or a single folder name kept inside the repository. |
 | `profile` | string | none | Profile that seeds a new worktree session, from the Worktrees picker or `rozi worktrees open`. |
+| `delete_branch` | bool | `false` | Delete a checkout's branch when you remove the checkout, if the branch is fully merged. |
 
 Without `directory`, checkouts go beside the repository in `<repo>-worktrees/<branch>`. Otherwise:
 
@@ -426,6 +427,12 @@ checkout, directories outside it are kept, and panes without a directory start i
 a worktree on a remote host, the profile applies only when every pane directory it names is inside
 the repository, since an outside path names a directory on this machine. Otherwise the session
 starts as one shell in its checkout. rozi reports why a profile failed to load or was skipped.
+
+With `delete_branch`, the branch goes with its checkout only when Git considers it fully merged
+(`git branch -d`). An unmerged branch, a branch another checkout still has checked out, and a
+detached checkout are left alone, and rozi says when a branch was kept. A running Rozi UI sends its
+own `delete_branch` with each removal; `rozi worktrees remove` reads the value on the host that owns
+the repository, and `--delete-branch` or `--keep-branch` overrides it.
 
 See [Worktrees](worktrees.md#configuration).
 

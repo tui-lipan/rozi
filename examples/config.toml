@@ -252,6 +252,9 @@
 # session host, so a remote session uses the remote host's config. No default: checkouts go beside
 # the repository in <repo>-worktrees/<branch>.
 #directory = "~/worktrees"
+# Delete a checkout's branch when you remove the checkout, but only if it is fully merged. An
+# unmerged branch is kept and Rozi says so.
+#delete_branch = false
 
 [clipboard]
 # Copy mouse selections automatically. Linux defaults to "both"; other platforms default to

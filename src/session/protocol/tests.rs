@@ -196,6 +196,7 @@ fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
             path: "C:\\code\\repo-worktrees\\feature".into(),
             force: false,
             unlock_stale: true,
+            delete_branch: true,
         },
     };
     let mut bytes = Vec::new();
@@ -207,6 +208,10 @@ fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
         request_id: 47,
         result: WorktreeResult::Removed {
             path: "C:\\code\\repo-worktrees\\feature".into(),
+            branch: Some(crate::git::worktrees::BranchOutcome::Kept {
+                branch: "feature".into(),
+                reason: "not fully merged".into(),
+            }),
         },
     };
     bytes.clear();

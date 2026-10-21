@@ -33,10 +33,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "open <PATH> [--name <SESSION>]",
                 "Open the checkout's session, or create one",
             ),
-            row(
-                "remove <PATH> [--force]",
-                "Remove a linked checkout, never its branch",
-            ),
+            row("remove <PATH> [OPTIONS]", "Remove a linked checkout"),
             row("unlock <PATH>", "Lift a checkout's Git lock"),
             row(
                 "exclude [DIR] [--cwd <DIR>]",
@@ -55,6 +52,16 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row("--cwd <DIR>", "A directory in the repository"),
             row("--open", "Open the new checkout in a session"),
             row("--format text|json", "Print the new checkout"),
+        ],
+    },
+    HelpSection {
+        heading: "REMOVE OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("--force", "Let Git remove a dirty checkout"),
+            row("--delete-branch", "Also delete its branch if fully merged"),
+            row("--keep-branch", "Keep its branch (overrides config)"),
         ],
     },
     HelpSection {
@@ -99,6 +106,8 @@ pub(crate) enum WorktreesCommand {
     Remove {
         path: String,
         force: bool,
+        /// `None` follows `[worktrees] delete_branch` on the host.
+        delete_branch: Option<bool>,
     },
     Unlock {
         path: String,
@@ -188,6 +197,8 @@ pub(super) fn parse(
             }
             "--open" => flags.open = true,
             "--force" => flags.force = true,
+            "--delete-branch" => flags.delete_branch = Some(true),
+            "--keep-branch" => flags.delete_branch = Some(false),
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown flag `{other}` for worktrees {verb}"));
             }
@@ -239,10 +250,11 @@ pub(super) fn parse(
             }
         }
         "remove" => {
-            flags.allow(&verb, &["--force"])?;
+            flags.allow(&verb, &["--force", "--delete-branch", "--keep-branch"])?;
             WorktreesCommand::Remove {
                 path: operand.ok_or("worktrees remove requires a checkout path")?,
                 force: flags.force,
+                delete_branch: flags.delete_branch,
             }
         }
         "unlock" => {
@@ -273,6 +285,7 @@ struct Flags {
     name: Option<String>,
     open: bool,
     force: bool,
+    delete_branch: Option<bool>,
 }
 
 impl Flags {
@@ -286,6 +299,8 @@ impl Flags {
             ("--name", self.name.is_some()),
             ("--open", self.open),
             ("--force", self.force),
+            ("--delete-branch", self.delete_branch == Some(true)),
+            ("--keep-branch", self.delete_branch == Some(false)),
         ];
         match given
             .iter()
@@ -394,11 +409,22 @@ mod tests {
                 cwd: Some("~/src/rozi".into()),
             }
         );
+        for (flag, expected) in [("--delete-branch", true), ("--keep-branch", false)] {
+            assert_eq!(
+                command(&["worktrees", "remove", "/wt/x", flag]).command,
+                WorktreesCommand::Remove {
+                    path: "/wt/x".into(),
+                    force: false,
+                    delete_branch: Some(expected),
+                }
+            );
+        }
         assert_eq!(
             command(&["worktrees", "remove", "/wt/x", "--force"]).command,
             WorktreesCommand::Remove {
                 path: "/wt/x".into(),
                 force: true,
+                delete_branch: None,
             }
         );
         assert_eq!(

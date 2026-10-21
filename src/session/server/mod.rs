@@ -259,6 +259,8 @@ pub struct ServerSettings {
     /// the server's current config (rather than whatever was resolved when the pane was
     /// originally spawned) does not yet require.
     pub shell: Vec<String>,
+    /// Shell integration for panes restored before a client can prepare their launch policy.
+    pub shell_integration: crate::config::ShellIntegrationMode,
     pub command_shell: Vec<String>,
     /// `[[rules]]` placement, for a pane this server opens itself.
     ///
@@ -301,6 +303,7 @@ impl Default for ServerSettings {
             allow_takeover: true,
             scrollback: DEFAULT_SCROLLBACK,
             shell: Vec::new(),
+            shell_integration: crate::config::ShellIntegrationMode::default(),
             command_shell: Vec::new(),
             rules: Vec::new(),
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
@@ -2224,6 +2227,7 @@ pub fn run_named_session_mode_with_nonce(
             allow_takeover: !client_scratch && loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,
             shell,
+            shell_integration: loaded.config.shell_integration.mode,
             command_shell,
             rules: loaded.config.rules,
             agents: agent_catalog(loaded.config.agents),

@@ -436,6 +436,7 @@ struct WorktreesFileConfig {
     profile: Option<String>,
     directory: Option<String>,
     delete_branch: Option<Vec<String>>,
+    sidebar_open: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -951,6 +952,14 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(name) = non_empty(parsed.worktrees.profile) {
         config.worktrees.profile = Some(name);
+    }
+    if let Some(open) = non_empty(parsed.worktrees.sidebar_open) {
+        match WorktreeOpen::parse(&open) {
+            Some(value) => config.worktrees.sidebar_open = value,
+            None => warnings.push(format!(
+                "Ignored unknown worktrees.sidebar_open \"{open}\" (expected `session` or `pane`)"
+            )),
+        }
     }
     if let Some(delete_branch) = parsed.worktrees.delete_branch {
         // An empty list is the default, spelled out.
@@ -2028,6 +2037,20 @@ mod file_tests {
             loaded.config.worktrees.directory.as_deref(),
             Some("~/worktrees")
         );
+    }
+
+    #[test]
+    fn worktrees_sidebar_open_defaults_to_the_session() {
+        let loaded = load_config_from_text("", Path::new("c.toml"));
+        assert_eq!(loaded.config.worktrees.sidebar_open, WorktreeOpen::Session);
+        let loaded =
+            load_config_from_text("[worktrees]\nsidebar_open = \"pane\"", Path::new("c.toml"));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.worktrees.sidebar_open, WorktreeOpen::Pane);
+        let loaded =
+            load_config_from_text("[worktrees]\nsidebar_open = \"tab\"", Path::new("c.toml"));
+        assert_eq!(loaded.warnings.len(), 1, "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.worktrees.sidebar_open, WorktreeOpen::Session);
     }
 
     #[test]

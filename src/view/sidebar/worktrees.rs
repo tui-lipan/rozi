@@ -120,7 +120,11 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
         (false, None, None) => item,
     };
     // Under the pointer the rail says what Enter does. A closable row's hover is its ✕ instead.
-    if let Some(strongest) = strongest {
+    if state.config.worktrees.sidebar_open == crate::config::WorktreeOpen::Pane {
+        if !row.closable && !row.removing {
+            item = item.hover_badge_text("new pane", muted);
+        }
+    } else if let Some(strongest) = strongest {
         let verb = if row.sessions.len() > 1 {
             "choose"
         } else {

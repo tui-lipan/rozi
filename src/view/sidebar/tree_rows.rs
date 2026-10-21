@@ -287,6 +287,15 @@ pub(super) fn tab(
         .on_pointer_move(super::callback(ctx, move |_| {
             crate::Msg::SidebarPointerMoved(panel)
         }));
+    // Only the Worktrees tab has a second way to open a row; elsewhere Ctrl stays a plain click.
+    if matches!(tab, crate::config::SidebarTab::Worktrees) {
+        tree = tree.on_ctrl_activate(super::callback(ctx, move |event: TreeEvent| {
+            crate::Msg::SidebarRowCtrlActivate {
+                panel,
+                index: event.index,
+            }
+        }));
+    }
     if let Some(index) = cursor {
         tree = tree.selected(index);
     }

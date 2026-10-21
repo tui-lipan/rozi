@@ -243,6 +243,7 @@ See [Remote sessions](remote.md).
 | --- | --- |
 | `[worktrees] directory` | Default location for new checkouts, as described in [Create a worktree](#create-a-worktree) |
 | `[worktrees] profile` | Profile that seeds new worktree sessions |
+| `[worktrees] sidebar_open` | Whether a click on a checkout in the sidebar opens its session or a pane, as described in [Sidebar](sidebar.md#worktrees) |
 | `[worktrees] delete_branch` | Which copies of a removed checkout's branch to delete too, as described in [Delete the branch too](#delete-the-branch-too) |
 
 A relative `directory` must be a single folder name. A nested or escaping value, such as

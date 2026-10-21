@@ -256,6 +256,9 @@
 # branches go; an unmerged one is kept and Rozi says so. "remote" also needs the fetched remote
 # branch to be merged and unchanged. Empty keeps every branch.
 #delete_branch = ["local"]
+# What a click or Enter on a checkout in the Worktrees sidebar tab opens: "session" or "pane".
+# Ctrl+click and Ctrl+Enter open the other.
+#sidebar_open = "session"
 
 [clipboard]
 # Copy mouse selections automatically. Linux defaults to "both"; other platforms default to

@@ -408,6 +408,7 @@ See [Profiles](profiles.md).
 | `directory` | path | none | Where a new checkout goes when you give no path. An absolute path, or a single folder name kept inside the repository. |
 | `profile` | string | none | Profile that seeds a new worktree session, from the Worktrees picker or `rozi worktrees open`. |
 | `delete_branch` | array | `[]` | Branch copies to delete when you remove a checkout: `"local"`, `"remote"`, or both. Only merged branches are deleted. |
+| `sidebar_open` | string | `"session"` | What a click or `Enter` on a checkout in the Worktrees sidebar tab opens: `"session"` or `"pane"`. Ctrl+click and `Ctrl+Enter` open the other. |
 
 Without `directory`, checkouts go beside the repository in `<repo>-worktrees/<branch>`. Otherwise:
 

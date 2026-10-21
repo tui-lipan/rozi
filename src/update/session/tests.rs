@@ -1552,136 +1552,12 @@ fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
 }
 
 #[test]
-fn losing_control_discards_only_shared_drag_resizes() {
+fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes() {
     // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(losing_control_discards_only_shared_drag_resizes_body);
+    on_large_stack(disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_body);
 }
 
-fn losing_control_discards_only_shared_drag_resizes_body() {
-    let mut backend = follower_backend();
-    {
-        let state = backend.state_mut();
-        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
-        state.moving_pane = Some(crate::state::MoveSession {
-            id: 4,
-            was_floating: false,
-            drag_rect: tui_lipan::prelude::FloatRect::default(),
-            pointer_x: 0,
-            pointer_y: 0,
-        });
-        state
-            .current_mut()
-            .pending_resizes
-            .insert((false, 4), (80, 20));
-        state.current_mut().drag_held_resizes.insert((false, 4));
-        state
-            .current_mut()
-            .pending_resizes
-            .insert((false, 99), (70, 18));
-    }
-    backend
-        .dispatch(Msg::SessionControllerChanged {
-            epoch: 0,
-            controller: Some(2),
-            reason: crate::session::protocol::ControllerChangeReason::Granted,
-        })
-        .expect("lose control during drag");
-    assert!(
-        !backend
-            .state()
-            .current()
-            .pending_resizes
-            .contains_key(&(false, 4))
-    );
-    assert_eq!(
-        backend.state().current().pending_resizes.get(&(false, 99)),
-        Some(&(70, 18)),
-        "an unrelated shared resize remains pending"
-    );
-}
-
-#[test]
-fn settled_resize_survives_a_later_drag_control_loss() {
-    // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(settled_resize_survives_a_later_drag_control_loss_body);
-}
-
-fn settled_resize_survives_a_later_drag_control_loss_body() {
-    let mut backend = follower_backend();
-    let (client, _rx) = SessionClient::test_channel();
-    {
-        let state = backend.state_mut();
-        state.current_mut().session_client = Some(client);
-        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
-        state.current_mut().workspaces[0]
-            .panes
-            .push(crate::state::Pane::new(
-                2,
-                100,
-                tui_lipan::prelude::FloatRect::default(),
-            ));
-        state.moving_pane = Some(crate::state::MoveSession {
-            id: 1,
-            was_floating: false,
-            drag_rect: tui_lipan::prelude::FloatRect::default(),
-            pointer_x: 0,
-            pointer_y: 0,
-        });
-    }
-
-    backend
-        .dispatch(Msg::PaneResize(1, 80, 20))
-        .expect("record the first drag resize");
-    backend.state_mut().moving_pane = None;
-    backend
-        .dispatch(Msg::PaneResize(1, 90, 22))
-        .expect("record the settled post-drop resize");
-    assert_eq!(
-        backend.state().current().drag_held_resizes,
-        std::collections::HashSet::new(),
-        "a normal post-drop overwrite releases the old drag marker"
-    );
-
-    backend.state_mut().moving_pane = Some(crate::state::MoveSession {
-        id: 2,
-        was_floating: false,
-        drag_rect: tui_lipan::prelude::FloatRect::default(),
-        pointer_x: 0,
-        pointer_y: 0,
-    });
-    backend
-        .dispatch(Msg::PaneResize(2, 70, 18))
-        .expect("record the later drag resize");
-    backend
-        .dispatch(Msg::SessionControllerChanged {
-            epoch: 0,
-            controller: Some(2),
-            reason: crate::session::protocol::ControllerChangeReason::Granted,
-        })
-        .expect("lose control during the later drag");
-
-    assert_eq!(
-        backend.state().current().pending_resizes.get(&(false, 1)),
-        Some(&(90, 22)),
-        "the settled first-drop resize remains pending"
-    );
-    assert!(
-        !backend
-            .state()
-            .current()
-            .pending_resizes
-            .contains_key(&(false, 2)),
-        "the later drag's transient resize is discarded"
-    );
-}
-
-#[test]
-fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes() {
-    // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body);
-}
-
-fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
+fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_body() {
     let mut backend = follower_backend();
     let (old_client, _old_rx) = SessionClient::test_channel();
     {
@@ -1708,18 +1584,10 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
     }
     backend
         .update_level(Msg::PaneResize(1, 80, 20))
-        .expect("record the transient drag resize");
-    backend.state_mut().moving_pane = None;
+        .expect("record a resize reported mid-drag");
     backend
         .update_level(Msg::PaneResize(2, 90, 22))
-        .expect("record the legitimate pending resize");
-    backend.state_mut().moving_pane = Some(crate::state::MoveSession {
-        id: 1,
-        was_floating: false,
-        drag_rect: tui_lipan::prelude::FloatRect::default(),
-        pointer_x: 0,
-        pointer_y: 0,
-    });
+        .expect("record a neighbour's resize");
     backend.state_mut().resizing_pane = Some(crate::state::ResizeSession {
         id: 1,
         corner: crate::state::ResizeCorner::LowerRight,
@@ -1762,18 +1630,10 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
     assert!(backend.state().moving_pane.is_none());
     assert!(backend.state().resizing_pane.is_none());
     assert!(backend.state().split_drag.is_none());
-    assert!(
-        !backend
-            .state()
-            .current()
-            .pending_resizes
-            .contains_key(&(false, 1)),
-        "transient drag resize is removed before reconnect"
-    );
     assert_eq!(
-        backend.state().current().pending_resizes.get(&(false, 2)),
-        Some(&(90, 22)),
-        "legitimate pending resize survives reconnect"
+        backend.state().current().pending_resizes.len(),
+        2,
+        "pending resizes survive the reconnect"
     );
 
     let (new_client, reconnect_rx) = SessionClient::test_channel();
@@ -1801,7 +1661,7 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
             origin: crate::session::origin::SessionOrigin::default(),
         })
         .expect("flush pending geometry after reconnect");
-    let resized: Vec<_> = reconnect_rx
+    let mut resized: Vec<_> = reconnect_rx
         .try_iter()
         .filter_map(|outbound| match outbound {
             crate::session::client::ClientOutbound::Control(
@@ -1816,7 +1676,8 @@ fn disconnect_cancels_drag_before_reconnect_flushes_pending_resizes_body() {
             _ => None,
         })
         .collect();
-    assert_eq!(resized, vec![(2, false, 90, 22)]);
+    resized.sort_unstable();
+    assert_eq!(resized, vec![(1, false, 80, 20), (2, false, 90, 22)]);
 }
 
 #[test]

@@ -87,9 +87,6 @@ fn apply_controller_transition(
     controller: Option<ClientId>,
 ) {
     if was_controller && !now_controller {
-        if ctx.state.shared_tiled_drag_in_flight() {
-            ctx.state.discard_shared_drag_resizes();
-        }
         ctx.state.moving_pane = None;
         ctx.state.resizing_pane = None;
         ctx.state.split_drag = None;

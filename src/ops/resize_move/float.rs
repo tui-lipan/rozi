@@ -265,9 +265,6 @@ pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -
             // `finish_published_drag`. `moving_pane` is already cleared above, so the commit this
             // flushes describes the settled layout rather than the gesture.
             crate::ops::session::finish_published_drag(ctx);
-            // Sizes held for the length of the gesture are now free to go, but not from here: the
-            // settled geometry only exists after the next render.
-            crate::pane::pty_events::rearm_pending_resize_flush(ctx);
         }
     }
     Update::full()
@@ -2320,11 +2317,10 @@ mod tests {
             });
         }
 
-        /// The PTY is session-global, but the tiles a lift vacates are not: they reflow on the
-        /// controller's screen alone. Pushing those sizes would reshape one shared screen inside a
-        /// rectangle only this client has - and re-wrap every application in it, every frame.
+        /// The tiles a lift vacates reflow on every client, so their programs reflow with them
+        /// rather than waiting for the drop.
         #[test]
-        fn a_tiled_drag_holds_pty_resizes_instead_of_dropping_them() {
+        fn a_tiled_drag_resizes_the_tiles_it_vacates() {
             in_test_stack(|| {
                 let (mut backend, rx) = shared_backend(true);
                 pickup(&mut backend);
@@ -2333,7 +2329,7 @@ mod tests {
                 // The reflow the lift causes: pane 2 takes the whole canvas and reports it.
                 backend
                     .dispatch(Msg::PaneResize(2, 98, 27))
-                    .expect("neighbour reports its transient size");
+                    .expect("neighbour reports its reflowed size");
                 backend
                     .dispatch(Msg::FlushPaneResizes {
                         epoch: 0,
@@ -2342,86 +2338,17 @@ mod tests {
                     .expect("flush while the drag is in flight");
 
                 assert!(
-                    !control_messages(&rx)
-                        .iter()
-                        .any(|message| matches!(message, ClientMessage::Resize { .. })),
-                    "no PTY resize may escape while the pane is lifted"
-                );
-                assert_eq!(
-                    backend.state().current().pending_resizes.get(&(false, 2)),
-                    Some(&(98, 27)),
-                    "the size is held, never dropped - nothing else records this pane's geometry"
-                );
-            });
-        }
-
-        /// And released once the drop makes the geometry real. The settled size wins because the
-        /// post-drop report overwrites the held one under the same key before the flush runs.
-        #[test]
-        fn a_drop_releases_the_sizes_the_drag_held() {
-            in_test_stack(|| {
-                let (mut backend, rx) = shared_backend(true);
-                pickup(&mut backend);
-                // Both panes report transient geometry while the lift is in flight.
-                backend
-                    .dispatch(Msg::PaneResize(2, 98, 27))
-                    .expect("neighbour's transient size");
-                backend
-                    .dispatch(Msg::PaneResize(1, 30, 12))
-                    .expect("lifted pane's transient size");
-                backend
-                    .dispatch(Msg::EndMove(1, 80, 15))
-                    .expect("drop the pane");
-                let _ = control_messages(&rx);
-
-                // The timer armed before mouse-up is stale. It must not release the transient
-                // sizes in the gap before the post-drop geometry report arrives.
-                backend
-                    .dispatch(Msg::FlushPaneResizes {
-                        epoch: 0,
-                        generation: 1,
-                    })
-                    .expect("stale pre-drop flush");
-                assert!(
-                    control_messages(&rx)
-                        .iter()
-                        .all(|message| !matches!(message, ClientMessage::Resize { .. })),
-                    "stale timer must not send transient drag sizes"
-                );
-
-                // The post-drop render reports the settled geometry, then the debounce fires.
-                backend
-                    .dispatch(Msg::PaneResize(2, 49, 27))
-                    .expect("neighbour's settled size");
-                backend
-                    .dispatch(Msg::PaneResize(1, 49, 27))
-                    .expect("lifted pane's settled size");
-                backend
-                    .dispatch(Msg::FlushPaneResizes {
-                        epoch: 0,
-                        generation: 2,
-                    })
-                    .expect("flush after the drop");
-
-                let mut sizes: Vec<_> = control_messages(&rx)
-                    .into_iter()
-                    .filter_map(|message| match message {
+                    control_messages(&rx).iter().any(|message| matches!(
+                        message,
                         ClientMessage::Resize {
-                            pane_id,
-                            cols,
-                            rows,
+                            pane_id: 2,
+                            cols: 98,
+                            rows: 27,
                             ..
-                        } => Some((pane_id, cols, rows)),
-                        _ => None,
-                    })
-                    .collect();
-                sizes.sort_unstable();
-                assert_eq!(
-                    sizes,
-                    vec![(1, 49, 27), (2, 49, 27)],
-                    "one resize per pane, carrying the settled size rather than the transient one"
+                        }
+                    )),
+                    "the neighbour's PTY follows its reflowed tile mid-drag"
                 );
-                assert!(backend.state().current().pending_resizes.is_empty());
             });
         }
 

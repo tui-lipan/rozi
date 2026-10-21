@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -121,9 +121,6 @@ pub struct Attachment {
     pub resize_flush_scheduled: bool,
     /// Generation of the currently valid resize timer. Replacing it fences a queued stale timer.
     pub resize_flush_generation: u64,
-    /// Shared resize entries observed while a tiled drag was in flight. Control loss discards only
-    /// these entries, not unrelated pending geometry reports.
-    pub drag_held_resizes: HashSet<(bool, PaneId)>,
     /// Recently removed authoritative panes retained only so a same-generation layout correction
     /// can restore the client-side terminal screen while Canvas owns the visual exit subtree.
     pub retired_panes: ExitQueue<(PaneId, u64), Pane>,
@@ -183,7 +180,6 @@ impl Attachment {
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
             resize_flush_generation: 0,
-            drag_held_resizes: HashSet::new(),
             retired_panes: ExitQueue::with_exit_timeout(
                 crate::layout::anim::retained_pane_timeout(
                     crate::layout::anim::WindowAnimationConfig::default(),

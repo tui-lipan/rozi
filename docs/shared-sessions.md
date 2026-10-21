@@ -89,8 +89,8 @@ fit those cells.
 When control moves, the new controller's size and cell dimensions apply, even when its terminal has
 the same number of rows and columns. Full-screen programs may redraw for the new size.
 
-Dragging a pane does not resize the programs in it. The tiles reflow on screen during the drag, but
-each affected pane is resized once, when the pane lands.
+While a pane is dragged, the panes around it reflow into its space, and the programs in them are
+resized to match. They are resized again when the pane lands.
 
 ## Input control
 

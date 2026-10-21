@@ -13,9 +13,7 @@ pub(crate) use notifications::{
     maybe_notify_rows_done, maybe_notify_session_agent, notify_error, notify_info, notify_on,
     notify_path_error, notify_path_info, notify_screenshot_saved, notify_update, notify_warning,
 };
-pub(crate) use resize::{
-    flush_background_resizes, flush_pending_resizes, handle_pane_resize, rearm_pending_resize_flush,
-};
+pub(crate) use resize::{flush_background_resizes, flush_pending_resizes, handle_pane_resize};
 
 #[cfg(test)]
 mod tests;

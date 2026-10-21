@@ -145,6 +145,8 @@ base = false
 match = { names = ["claude", "claude-code"], paths = ["@anthropic-ai/claude-code"] }
 [agents.resume]
 argv = ["claude", "--resume", "{session}"]
+# Claude refuses to resume a conversation that is still running as a background session.
+attach = ["claude", "attach", "{short_session}"]
 
 # The selection cursor on a numbered option: the stable structure of every approval dialog, and
 # the one thing a transcript discussing approvals does not reproduce.

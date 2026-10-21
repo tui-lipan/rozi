@@ -331,7 +331,7 @@ pub struct ServerPane {
     /// agent definition this Rozi has loaded, not a fact about how the pane was created, so it
     /// must never be written back into a snapshot as launch intent. It is cleared the moment the
     /// resumed process exits, after which the pane is an ordinary shell again.
-    pub agent_resume: Option<String>,
+    pub agent_resume: Option<PaneResume>,
     pub keep_open: bool,
     /// Set once a `keep_open` pane's command has finished and its PTY has been replaced by the
     /// interactive shell (see [`SessionServer::replace_with_keep_open_shell`]). Without it, the
@@ -1973,6 +1973,20 @@ fn wire_local(owner: Option<ClientId>) -> bool {
     owner.is_some()
 }
 
+/// A native agent resume a pane is running, kept until the process exits.
+pub struct PaneResume {
+    /// The agent's display label, for the notice shown if the resume fails.
+    pub label: String,
+    /// What reaches the conversation when the resume is refused because it is still running
+    /// elsewhere. Spent once tried.
+    pub attach: Option<Vec<String>>,
+    /// Whether the process now running is that attach rather than the resume itself. An attach
+    /// that ends in a shell, however it ends, has given up the conversation: it can be detached
+    /// from normally, and the pane's launch intent must not stand in for it afterwards.
+    pub attached: bool,
+    pub started: Instant,
+}
+
 /// A native agent conversation a pane is being relaunched into, instead of whatever its `launch`
 /// would have started.
 ///
@@ -1982,6 +1996,10 @@ pub(super) struct AgentResumeLaunch {
     /// The agent's display label, for the notice shown if the resume command fails.
     pub(super) label: String,
     pub(super) launch: crate::pane::launch::PaneLaunch,
+    /// What reaches the conversation when `launch` is refused because it is still running
+    /// elsewhere. A held line chains it behind `launch` with `||`; a launched pane runs it when
+    /// `launch` fails quickly.
+    pub(super) attach: Option<Vec<String>>,
 }
 
 struct SpawnRequest {

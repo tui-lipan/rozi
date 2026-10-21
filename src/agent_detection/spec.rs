@@ -46,6 +46,8 @@ pub enum AgentResumeSpec {
 #[serde(default, deny_unknown_fields)]
 pub struct AgentResumeCommandSpec {
     pub argv: Vec<String>,
+    /// What to run when `argv` is refused because the conversation is still running elsewhere.
+    pub attach: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -181,18 +183,25 @@ pub fn build_definitions(
             .into_iter()
             .filter_map(|state| build_state_rule(state, &noun, &id, warnings))
             .collect();
-        let resume_argv = match spec.resume {
+        let (resume_argv, attach_argv) = match spec.resume {
             Some(AgentResumeSpec::Command(resume)) => {
-                validate_resume_argv(resume.argv, &noun, &id, warnings)
+                let argv = validate_resume_argv(resume.argv, &noun, &id, warnings);
+                let attach = argv
+                    .as_ref()
+                    .and_then(|_| validate_attach_argv(resume.attach, &noun, &id, warnings));
+                (argv, attach)
             }
-            Some(AgentResumeSpec::Disabled(false)) => None,
+            Some(AgentResumeSpec::Disabled(false)) => (None, None),
             Some(AgentResumeSpec::Disabled(true)) => {
                 warnings.push(format!(
                     "Ignored {noun} `{id}` resume capability: use a resume table or `resume = false`"
                 ));
-                None
+                (None, None)
             }
-            None => inherited.and_then(|definition| definition.resume_argv.clone()),
+            None => (
+                inherited.and_then(|definition| definition.resume_argv.clone()),
+                inherited.and_then(|definition| definition.attach_argv.clone()),
+            ),
         };
 
         let label = spec
@@ -207,6 +216,7 @@ pub fn build_definitions(
             base: spec.base.unwrap_or(true),
             states,
             resume_argv,
+            attach_argv,
         });
     }
     built
@@ -218,27 +228,55 @@ fn validate_resume_argv(
     id: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Vec<String>> {
-    let placeholders = argv
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == "{session}").then_some(index))
-        .collect::<Vec<_>>();
-    let embedded = argv
-        .iter()
-        .any(|argument| argument != "{session}" && argument.contains("{session}"));
-    if argv.is_empty()
-        || placeholders.len() != 1
-        || placeholders[0] == 0
-        || embedded
-        || argv.iter().any(|argument| argument.is_empty())
-    {
+    if has_one_placeholder(&argv, &["{session}"]) {
+        Some(argv)
+    } else {
         warnings.push(format!(
             "Ignored {noun} `{id}` resume capability: `argv` must be non-empty and contain `{{session}}` exactly once as a whole non-program argument"
         ));
         None
-    } else {
-        Some(argv)
     }
+}
+
+/// The optional `attach` command. Leaving it out is fine; an invalid one is dropped on its own,
+/// and plain resume still works.
+fn validate_attach_argv(
+    argv: Vec<String>,
+    noun: &str,
+    id: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    if argv.is_empty() {
+        return None;
+    }
+    if has_one_placeholder(&argv, &["{session}", "{short_session}"]) {
+        Some(argv)
+    } else {
+        warnings.push(format!(
+            "Ignored {noun} `{id}` resume `attach`: it must be non-empty and contain `{{session}}` or `{{short_session}}` exactly once as a whole non-program argument"
+        ));
+        None
+    }
+}
+
+/// Whether exactly one argument is one of `placeholders`, it is not the program, no placeholder is
+/// embedded in a longer argument, and nothing is empty.
+fn has_one_placeholder(argv: &[String], placeholders: &[&str]) -> bool {
+    let whole = argv
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| placeholders.contains(&argument.as_str()))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let embedded = argv.iter().any(|argument| {
+        !placeholders.contains(&argument.as_str())
+            && (argument.contains("{session}") || argument.contains("{short_session}"))
+    });
+    !argv.is_empty()
+        && whole.len() == 1
+        && whole[0] != 0
+        && !embedded
+        && argv.iter().all(|argument| !argument.is_empty())
 }
 
 /// Validate the shared base rules. Same rule grammar, no owning agent.
@@ -416,6 +454,48 @@ mod tests {
     }
 
     #[test]
+    fn attach_fills_the_whole_and_the_short_session_reference() {
+        let (built, warnings) = build(
+            r#"
+            [[agents]]
+            id = "mca"
+            match = { names = ["mca"] }
+            [agents.resume]
+            argv = ["mca", "--resume", "{session}"]
+            attach = ["mca", "attach", "{short_session}"]
+            "#,
+            AgentOrigin::Config,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            built[0].attach_command("1c51ce68-faf1-401e"),
+            Some(vec![
+                "mca".to_string(),
+                "attach".to_string(),
+                "1c51ce68".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn an_invalid_attach_is_dropped_but_resume_survives() {
+        let (built, warnings) = build(
+            r#"
+            [[agents]]
+            id = "mca"
+            match = { names = ["mca"] }
+            [agents.resume]
+            argv = ["mca", "--resume", "{session}"]
+            attach = ["mca", "attach", "x-{session}"]
+            "#,
+            AgentOrigin::Config,
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(built[0].attach_argv.is_none());
+        assert!(built[0].resume_argv.is_some());
+    }
+
+    #[test]
     fn embedded_resume_placeholder_is_rejected_without_losing_detection() {
         let (built, warnings) = build(
             r#"
@@ -456,6 +536,7 @@ mod tests {
             base: true,
             states: Vec::new(),
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
+            attach_argv: None,
         }];
         let built = build_definitions(
             parse(
@@ -496,6 +577,7 @@ mod tests {
             base: true,
             states: Vec::new(),
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
+            attach_argv: None,
         }];
         let built = build_definitions(
             parse(

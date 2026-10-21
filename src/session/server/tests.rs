@@ -5330,6 +5330,87 @@ fn a_refused_agent_resume_falls_back_to_attaching() {
     assert_eq!(pane.launch, None, "a failed attach leaves a plain shell");
 }
 
+/// Runs a pane whose resume is refused straight away and whose attach is `attach`, until the pane
+/// has settled into the shell that follows, and returns it.
+fn pane_after_refused_resume(attach: Vec<String>) -> SessionServer {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+    let sh = |script: &str| vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()];
+
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        // The pane was created to run the agent: restoring this would open a fresh conversation.
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
+        agent_resume: Some(AgentResumeLaunch {
+            label: "Claude Code".to_string(),
+            launch: crate::pane::launch::PaneLaunch::direct(sh("exit 1")).expect("resume argv"),
+            attach: Some(attach),
+        }),
+        cwd: None,
+        title: None,
+        cols: 80,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            if let Some(outbound) = server.handle_event(event) {
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        if server
+            .panes
+            .get(&1)
+            .is_some_and(|pane| pane.command_completed)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    server
+}
+
+/// An attach ends normally when the user detaches from a conversation that carries on elsewhere.
+/// The shell that follows must not keep the launch that would start a fresh one.
+#[test]
+fn an_attach_that_exits_cleanly_does_not_leave_a_launch_behind() {
+    let server = pane_after_refused_resume(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]);
+
+    let pane = server.panes.get(&1).expect("pane still exists");
+    assert!(
+        pane.command_completed,
+        "the attach never gave way to a shell"
+    );
+    assert_eq!(pane.launch, None);
+    assert!(pane.agent_resume.is_none());
+}
+
+/// An attach command that cannot be spawned falls back to the shell the same way.
+#[test]
+fn an_attach_that_cannot_start_does_not_leave_a_launch_behind() {
+    let server = pane_after_refused_resume(vec!["/nonexistent/rozi-test/claude".into()]);
+
+    let pane = server.panes.get(&1).expect("pane still exists");
+    assert!(
+        pane.command_completed,
+        "no shell followed the failed attach"
+    );
+    assert_eq!(pane.launch, None);
+}
+
 /// A command that merely exits keeps its launch intent: a pane created to run something restores
 /// by running it again, which is the ordinary keep-open contract. Only a *failed conversation
 /// resume* is special, and conflating the two would stop every keep-open pane coming back.

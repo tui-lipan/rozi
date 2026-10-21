@@ -2197,7 +2197,33 @@ mod tests {
         let saved = saved_pane("claude", "needs quoting", None);
 
         match action(&server, &saved, &mut std::collections::HashSet::new()) {
-            RestoreAction::Type(line) => assert_eq!(line, "claude --resume 'needs quoting'"),
+            RestoreAction::Type(line) => {
+                let quoting = crate::pane::launch::PromptQuoting::of(Some("nu"));
+                assert!(!crate::pane::launch::PromptQuoting::chains_with_or(Some(
+                    "nu"
+                )));
+                assert_eq!(
+                    line,
+                    format!(
+                        "claude --resume {}",
+                        crate::pane::launch::quote_for_prompt("needs quoting", quoting)
+                    )
+                );
+            }
+            _ => panic!("`hold` must not start the agent itself"),
+        }
+    }
+
+    /// Windows PowerShell 5.1 cannot parse `||`, and Rozi's own Windows shell resolution falls
+    /// back to it when PowerShell 7 is missing.
+    #[test]
+    fn windows_powershell_gets_the_plain_resume_line() {
+        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        server.settings.shell = vec!["powershell.exe".to_string()];
+        let saved = saved_pane("claude", "abc", None);
+
+        match action(&server, &saved, &mut std::collections::HashSet::new()) {
+            RestoreAction::Type(line) => assert!(!line.contains("||"), "{line}"),
             _ => panic!("`hold` must not start the agent itself"),
         }
     }
@@ -2312,6 +2338,7 @@ mod tests {
         pane.agent_resume = Some(PaneResume {
             label: "Claude Code".to_string(),
             attach: None,
+            attached: false,
             started: Instant::now(),
         });
         server.panes.insert(1, pane);

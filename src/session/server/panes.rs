@@ -189,6 +189,7 @@ impl SessionServer {
         let mut agent_resume = resume.as_ref().map(|resume| PaneResume {
             label: resume.label.clone(),
             attach: resume.attach.clone(),
+            attached: false,
             started: Instant::now(),
         });
         let mut spawned = start(build_config(
@@ -666,7 +667,6 @@ impl SessionServer {
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
         // A failed native resume says so plainly rather than reading as a command that happened to
         // exit, because the pane it leaves behind looks like a restore that quietly did nothing.
-        let resume_failed = resume.is_some() && code != 0 && attach.is_none();
         let banner = match &resume {
             Some(resume) if attach.is_some() => format!(
                 "\r\n\x1b[2m[rozi] {} is still running · attaching\x1b[0m\r\n",
@@ -730,6 +730,7 @@ impl SessionServer {
                 pane.exited = None;
                 pane.agent_resume = resume.map(|resume| PaneResume {
                     attach: None,
+                    attached: true,
                     started: Instant::now(),
                     ..resume
                 });
@@ -758,7 +759,14 @@ impl SessionServer {
                 // records the agent with no conversation beside it and the restore after that
                 // opens a fresh one. A command that merely exited keeps its intent, which is the
                 // ordinary keep-open contract - only a *failed conversation resume* is special.
-                if resume_failed {
+                //
+                // An attach that ended in this shell counts however it ended: it exits 0 when
+                // the user detaches from a conversation that carries on elsewhere, and it may
+                // never have spawned at all. Neither leaves a launch that may stand in for it.
+                if resume
+                    .as_ref()
+                    .is_some_and(|resume| resume.attached || code != 0)
+                {
                     pane.launch = None;
                 }
             }

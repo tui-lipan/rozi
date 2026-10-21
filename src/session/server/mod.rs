@@ -1980,6 +1980,10 @@ pub struct PaneResume {
     /// What reaches the conversation when the resume is refused because it is still running
     /// elsewhere. Spent once tried.
     pub attach: Option<Vec<String>>,
+    /// Whether the process now running is that attach rather than the resume itself. An attach
+    /// that ends in a shell, however it ends, has given up the conversation: it can be detached
+    /// from normally, and the pane's launch intent must not stand in for it afterwards.
+    pub attached: bool,
     pub started: Instant,
 }
 

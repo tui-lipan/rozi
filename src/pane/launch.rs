@@ -166,6 +166,7 @@ impl PromptQuoting {
 
     /// Whether the shell a pane runs reads `a || b` as "run `b` if `a` fails". Only the shells
     /// named here are known to; an unrecognized one, such as Nushell, gets no chained line.
+    /// Windows PowerShell 5.1 (`powershell.exe`) predates `||`, which arrived with PowerShell 7.
     pub fn chains_with_or(shell: Option<&str>) -> bool {
         let name = shell.map(crate::platform::command::normalized_program_name);
         matches!(
@@ -178,7 +179,6 @@ impl PromptQuoting {
                     | "ash"
                     | "busybox"
                     | "fish"
-                    | "powershell"
                     | "pwsh"
                     | "cmd"
             )

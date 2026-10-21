@@ -232,8 +232,9 @@ of attached sessions instead (see [Run on the session host](#run-on-the-session-
 starts while a UI with the extension is attached, receives that UI's
 [control environment](#runtime-environment), and stops when the client detaches or the extension is
 disabled or removed. A reload that changes a process-facing
-field or setting, or any file in the extension directory other than `extension.toml`, restarts
-the service; a reload that changes only `title`, `description`, or `version` leaves it running. Services do not run in a detached session.
+field or setting, any file in the extension directory other than `extension.toml`, or the
+checkout itself (as `rozi extensions update` replaces it) restarts the service; editing only
+`title`, `description`, or `version` in place leaves it running. Services do not run in a detached session.
 
 Let `rozi` supervise the process rather than daemonizing it or writing your own restart loop. Use a
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or

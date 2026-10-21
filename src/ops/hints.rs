@@ -12,14 +12,13 @@ use crate::ops::focus::request_current_pane_focus;
 use crate::pane::lifecycle::find_pane;
 use crate::state::{HintModeState, Mode};
 
-/// Scan one visible snapshot for hints, rejoining soft-wrapped rows first.
+/// Scan one visible snapshot for hints: its text rejoined across soft wraps, and its OSC 8 links.
 ///
-/// `wrapped_rows` comes straight off the snapshot: without it a URL or path the terminal broke
-/// across rows is scanned as the fragments it was broken into, and a fragment is rarely a hint on
-/// its own. See [`tui_lipan::utils::hints::HintScan::scan_wrapped`].
+/// A URL or path the terminal broke across rows is scanned whole rather than as the fragments it
+/// was broken into, and a link is hinted by its destination rather than its label. See
+/// [`tui_lipan::utils::hints::HintScan::scan_snapshot`].
 pub fn scan_snapshot_with_custom(
-    text: &str,
-    wrapped_rows: &[bool],
+    snapshot: &TerminalRenderSnapshot,
     custom: &[crate::config::HintConfig],
 ) -> Vec<HintMatch> {
     let mut scan = HintScan::new();
@@ -36,7 +35,7 @@ pub fn scan_snapshot_with_custom(
             );
         });
     }
-    scan.scan_wrapped(text, wrapped_rows)
+    scan.scan_snapshot(snapshot)
 }
 
 fn can_open(kind: HintKind, config: &crate::config::Config) -> bool {
@@ -59,11 +58,7 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     let snapshot = pane.terminal.snapshot();
-    let matches = scan_snapshot_with_custom(
-        &snapshot.text,
-        &snapshot.wrapped_rows,
-        &ctx.state.config.hints,
-    );
+    let matches = scan_snapshot_with_custom(&snapshot, &ctx.state.config.hints);
     if matches.is_empty() {
         crate::pane::pty_events::notify_info(ctx, "No hints in this pane");
         return Update::full();
@@ -198,24 +193,36 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
 mod tests {
     use super::*;
 
+    fn scan_text(
+        text: &str,
+        wrapped_rows: &[bool],
+        custom: &[crate::config::HintConfig],
+    ) -> Vec<HintMatch> {
+        let snapshot = TerminalRenderSnapshot {
+            text: text.into(),
+            wrapped_rows: wrapped_rows.into(),
+            ..Default::default()
+        };
+        scan_snapshot_with_custom(&snapshot, custom)
+    }
+
     #[test]
     fn scans_and_deduplicates_hints() {
-        let found = scan_snapshot_with_custom(
-            "https://example.com/a). ./src/main.rs:12 deadbeef",
+        let found = scan_text(
+            "https://example.com/a). ./src/main.rs:12 9983d705",
             &[],
             &[],
         );
         assert_eq!(
             found.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
-            vec!["https://example.com/a", "./src/main.rs:12", "deadbeef"]
+            vec!["https://example.com/a", "./src/main.rs:12", "9983d705"]
         );
         assert_eq!(found[0].kind, HintKind::Url);
     }
 
     #[test]
     fn scans_multiple_urls_after_ascii_prose() {
-        let found =
-            scan_snapshot_with_custom("error at https://a.test and https://b.test", &[], &[]);
+        let found = scan_text("error at https://a.test and https://b.test", &[], &[]);
         assert_eq!(
             found
                 .iter()
@@ -227,8 +234,8 @@ mod tests {
 
     #[test]
     fn pure_decimal_runs_are_not_sha_hints() {
-        assert!(scan_snapshot_with_custom("size 17520384 pid 1234567890", &[], &[]).is_empty());
-        let found = scan_snapshot_with_custom("rev 1234abc timestamp 1720780800", &[], &[]);
+        assert!(scan_text("size 17520384 pid 1234567890", &[], &[]).is_empty());
+        let found = scan_text("rev 1234abc timestamp 1720780800", &[], &[]);
         assert_eq!(
             found.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["1234abc"]
@@ -258,14 +265,14 @@ mod tests {
             open: true,
             on_open: None,
         }];
-        let found = scan_snapshot_with_custom(
-            "see 10.0.0.1 then https://example.com and deadbeef",
+        let found = scan_text(
+            "see 10.0.0.1 then https://example.com and 9983d705",
             &[],
             &custom,
         );
         let texts: Vec<_> = found.iter().map(|m| m.text.as_str()).collect();
         assert!(texts.contains(&"https://example.com"));
-        assert!(texts.contains(&"deadbeef"));
+        assert!(texts.contains(&"9983d705"));
         assert!(texts.contains(&"10.0.0.1"));
         assert!(
             found
@@ -286,8 +293,8 @@ mod tests {
         // What the shell prints when a URL is longer than the pane is wide. Neither row is a URL.
         let text =
             "https://example.test/ssr/30000\n2660/Deals?disableNav=YES  \nbash: no such file";
-        let split = scan_snapshot_with_custom(text, &[], &[]);
-        let joined = scan_snapshot_with_custom(text, &[true, false, false], &[]);
+        let split = scan_text(text, &[], &[]);
+        let joined = scan_text(text, &[true, false, false], &[]);
 
         // Row by row the URL is only its first line, and the remainder is nothing at all.
         assert_eq!(
@@ -386,8 +393,27 @@ mod tests {
     }
 
     #[test]
+    fn osc8_links_are_hinted_by_their_destination() {
+        let snapshot = TerminalRenderSnapshot {
+            text: "Pushed to PR #200".into(),
+            hyperlinks: [TerminalHyperlink::new(
+                "https://github.com/tui-lipan/rozi/pull/200",
+                0,
+                10..17,
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let found = scan_snapshot_with_custom(&snapshot, &[]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].text, "https://github.com/tui-lipan/rozi/pull/200");
+        assert_eq!(found[0].kind, HintKind::Url);
+        assert_eq!((found[0].start_col(), found[0].end_col()), (10, 17));
+    }
+
+    #[test]
     fn scanners_report_display_columns_after_wide_text() {
-        let found = scan_snapshot_with_custom("你 https://example.com", &[], &[]);
+        let found = scan_text("你 https://example.com", &[], &[]);
         assert_eq!(found[0].start_col(), 3);
     }
 }

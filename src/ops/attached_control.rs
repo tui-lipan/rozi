@@ -395,6 +395,7 @@ mod tests {
                     source_pane,
                     source_session: source_session.map(SessionInstanceId::for_test),
                     extension: None,
+                    caller_context: None,
                     credential: None,
                 },
                 reply,
@@ -434,6 +435,41 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn caller_context_distinguishes_the_displayed_and_background_sessions() {
+        on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().current_mut().session_instance =
+                Some(SessionInstanceId::for_test("screen"));
+            let background = crate::state::Attachment {
+                session_instance: Some(SessionInstanceId::for_test("caller")),
+                ..Default::default()
+            };
+            backend.state_mut().background.insert(99, background);
+            let response = ask_from(
+                &mut backend,
+                ControlCommand::Context,
+                Some(3),
+                Some("caller"),
+            )
+            .try_recv()
+            .unwrap();
+            let data = response.data.unwrap();
+            assert_eq!(data["displayed_session"], "screen");
+            assert!(
+                data["held_sessions"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("caller"))
+            );
+            assert!(
+                data.get("pane").is_none(),
+                "a UI does not verify environment hints as caller identity"
+            );
+        });
     }
 
     #[test]
@@ -542,6 +578,7 @@ mod tests {
                     prompt: "hi".into(),
                     wait: None,
                     timeout_ms: None,
+                    capture: None,
                     allow_working: false,
                 },
             );
@@ -650,6 +687,7 @@ mod tests {
                         source_pane: Some(7),
                         source_session: Some(SessionInstanceId::for_test("a")),
                         extension: None,
+                        caller_context: None,
                         credential: None,
                     },
                     reply: mpsc::channel().0,
@@ -727,6 +765,7 @@ mod tests {
                         source_pane: None,
                         source_session: None,
                         extension: None,
+                        caller_context: None,
                         credential: None,
                     },
                     reply,
@@ -852,6 +891,7 @@ mod tests {
                         source_pane: None,
                         source_session: None,
                         extension: None,
+                        caller_context: None,
                         credential: None,
                     },
                     reply,

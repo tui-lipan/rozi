@@ -898,13 +898,21 @@ pub(super) fn format_control_text(
         control::ControlCommand::AgentsList | control::ControlCommand::AgentGet { .. } => {
             format_agents_text(data, styles)
         }
+        control::ControlCommand::Context => format_caller_context_text(data),
         control::ControlCommand::AgentsOverview => format_global_agents_text(data, styles),
         control::ControlCommand::AgentGo { .. } => String::new(),
         control::ControlCommand::AgentRead { .. } => format_capture_text(data),
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
         control::ControlCommand::AgentPrompt { .. } => {
             if data.is_some_and(|data| data.get("condition").is_some()) {
-                format_agent_wait_text(data, styles)
+                let mut text = format_agent_wait_text(data, styles);
+                if let Some(capture) = data
+                    .and_then(|data| data.get("result"))
+                    .and_then(|result| result.get("capture"))
+                {
+                    text.push_str(&format_capture_text(Some(capture)));
+                }
+                text
             } else {
                 format!(
                     "{}\n",
@@ -1182,12 +1190,61 @@ fn format_global_agents_text(data: Option<&serde_json::Value>, styles: OutputSty
     )
 }
 
+fn format_caller_context_text(data: Option<&serde_json::Value>) -> String {
+    let Some(context) =
+        data.and_then(|data| serde_json::from_value::<control::CallerContext>(data.clone()).ok())
+    else {
+        return String::new();
+    };
+    let mut text = format!("{}\n", context.status);
+    if let Some(session) = context.session {
+        text.push_str(&format!(
+            "Session: {} ({})\n",
+            session.name,
+            session.instance.as_str()
+        ));
+    }
+    if let Some(pane) = context.pane {
+        text.push_str(&format!(
+            "Pane: {} (generation {})\n",
+            pane.pane_id, pane.generation
+        ));
+    }
+    if let Some(agent) = context.agent {
+        text.push_str(&format!(
+            "Agent: {} ({})\n",
+            agent.identity.id,
+            agent.state.as_str()
+        ));
+    }
+    text.push_str(if context.ui.available {
+        "UI: available\n"
+    } else {
+        "UI: unavailable\n"
+    });
+    text
+}
+
 fn format_agent_wait_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
-    let condition = data
-        .and_then(|data| data.get("condition"))
+    let state = data
+        .and_then(|data| data.get("agent"))
+        .and_then(|agent| agent.get("state"))
         .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            data.and_then(|data| data.get("condition"))
+                .and_then(serde_json::Value::as_str)
+        })
         .unwrap_or("ready");
-    format!("{}\n", styles.paint(condition, OutputTone::Success))
+    let mut text = format!("{}\n", styles.paint(state, OutputTone::Success));
+    if let Some(reason) = data
+        .and_then(|data| data.get("agent"))
+        .and_then(|agent| agent.get("reason"))
+        .and_then(serde_json::Value::as_str)
+    {
+        text.push_str(reason);
+        text.push('\n');
+    }
+    text
 }
 
 pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputStyles) -> String {

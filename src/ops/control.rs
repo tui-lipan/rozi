@@ -23,6 +23,10 @@ pub(crate) fn handle_control_request(
     ctx: &mut Context<AppRoot>,
     envelope: ControlEnvelope,
 ) -> Update {
+    if let Err(response) = crate::ops::caller_context::validate(&ctx.state, &envelope.request) {
+        let _ = envelope.reply.send(response);
+        return Update::none();
+    }
     if envelope
         .request
         .extension
@@ -365,6 +369,17 @@ pub(crate) fn handle_control_request(
             status,
             reason,
         ),
+        ControlCommand::Context => {
+            let displayed = ctx.state.current().session_instance.clone();
+            let held: Vec<_> = std::iter::once(ctx.state.current())
+                .chain(ctx.state.background.values())
+                .filter_map(|attachment| attachment.session_instance.clone())
+                .collect();
+            ControlResponse::ok(crate::control::UiContextMetadata {
+                displayed_session: displayed,
+                held_sessions: held,
+            })
+        }
         ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
             return crate::ops::attached_control::forward_agent(
                 ctx,
@@ -2164,6 +2179,7 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                caller_context: None,
                 credential: None,
             },
             reply,
@@ -2396,6 +2412,7 @@ mod tests {
                                 id: "tools".to_string(),
                                 generation: "retired".to_string(),
                             }),
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -2431,6 +2448,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -2536,6 +2554,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -2573,6 +2592,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -2639,6 +2659,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    caller_context: None,
                     credential: None,
                 },
                 reply,
@@ -2840,6 +2861,7 @@ mod tests {
                                     source_pane: None,
                                     source_session: None,
                                     extension: None,
+                                    caller_context: None,
                                     credential: None,
                                 },
                                 reply: tx,
@@ -2865,6 +2887,7 @@ mod tests {
                                 source_pane: None,
                                 source_session: None,
                                 extension: None,
+                                caller_context: None,
                                 credential: None,
                             },
                             reply: tx,
@@ -2947,6 +2970,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -3016,6 +3040,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -3057,6 +3082,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -3095,6 +3121,7 @@ mod tests {
                                 source_pane: None,
                                 source_session: None,
                                 extension: None,
+                                caller_context: None,
                                 credential: None,
                             },
                             reply,
@@ -3179,6 +3206,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    caller_context: None,
                     credential: None,
                 },
                 reply,
@@ -4012,6 +4040,7 @@ mod tests {
                             source_pane: None,
                             source_session: None,
                             extension: None,
+                            caller_context: None,
                             credential: None,
                         },
                         reply,
@@ -4078,6 +4107,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    caller_context: None,
                     credential: None,
                 },
                 reply,

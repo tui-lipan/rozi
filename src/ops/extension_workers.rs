@@ -159,6 +159,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         ControlCommand::CaptureUi { .. } => {
             Gate::Denied("a UI capture shows this whole client, not one session")
         }
+        ControlCommand::Context => Gate::Denied("caller context describes this whole client"),
         ControlCommand::Metrics => Gate::Denied("metrics describe this whole client"),
         ControlCommand::AgentsOverview => {
             Gate::Denied("the overview lists every session and host this client knows")
@@ -433,6 +434,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         }
     }

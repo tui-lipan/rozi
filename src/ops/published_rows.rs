@@ -106,6 +106,7 @@ pub(crate) fn stream_opened(
                         source_pane: requested_pane,
                         source_session: None,
                         extension: None,
+                        caller_context: None,
                         credential: None,
                     };
                     crate::ops::extension_workers::admit(&ctx.state, worker, &request)

@@ -21,7 +21,9 @@ use super::protocol::{
     self, Capture, Frame, Hello, Launch, Message, SpawnCwd, SpawnFailure, read_frame,
 };
 use super::store::{BundleStore, StoreError};
-use crate::platform::command::{CommandGroup, configure_command_group, kill_on_supervisor_death};
+use crate::platform::command::{
+    CommandGroup, configure_command_group, kill_on_supervisor_death, spawn_retrying_on_busy,
+};
 use crate::platform::ipc::{EndpointRegistry, IpcConnection};
 
 /// Environment the runtime sets for every process it starts, and never takes from the caller.
@@ -378,9 +380,10 @@ impl Runtime {
         command.stderr(std::process::Stdio::null());
         configure_command_group(&mut command);
         kill_on_supervisor_death(&mut command);
-        let mut child = command.spawn().map_err(|error| SpawnFailure::SpawnFailed {
-            detail: error.to_string(),
-        })?;
+        let mut child =
+            spawn_retrying_on_busy(&mut command).map_err(|error| SpawnFailure::SpawnFailed {
+                detail: error.to_string(),
+            })?;
         let group = match CommandGroup::new(&child) {
             Ok(group) => group,
             Err(error) => {
@@ -961,8 +964,9 @@ mod tests {
             },
             false,
         );
-        let Message::Spawned { pid, .. } = client.next_message() else {
-            panic!("spawned");
+        let spawned = client.next_message();
+        let Message::Spawned { pid, .. } = spawned else {
+            panic!("expected worker 7 to spawn, got {spawned:?}");
         };
         let deadline = Instant::now() + Duration::from_secs(10);
         let grandchild = loop {

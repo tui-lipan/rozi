@@ -171,20 +171,39 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi agents prompt --target <PANE_ID> --wait quiescent --timeout 10m 'Fix the failing test'
+rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m --capture text 'Fix the failing test'
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
 ```
 
 The pane id always goes after `--target`; `agents get 3` is refused. A pane can list several
 agents, such as a client's background conversations: `--target` names the one on screen, and the
 others, even a lone background one, need their `--ref` from `agents list`. From a UI pane, every
-`agents` command addresses the session on screen; add `--session <NAME>` for a detached one.
+`agents` pane-number target addresses the session on screen. Use `--here` to target your own
+verified session, or `--session <NAME>` for a named one. `rozi context --format json` verifies
+your caller pane and session and reports stale identity. It works without a UI socket.
+`--here` uses your displayed UI's authority for splits, layout changes, pane close, and input.
+If `ROZI_SOCKET` is absent, stale, or displays another session, it searches for exactly one live
+UI displaying your verified session. If none or several match, it uses direct session control,
+where layout control must be free and input locks apply. A UI session switch before execution
+refuses the command.
+UI authority cannot cross hosts. Inside a remotely attached pane, `--here` uses direct session
+control unless a suitable UI runs on the session host. When the remote attachment holds the
+required authority, `--here` returns `unsupported`. Submit the mutation through the UI socket on
+the UI host, detach the controller for layout changes, or unlock input for sends and prompts.
+Read operations still work.
 `--until` and `--wait` take `working`, `blocked`, `idle`, `done`, `error`, `quiescent` (idle, done,
 or error), or `gone`, and both need `--timeout`. An agent that finished a turn stays `done` until the
 user visits its pane, so wait for `quiescent`, not `idle`, to catch the end of a turn; check the
 returned state, since a failed turn also ends the wait, as `error`. Right after `split`,
 `wait` waits for the new pane's agent to be detected; `get` and `prompt` refuse a pane with no agent
 yet.
+
+For a submitted turn, use `prompt --wait turn`: it resolves on `blocked`, `done`, `error`, or
+`idle` after a transition, and returns the ordinary state and reason. `quiescent` excludes blocked.
+Add `--capture text` or `--capture ansi` to retrieve a terminal snapshot with the wait reply.
+`result.kind` is `terminal`; `result.capture` contains the visible terminal, including chrome and
+older output. Treat it as terminal content, not an assistant message. Discover an agent, save its
+`ref`, and use `--ref` for later operations. A prompt wait reply also carries that exact `ref`.
 
 `agents prompt` submits the text and Enter as one operation, only to the agent incarnation it
 resolved. It never types into a `blocked` agent, which may be showing an approval dialog, and it

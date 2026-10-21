@@ -401,7 +401,10 @@ pub fn session_with_instance(
         .into_iter()
         .map(|(name, endpoint)| {
             std::thread::spawn(move || {
-                let mut stream = endpoint.connect().ok()?;
+                // A discovery sweep may be holding the only free pipe instance. Missing
+                // this server drops the pane's report, so wait out that window instead
+                // of treating one busy connect as "not here".
+                let mut stream = connect_for_instance_query(&endpoint)?;
                 let answer =
                     query_status_within(&name, &mut stream, None, INSTANCE_QUERY_TIMEOUT).ok()?;
                 matches!(answer.status, DiscoveredSessionStatus::Running { .. })
@@ -422,6 +425,27 @@ pub fn session_with_instance(
     }
     unidentified.sort();
     Ok(InstanceLookup::NotFound { unidentified })
+}
+
+/// Connect for [`session_with_instance`], retrying while the endpoint is busy.
+///
+/// The wait shares [`INSTANCE_QUERY_TIMEOUT`]: a pane looking for its own server can afford one
+/// bounded delay and cannot afford to skip the server. Any other connect error still means the
+/// endpoint is not usable.
+fn connect_for_instance_query(endpoint: &IpcEndpoint) -> Option<IpcConnection> {
+    let deadline = std::time::Instant::now() + INSTANCE_QUERY_TIMEOUT;
+    loop {
+        match endpoint.connect() {
+            Ok(stream) => return Some(stream),
+            Err(err)
+                if crate::platform::ipc::is_busy_error(&err)
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// Sessions on this host with a worktree origin, from snapshots and live servers.

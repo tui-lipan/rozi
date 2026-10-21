@@ -1,8 +1,8 @@
 //! The global Agents view: open it, move its cursor, and land on what it points at.
 //!
-//! Everything the view lists is derived state — live panes for the session on screen, host-monitor
-//! snapshots for other sessions — so there is nothing here to build or refresh. What this module
-//! owns is the one act the view exists for: turning "Codex is blocked on backend@workbox" into
+//! Everything the view lists is derived state: panes in the foreground and connected parked
+//! sessions, and host-monitor snapshots for other sessions. There is nothing to build or refresh.
+//! This module owns the one act the view exists for: turning "Codex is blocked on backend@workbox" into
 //! being *there*, across an attach when the session is somewhere else.
 
 use tui_lipan::prelude::*;
@@ -242,7 +242,9 @@ pub(crate) fn location_from_spec(
             row: spec.row.clone(),
         });
     }
-    if session_for_agent(state, target.as_ref(), &spec.session).is_none() {
+    if connected_parked_session(state, target.as_ref(), &spec.session).is_none()
+        && session_for_agent(state, target.as_ref(), &spec.session).is_none()
+    {
         return Err(match &spec.host {
             Some(host) => format!("no session `{}` on a connected host `{host}`", spec.session),
             None => format!("no running local session `{}`", spec.session),
@@ -274,28 +276,52 @@ fn jump_to_other_session(
     else {
         return Update::none();
     };
-    let Some(entry) = session_for_agent(&ctx.state, target.as_ref(), &session) else {
-        // Session rows and agent summaries come from the same poll, so a summary without its
-        // session row can no longer be activated.
-        return Update::none();
-    };
-    ctx.state.pending_agent_jump = Some(PendingAgentJump {
+    let jump = PendingAgentJump {
         target,
         session,
         pane,
         row,
-    });
+    };
+    // A held connection is an independent source of both the row and its destination. A host
+    // monitor can fail without affecting it, so switching must not depend on discovery.
+    if let Some(parked) = connected_parked_session(&ctx.state, jump.target.as_ref(), &jump.session)
+    {
+        ctx.state.pending_agent_jump = Some(jump);
+        let update = crate::ops::session::switch_to_parked(ctx, parked);
+        return finish_agent_jump(ctx, update);
+    }
+    let Some(entry) = session_for_agent(&ctx.state, jump.target.as_ref(), &jump.session) else {
+        // An unheld session must still be reported by discovery before a new attach is attempted.
+        return Update::none();
+    };
+    ctx.state.pending_agent_jump = Some(jump);
     let update = crate::ops::session::activate_discovered_session(ctx, entry.clone());
     if refused(ctx, &entry) {
         ctx.state.pending_agent_jump = None;
         return update;
     }
-    // A session already parked in the background switches in synchronously, so its panes are on
-    // screen by the time this returns and there is no attach to wait for.
+    finish_agent_jump(ctx, update)
+}
+
+fn connected_parked_session(
+    state: &crate::state::State,
+    target: Option<&crate::session::remote::RemoteTarget>,
+    session: &str,
+) -> Option<crate::state::AttachmentId> {
+    state.parked_attachment_id(session, target).filter(|id| {
+        state.background.get(id).is_some_and(|attachment| {
+            attachment.connection == crate::state::ConnectionState::Connected
+        })
+    })
+}
+
+fn finish_agent_jump(ctx: &mut Context<AppRoot>, update: Update) -> Update {
+    // Switching a parked session is synchronous; a fresh attach leaves the jump pending.
     if land_on_pending_agent(ctx) {
-        return Update::full();
+        Update::full()
+    } else {
+        update
     }
-    update
 }
 
 fn session_for_agent(
@@ -492,6 +518,141 @@ mod tests {
                 .expect("activate");
             assert!(backend.state().pending_agent_jump.is_none());
         });
+    }
+
+    #[test]
+    fn parked_rows_activate_without_any_discovery_entry() {
+        for remote in [false, true] {
+            for entry_point in ["projects", "agents", "picker", "spec"] {
+                on_large_stack(move || {
+                    use crate::session::protocol::{
+                        AgentIdentity, DetectedAgent, DetectedAgentState,
+                    };
+                    use crate::state::{Attachment, ConnectionState, RowTarget};
+                    let mut backend = backend_with_panes(&[2, 3]);
+                    let target = remote.then(|| RemoteTarget::Alias("workbox".into()));
+                    {
+                        let state = backend.state_mut();
+                        state.command_link = None;
+                        let current = state.current_mut();
+                        current.session_name = Some("backend".into());
+                        current.remote_target = target.clone();
+                        current.connection = ConnectionState::Connected;
+                        current.session_attached = true;
+                        current.pending_session_attach = None;
+                        current.focused_pane = Some(2);
+                        for pane in &mut current.workspaces[0].panes {
+                            pane.terminal.cwd = Some("/srv/api".into());
+                            pane.terminal.project_root = Some("/srv/api".into());
+                            pane.terminal.git_branch = Some("main".into());
+                        }
+                        current.workspaces[0]
+                            .panes
+                            .iter_mut()
+                            .find(|pane| pane.id == 3)
+                            .unwrap()
+                            .terminal
+                            .detected_agent = Some(DetectedAgent {
+                            agent: AgentIdentity::new("codex", "Codex").into(),
+                            state: DetectedAgentState::Blocked,
+                        });
+                        let mut foreground = Attachment::new();
+                        foreground.session_name = Some("foreground".into());
+                        state.park_current(42, foreground);
+                        state.remote.live_sessions.clear();
+                        state.local_agent_snapshot = None;
+                        state.remote.agents.clear();
+                        state.remote.projects.clear();
+                    }
+                    let rows = overview(backend.state());
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "the pane-backed parked agent remains visible"
+                    );
+                    let spec = &rows[0].location;
+                    let expected = AgentLocation::OtherSession {
+                        target: target.clone(),
+                        session: "backend".into(),
+                        pane: 3,
+                        row: None,
+                    };
+                    assert_eq!(
+                        location_from_spec(backend.state(), spec),
+                        Ok(expected.clone())
+                    );
+                    let projects = backend.state().project_sections();
+                    assert!(
+                        projects
+                            .iter()
+                            .flat_map(|section| &section.rows)
+                            .any(|row| row.target == RowTarget::Agent(expected.clone()))
+                    );
+                    // A retained but disconnected picture is not an independently live destination.
+                    backend
+                        .state_mut()
+                        .background
+                        .get_mut(&42)
+                        .unwrap()
+                        .connection = ConnectionState::Disconnected;
+                    assert!(location_from_spec(backend.state(), spec).is_err());
+                    backend
+                        .state_mut()
+                        .background
+                        .get_mut(&42)
+                        .unwrap()
+                        .connection = ConnectionState::Connected;
+
+                    match entry_point {
+                        "projects" | "agents" => {
+                            let tab = if entry_point == "projects" {
+                                crate::config::SidebarTab::Projects
+                            } else {
+                                crate::config::SidebarTab::Agents
+                            };
+                            let state = backend.state_mut();
+                            state.config.sidebar.tabs = vec![tab.clone()];
+                            state.sidebar.panels[0].tabs = vec![tab.id()];
+                            state.sidebar.panels[0].active_tab = Some(tab.id());
+                            let index = state
+                                .sidebar_rows(&tab)
+                                .iter()
+                                .position(|row| row.target == RowTarget::Agent(expected.clone()))
+                                .unwrap();
+                            backend
+                                .update_level(Msg::SidebarRowActivate { panel: 0, index })
+                                .unwrap();
+                        }
+                        "picker" => {
+                            backend.state_mut().agent_picker =
+                                Some(AgentPickerState::new(Some(expected.clone())));
+                            backend
+                                .update_level(Msg::AgentPickerActivate(expected))
+                                .unwrap();
+                        }
+                        "spec" => {
+                            let location = location_from_spec(backend.state(), spec).unwrap();
+                            backend
+                                .update_level(Msg::AgentPickerActivate(location))
+                                .unwrap();
+                        }
+                        _ => unreachable!(),
+                    }
+                    let state = backend.state();
+                    assert_eq!(state.current().session_name.as_deref(), Some("backend"));
+                    assert_eq!(state.current().remote_target, target);
+                    assert_eq!(state.runtime_epoch, 42);
+                    assert_eq!(state.current().focused_pane, Some(3));
+                    assert!(
+                        state.current().pending_session_attach.is_none(),
+                        "switch without a new attach"
+                    );
+                    assert!(state.pending_agent_jump.is_none());
+                    assert!(state.agent_picker.is_none());
+                    assert!(!state.background.contains_key(&42));
+                });
+            }
+        }
     }
 
     #[test]

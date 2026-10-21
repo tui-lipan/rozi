@@ -341,9 +341,6 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // up from the bottom. Modal dialogs stack above the scratchpad, so it dims by the dialog
     // progress alone (its own progress dims only the workspace beneath it).
     let scratch_scrim = crate::scratchpad::scratch_backdrop(ctx, scratch_backdrop_progress);
-    // Between the dismiss scrim and docked panes: the dock's gaps and divider rows belong to the
-    // scratch overlay, not to the scrim that closes it. Floating-only presentation has no shield.
-    let scratch_shield = crate::scratchpad::scratch_shield(ctx, scratch_progress);
     // Drawn last so the drag handle sits above the dropdown's top edge and captures the resize drag.
     let scratch_resize = crate::scratchpad::scratch_resize_strip(ctx, scratch_progress);
     // Mounted while the dropdown is retracting (progress still above zero) *and* from the frame
@@ -356,7 +353,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         || scratch_pane_closing
     {
         let mut scratch_canvas = Canvas::new().height(Length::Flex(1));
-        for (rect, element) in scratch_scrim.into_iter().chain(scratch_shield) {
+        if let Some((rect, element)) = scratch_scrim {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }

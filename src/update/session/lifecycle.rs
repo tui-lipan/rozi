@@ -84,9 +84,6 @@ pub(crate) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String)
 }
 
 fn cancel_current_pointer_layout_sessions(state: &mut crate::state::State) {
-    if state.shared_tiled_drag_in_flight() {
-        state.discard_shared_drag_resizes();
-    }
     state.moving_pane = None;
     state.resizing_pane = None;
     state.split_drag = None;

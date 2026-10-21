@@ -73,6 +73,7 @@ pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> 
 
 fn tree_row(state: &State, line: TreeLine) -> Row {
     let theme = &state.theme;
+    let armed_label = armed_stream_label(state, &line);
     let content = line.row.content;
     let muted = super::super::fg_only(&theme.muted);
     let disabled = content.disabled.is_some();
@@ -90,7 +91,7 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
         },
     );
     let mut row = Row::new(content.label)
-        .active(content.active)
+        .active(content.active || line.hidden_active)
         .title_style(title_style);
     if let Some(glyph) = glyph {
         row = row.glyph(glyph);
@@ -103,28 +104,54 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
     if let Some(meta) = content.meta {
         row = row.meta(meta, color.map_or(muted, |color| Style::new().fg(color)));
     }
-    // A keyed action waiting for its second press says so on the row it will act on. The ✕'s own
-    // arming is drawn by the ✕.
-    if let crate::state::RowTarget::StreamRow(reference) = &line.row.target
-        && let Some(crate::state::SidebarClose::StreamAction { row: armed, action }) =
-            &state.sidebar.pending_row_close
-        && armed == reference
-        && line.row.close.as_ref() != state.sidebar.pending_row_close.as_ref()
-        && let Some(label) = state.stream_row(reference).and_then(|(producer, _)| {
-            producer
-                .actions
-                .iter()
-                .find(|candidate| &candidate.id == action)
-                .map(|candidate| candidate.label.clone())
-        })
-    {
+    if let Some(label) = armed_label {
         row = row.armed(format!("Again to {label}"));
     }
-    match (content.disabled, content.detail) {
+    row_detail(
+        row,
+        content.disabled,
+        content.detail,
+        content.tone,
+        color,
+        muted,
+    )
+}
+
+/// A keyed stream action asks for confirmation on its row; the close button arms itself.
+fn armed_stream_label(state: &State, line: &TreeLine) -> Option<String> {
+    use crate::state::{RowTarget, SidebarClose};
+    let RowTarget::StreamRow(reference) = &line.row.target else {
+        return None;
+    };
+    let SidebarClose::StreamAction { row: armed, action } =
+        state.sidebar.pending_row_close.as_ref()?
+    else {
+        return None;
+    };
+    if armed != reference || line.row.close.as_ref() == state.sidebar.pending_row_close.as_ref() {
+        return None;
+    }
+    let (producer, _) = state.stream_row(reference)?;
+    producer
+        .actions
+        .iter()
+        .find(|candidate| &candidate.id == action)
+        .map(|candidate| candidate.label.clone())
+}
+
+fn row_detail(
+    mut row: Row,
+    disabled: Option<String>,
+    detail: Option<String>,
+    tone: SidebarTone,
+    color: Option<Color>,
+    muted: Style,
+) -> Row {
+    match (disabled, detail) {
         (Some(reason), _) => row = row.detail(reason, muted.dim()),
         (None, Some(detail)) => {
             let style = match color {
-                Some(color) if content.tone != SidebarTone::Normal => Style::new().fg(color),
+                Some(color) if tone != SidebarTone::Normal => Style::new().fg(color),
                 _ => muted.dim(),
             };
             row = row.detail(detail, style);

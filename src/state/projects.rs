@@ -10,8 +10,8 @@
 //! host → repository → checkout (branch) → session
 //! ```
 //!
-//! The session on screen is read from its live panes. Every other session — local or on a connected
-//! host — comes from the project summaries the host monitors already collect alongside their agent
+//! The session on screen and connected background attachments are read from their panes. Other
+//! sessions come from the project summaries the host monitors collect alongside their agent
 //! summaries, so nothing here runs Git or contacts a machine. Each level carries the state of the
 //! most urgent agent below it.
 
@@ -30,80 +30,142 @@ struct Work<'a> {
 }
 
 impl State {
-    /// The Projects tab's sections: one per host with work to show.
+    /// The Projects tab's sections: one per host with work or a failed connection to show.
     pub fn project_sections(&self) -> Vec<TreeSection> {
-        let live = live_project_summaries(self);
-        let here_target = self.current().remote_target.as_ref();
-        let here_session = self.current().session_name.as_deref();
-        let mut work: Vec<Work<'_>> = Vec::new();
-        for summary in &live {
-            work.push(Work {
-                summary,
-                host: here_target,
-            });
-        }
-        // Another source's copy of the session on screen is staler than its live panes.
-        let is_here = |host: Option<&RemoteTarget>, session: &str| {
-            host == here_target && here_session == Some(session)
-        };
-        if let Some(snapshot) = &self.local_agent_snapshot {
-            for summary in &snapshot.projects {
-                if !is_here(None, &summary.session) {
-                    work.push(Work {
-                        summary,
-                        host: None,
-                    });
-                }
-            }
-        }
-        for (target, summaries) in &self.remote.projects {
-            for summary in summaries {
-                if !is_here(Some(target), &summary.session) {
-                    work.push(Work {
-                        summary,
-                        host: Some(target),
-                    });
-                }
-            }
-        }
-
+        let live: Vec<_> = self
+            .navigation_attachments()
+            .map(|attachment| (attachment, live_project_summaries(attachment)))
+            .collect();
+        let work = project_work(self, &live);
         let agents = crate::view::agents::global_agent_rows(self);
-        let mut hosts: Vec<Option<&RemoteTarget>> = Vec::new();
-        for item in &work {
-            if !hosts.contains(&item.host) {
-                hosts.push(item.host);
-            }
-        }
-        hosts.sort_by_key(|host| host.map(|target| self.remote_target_label(target)));
-        // A header says which machine a section is; with only this one, it says nothing.
+        let hosts = project_hosts(self, &work);
         let headed = hosts.len() > 1 || hosts.iter().any(Option::is_some);
         hosts
             .into_iter()
-            .map(|host| {
-                let items: Vec<_> = work.iter().filter(|item| item.host == host).collect();
-                TreeSection {
-                    key: host.map_or_else(|| "local".to_string(), RemoteTarget::to_spec),
-                    header: headed.then(|| match host {
-                        Some(target) => self.remote_target_label(target).to_uppercase(),
-                        None => "LOCAL".to_string(),
-                    }),
-                    rows: host_rows(self, host, &items, &agents),
-                    lazy: false,
-                }
-            })
+            .map(|host| project_section(self, host, &work, &agents, headed))
             .collect()
     }
 }
 
-/// The session on screen's checkouts, from its live panes: what its server would report, without
-/// waiting for a poll.
-fn live_project_summaries(state: &State) -> Vec<ProjectSummary> {
-    let Some(session) = state.current().session_name.clone() else {
+/// Prefer pane-backed session data to the monitors' older copies, including empty attachments.
+fn project_work<'a>(
+    state: &'a State,
+    live: &'a [(&crate::state::Attachment, Vec<ProjectSummary>)],
+) -> Vec<Work<'a>> {
+    let is_live = |host: Option<&RemoteTarget>, session: &str| {
+        live.iter().any(|(attachment, _)| {
+            attachment.remote_target.as_ref() == host
+                && attachment.session_name.as_deref() == Some(session)
+        })
+    };
+    let mut work: Vec<_> = live
+        .iter()
+        .flat_map(|(attachment, summaries)| {
+            summaries.iter().map(|summary| Work {
+                summary,
+                host: attachment.remote_target.as_ref(),
+            })
+        })
+        .collect();
+    if let Some(snapshot) = &state.local_agent_snapshot {
+        work.extend(
+            snapshot
+                .projects
+                .iter()
+                .filter(|summary| !is_live(None, &summary.session))
+                .map(|summary| Work {
+                    summary,
+                    host: None,
+                }),
+        );
+    }
+    for (target, summaries) in &state.remote.projects {
+        work.extend(
+            summaries
+                .iter()
+                .filter(|summary| !is_live(Some(target), &summary.session))
+                .map(|summary| Work {
+                    summary,
+                    host: Some(target),
+                }),
+        );
+    }
+    work
+}
+
+fn project_hosts<'a>(state: &'a State, work: &[Work<'a>]) -> Vec<Option<&'a RemoteTarget>> {
+    let failed = state
+        .remote
+        .hosts
+        .iter()
+        .filter(|host| matches!(host.probe, crate::state::HostProbe::Failed(_)))
+        .map(|host| Some(&host.target));
+    let mut hosts: Vec<_> = work.iter().map(|item| item.host).chain(failed).collect();
+    hosts.sort_by_key(|host| host.map(|target| state.remote_target_label(target)));
+    hosts.dedup();
+    hosts
+}
+
+fn project_section(
+    state: &State,
+    host: Option<&RemoteTarget>,
+    work: &[Work<'_>],
+    agents: &[GlobalAgentRow],
+    headed: bool,
+) -> TreeSection {
+    let items: Vec<_> = work.iter().filter(|item| item.host == host).collect();
+    let mut rows = host_rows(state, host, &items, agents);
+    let header = headed.then(|| {
+        host.map_or_else(
+            || "LOCAL".to_string(),
+            |target| state.remote_target_label(target).to_uppercase(),
+        )
+    });
+    let failed = host
+        .and_then(|target| state.remote.hosts.get(target))
+        .is_some_and(|entry| matches!(entry.probe, crate::state::HostProbe::Failed(_)));
+    // A failed monitor has no trustworthy checkout or agent rows. Keep its heading, so the
+    // failure is visible and the other host headings do not disappear with it.
+    let header = if failed {
+        let target = host.expect("a failed host is remote");
+        let status =
+            crate::view::vocabulary::host_connection_status(state, target, !items.is_empty());
+        rows.insert(
+            0,
+            TreeRow {
+                id: "host-status".into(),
+                parent: None,
+                content: RowContent {
+                    label: header.unwrap_or_default(),
+                    description: Some(crate::view::vocabulary::host_status_label(status).into()),
+                    heading: true,
+                    ..RowContent::default()
+                },
+                target: RowTarget::Inert,
+                close: None,
+                expandable: false,
+                expanded: None,
+            },
+        );
+        None
+    } else {
+        header
+    };
+    TreeSection {
+        key: host.map_or_else(|| "local".to_string(), RemoteTarget::to_spec),
+        header,
+        rows,
+        lazy: false,
+    }
+}
+
+/// An attachment's checkouts, from its panes, without waiting for a host poll.
+fn live_project_summaries(attachment: &crate::state::Attachment) -> Vec<ProjectSummary> {
+    let Some(session) = attachment.session_name.clone() else {
         return Vec::new();
     };
     let mut summaries: Vec<ProjectSummary> = Vec::new();
-    let mut panes: Vec<_> = state
-        .current()
+    let mut panes: Vec<_> = attachment
         .workspaces
         .iter()
         .flat_map(|workspace| &workspace.panes)
@@ -362,64 +424,15 @@ fn host_rows(
                 let mut session_agents = agents_of(summary);
                 session_agents.sort_by_key(|agent| agent.rank());
                 let lead = session_agents.first().copied();
-                let tone = lead_tone(lead);
                 checkout_leads.push(lead);
-                let is_here = here(summary);
-                let active = is_here && focused_checkout == Some(summary.root.as_str());
-                // Keep the current destination when already in this checkout. Otherwise land on
-                // the most urgent agent, then a pane or published row working here.
-                let landing = focused
-                    .filter(|_| active)
-                    .map(|pane| (pane, None))
-                    .or_else(|| {
-                        session_agents
-                            .first()
-                            .map(|agent| (agent.location.pane(), agent.location.row().cloned()))
-                    })
-                    .or_else(|| summary.panes.first().map(|pane| (*pane, None)))
-                    .or_else(|| {
-                        summary
-                            .rows
-                            .first()
-                            .map(|row| (row.pane, Some(row.row.clone())))
-                    });
-                let target = match landing {
-                    Some((pane, row)) if is_here => {
-                        RowTarget::Agent(AgentLocation::Here { pane, row })
-                    }
-                    Some((pane, row)) => RowTarget::Agent(AgentLocation::OtherSession {
-                        target: host.cloned(),
-                        session: summary.session.clone(),
-                        pane,
-                        row,
-                    }),
-                    None => RowTarget::Inert,
-                };
-                let label = crate::view::vocabulary::session_name(&summary.session).to_string();
-                rows.push(TreeRow {
-                    id: format!("session:{root}:{}", summary.session),
-                    parent: Some(checkout_id.clone()),
-                    content: RowContent {
-                        label,
-                        description: Some(crate::view::vocabulary::fields([
-                            crate::view::vocabulary::session_presence_for(
-                                state,
-                                &summary.session,
-                                host,
-                            )
-                            .label()
-                            .to_string(),
-                            session_description(&session_agents, summary).unwrap_or_default(),
-                        ])),
-                        tone,
-                        active,
-                        ..RowContent::default()
-                    },
-                    target,
-                    close: None,
-                    expandable: false,
-                    expanded: None,
-                });
+                let active = here(summary) && focused_checkout == Some(summary.root.as_str());
+                rows.push(project_session_row(
+                    state,
+                    host,
+                    summary,
+                    &session_agents,
+                    active,
+                ));
             }
             let lead = most_urgent(checkout_leads);
             repo_leads.push(lead);
@@ -428,6 +441,77 @@ fn host_rows(
         rows[repo_index].content.tone = lead_tone(most_urgent(repo_leads));
     }
     rows
+}
+
+fn project_session_row(
+    state: &State,
+    host: Option<&RemoteTarget>,
+    summary: &ProjectSummary,
+    agents: &[&GlobalAgentRow],
+    active: bool,
+) -> TreeRow {
+    let is_here = host == state.current().remote_target.as_ref()
+        && state.current().session_name.as_deref() == Some(summary.session.as_str());
+    // Keep the current destination when already in this checkout. Otherwise land on
+    // the most urgent agent, then a pane or published row working here.
+    let landing = state
+        .focused_pane()
+        .filter(|_| active)
+        .map(|pane| (pane, None))
+        .or_else(|| {
+            agents
+                .first()
+                .map(|agent| (agent.location.pane(), agent.location.row().cloned()))
+        })
+        .or_else(|| summary.panes.first().map(|pane| (*pane, None)))
+        .or_else(|| {
+            summary
+                .rows
+                .first()
+                .map(|row| (row.pane, Some(row.row.clone())))
+        });
+    let target = match landing {
+        Some((pane, row)) if is_here => RowTarget::Agent(AgentLocation::Here { pane, row }),
+        Some((pane, row)) => RowTarget::Agent(AgentLocation::OtherSession {
+            target: host.cloned(),
+            session: summary.session.clone(),
+            pane,
+            row,
+        }),
+        None => RowTarget::Inert,
+    };
+    let label = crate::view::vocabulary::session_name(&summary.session).to_string();
+    TreeRow {
+        id: format!("session:{}:{}", summary.root, summary.session),
+        parent: Some(format!("checkout:{}", summary.root)),
+        content: RowContent {
+            label,
+            description: project_description(state, host, summary, agents),
+            tone: lead_tone(agents.first().copied()),
+            active,
+            ..RowContent::default()
+        },
+        target,
+        close: None,
+        expandable: false,
+        expanded: None,
+    }
+}
+
+/// Unheld sessions are necessarily running in this view. Keep the work summary's room while
+/// retaining states that distinguish the client's current, background, and lost connections.
+fn project_description(
+    state: &State,
+    host: Option<&RemoteTarget>,
+    summary: &ProjectSummary,
+    agents: &[&GlobalAgentRow],
+) -> Option<String> {
+    use crate::view::vocabulary::{SessionPresence, fields, session_presence_for};
+    let presence = session_presence_for(state, &summary.session, host);
+    let status = (presence != SessionPresence::Running).then(|| presence.label().to_string());
+    let facts = session_description(agents, summary);
+    let description = fields(status.into_iter().chain(facts));
+    (!description.is_empty()).then_some(description)
 }
 
 /// What a session row says about the work it holds: the one agent by name, a count of several,
@@ -534,12 +618,12 @@ mod tests {
             [
                 "rozi Blocked",
                 "  master Working",
-                "    dev Working [Running · Codex]",
+                "    dev Working [Codex]",
                 "  fix/ssh Blocked",
-                "    fix Blocked [Running · Codex]",
+                "    fix Blocked [Codex]",
                 "tui-lipan Normal",
                 "  main Normal",
-                "    dev Normal [Running · 1 pane]",
+                "    dev Normal [1 pane]",
             ]
         );
     }
@@ -575,9 +659,9 @@ mod tests {
             [
                 "rozi Success",
                 "  master Working",
-                "    dev Working [Running · Codex]",
+                "    dev Working [Codex]",
                 "  fix/ssh Success",
-                "    fix Success [Running · Codex]",
+                "    fix Success [Codex]",
             ]
         );
     }
@@ -598,6 +682,118 @@ mod tests {
         let lines = outline(&state.project_sections());
         assert_eq!(lines[0], "#LOCAL");
         assert!(lines.contains(&"#WORKBOX".to_string()), "{lines:?}");
+    }
+
+    #[test]
+    fn failed_hosts_keep_their_heading_until_recovered_disconnected_or_forgotten() {
+        use crate::state::HostProbe;
+        let mut state = state();
+        state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            projects: vec![summary("dev", "/x/rozi", None, "master", &[1])],
+            agents: Vec::new(),
+            sessions: Vec::new(),
+        });
+        let target = RemoteTarget::Alias("workbox".into());
+        state.remote.hosts.seed(
+            &state.config.remote,
+            std::slice::from_ref(&target),
+            &[],
+            &[],
+        );
+        state.remote.hosts.get_mut(&target).unwrap().probe =
+            HostProbe::Failed("SSH timed out".into());
+        let sections = state.project_sections();
+        assert_eq!(sections[0].header.as_deref(), Some("LOCAL"));
+        let remote = &sections[1];
+        assert_eq!(remote.key, target.to_spec());
+        assert_eq!(remote.header, None);
+        assert_eq!(
+            remote.rows.len(),
+            1,
+            "untrusted checkout and agent rows stay absent"
+        );
+        assert!(remote.rows[0].content.heading);
+        assert_eq!(remote.rows[0].content.label, "WORKBOX");
+        assert_eq!(
+            remote.rows[0].content.description.as_deref(),
+            Some("Unreachable")
+        );
+        assert_eq!(remote.rows[0].target, RowTarget::Inert);
+
+        state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Reached;
+        state.remote.projects.insert(
+            target.clone(),
+            vec![summary("api", "/srv/api", None, "main", &[2])],
+        );
+        let recovered = state.project_sections();
+        assert_eq!(recovered[1].header.as_deref(), Some("WORKBOX"));
+        assert_eq!(recovered[1].rows[0].content.label, "api");
+        assert!(!recovered[1].rows[0].content.heading);
+
+        state.remote.projects.remove(&target);
+        state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Idle;
+        assert_eq!(state.project_sections().len(), 1);
+        assert_eq!(state.project_sections()[0].header, None);
+
+        state.remote.hosts.get_mut(&target).unwrap().probe =
+            HostProbe::Failed("SSH timed out".into());
+        state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+        assert_eq!(state.project_sections().len(), 1);
+    }
+
+    #[test]
+    fn failed_host_is_visible_without_any_local_work() {
+        let mut state = state();
+        let target = RemoteTarget::Alias("workbox".into());
+        state.remote.hosts.seed(
+            &state.config.remote,
+            std::slice::from_ref(&target),
+            &[],
+            &[],
+        );
+        state.remote.hosts.get_mut(&target).unwrap().probe =
+            crate::state::HostProbe::Failed("SSH timed out".into());
+        let items = crate::state::flatten(
+            &crate::config::SidebarTabId::new("projects"),
+            &state.project_sections(),
+            &crate::state::TreeExpansion::new(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].line().unwrap().row.content.description.as_deref(),
+            Some("Unreachable")
+        );
+    }
+
+    #[test]
+    fn project_descriptions_keep_held_session_states_and_hide_redundant_running() {
+        use crate::state::{Attachment, ConnectionState};
+        let mut state = state();
+        let summary = summary("dev", "/x/rozi", None, "master", &[1, 2]);
+        assert_eq!(
+            project_description(&state, None, &summary, &[]).as_deref(),
+            Some("2 panes")
+        );
+        state.current_mut().session_name = Some("dev".into());
+        assert_eq!(
+            project_description(&state, None, &summary, &[]).as_deref(),
+            Some("Current · 2 panes")
+        );
+        state.current_mut().session_name = Some("other".into());
+        for (connection, expected) in [
+            (ConnectionState::Connected, "Background · 2 panes"),
+            (ConnectionState::Reconnecting, "Reconnecting · 2 panes"),
+            (ConnectionState::Disconnected, "Offline · 2 panes"),
+        ] {
+            let mut attachment = Attachment::new();
+            attachment.session_name = Some("dev".into());
+            attachment.connection = connection;
+            state.background.insert(1, attachment);
+            assert_eq!(
+                project_description(&state, None, &summary, &[]).as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     /// Two different repositories with the same directory name are told apart by their parent.

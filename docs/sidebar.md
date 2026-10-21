@@ -342,7 +342,7 @@ Projects lists every Git checkout any of your sessions works in — on this mach
  ├▼ master
  │└─ api                1 pane
  └▼ ▲ fix/ssh
-▍ └─ ▲ fix               Codex
+▍ └─ ▲ fix    Current · Codex
 ```
 
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
@@ -353,13 +353,15 @@ then working. A session row names its agent, counts
 several, or counts its panes when none runs an agent. When more than one machine has work, each
 machine gets a heading, `LOCAL` for this one.
 
-Session rows use the same `Current`, `Background`, and `Running` labels as Sessions, alongside
-pane or agent counts. The activity glyph describes the most urgent agent, independently of the
-session's connection state. Saved restore snapshots do not add entries to Projects.
+Session rows show pane or agent counts. Sessions held by this client also show their state, such
+as `Current`, `Background`, or `Reconnecting`. Other running sessions omit the `Running` word.
+The activity glyph describes the most urgent agent, independently of the session's connection
+state. Saved restore snapshots do not add entries to Projects.
 
 The accent bar and subtle background mark the session row for the focused pane's checkout. Other
-appearances of the same session and parent branches have neither. The stronger row background
-follows the keyboard selection while the sidebar is focused.
+appearances of the same session have neither. Collapsing its checkout or repository moves the
+marker to the nearest visible collapsed row. The stronger row background follows the keyboard
+selection while the sidebar is focused.
 
 Activating a session row keeps the focused pane when it already belongs to that checkout and
 session. Otherwise it goes to the most urgent agent working there, or to a pane there when none
@@ -368,7 +370,9 @@ row shows or hides what is under it.
 
 Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
 lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
-are not listed.
+are not listed. With none to show, the tab reads `No sessions in Git`. If a remote host becomes
+unreachable, its heading shows its connection state while its unavailable work is hidden. Sessions
+still connected to this client remain listed, including those held in the background.
 
 ### Expand and collapse
 

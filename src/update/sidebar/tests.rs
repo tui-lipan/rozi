@@ -2741,7 +2741,7 @@ fn project_session_activation_preserves_focus_within_the_current_checkout() {
 }
 
 #[test]
-fn projects_keep_long_session_names_and_connection_state_visible() {
+fn projects_keep_long_session_names_and_work_counts_visible() {
     on_test_thread(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
         backend.state_mut().local_agent_snapshot =
@@ -2763,8 +2763,8 @@ fn projects_keep_long_session_names_and_connection_state_visible() {
             assert!(
                 lines
                     .iter()
-                    .any(|line| line.contains("sess") && line.contains("Running")),
-                "both session identity and connection state at width {width}: {lines:#?}"
+                    .any(|line| line.contains("sess") && line.contains("1 pane")),
+                "both session identity and work count at width {width}: {lines:#?}"
             );
         }
     });

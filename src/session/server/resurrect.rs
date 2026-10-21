@@ -841,10 +841,23 @@ impl SessionServer {
                     self.settings.shell.first().map(String::as_str),
                 );
                 // Always `Some`: a resume launch is direct argv by construction.
-                RestoreAction::Type(crate::pane::launch::prompt_line(
+                let mut line = crate::pane::launch::prompt_line(
                     resume.launch.argv().unwrap_or_default(),
                     quoting,
-                ))
+                );
+                // A conversation still running as a background session cannot be resumed, only
+                // attached to. The shell decides which, so the line works either way.
+                if let Some(attach) = resume.attach.as_deref().filter(|_| {
+                    crate::pane::launch::PromptQuoting::chains_with_or(
+                        self.settings.shell.first().map(String::as_str),
+                    )
+                }) {
+                    line = format!(
+                        "{line} || {}",
+                        crate::pane::launch::prompt_line(attach, quoting)
+                    );
+                }
+                RestoreAction::Type(line)
             } else {
                 RestoreAction::ResumeAgent(resume)
             };
@@ -895,6 +908,7 @@ impl SessionServer {
         Some(AgentResumeLaunch {
             label: definition.label().to_string(),
             launch,
+            attach: definition.attach_command(&saved.session),
         })
     }
 
@@ -2129,7 +2143,12 @@ mod tests {
 
         match action(&server, &saved, &mut std::collections::HashSet::new()) {
             RestoreAction::Type(line) => {
-                assert_eq!(line, "claude --resume 'needs quoting'");
+                // Claude cannot resume a conversation that still runs in the background, only
+                // attach to it, so the line tries both.
+                assert_eq!(
+                    line,
+                    "claude --resume 'needs quoting' || claude attach 'needs qu'"
+                );
             }
             _ => panic!("`hold` must not start the agent itself"),
         }
@@ -2150,11 +2169,63 @@ mod tests {
             }
         };
 
-        assert_eq!(line("/bin/zsh"), r"claude --resume 'it'\''s here'");
-        assert_eq!(line("fish"), r"claude --resume 'it\'s here'");
+        assert_eq!(
+            line("/bin/zsh"),
+            r"claude --resume 'it'\''s here' || claude attach 'it'\''s her'"
+        );
+        assert_eq!(
+            line("fish"),
+            r"claude --resume 'it\'s here' || claude attach 'it\'s her'"
+        );
         // PowerShell needs the call operator, or the line is an expression rather than a command.
-        assert_eq!(line("pwsh"), "& claude --resume 'it''s here'");
-        assert_eq!(line("cmd.exe"), "claude --resume \"it's here\"");
+        assert_eq!(
+            line("pwsh"),
+            "& claude --resume 'it''s here' || & claude attach 'it''s her'"
+        );
+        assert_eq!(
+            line("cmd.exe"),
+            "claude --resume \"it's here\" || claude attach \"it's her\""
+        );
+    }
+
+    /// `a || b` is not syntax in every shell. A shell this cannot vouch for gets the plain resume
+    /// line it always did, rather than one that fails to parse.
+    #[test]
+    fn a_shell_that_may_not_chain_gets_the_plain_resume_line() {
+        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        server.settings.shell = vec!["nu".to_string()];
+        let saved = saved_pane("claude", "needs quoting", None);
+
+        match action(&server, &saved, &mut std::collections::HashSet::new()) {
+            RestoreAction::Type(line) => {
+                let quoting = crate::pane::launch::PromptQuoting::of(Some("nu"));
+                assert!(!crate::pane::launch::PromptQuoting::chains_with_or(Some(
+                    "nu"
+                )));
+                assert_eq!(
+                    line,
+                    format!(
+                        "claude --resume {}",
+                        crate::pane::launch::quote_for_prompt("needs quoting", quoting)
+                    )
+                );
+            }
+            _ => panic!("`hold` must not start the agent itself"),
+        }
+    }
+
+    /// Windows PowerShell 5.1 cannot parse `||`, and Rozi's own Windows shell resolution falls
+    /// back to it when PowerShell 7 is missing.
+    #[test]
+    fn windows_powershell_gets_the_plain_resume_line() {
+        let mut server = restore_server(crate::config::ForegroundRestore::Hold, true);
+        server.settings.shell = vec!["powershell.exe".to_string()];
+        let saved = saved_pane("claude", "abc", None);
+
+        match action(&server, &saved, &mut std::collections::HashSet::new()) {
+            RestoreAction::Type(line) => assert!(!line.contains("||"), "{line}"),
+            _ => panic!("`hold` must not start the agent itself"),
+        }
     }
 
     /// The snapshot stored a fact, not a recipe. An agent that no longer declares how to resume -
@@ -2264,7 +2335,12 @@ mod tests {
             },
         );
         let mut pane = reporting_agent_pane(&server.instance_id);
-        pane.agent_resume = Some("Claude Code".to_string());
+        pane.agent_resume = Some(PaneResume {
+            label: "Claude Code".to_string(),
+            attach: None,
+            attached: false,
+            started: Instant::now(),
+        });
         server.panes.insert(1, pane);
 
         let job = server.capture_snapshot(Instant::now()).expect("capture");

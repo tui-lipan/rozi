@@ -235,6 +235,8 @@ See [Sidebar](sidebar.md) for what each tab shows.
 
 In Files and Git, Ctrl+click inserts a file or directory path without toggling directories or
 running the tab's custom click action. Neither Ctrl+click nor Ctrl+Enter presses `Enter` in the pane.
+In Worktrees, they open the checkout as a pane rather than a session, or the reverse with
+`[worktrees] sidebar_open = "pane"`.
 
 ## Picker keys
 

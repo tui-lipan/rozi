@@ -259,7 +259,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         table,
         "",
         "worktrees",
-        &["profile", "directory", "delete_branch"],
+        &["profile", "directory", "delete_branch", "sidebar_open"],
         unknown,
     );
     collect_named_table(table, "", "session", SESSION_KEYS, unknown);

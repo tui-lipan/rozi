@@ -4,6 +4,9 @@ use super::*;
 /// Return a terminal to shell-safe input state without clearing its primary screen or scrollback.
 /// Shell integrations emit the same bytes after a foreground command completes; this copy covers
 /// command-runner PTYs that exit and are replaced by an interactive shell.
+/// How soon after a resume starts a failure still counts as the agent refusing it. A conversation
+/// that ran for a while and then exited non-zero is not retried as an attach.
+const ATTACH_FALLBACK_WINDOW: Duration = Duration::from_secs(10);
 const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[?25h\x1b[=0u\x1b>\x1b[0 q\x1b[0m";
 use std::fs::OpenOptions;
 #[cfg(unix)]
@@ -183,7 +186,12 @@ impl SessionServer {
         // A native agent resume runs in place of the pane's launch intent without becoming it, so
         // the pane still remembers - and still snapshots - how it was originally created.
         let resume = request.agent_resume.take();
-        let mut agent_resume = resume.as_ref().map(|resume| resume.label.clone());
+        let mut agent_resume = resume.as_ref().map(|resume| PaneResume {
+            label: resume.label.clone(),
+            attach: resume.attach.clone(),
+            attached: false,
+            started: Instant::now(),
+        });
         let mut spawned = start(build_config(
             resume
                 .as_ref()
@@ -649,14 +657,25 @@ impl SessionServer {
         let resume = self
             .pane_mut(owner, id)
             .and_then(|pane| pane.agent_resume.take());
+        // A resume the agent refused within moments is the ordinary shape of a conversation that
+        // is still running elsewhere, and the agent names the command that reaches it.
+        let attach = resume
+            .as_ref()
+            .filter(|resume| code != 0 && resume.started.elapsed() <= ATTACH_FALLBACK_WINDOW)
+            .and_then(|resume| resume.attach.clone())
+            .and_then(|argv| crate::pane::launch::PaneLaunch::direct(argv).ok());
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
         // A failed native resume says so plainly rather than reading as a command that happened to
         // exit, because the pane it leaves behind looks like a restore that quietly did nothing.
-        let resume_failed = resume.is_some() && code != 0;
-        let banner = match resume {
-            Some(label) if code != 0 => {
-                format!("\r\n\x1b[2m[rozi] {label} resume failed · exited {code}\x1b[0m\r\n")
-            }
+        let banner = match &resume {
+            Some(resume) if attach.is_some() => format!(
+                "\r\n\x1b[2m[rozi] {} is still running · attaching\x1b[0m\r\n",
+                resume.label
+            ),
+            Some(resume) if code != 0 => format!(
+                "\r\n\x1b[2m[rozi] {} resume failed · exited {code}\x1b[0m\r\n",
+                resume.label
+            ),
             _ => format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n"),
         };
         let mut bytes = Vec::with_capacity(SHELL_MODE_RECOVERY.len() + banner.len());
@@ -673,24 +692,67 @@ impl SessionServer {
         // over its launch directory, and never returns a remote one.
         let cwd = pane.spawnable_cwd();
         let (cols, rows) = (pane.cols, pane.rows);
-        let mut config = pty_config(None, &pane.shell, &[])
-            .size(cols.max(1), rows.max(1))
-            .cell_size(pane.cell);
-        if let Some(cwd) = cwd.filter(|cwd| Path::new(cwd).is_dir()) {
-            config = config.cwd(cwd);
-        }
-        for (key, value) in &pane.env {
-            config = config.env(key.clone(), value.clone());
-        }
+        let cwd = cwd.filter(|cwd| Path::new(cwd).is_dir());
+        let (shell, env, cell) = (pane.shell.clone(), pane.env.clone(), pane.cell);
         let events = Arc::clone(&self.events);
-        let spawned = TerminalPty::spawn(config, move |event| {
-            let event = ServerEvent::Pty(owner, id, generation, event);
-            let bytes = event.payload_bytes();
-            let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
-        });
+        let start = |launch: Option<&crate::pane::launch::PaneLaunch>| {
+            let mut config = pty_config(launch, &shell, &[])
+                .size(cols.max(1), rows.max(1))
+                .cell_size(cell);
+            if let Some(cwd) = cwd.clone() {
+                config = config.cwd(cwd);
+            }
+            for (key, value) in &env {
+                config = config.env(key.clone(), value.clone());
+            }
+            let events = Arc::clone(&events);
+            TerminalPty::spawn(config, move |event| {
+                let event = ServerEvent::Pty(owner, id, generation, event);
+                let bytes = event.payload_bytes();
+                let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
+            })
+        };
+        let attached = match attach.as_ref().map(|launch| start(Some(launch))) {
+            Some(Ok(pty)) => Some(pty),
+            Some(Err(error)) => {
+                // The banner above promised an attach, so the shell that replaces it has to say
+                // why that did not happen.
+                let label = resume
+                    .as_ref()
+                    .map_or("agent", |resume| resume.label.as_str());
+                let notice = format!("\x1b[2m[rozi] {label} attach failed · {error}\x1b[0m\r\n");
+                bytes.extend_from_slice(notice.as_bytes());
+                let pane = self.pane_mut(owner, id)?;
+                pane.screen_mut().process_bytes(notice.as_bytes());
+                if let Some(log) = pane.log.as_mut() {
+                    let _ = log.write(notice.as_bytes());
+                }
+                None
+            }
+            None => None,
+        };
+        let attaching = attached.is_some();
+        let spawned = match attached {
+            Some(pty) => Ok(pty),
+            None => start(None),
+        };
 
         let pane = self.pane_mut(owner, id)?;
         match spawned {
+            Ok(pty) if attaching => {
+                // The conversation, not a shell: it keeps the identity and the retained session,
+                // and the pane stays held so a failed attach is named like a failed resume.
+                pane.initial_cursor_report_primed = cfg!(windows);
+                pane.pty = Some(pty);
+                pane.pty_resize_pending = false;
+                pane.exited = None;
+                pane.agent_resume = resume.map(|resume| PaneResume {
+                    attach: None,
+                    attached: true,
+                    started: Instant::now(),
+                    ..resume
+                });
+            }
             Ok(pty) => {
                 pane.initial_cursor_report_primed = cfg!(windows);
                 pane.pty = Some(pty);
@@ -715,7 +777,14 @@ impl SessionServer {
                 // records the agent with no conversation beside it and the restore after that
                 // opens a fresh one. A command that merely exited keeps its intent, which is the
                 // ordinary keep-open contract - only a *failed conversation resume* is special.
-                if resume_failed {
+                //
+                // An attach that ended in this shell counts however it ended: it exits 0 when
+                // the user detaches from a conversation that carries on elsewhere, and it may
+                // never have spawned at all. Neither leaves a launch that may stand in for it.
+                if resume
+                    .as_ref()
+                    .is_some_and(|resume| resume.attached || code != 0)
+                {
                     pane.launch = None;
                 }
             }

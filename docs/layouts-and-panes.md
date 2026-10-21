@@ -223,7 +223,8 @@ open after its command finishes so you can read the output; then `Enter`, `Esc`,
 it.
 
 The scratchpad is a dropdown layer over the workspace, opened with the `` ` `` (backtick) command
-key.
+key. It slides in and out from the bottom at its full height, keeping terminal content at a fixed
+size throughout the animation.
 
 - Its panes belong to your client alone. They survive workspace changes and switching to another
   session, but they are not shared, saved in profiles, or included in resurrection snapshots. They

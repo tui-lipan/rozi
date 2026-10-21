@@ -59,7 +59,7 @@ After the `B` command key focuses the sidebar:
 | `PageUp`, `PageDown` | Move by a page |
 | `g`, `G`, `Home`, `End` | First or last row |
 | `Enter` | Activate the selected row |
-| `Ctrl+Enter` | Files/Git: insert the selected file or directory path into the focused pane |
+| `Ctrl+Enter` | Files/Git: insert the selected file or directory path into the focused pane. Worktrees: open the checkout the other way, see [Worktrees](#worktrees) |
 | `x` | Close the selected row; press again to confirm |
 | `Tab`, `Shift+Tab` | Next or previous tab |
 | `h/l`, arrows, `Space` | Collapse, expand, or toggle directories and [tree rows](#expand-and-collapse) |
@@ -318,6 +318,11 @@ what activating it does: `open`, `switch`, `connect`, `attach`, `restore`, `choo
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.
+
+Ctrl+click, or `Ctrl+Enter` on the selected row, opens a shell in the checkout as a new pane of the
+current session instead. Pane placement follows the usual rules, and it needs a client that may
+change the layout. Set `[worktrees] sidebar_open = "pane"` to make a plain click open the pane, and
+Ctrl+click or `Ctrl+Enter` the session. The hover text on a row then reads `new pane`.
 
 **+ New worktree** opens the new-worktree form. The checkout appears as `Creating…`, and its session
 opens when Git finishes.

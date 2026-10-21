@@ -3,7 +3,7 @@
 //! Paths stay host-native here. A remote client must treat the returned strings as opaque.
 
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::command::{self, WORKTREE_LIST_TIMEOUT, WORKTREE_MUTATION_TIMEOUT};
 
@@ -222,6 +222,11 @@ pub fn remove(
     delete_branch: bool,
 ) -> Result<Option<BranchOutcome>, String> {
     let worktree = linked_worktree(cwd, path)?;
+    let primary = if delete_branch {
+        list(cwd)?.into_iter().next().map(|tree| tree.path)
+    } else {
+        None
+    };
     if let Some(lock) = &worktree.lock {
         if !(unlock_stale && lock.stale) {
             return Err(locked_error(lock));
@@ -242,10 +247,12 @@ pub fn remove(
         let _ = lock_path(cwd, &worktree.path, &lock.reason);
     }
     removed?;
-    Ok(worktree
-        .branch
-        .filter(|_| delete_branch)
-        .map(|branch| delete_merged_branch(cwd, branch)))
+    let Some(branch) = worktree.branch.filter(|_| delete_branch) else {
+        return Ok(None);
+    };
+    // `cwd` may be the checkout just removed, so the branch is deleted from one that survives.
+    let survivor = primary.map_or_else(|| cwd.to_path_buf(), PathBuf::from);
+    Ok(Some(delete_merged_branch(&survivor, branch)))
 }
 
 /// Delete a branch whose checkout is gone, unless another checkout (the primary's included) still
@@ -738,6 +745,17 @@ mod tests {
         assert!(reason.contains("not fully merged"), "{reason}");
         assert!(!unmerged.exists(), "the checkout is removed regardless");
         assert!(has_branch(&repo, "feat/unmerged"));
+
+        // The checkout being removed may be the directory the caller works in.
+        let current = temp.path().join("current");
+        create(&repo, "feat/current", "HEAD", &current).unwrap();
+        assert_eq!(
+            remove(&current, &current, false, false, true).unwrap(),
+            Some(BranchOutcome::Deleted {
+                branch: "feat/current".into()
+            })
+        );
+        assert!(!has_branch(&repo, "feat/current"));
 
         let kept = temp.path().join("kept");
         create(&repo, "feat/kept", "HEAD", &kept).unwrap();

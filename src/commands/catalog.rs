@@ -360,7 +360,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Reload extensions",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleHelp,

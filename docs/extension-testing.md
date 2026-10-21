@@ -195,7 +195,7 @@ For the activity dashboard:
 ```
 
 The dashboard keeps a history file, which is acceptable only because the installed copy is inside
-`$LAB`. Reload extensions and check that the history survives the service restart.
+`$LAB`. Run `rozi run-action reload-extensions` and check that the history survives the service restart.
 
 ## Test reload and service cleanup
 

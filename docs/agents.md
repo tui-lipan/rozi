@@ -277,8 +277,8 @@ attach = ["mca", "attach", "{short_session}"]
 `attach` follows the same rules as `argv`. Its placeholder is `{session}` or `{short_session}`,
 the first eight characters of the reference. With `resurrect_foreground = "hold"`, the line left at
 the prompt is `argv || attach`, so the shell tries `attach` when resuming fails. A shell that rozi
-does not recognize gets the `argv` command alone. Claude Code declares `attach`
-for its background sessions.
+does not recognize gets the `argv` command alone. With `auto`, rozi runs `attach` in the same pane
+when `argv` fails within a few seconds. Claude Code declares `attach` for its background sessions.
 
 An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.

@@ -2300,7 +2300,11 @@ mod tests {
             },
         );
         let mut pane = reporting_agent_pane(&server.instance_id);
-        pane.agent_resume = Some("Claude Code".to_string());
+        pane.agent_resume = Some(PaneResume {
+            label: "Claude Code".to_string(),
+            attach: None,
+            started: Instant::now(),
+        });
         server.panes.insert(1, pane);
 
         let job = server.capture_snapshot(Instant::now()).expect("capture");

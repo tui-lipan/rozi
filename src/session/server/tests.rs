@@ -5256,6 +5256,80 @@ fn a_failed_agent_resume_names_the_failure_and_leaves_a_usable_shell() {
     );
 }
 
+/// A resume the agent refuses straight away, because the conversation still runs elsewhere, is
+/// followed by the agent's own attach command in the same pane. Only an attach that fails too is
+/// reported as a failed resume.
+#[test]
+fn a_refused_agent_resume_falls_back_to_attaching() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+    let sh = |script: &str| vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()];
+
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: Some(crate::pane::launch::PaneLaunch::shell("true")),
+        agent_resume: Some(AgentResumeLaunch {
+            label: "Claude Code".to_string(),
+            launch: crate::pane::launch::PaneLaunch::direct(sh(
+                "printf 'running in the background\\n' >&2; exit 1",
+            ))
+            .expect("resume argv"),
+            attach: Some(sh("printf 'attached to it\\n'; exit 1")),
+        }),
+        cwd: None,
+        title: None,
+        cols: 80,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        while let Some(event) = server.events.try_pop() {
+            if let Some(outbound) = server.handle_event(event) {
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        let pane = server.panes.get_mut(&1).expect("pane still exists");
+        if pane.command_completed
+            && pane
+                .screen_without_change()
+                .snapshot()
+                .contains("resume failed")
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get_mut(&1).expect("pane still exists");
+    assert_eq!(pane.exited, None, "the pane must survive");
+    let text = pane.screen_without_change().snapshot();
+    for expected in [
+        "running in the background",
+        "Claude Code is still running · attaching",
+        "attached to it",
+        "Claude Code resume failed · exited 1",
+    ] {
+        assert!(
+            text.contains(expected),
+            "missing {expected:?}; screen was:\n{text}"
+        );
+    }
+    assert_eq!(pane.launch, None, "a failed attach leaves a plain shell");
+}
+
 /// A command that merely exits keeps its launch intent: a pane created to run something restores
 /// by running it again, which is the ordinary keep-open contract. Only a *failed conversation
 /// resume* is special, and conflating the two would stop every keep-open pane coming back.

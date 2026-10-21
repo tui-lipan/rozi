@@ -612,6 +612,11 @@ mod tests {
         for attached in [false, true] {
             let mut server = server_with_agent(protocol::DetectedAgentState::Idle);
             let (client, mut stream) = super::super::tests::attach_client(&mut server);
+            // Set the timeout before a headless reply closes the server end. macOS rejects
+            // setting it after that peer has closed, even with a reply still buffered.
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let reference = server
                 .resolve_agent_wait_target(AgentTarget::Pane(3))
                 .unwrap();
@@ -659,9 +664,6 @@ mod tests {
                 .screen_mut()
                 .process_bytes(b"later output");
             server.flush_clients();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
             let message: ServerMessage = protocol::read_frame(&mut stream).unwrap();
             let response = match message {
                 ServerMessage::AttachedControlResult {

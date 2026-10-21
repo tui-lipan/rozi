@@ -161,6 +161,76 @@ pub fn snapshot(root: &Path) -> Result<Bundle, String> {
     Bundle::from_files(files)
 }
 
+/// Hex SHA-256 of the files a client-run process of the extension at `root` is started from, or
+/// `None` when they cannot be read in full.
+///
+/// Unlike [`snapshot`], this never rejects an extension: nothing is carried anywhere, so a link
+/// out of the directory or a large tree only means the files are not tracked. The skipped names
+/// match [`snapshot`], so an interpreter's cache beside the code never moves the digest, and the
+/// manifest is left out.
+pub fn code_digest(root: &Path) -> Option<String> {
+    let mut paths = Vec::new();
+    collect_paths(root, root, &mut paths)?;
+    paths.sort();
+    let mut hasher = Sha256::new();
+    let mut size = 0u64;
+    for (relative, path) in paths {
+        let contents = std::fs::read(&path).ok()?;
+        size = size.saturating_add(contents.len() as u64);
+        if size > MAX_BUNDLE_BYTES {
+            return None;
+        }
+        hasher.update((relative.len() as u64).to_le_bytes());
+        hasher.update(relative.as_bytes());
+        hasher.update((contents.len() as u64).to_le_bytes());
+        hasher.update(&contents);
+    }
+    Some(
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+fn collect_paths(root: &Path, directory: &Path, paths: &mut Vec<(String, PathBuf)>) -> Option<()> {
+    for entry in std::fs::read_dir(directory).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let name = name.to_str()?;
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if file_type.is_dir() {
+            if !EXCLUDED_DIRECTORIES.contains(&name) {
+                collect_paths(root, &path, paths)?;
+            }
+            continue;
+        }
+        if EXCLUDED_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        {
+            continue;
+        }
+        // A link is read through to its target file; one to a directory is left untracked, which
+        // also keeps a link cycle from looping.
+        if !std::fs::metadata(&path).ok()?.is_file() {
+            continue;
+        }
+        if paths.len() >= MAX_BUNDLE_FILES {
+            return None;
+        }
+        let relative = path.strip_prefix(root).ok()?.to_str()?.replace('\\', "/");
+        // The manifest's process-facing fields are fingerprinted already; its title, description,
+        // and version are presentation and must not restart a service.
+        if relative != "extension.toml" {
+            paths.push((relative, path));
+        }
+    }
+    Some(())
+}
+
 fn walk(
     root: &Path,
     directory: &Path,

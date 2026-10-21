@@ -29,7 +29,8 @@ pub(crate) struct ExtensionCommandFingerprint {
 /// Canonical process-facing extension definition.
 ///
 /// Presentation metadata is deliberately absent: labels, title, description, and package version
-/// may update without restarting services or fencing otherwise unchanged extension processes.
+/// may update without restarting services or fencing otherwise unchanged extension processes. The
+/// files a service runs from are present, so an update to them does restart it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExtensionRuntimeFingerprint {
     pub(crate) api: u32,
@@ -40,6 +41,11 @@ pub(crate) struct ExtensionRuntimeFingerprint {
     /// edited on disk keeps its manifest but changes this, so its placed processes move to a new
     /// generation running the new files instead of the old ones carrying on.
     pub(crate) placements: Option<super::placement::SharedPlacements>,
+    /// Digest of the files a client-run service starts from. A service is a long-lived process, so
+    /// an update that changes only its script must replace it; a command starts afresh each run
+    /// and reads the new files anyway. `None` for an extension with no service, and when the files
+    /// cannot be read in full.
+    pub(crate) code: Option<String>,
 }
 
 pub(crate) fn reconcile_generations(
@@ -149,6 +155,7 @@ pub(crate) fn fingerprint(
     commands: &[crate::config::NamedCommand],
     services: &[ServiceConfig],
     placements: Option<super::placement::SharedPlacements>,
+    code: Option<String>,
 ) -> ExtensionRuntimeFingerprint {
     ExtensionRuntimeFingerprint {
         api,
@@ -163,6 +170,7 @@ pub(crate) fn fingerprint(
             .collect(),
         services: services.to_vec(),
         placements,
+        code,
     }
 }
 
@@ -201,7 +209,14 @@ mod tests {
         config.active_extensions.insert(id.clone());
         config.extension_runtime.insert(
             id,
-            fingerprint(1, "/extensions/tools".to_string(), &[command], &[], None),
+            fingerprint(
+                1,
+                "/extensions/tools".to_string(),
+                &[command],
+                &[],
+                None,
+                None,
+            ),
         );
         config
     }

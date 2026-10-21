@@ -214,6 +214,8 @@ rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
+A reload restarts the extension's services when the update changed the files they run from.
+
 The update clones the recorded remote into a staging area, validates it, and replaces the old
 checkout only if the new version is valid. It refuses to replace a checkout with local changes.
 Copied local extensions and linked checkouts cannot be updated this way.

@@ -95,6 +95,13 @@ pub(super) fn build(
                 }
             }
             if extension.info.id.is_some() {
+                let code = (!extension_services.is_empty())
+                    .then(|| {
+                        crate::extension_runtime::bundle::code_digest(std::path::Path::new(
+                            &extension.info.path,
+                        ))
+                    })
+                    .flatten();
                 runtime.push((
                     id.clone(),
                     fingerprint(
@@ -103,6 +110,7 @@ pub(super) fn build(
                         &extension_commands,
                         &extension_services,
                         extension_placements.clone(),
+                        code,
                     ),
                 ));
                 if let Some(placed) = extension_placements {

@@ -2188,6 +2188,51 @@ mod tests {
         );
     }
 
+    /// A service is a long-lived process, so an update that changes only its script must restart
+    /// it, while a version or interpreter-cache change must not.
+    #[test]
+    fn editing_a_service_script_moves_the_runtime_fingerprint() {
+        let temp = tempfile::tempdir().unwrap();
+        write_manifest(
+            temp.path(),
+            "tasks",
+            &format!(
+                "{}[[services]]\nname = \"watch\"\nexec = [\"./bin/watch\"]\n",
+                manifest("tasks", "1")
+            ),
+        );
+        write_program(&temp.path().join("tasks"), "bin/watch");
+        let fingerprint = |temp: &tempfile::TempDir| {
+            scan_extensions_in(temp.path())
+                .into_contributions(&[], &Default::default())
+                .runtime["tasks"]
+                .clone()
+        };
+        let before = fingerprint(&temp);
+
+        let cache = temp.path().join("tasks/__pycache__");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("watch.pyc"), b"cache").unwrap();
+        assert_eq!(
+            fingerprint(&temp),
+            before,
+            "an interpreter cache is not code"
+        );
+
+        write_manifest(
+            temp.path(),
+            "tasks",
+            &format!(
+                "{}[[services]]\nname = \"watch\"\nexec = [\"./bin/watch\"]\n",
+                manifest("tasks", "1").replace("0.1.0", "0.2.0")
+            ),
+        );
+        assert_eq!(fingerprint(&temp), before, "a version bump is not code");
+
+        std::fs::write(temp.path().join("tasks/bin/watch"), "#!/bin/sh\necho new\n").unwrap();
+        assert_ne!(fingerprint(&temp), before, "a changed script is");
+    }
+
     #[test]
     fn settings_report_unknown_keys_wrong_types_and_orphan_tables() {
         let temp = tempfile::tempdir().unwrap();

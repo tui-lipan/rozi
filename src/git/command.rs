@@ -53,11 +53,42 @@ pub(crate) fn checked(dir: &Path, args: &[OsString], timeout: Duration) -> Resul
     finish(run(dir, args, timeout)?)
 }
 
-/// [`checked`] for a command that talks to a remote: Git must fail rather than ask for credentials
-/// the session server has nowhere to show.
+/// [`checked`] for a command that talks to a remote: Git and SSH must fail rather than ask for
+/// credentials or a host-key confirmation the session server has nowhere to show. That covers the
+/// terminal, every askpass helper (`GIT_ASKPASS`, `core.askPass`, `SSH_ASKPASS`), and SSH's own
+/// prompts, which are switched off only when the user has configured no SSH command of their own.
 pub(crate) fn checked_remote(dir: &Path, args: &[OsString]) -> Result<Vec<u8>, String> {
-    let env = [("GIT_TERMINAL_PROMPT".to_string(), "0".to_string())];
-    finish(run_with_env(dir, args, &env, REMOTE_TIMEOUT)?)
+    let mut env: Vec<(String, String)> = [
+        ("GIT_TERMINAL_PROMPT", "0"),
+        ("GIT_ASKPASS", ""),
+        ("SSH_ASKPASS", ""),
+        ("SSH_ASKPASS_REQUIRE", "never"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_string(), value.to_string()))
+    .collect();
+    if !has_ssh_override(dir) {
+        env.push((
+            "GIT_SSH_COMMAND".to_string(),
+            "ssh -o BatchMode=yes".to_string(),
+        ));
+    }
+    let mut argv: Vec<OsString> = ["-c", "core.askPass=", "-c", "credential.interactive=false"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    argv.extend_from_slice(args);
+    finish(run_with_env(dir, &argv, &env, REMOTE_TIMEOUT)?)
+}
+
+/// The user chose how Git runs SSH, so adding options to it could break a non-OpenSSH transport.
+fn has_ssh_override(dir: &Path) -> bool {
+    if std::env::var_os("GIT_SSH").is_some() || std::env::var_os("GIT_SSH_COMMAND").is_some() {
+        return true;
+    }
+    let args = ["config", "--get", "core.sshCommand"].map(OsString::from);
+    checked(dir, &args, WORKTREE_LIST_TIMEOUT)
+        .is_ok_and(|output| !String::from_utf8_lossy(&output).trim().is_empty())
 }
 
 fn finish(output: CommandOutput) -> Result<Vec<u8>, String> {

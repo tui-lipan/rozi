@@ -1162,6 +1162,74 @@ mod tests {
         );
     }
 
+    /// A remote that demands credentials must make the delete fail, never reach an askpass helper.
+    #[cfg(unix)]
+    #[test]
+    fn a_remote_delete_never_runs_an_askpass_helper() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let marker = temp.path().join("asked");
+        let helper = temp.path().join("askpass.sh");
+        std::fs::write(
+            &helper,
+            format!("#!/bin/sh\ntouch '{}'\necho secret\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&repo, &["config", "core.askPass", helper.to_str().unwrap()]);
+
+        // An HTTP remote that answers every request with a request for credentials.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/repo.git", listener.local_addr().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    };
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                    let _ = stream.read(&mut [0; 4096]);
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"x\"\r\n\
+                          Content-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                }
+            })
+        };
+        let mut args = argv(&["push", "--"]);
+        args.push(url.into());
+        args.push(":refs/heads/feat".into());
+
+        // Control: without the guard, Git reaches the helper, so the setup does exercise it.
+        let _ = command::checked(&repo, &args, WORKTREE_MUTATION_TIMEOUT);
+        assert!(
+            marker.exists(),
+            "the helper must be reachable for the test to mean anything"
+        );
+        std::fs::remove_file(&marker).unwrap();
+
+        assert!(command::checked_remote(&repo, &args).is_err());
+        assert!(!marker.exists(), "the askpass helper ran");
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+    }
+
     #[test]
     fn locks_block_removal_until_unlocked_and_only_a_stale_one_lifts_itself() {
         if !crate::platform::command::program_exists("git") {

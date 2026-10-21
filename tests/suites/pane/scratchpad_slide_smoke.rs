@@ -143,6 +143,46 @@ fn the_dropdown_slides_without_resizing_its_terminal() {
     });
 }
 
+/// The slide must stop painting at the tile area, before either the workbar or its gap.
+#[test]
+fn a_sliding_dropdown_cannot_paint_over_a_bottom_workbar() {
+    on_large_stack(|| {
+        for gap in [false, true] {
+            let mut backend = backend();
+            {
+                let pane = &mut backend.state_mut().config.pane;
+                pane.show_workbar = true;
+                pane.workbar_at_bottom = true;
+                pane.workbar_gap = gap;
+            }
+            backend.render();
+            backend.advance(Duration::from_millis(4_000));
+            let protected_start = usize::from(HEIGHT) - 1 - usize::from(gap);
+            let protected: Vec<_> =
+                backend.capture_frame().to_fixed_grid_lines()[protected_start..].to_vec();
+
+            for visible in [true, false] {
+                set_visible(&mut backend, visible);
+                let allocation = pane_rect(&backend);
+                for step in [0, 400, 500, 500, 2600] {
+                    backend.advance(Duration::from_millis(step));
+                    let frame = backend.capture_frame().to_fixed_grid_lines();
+                    assert_eq!(
+                        &frame[protected_start..],
+                        protected.as_slice(),
+                        "bottom workbar/gap changed: gap={gap}, visible={visible}, step={step}\n{}",
+                        frame.join("\n")
+                    );
+                    if step != 2600 {
+                        let rect = pane_rect(&backend);
+                        assert_eq!((rect.w, rect.h), (allocation.w, allocation.h));
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[test]
 fn a_terminal_resize_snaps_the_dropdown_instead_of_animating_it() {
     on_large_stack(|| {

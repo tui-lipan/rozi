@@ -613,6 +613,11 @@ pub(crate) fn render_workspace_panes(
         }
     }
     let canvas = paint_only_pane_layer(canvas, closing_tiles);
+    let canvas = if layer.scratch {
+        crate::scratchpad::clip_docked_panes(ctx, canvas)
+    } else {
+        canvas
+    };
     let canvas = raised_pane_layer(canvas, floating_panes);
     raised_pane_layer(canvas, fullscreen_panes)
 }

@@ -449,14 +449,24 @@ pub(crate) fn scratch_panes(
     let placed = view::canvas_rect_to_root(deploying, ctx.state.content_top_offset()).to_rect();
     let scratch_moved = ctx.state.last_scratch_rect.replace(Some(placed)) != Some(placed);
     let docked = has_docked_panes(&ctx.state);
-    let canvas = if docked {
-        wipe_merged_dropdown_underlay(ctx, canvas, placed)
+    // Keep the dismiss catcher outside the dock clip. Floating/fullscreen panes are added
+    // above the clipped tiles by the workspace renderer.
+    let mut panes = Canvas::new().height(Length::Flex(1)).passthrough(true);
+    // Gaps inside the dock consume clicks, but its shield must also stop at the tile edge.
+    if let Some((rect, element)) = scratch_shield(ctx, progress) {
+        panes = panes.child_at(
+            view::canvas_rect_to_root(rect, ctx.state.content_top_offset()).to_rect(),
+            element,
+        );
+    }
+    let panes = if docked {
+        wipe_merged_dropdown_underlay(ctx, panes, placed)
     } else {
-        canvas
+        panes
     };
-    view::render_workspace_panes(
+    let panes = view::render_workspace_panes(
         ctx,
-        canvas,
+        panes,
         &view::WorkspaceLayer {
             workspace: &ctx.state.scratch,
             bounds: deploying,
@@ -483,7 +493,38 @@ pub(crate) fn scratch_panes(
             // which the layer used to miss entirely by hardcoding this false.
             viewport_changed: viewport_changed || (docked && scratch_moved),
         },
-    )
+    );
+    canvas.child_at(ctx.state.content_viewport(ctx.viewport()), panes)
+}
+
+/// Clip the docked subtree at the stationary tile area while keeping its full root allocation.
+/// Floating and fullscreen scratch panes are mounted outside this clip.
+pub(crate) fn clip_docked_panes(ctx: &Context<AppRoot>, panes: Canvas) -> Canvas {
+    let viewport = ctx.state.content_viewport(ctx.viewport());
+    let bounds = workspace_tile_bounds(
+        ctx.state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport()),
+        ctx.state.workspace_top_gap(),
+    );
+    let clip = view::canvas_rect_to_root(bounds, ctx.state.content_top_offset()).to_rect();
+    let panes = PanView::new()
+        .offset((i32::from(clip.x), i32::from(clip.y)))
+        .clamp(false)
+        .drag_to_pan(false)
+        .wheel_to_pan(false)
+        .focusable(false)
+        .child(
+            panes
+                .min_width(Length::Px(viewport.w))
+                .max_width(Length::Px(viewport.w))
+                .min_height(Length::Px(viewport.h))
+                .max_height(Length::Px(viewport.h)),
+        )
+        .key("rozi-scratch-dock-clip");
+    Canvas::new()
+        .height(Length::Flex(1))
+        .passthrough(true)
+        .child_at(clip, panes)
 }
 
 /// A thin drag handle sitting over the scratchpad's top chrome (title row and top border) that

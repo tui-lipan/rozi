@@ -1835,6 +1835,46 @@ fn sidebar_projects() {
         }
     }
     write_png(&mut backend, "sidebar-projects-clicked");
+    sidebar_projects_folded_repository(&mut backend);
+    sidebar_projects_failed_host(&mut backend);
+}
+
+fn sidebar_projects_folded_repository(backend: &mut TestBackend<AppRoot>) {
+    backend.state_mut().sidebar.tree_rows_expanded.insert(
+        rozi::state::TreeExpansionKey {
+            tab: SidebarTabId::new("projects"),
+            section: "local".into(),
+            row: "repo:/src/tui-lipan".into(),
+        },
+        false,
+    );
+    backend.render();
+    write_png(backend, "sidebar-projects-current-repository-folded");
+}
+
+fn sidebar_projects_failed_host(backend: &mut TestBackend<AppRoot>) {
+    use rozi::session::remote::RemoteTarget;
+    use rozi::state::HostProbe;
+
+    let target = RemoteTarget::Alias("workbox".into());
+    let state = backend.state_mut();
+    state.config.nerd_icons = true;
+    state.sidebar.tree_rows_expanded.clear();
+    state.remote.hosts.seed(
+        &state.config.remote,
+        std::slice::from_ref(&target),
+        &[],
+        &[],
+    );
+    state.remote.hosts.get_mut(&target).unwrap().probe =
+        HostProbe::Failed("SSH connection timed out".into());
+    backend.render();
+    write_png(backend, "sidebar-projects-unreachable-host");
+    backend.state_mut().current_mut().workspaces[0]
+        .panes
+        .clear();
+    backend.render();
+    write_png(backend, "sidebar-projects-unreachable-host-only");
 }
 
 fn sidebar_files() {

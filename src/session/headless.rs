@@ -220,6 +220,7 @@ mod tests {
             prompt: "go".to_string(),
             wait,
             timeout_ms,
+            capture: None,
             allow_working: false,
         };
 
@@ -286,6 +287,7 @@ mod tests {
                     source_pane: None,
                     source_session: None,
                     extension: None,
+                    caller_context: None,
                     credential: None,
                 },
             )
@@ -306,6 +308,7 @@ mod tests {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                caller_context: None,
                 credential: None,
             },
         )

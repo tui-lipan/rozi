@@ -49,6 +49,8 @@ pub fn bundle() -> Value {
     add::<crate::control::SpanFrame>(&mut generator, &mut roots);
     add::<crate::control::NewPaneAccepted>(&mut generator, &mut roots);
     add::<crate::control::PaneLoggingState>(&mut generator, &mut roots);
+    add::<crate::control::UiContextMetadata>(&mut generator, &mut roots);
+    add::<crate::control::CallerContext>(&mut generator, &mut roots);
     add::<crate::control::AgentInfo>(&mut generator, &mut roots);
     add::<crate::control::AgentPromptAccepted>(&mut generator, &mut roots);
     add::<crate::control::AgentWaitResult>(&mut generator, &mut roots);

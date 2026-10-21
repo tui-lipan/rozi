@@ -41,9 +41,12 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// `fill_cell_box`, `z_index`, and `underlying_cells`, and version 19 with `publish`'s `kind` and
 /// `name`, published rows' `publisher`, `kind`, `live_session`, and `reported`, and an agent
 /// reference's structured `slot`, and version 20 with `sidebar-publish` and the sidebar snapshot,
-/// row, action, and stream event shapes, `agents-overview`, and `agent-go`.
-pub const API_SCHEMA_VERSION: u32 = 20;
+/// row, action, and stream event shapes, `agents-overview`, and `agent-go`, and version 21
+/// with `context`, caller routing fences, post-prompt `turn` waits, and terminal prompt results.
+pub const API_SCHEMA_VERSION: u32 = 21;
 
+pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
+pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
@@ -119,8 +122,10 @@ impl ApiDescription {
             schema: API_SCHEMA_VERSION,
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
+                AGENT_PROMPT_RESULTS_CAPABILITY,
                 AGENT_WAITS_CAPABILITY,
                 ATTACHED_CONTROL_CAPABILITY,
+                CALLER_CONTEXT_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
                 CAPTURE_SPANS_CAPABILITY,
@@ -158,6 +163,10 @@ pub struct ControlRequest {
     /// Absent when the caller is not a shared pane of a session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_session: Option<crate::session::protocol::SessionInstanceId>,
+    /// Verified caller session and pane generation. A UI must still display this session when it
+    /// executes the command; the session server also checks the pane generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_context: Option<Box<crate::session::protocol::PaneRef>>,
     /// Automatically attached by the CLI when launched from an extension process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension: Option<crate::config::ExtensionProvenance>,
@@ -166,6 +175,23 @@ pub struct ControlRequest {
     /// and replaces `extension` with what the credential was issued for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+}
+
+impl ControlCommand {
+    pub(crate) fn uses_ui_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::NewPane { .. }
+                | Self::LayoutSet { .. }
+                | Self::PaneSet { .. }
+                | Self::PaneMove { .. }
+                | Self::PaneSwap { .. }
+                | Self::PaneClose { .. }
+                | Self::SendText { .. }
+                | Self::SendKeys { .. }
+                | Self::AgentPrompt { .. }
+        )
+    }
 }
 
 /// How many scrollback lines `capture-pane` should include when not using the visible grid.
@@ -387,6 +413,8 @@ impl CaptureScrollback {
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum ControlCommand {
+    /// Verified caller identity on a server; attachment metadata on a UI.
+    Context,
     ListPanes,
     /// Report workspaces and where each pane sits. `workspace` is one-based and narrows the report
     /// to that workspace.
@@ -653,6 +681,8 @@ pub enum ControlCommand {
         timeout_ms: Option<u64>,
     },
     AgentPrompt {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture: Option<CaptureRender>,
         target: AgentTarget,
         prompt: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -843,6 +873,8 @@ pub enum AgentWaitCondition {
     Done,
     Error,
     Quiescent,
+    /// A prompted turn finished or needs intervention.
+    Turn,
     Gone,
 }
 
@@ -2093,8 +2125,56 @@ pub struct AgentPromptAccepted {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentWaitResult {
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::session::protocol::AgentRef>,
     pub condition: AgentWaitCondition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<AgentPromptResult>,
     pub agent: Option<crate::session::protocol::AgentRuntime>,
+}
+
+/// The requested representation of a prompted turn. Integration messages may be added as
+/// another explicit kind without treating a terminal screen as an assistant message.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AgentPromptResult {
+    Terminal { capture: PaneCapture },
+}
+
+/// Caller identity verified by the session server. Environment hints alone never fill `pane`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CallerContext {
+    pub inside_rozi: bool,
+    pub status: String,
+    pub session: Option<CallerSession>,
+    pub pane: Option<crate::session::protocol::PaneRef>,
+    pub agent: Option<crate::session::protocol::AgentRuntime>,
+    pub ui: CallerUi,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CallerSession {
+    pub name: String,
+    pub instance: crate::session::protocol::SessionInstanceId,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct CallerUi {
+    pub available: bool,
+    pub displays_session: Option<bool>,
+    pub holds_session: Option<bool>,
+}
+
+/// Attachment identities supplied by a UI, independent of verified caller identity.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct UiContextMetadata {
+    pub displayed_session: Option<crate::session::protocol::SessionInstanceId>,
+    pub held_sessions: Vec<crate::session::protocol::SessionInstanceId>,
 }
 
 /// What `metrics` answers with from a session server.
@@ -3214,6 +3294,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3232,6 +3313,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         assert_eq!(
@@ -3694,6 +3776,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3768,6 +3851,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&switch).unwrap();
@@ -3781,6 +3865,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&move_to).unwrap();
@@ -3804,6 +3889,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3824,6 +3910,7 @@ mod tests {
             source_pane: Some(3),
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -3858,6 +3945,7 @@ mod tests {
             source_pane: None,
             source_session: None,
             extension: None,
+            caller_context: None,
             credential: None,
         };
         let json = serde_json::to_string(&request).unwrap();

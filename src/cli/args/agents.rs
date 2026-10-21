@@ -1,4 +1,6 @@
-use crate::control::{AgentTarget, AgentWaitCondition, CaptureScrollback, ControlCommand};
+use crate::control::{
+    AgentTarget, AgentWaitCondition, CaptureRender, CaptureScrollback, ControlCommand,
+};
 
 use super::{ListFormat, parse_list_format};
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
@@ -9,14 +11,14 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[row(
-            "rozi [--session <NAME>] agents <COMMAND> [OPTIONS]",
+            "rozi [--session <NAME> | --here] agents <COMMAND> [OPTIONS]",
             "",
         )],
     },
     HelpSection {
         heading: "COMMANDS",
         advanced_only: false,
-        note: "Every --target <PANE> also takes --ref <JSON> instead, from `list` or `get`.",
+        note: crate::cli::help::AGENT_ENDPOINT_HELP,
         rows: &[
             row("list [--format text|json]", "List semantic agent occupants"),
             row(
@@ -67,7 +69,14 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "working, blocked, idle, done, error,",
             ),
             row("", "quiescent (idle, done, or error), or gone"),
-            row("    --wait <STATE>", "The same states as --until"),
+            row(
+                "    --wait <STATE>",
+                "The --until states, or turn (includes blocked)",
+            ),
+            row(
+                "    --capture text|ansi",
+                "Return the terminal when the prompt wait resolves",
+            ),
             row(
                 "    --timeout <DUR>",
                 "Deadline for a wait, such as 30s or 2m",
@@ -277,6 +286,7 @@ fn parse_prompt(
     let mut wait = None;
     let mut timeout_ms = None;
     let mut allow_working = false;
+    let mut capture = None;
     let mut format = None;
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
@@ -297,6 +307,16 @@ fn parse_prompt(
                     return Err("agents prompt --timeout specified more than once".into());
                 }
             }
+            "--capture" => {
+                let value = next_value(&mut iter, "--capture requires text or ansi")?;
+                let render = CaptureRender::parse_cli(&value)?;
+                if !matches!(render, CaptureRender::Text | CaptureRender::Ansi) {
+                    return Err("agents prompt --capture requires text or ansi".into());
+                }
+                if capture.replace(render).is_some() {
+                    return Err("agents prompt --capture specified more than once".into());
+                }
+            }
             "--allow-working" => allow_working = true,
             "--format" => set_format(&mut format, &mut iter, "agents prompt")?,
             value if prompt.is_none() => prompt = Some(value.to_string()),
@@ -310,6 +330,11 @@ fn parse_prompt(
                 return Err(format!("unexpected agents prompt argument `{other}`"));
             }
         }
+    }
+    if capture.is_some() && (wait.is_none() || wait == Some(AgentWaitCondition::Gone)) {
+        return Err(
+            "agents prompt --capture requires --wait with an outcome other than gone".into(),
+        );
     }
     match (wait, timeout_ms) {
         (Some(_), None) => {
@@ -329,6 +354,7 @@ fn parse_prompt(
             wait,
             timeout_ms,
             allow_working,
+            capture,
         },
         format,
     ))
@@ -395,6 +421,9 @@ fn parse_wait(
             "--format" => set_format(&mut format, &mut iter, "agents wait")?,
             other => return Err(unexpected("agents wait", other)),
         }
+    }
+    if until == Some(AgentWaitCondition::Turn) {
+        return Err("turn is a post-prompt condition; use agents prompt --wait turn".into());
     }
     Ok((
         ControlCommand::AgentWait {
@@ -505,6 +534,7 @@ fn parse_condition(value: &str) -> std::result::Result<AgentWaitCondition, Strin
         "done" => Ok(AgentWaitCondition::Done),
         "error" => Ok(AgentWaitCondition::Error),
         "quiescent" => Ok(AgentWaitCondition::Quiescent),
+        "turn" => Ok(AgentWaitCondition::Turn),
         "gone" => Ok(AgentWaitCondition::Gone),
         _ => Err(format!("unknown agent wait condition `{value}`")),
     }
@@ -545,6 +575,76 @@ fn positional_target(command: &str, pane: &str) -> String {
 mod tests {
     use super::super::{ParsedCli, parse_cli_args};
     use super::*;
+
+    #[test]
+    fn prompt_capture_requires_a_turn_outcome() {
+        let parse = |tail: &[&str]| {
+            parse_agents_args(
+                ["prompt", "--target", "3"]
+                    .into_iter()
+                    .chain(tail.iter().copied())
+                    .map(str::to_string)
+                    .collect(),
+            )
+        };
+        let (command, _) = parse(&[
+            "--wait",
+            "turn",
+            "--timeout",
+            "1m",
+            "--capture",
+            "text",
+            "hello",
+        ])
+        .unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentPrompt {
+                wait: Some(AgentWaitCondition::Turn),
+                capture: Some(CaptureRender::Text),
+                ..
+            }
+        ));
+        for tail in [
+            vec!["--capture", "text", "hello"],
+            vec![
+                "--capture",
+                "png",
+                "--wait",
+                "turn",
+                "--timeout",
+                "1m",
+                "hello",
+            ],
+            vec![
+                "--capture",
+                "text",
+                "--wait",
+                "gone",
+                "--timeout",
+                "1m",
+                "hello",
+            ],
+        ] {
+            assert!(parse(&tail).is_err());
+        }
+        assert!(
+            parse_agents_args(
+                [
+                    "wait",
+                    "--target",
+                    "3",
+                    "--until",
+                    "turn",
+                    "--timeout",
+                    "1m"
+                ]
+                .map(str::to_string)
+                .to_vec()
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn agents_namespace_owns_its_help() {
@@ -712,6 +812,7 @@ mod tests {
                 prompt: "fix the test".into(),
                 wait: Some(AgentWaitCondition::Idle),
                 timeout_ms: Some(45_000),
+                capture: None,
                 allow_working: false,
             }
         );

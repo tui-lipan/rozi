@@ -361,6 +361,8 @@ pub struct TreeLine {
     pub heading: bool,
     /// Folded: the most urgent tone among the rows it hides.
     pub hidden_tone: Option<SidebarTone>,
+    /// Folded: at least one hidden descendant is the current destination.
+    pub hidden_active: bool,
 }
 
 impl TreeItem {
@@ -464,14 +466,8 @@ fn push_row(
         section: section.key.clone(),
         row: row.id.clone(),
     };
-    let expanded = heading
-        || expandable
-            && expansion
-                .get(&key)
-                .copied()
-                .unwrap_or_else(|| row.expanded.unwrap_or(!kids.is_empty()));
-    let hidden_tone = (expandable && !expanded && !kids.is_empty())
-        .then(|| SidebarTone::most_urgent(descendants(children, kids).map(|row| row.content.tone)));
+    let expanded = row_expanded(row, heading, expandable, &key, expansion, !kids.is_empty());
+    let (hidden_tone, hidden_active) = hidden_content(children, kids, expanded);
     items.push(TreeItem::Row(Box::new(TreeLine {
         row: row.clone(),
         key,
@@ -480,6 +476,7 @@ fn push_row(
         expanded,
         heading,
         hidden_tone,
+        hidden_active,
     })));
     if !expanded || depth >= MAX_DEPTH {
         return;
@@ -502,6 +499,37 @@ fn push_row(
             items,
         );
     }
+}
+
+fn row_expanded(
+    row: &TreeRow,
+    heading: bool,
+    expandable: bool,
+    key: &TreeExpansionKey,
+    expansion: &TreeExpansion,
+    has_children: bool,
+) -> bool {
+    if heading {
+        return true;
+    }
+    expandable
+        && expansion
+            .get(key)
+            .copied()
+            .unwrap_or_else(|| row.expanded.unwrap_or(has_children))
+}
+
+fn hidden_content(
+    children: &HashMap<&str, Vec<&TreeRow>>,
+    kids: &[&TreeRow],
+    expanded: bool,
+) -> (Option<SidebarTone>, bool) {
+    if expanded || kids.is_empty() {
+        return (None, false);
+    }
+    let tone = SidebarTone::most_urgent(descendants(children, kids).map(|row| row.content.tone));
+    let active = descendants(children, kids).any(|row| row.content.active);
+    (Some(tone), active)
 }
 
 /// Every row beneath `kids`, at any depth.
@@ -687,6 +715,50 @@ mod tests {
             folded[0].line().and_then(|line| line.hidden_tone),
             Some(SidebarTone::Error)
         );
+    }
+
+    #[test]
+    fn current_location_follows_the_nearest_folded_ancestor() {
+        let mut active = row("session", Some("checkout"));
+        active.content.active = true;
+        let section = TreeSection {
+            key: "local".into(),
+            rows: vec![
+                row("repo", None),
+                row("checkout", Some("repo")),
+                active,
+                row("other", None),
+            ],
+            ..TreeSection::default()
+        };
+        let mut expansion = TreeExpansion::new();
+        for (repo_open, checkout_open, expected) in [
+            (true, true, "session"),
+            (true, false, "checkout"),
+            (false, false, "repo"),
+            (true, false, "checkout"),
+            (true, true, "session"),
+        ] {
+            for (id, open) in [("repo", repo_open), ("checkout", checkout_open)] {
+                expansion.insert(
+                    TreeExpansionKey {
+                        tab: tab(),
+                        section: "local".into(),
+                        row: id.into(),
+                    },
+                    open,
+                );
+            }
+            let items = flatten(&tab(), std::slice::from_ref(&section), &expansion);
+            let marked: Vec<_> = items
+                .iter()
+                .filter_map(TreeItem::line)
+                .filter(|line| line.row.content.active || line.hidden_active)
+                .map(|line| line.row.id.as_str())
+                .collect();
+            assert_eq!(marked, [expected]);
+            assert!(!items.last().unwrap().line().unwrap().hidden_active);
+        }
     }
 
     /// Sections are separated, and a structural row with children toggles them when activated.

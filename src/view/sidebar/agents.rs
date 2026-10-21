@@ -227,8 +227,15 @@ fn is_cwd_echo(title: &str, cwd: Option<&str>) -> bool {
 /// Built from [`crate::state::Pane::occupants`], the activity projection. The Agents view keeps
 /// only the rows with [`AgentRow::agent`] set, which are exactly the agent projection's.
 pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
-    let mut rows = state
-        .current()
+    attachment_agent_rows(state, state.current())
+}
+
+/// The same activity projection for a foreground or parked attachment.
+pub(crate) fn attachment_agent_rows(
+    state: &State,
+    attachment: &crate::state::Attachment,
+) -> Vec<AgentRow> {
+    let mut rows = attachment
         .workspaces
         .iter()
         .enumerate()

@@ -279,7 +279,7 @@ rozi --session dev agents list
 rozi --session dev agents get --target 3
 rozi --session dev agents read --target 3 --scrollback 200
 rozi --session dev agents wait --target 3 --until quiescent --timeout 2m
-rozi --session dev agents prompt --target 3 --wait quiescent --timeout 10m "Fix the failing test"
+rozi --here agents prompt --target 3 --wait turn --timeout 10m --capture text "Fix the failing test"
 ```
 
 `rozi agents --help` lists every subcommand and flag, including `report` and `release`, which
@@ -303,6 +303,11 @@ the agent, so a replacement started in the same pane does not receive it.
 JSON output also gives each agent's `reason` for its state, the `task` its published row names, and
 `completions`, the number of runs it has finished. A script that compares `completions` between two
 reads learns that a run ended even if it never saw the agent working.
+
+For agent automation, discover agents with `rozi --here agents list --format json`, save the
+chosen `ref`, and keep using `--ref` for subsequent operations. `rozi context --format json`
+verifies your own pane and session independently of the session currently on screen.
+See [caller context](control.md#verify-caller-context).
 
 ### Every agent, everywhere
 
@@ -354,6 +359,27 @@ refuses every prompt.
 `Enter` as one operation, so a fast run cannot finish unobserved between sending and waiting. It
 never types into a blocked agent, which could answer an approval dialog. It also refuses a working
 agent unless you pass `--allow-working`.
+
+Use `--wait turn` to wait until the submitted turn ends or requires intervention. It resolves on
+`blocked`, `done`, `error`, or `idle`, after the agent leaves its initial outcome state.
+`working` keeps waiting. The reply carries the ordinary state and reason, for example `blocked`
+with reason `Plan approval required`. `turn` is only available on `prompt`; `quiescent` continues
+to exclude `blocked`.
+
+Add `--capture text` or `--capture ansi` with `--wait` to retrieve the visible terminal in the same
+operation. The JSON reply includes the exact prompted `ref`, `condition`, `agent` with its state
+and reason, and `result`:
+
+```json
+{
+  "kind": "terminal",
+  "capture": {"id": 3, "title": "Claude Code", "render": "text", "text": "Approve the plan?"}
+}
+```
+
+The capture is taken when the wait resolves. It is terminal content, including prompts, chrome,
+and earlier output visible on screen. It is not an extracted assistant message. Capture requires
+a wait other than `gone`. Timeouts, lost agents, replacements, and stale references remain errors.
 
 ### Report state from agent hooks
 

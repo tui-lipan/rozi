@@ -1,8 +1,8 @@
 //! What the global Agents view lists, as a pure projection of `State`.
 //!
 //! Kept apart from the overlay that draws it because two sources feed it and the rule joining them
-//! is the interesting part: the session in front of the user publishes live pane state, while other
-//! local sessions and connected hosts contribute semantic summaries, placed in their projects by
+//! is the interesting part: foreground and connected parked sessions publish live pane state,
+//! while other sessions contribute semantic summaries, placed in their projects by
 //! the same monitors' project summaries. The overlay renders whatever comes out; this is where the
 //! boundary between the two is decided.
 
@@ -244,78 +244,12 @@ fn number_twins(rows: &mut [(GlobalAgentRow, Seat)]) {
 /// what lets a monitor poll land while the overlay is open without moving the cursor onto a
 /// different agent than the one under it a moment ago.
 pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
-    let here_target = state.current().remote_target.clone();
-    let here_host = here_target
-        .as_ref()
-        .map(|target| state.remote_target_label(target));
-    let here_session = state.current().session_name.clone();
-    let mut rows: Vec<(GlobalAgentRow, Seat)> = Vec::new();
-    if let Some(session) = here_session.as_deref() {
-        // The Activity tab's rows, minus its activities: only the agent projection is listed.
-        for row in crate::view::sidebar::agents::agent_rows(state) {
-            let Some(identity) = row.identity.clone() else {
-                continue;
-            };
-            let (project, branch) = row_project(&row);
-            let elapsed = crate::view::sidebar::agents::elapsed(
-                row.status.as_deref().unwrap_or(pane_status::IDLE),
-                row.finished_unseen,
-                row.age,
-                row.run,
-            )
-            .map(|(elapsed, _)| elapsed);
-            let seat = (row.pane_id, row.order);
-            let global = GlobalAgentRow {
-                location: AgentLocation::Here {
-                    pane: row.pane_id,
-                    row: row.slot.as_ref().map(|slot| slot.key.clone()),
-                },
-                task: row.task.as_deref().and_then(|task| {
-                    crate::view::sidebar::agents::task_title(task, &identity.label)
-                }),
-                agent: identity.label,
-                host: here_host.clone(),
-                session: session.to_string(),
-                status: row.status.unwrap_or_default(),
-                reason: row.reason,
-                finished_unseen: row.finished_unseen,
-                elapsed,
-                project,
-                branch,
-                ordinal: None,
-            };
-            rows.push((global, seat));
-        }
-    }
-    if let Some(snapshot) = &state.local_agent_snapshot {
-        // Summaries arrive in pane order and, within a pane, in the order it publishes them.
-        for (index, agent) in snapshot.agents.iter().enumerate() {
-            if here_target.is_none() && here_session.as_deref() == Some(&agent.session) {
-                continue;
-            }
-            let row = summary_row(state, agent, None, &snapshot.projects);
-            rows.push((row, (agent.pane(), index)));
-        }
-    }
-    for (target, agents) in &state.remote.agents {
-        let projects = state
-            .remote
-            .projects
-            .get(target)
-            .map_or(&[][..], Vec::as_slice);
-        for (index, agent) in agents.iter().enumerate() {
-            // The session on screen is already listed from its live panes, which are fresher than a
-            // snapshot taken between polls. Two answers for one agent, disagreeing by up to a poll
-            // interval and sitting next to each other, is worse than either alone.
-            if here_target.as_ref() == Some(target)
-                && here_session.as_deref() == Some(&agent.session)
-            {
-                continue;
-            }
-            let row = summary_row(state, agent, Some(target), projects);
-            rows.push((row, (agent.pane(), index)));
-        }
-    }
+    let attachments: Vec<_> = state.navigation_attachments().collect();
+    let mut rows: Vec<(GlobalAgentRow, Seat)> = attachments
+        .iter()
+        .flat_map(|attachment| live_attachment_rows(state, attachment))
+        .collect();
+    rows.extend(monitor_agent_rows(state, &attachments));
     number_twins(&mut rows);
     let mut rows: Vec<GlobalAgentRow> = rows.into_iter().map(|(row, _)| row).collect();
     rows.sort_by(|a, b| {
@@ -327,6 +261,107 @@ pub(crate) fn global_agent_rows(state: &State) -> Vec<GlobalAgentRow> {
             .then_with(|| a.location.pane().cmp(&b.location.pane()))
             .then_with(|| a.location.row().cmp(&b.location.row()))
     });
+    rows
+}
+
+/// Monitor snapshots only contribute sessions without an authoritative pane-backed source.
+fn monitor_agent_rows(
+    state: &State,
+    attachments: &[&crate::state::Attachment],
+) -> Vec<(GlobalAgentRow, Seat)> {
+    let local = state.local_agent_snapshot.iter().map(|snapshot| {
+        (
+            None,
+            snapshot.agents.as_slice(),
+            snapshot.projects.as_slice(),
+        )
+    });
+    let remote = state.remote.agents.iter().map(|(target, agents)| {
+        let projects = state
+            .remote
+            .projects
+            .get(target)
+            .map_or(&[][..], Vec::as_slice);
+        (Some(target), agents.as_slice(), projects)
+    });
+    local
+        .chain(remote)
+        .flat_map(|(target, agents, projects)| {
+            agents
+                .iter()
+                .enumerate()
+                .filter(move |(_, agent)| {
+                    !attachments.iter().any(|attachment| {
+                        attachment.remote_target.as_ref() == target
+                            && attachment.session_name.as_deref() == Some(agent.session.as_str())
+                    })
+                })
+                .map(move |(index, agent)| {
+                    (
+                        summary_row(state, agent, target, projects),
+                        (agent.pane(), index),
+                    )
+                })
+        })
+        .collect()
+}
+
+fn live_attachment_rows(
+    state: &State,
+    attachment: &crate::state::Attachment,
+) -> Vec<(GlobalAgentRow, Seat)> {
+    let Some(session) = attachment.session_name.as_deref() else {
+        return Vec::new();
+    };
+    let host = attachment
+        .remote_target
+        .as_ref()
+        .map(|target| state.remote_target_label(target));
+    let mut rows = Vec::new();
+    for row in crate::view::sidebar::agents::attachment_agent_rows(state, attachment) {
+        let Some(identity) = row.identity.clone() else {
+            continue;
+        };
+        let (project, branch) = row_project(&row);
+        let elapsed = crate::view::sidebar::agents::elapsed(
+            row.status.as_deref().unwrap_or(pane_status::IDLE),
+            row.finished_unseen,
+            row.age,
+            row.run,
+        )
+        .map(|(elapsed, _)| elapsed);
+        let seat = (row.pane_id, row.order);
+        let global = GlobalAgentRow {
+            location: if std::ptr::eq(attachment, state.current()) {
+                AgentLocation::Here {
+                    pane: row.pane_id,
+                    row: row.slot.as_ref().map(|slot| slot.key.clone()),
+                }
+            } else {
+                AgentLocation::OtherSession {
+                    target: attachment.remote_target.clone(),
+                    session: session.to_string(),
+                    pane: row.pane_id,
+                    row: row.slot.as_ref().map(|slot| slot.key.clone()),
+                }
+            },
+            task: row
+                .task
+                .as_deref()
+                .and_then(|task| crate::view::sidebar::agents::task_title(task, &identity.label)),
+            agent: identity.label,
+            host: host.clone(),
+            session: session.to_string(),
+            status: row.status.unwrap_or_default(),
+            reason: row.reason,
+            finished_unseen: row.finished_unseen,
+            elapsed,
+            project,
+            branch,
+            ordinal: None,
+        };
+        rows.push((global, seat));
+    }
     rows
 }
 
@@ -370,6 +405,185 @@ mod tests {
                 .insert(RemoteTarget::Alias((*alias).into()), agents.clone());
         }
         state
+    }
+
+    #[test]
+    fn connected_background_panes_replace_monitor_copies_and_disconnected_ones_do_not() {
+        use crate::session::protocol::{DetectedAgent, DetectedAgentState, ProjectSummary};
+        use crate::state::{Attachment, ConnectionState, Pane};
+        for target in [None, Some(RemoteTarget::Alias("workbox".into()))] {
+            let mut state = state_with_hosts(&[("other", vec![summary("dev", 2, "working")])]);
+            let mut attachment = Attachment::new();
+            attachment.session_name = Some("dev".into());
+            attachment.remote_target = target.clone();
+            attachment.connection = ConnectionState::Connected;
+            let mut pane = Pane::new(1, 100, Default::default());
+            pane.terminal.cwd = Some("/srv/live".into());
+            pane.terminal.project_root = Some("/srv/live".into());
+            pane.terminal.git_branch = Some("main".into());
+            pane.terminal.detected_agent = Some(DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+                state: DetectedAgentState::Blocked,
+            });
+            attachment.workspaces[0].panes.push(pane);
+            state.background.insert(7, attachment);
+            let projects = vec![ProjectSummary {
+                session: "dev".into(),
+                root: "/srv/stale".into(),
+                repository: None,
+                branch: Some("old".into()),
+                panes: vec![1],
+                rows: Vec::new(),
+            }];
+            match &target {
+                Some(target) => {
+                    state
+                        .remote
+                        .agents
+                        .insert(target.clone(), vec![summary("dev", 1, "error")]);
+                    state.remote.projects.insert(target.clone(), projects);
+                }
+                None => {
+                    state.local_agent_snapshot =
+                        Some(crate::session::discovery::LocalAgentSnapshot {
+                            sessions: Vec::new(),
+                            agents: vec![summary("dev", 1, "error")],
+                            projects,
+                        })
+                }
+            }
+            let location = AgentLocation::OtherSession {
+                target: target.clone(),
+                session: "dev".into(),
+                pane: 1,
+                row: None,
+            };
+            let rows = global_agent_rows(&state);
+            assert_eq!(
+                rows.len(),
+                2,
+                "a same-named session on another host remains visible"
+            );
+            let row = rows.iter().find(|row| row.location == location).unwrap();
+            assert_eq!(
+                row.status, "blocked",
+                "live panes outrank their monitor copy"
+            );
+            assert_eq!(row.project.as_deref(), Some("live"));
+            let key = target
+                .as_ref()
+                .map_or_else(|| "local".into(), RemoteTarget::to_spec);
+            let sections = state.project_sections();
+            let section = sections.iter().find(|section| section.key == key).unwrap();
+            assert_eq!(
+                section
+                    .rows
+                    .iter()
+                    .map(|row| row.content.label.as_str())
+                    .collect::<Vec<_>>(),
+                ["live", "main", "dev"]
+            );
+            assert_eq!(
+                section.rows[2].target,
+                crate::state::RowTarget::Agent(location.clone())
+            );
+            assert_eq!(
+                section.rows[2].content.tone,
+                crate::state::SidebarTone::Blocked
+            );
+
+            state.background.get_mut(&7).unwrap().connection = ConnectionState::Disconnected;
+            let rows = global_agent_rows(&state);
+            let row = rows.iter().find(|row| row.location == location).unwrap();
+            assert_eq!(
+                row.status, "error",
+                "disconnected panes must not mask a newer monitor snapshot"
+            );
+            assert_eq!(row.project.as_deref(), Some("stale"));
+            let sections = state.project_sections();
+            let section = sections.iter().find(|section| section.key == key).unwrap();
+            assert_eq!(section.rows[0].content.label, "stale");
+            match &target {
+                Some(target) => {
+                    state.remote.agents.remove(target);
+                    state.remote.projects.remove(target);
+                }
+                None => state.local_agent_snapshot = None,
+            }
+            assert_eq!(
+                global_agent_rows(&state).len(),
+                1,
+                "a disconnected attachment is not a live fallback"
+            );
+            assert!(
+                state
+                    .project_sections()
+                    .iter()
+                    .all(|section| section.key != key)
+            );
+        }
+    }
+
+    #[test]
+    fn parked_published_agents_keep_their_checkout_task_and_activation_target() {
+        use crate::state::{Attachment, ConnectionState, Pane};
+        let mut state = state_with_hosts(&[]);
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut attachment = Attachment::new();
+        attachment.session_name = Some("backend".into());
+        attachment.remote_target = Some(target.clone());
+        attachment.connection = ConnectionState::Connected;
+        let mut pane = Pane::new(3, 100, Default::default());
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: crate::session::protocol::DetectedAgentState::Idle,
+        });
+        pane.terminal.cwd = Some("/srv/api".into());
+        pane.terminal.project_root = Some("/srv/api".into());
+        pane.terminal.git_branch = Some("main".into());
+        let published: crate::session::protocol::PublishedRow = serde_json::from_str(
+            r#"{
+            "publisher":"worker","id":"fix","kind":"agent","title":"Fix reconnect",
+            "status":"blocked","reason":"Permission required","cwd":"/srv/api-fix",
+            "project":{"root":"/srv/api-fix","repository":"/srv/api","branch":"fix"}
+        }"#,
+        )
+        .unwrap();
+        let key = published.key();
+        pane.terminal.published_rows.push(published);
+        attachment.workspaces[0].panes.push(pane);
+        state.background.insert(7, attachment);
+        let rows = global_agent_rows(&state);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].task.as_deref(), Some("Fix reconnect"));
+        assert_eq!(rows[0].branch.as_deref(), Some("fix"));
+        assert_eq!(rows[0].project.as_deref(), Some("api"));
+        assert_eq!(rows[0].reason.as_deref(), Some("Permission required"));
+        assert_eq!(
+            rows[0].location,
+            AgentLocation::OtherSession {
+                target: Some(target.clone()),
+                session: "backend".into(),
+                pane: 3,
+                row: Some(key),
+            }
+        );
+        let sections = state.project_sections();
+        let checkout = sections[0]
+            .rows
+            .iter()
+            .find(|row| row.content.label == "fix")
+            .unwrap();
+        assert_eq!(checkout.content.tone, crate::state::SidebarTone::Blocked);
+        let session = sections[0]
+            .rows
+            .iter()
+            .find(|row| row.parent.as_deref() == Some("checkout:/srv/api-fix"))
+            .unwrap();
+        assert_eq!(
+            session.target,
+            crate::state::RowTarget::Agent(rows[0].location.clone())
+        );
     }
 
     /// The whole point of the view: the thing that wants an answer is the thing under the cursor

@@ -12,9 +12,31 @@ rozi serves the same request and response documents on two transports:
 - A named session server serves the same requests on its session endpoint, each wrapped in one
   length-prefixed session-protocol frame. See [Session transport](#session-transport).
 
-The complete request vocabulary, including the agent requests (`agents-list`, `agent-get`,
+The complete request vocabulary, including `context` and the agent requests (`agents-list`, `agent-get`,
 `agent-read`, `agent-wait`, `agent-prompt`, `agent-report`, and `agent-release`) that this page
 does not spell out, is described by the [JSON Schema](control.md#json-schema).
+
+## Caller identity and prompt results
+
+`{"cmd":"context","source_session":"<instance>","source_pane":3}` on a session returns a
+`CallerContext`. The instance must match the answering server. A live pane yields its fenced
+reference and selected agent; a missing or exited pane yields `status: "stale-pane"`.
+On a UI, `context` returns attachment metadata, `displayed_session` and `held_sessions`, as session
+instance ids. The CLI combines these with the verified caller identity for
+[`rozi context`](control.md#verify-caller-context).
+
+`caller_context` optionally fences a request to a verified `PaneRef`. For UI requests, `source_pane` and
+`source_session` must match. The UI refuses it if that session is no longer displayed or the
+calling pane generation has changed. Direct and forwarded session requests also check the pane
+generation. The CLI uses this for `--here` mutations through the caller's UI; it does not retry a
+submitted mutation through another route.
+
+`agent-prompt` accepts `wait: "turn"` and optional `capture: "text"` or `"ansi"`. `turn` is a
+post-prompt wait that resolves on `blocked`, `idle`, `done`, or `error`, after departure from the
+initial state. `agent-wait` does not accept `turn`. Capture requires a wait other than
+`gone`. The `AgentWaitResult` names the exact prompted agent in `ref`, with its runtime in `agent`.
+When requested, `result` is `{"kind":"terminal","capture":<PaneCapture>}`, taken when the wait
+resolves. It describes the visible terminal, not a conversational message.
 
 ## Transport
 
@@ -634,12 +656,12 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":32,"min_protocol_version":32,
+{"type":"session-control","session":"dev","protocol_version":35,"min_protocol_version":35,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":24,
+{"type":"session-control-result","effective_protocol":35,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
@@ -666,7 +688,7 @@ gains no authority an attached client would not have.
 ### Supported requests
 
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
-`pane-swap`, `pane-close`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
+`pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
 and `record-mark`. It refuses every other `cmd` with

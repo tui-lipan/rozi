@@ -3,6 +3,9 @@
 //! The help text is data ([`HELP_SECTIONS`]) rendered by [`help_text`], so the same rows can be
 //! measured by a test, styled for a terminal, or printed plain into a pipe.
 
+pub(in crate::cli) const AGENT_ENDPOINT_HELP: &str =
+    "Waits and prompts work through a UI, --session <NAME>, or --here.";
+
 use crate::platform::ansi::{Role, RoleColors};
 use crate::platform::paths::{self, PlatformEnv};
 
@@ -265,6 +268,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
+            row(
+                "context [--format text|json]",
+                "Verify the calling session and pane",
+            ),
             row("status [--target <ID>] <VALUE> [--reason <TEXT>]", ""),
             row(
                 "status --clear [--target <ID>]",
@@ -328,7 +335,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         heading: "AGENTS",
         advanced_only: false,
-        note: "Waits and prompts need --session <NAME>; they run in the session server.",
+        note: AGENT_ENDPOINT_HELP,
         rows: &[
             row(
                 "agents list [--format text|json]",
@@ -386,6 +393,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "-V, --version",
                 "Print version, extension API, and protocol range",
             ),
+            row("    --here", "Target the calling pane's verified session"),
             row(
                 "    --session <NAME>",
                 "Session target, same as a positional TARGET",
@@ -577,6 +585,61 @@ mod tests {
         SESSIONS_HELP_SECTIONS, WORKTREES_HELP_SECTIONS, parse_cli_args,
     };
     use crate::cli::skill::SKILL_HELP_SECTIONS;
+
+    #[test]
+    fn root_and_agent_help_share_endpoint_support() {
+        let root = HELP_SECTIONS
+            .iter()
+            .find(|section| section.heading == "AGENTS")
+            .unwrap();
+        assert_eq!(root.note, AGENT_ENDPOINT_HELP);
+        assert!(
+            AGENTS_HELP_SECTIONS
+                .iter()
+                .any(|section| section.note == root.note)
+        );
+        for args in [
+            vec![
+                "agents",
+                "wait",
+                "--target",
+                "3",
+                "--until",
+                "idle",
+                "--timeout",
+                "1s",
+            ],
+            vec![
+                "agents",
+                "prompt",
+                "--target",
+                "3",
+                "--wait",
+                "turn",
+                "--timeout",
+                "1s",
+                "hello",
+            ],
+        ] {
+            for prefix in [vec![], vec!["--session", "dev"], vec!["--here"]] {
+                let parsed = parse_cli_args(
+                    prefix
+                        .into_iter()
+                        .chain(args.clone())
+                        .map(str::to_string)
+                        .collect(),
+                )
+                .unwrap();
+                let ParsedCli::Control(control) = parsed else {
+                    panic!("expected control")
+                };
+                assert!(
+                    crate::session::server::session_control_unsupported(&control.request.command)
+                        .is_none()
+                );
+            }
+        }
+    }
 
     #[test]
     fn cli_help_fits_an_eighty_column_terminal() {

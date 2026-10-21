@@ -775,6 +775,16 @@ impl State {
         &self.attachment
     }
 
+    /// Pane-backed sources for global navigation: the foreground session and connected parked
+    /// sessions. Disconnected background panes may be stale, so their host snapshots take over.
+    pub(crate) fn navigation_attachments(&self) -> impl Iterator<Item = &Attachment> {
+        std::iter::once(self.current()).chain(
+            self.background
+                .values()
+                .filter(|attachment| attachment.connection == ConnectionState::Connected),
+        )
+    }
+
     /// Whether this client is currently attending `pane_id` in its active attachment.
     pub fn is_pane_attended(&self, pane_id: PaneId) -> bool {
         self.window_focused && self.focused_pane() == Some(pane_id)

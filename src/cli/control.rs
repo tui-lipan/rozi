@@ -16,7 +16,7 @@ use super::output::{OutputStyles, format_control_text};
 use crate::control;
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 
-fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, String> {
+pub(super) fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, String> {
     if let Some(path) = explicit {
         return Ok(path);
     }
@@ -414,10 +414,10 @@ fn ask_session_endpoint(
 ///
 /// Unlike [`ask_session_endpoint`] the request keeps `source_session`: the server refuses it unless
 /// it is that instance, which closes the gap between finding the server and asking it. The pane id
-/// already travels as the explicit target, so `source_pane` is dropped as it is there.
+/// travels as an explicit target for commands that accept one. `context` keeps it for verification.
 fn ask_own_session_endpoint(
     instance: &crate::session::protocol::SessionInstanceId,
-    mut request: control::ControlRequest,
+    request: control::ControlRequest,
 ) -> Result<serde_json::Value> {
     use crate::session::discovery::InstanceLookup;
 
@@ -441,9 +441,16 @@ fn ask_own_session_endpoint(
             std::process::exit(2);
         }
     };
-    request.source_pane = None;
+    let explain_authority = request.caller_context.is_some() && request.command.uses_ui_authority();
     match crate::session::headless::run_session_control(&session, request) {
-        Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
+        Ok(response) => {
+            let response = if explain_authority {
+                super::context::explain_missing_ui_authority(response)
+            } else {
+                response
+            };
+            Ok(serde_json::to_value(response).unwrap_or_default())
+        }
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(2);
@@ -613,6 +620,28 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         resolve_split_cwd(&mut request.command)?;
     }
     let value = match endpoint {
+        ControlEndpoint::CallerContext => serde_json::to_value(control::ControlResponse::ok(
+            super::context::caller_context(&request)?,
+        ))
+        .expect("context serializes"),
+        ControlEndpoint::Here => {
+            let context = super::context::verified_caller_context(&request)?;
+            if !context.inside_rozi {
+                eprintln!(
+                    "--here requires a verified caller pane (context: {})",
+                    context.status
+                );
+                std::process::exit(2);
+            }
+            let caller = context.pane.expect("verified pane");
+            super::context::pin_here_target(&mut request.command, caller.pane_id);
+            request.caller_context = Some(Box::new(caller.clone()));
+            if let Some(socket) = super::context::authority_ui(&request, &caller) {
+                ask_ui_endpoint(Some(socket), &request)?
+            } else {
+                ask_own_session_endpoint(&caller.session_instance, request)?
+            }
+        }
         ControlEndpoint::Ui(socket) => ask_ui_endpoint(socket, &request)?,
         ControlEndpoint::Session(session) => ask_session_endpoint(&session, request)?,
         ControlEndpoint::Remote { target, session } => {
@@ -657,7 +686,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     Ok(())
 }
 
-fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<String> {
+pub(super) fn read_socket_line(reader: &mut impl BufRead) -> std::io::Result<String> {
     match crate::control::read_control_reply_line(reader)? {
         Some(line) => Ok(line),
         None => Err(std::io::Error::new(

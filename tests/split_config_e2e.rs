@@ -70,6 +70,7 @@ fn split_uses_explicit_config_before_cwd_fallback_and_preserves_cwd_override() {
                 source_pane: None,
                 source_session: None,
                 extension: None,
+                caller_context: None,
                 credential: None,
             },
         )

@@ -5401,14 +5401,19 @@ fn an_attach_that_exits_cleanly_does_not_leave_a_launch_behind() {
 /// An attach command that cannot be spawned falls back to the shell the same way.
 #[test]
 fn an_attach_that_cannot_start_does_not_leave_a_launch_behind() {
-    let server = pane_after_refused_resume(vec!["/nonexistent/rozi-test/claude".into()]);
+    let mut server = pane_after_refused_resume(vec!["/nonexistent/rozi-test/claude".into()]);
 
-    let pane = server.panes.get(&1).expect("pane still exists");
+    let pane = server.panes.get_mut(&1).expect("pane still exists");
     assert!(
         pane.command_completed,
         "no shell followed the failed attach"
     );
     assert_eq!(pane.launch, None);
+    let text = pane.screen_without_change().snapshot();
+    assert!(
+        text.contains("Claude Code attach failed"),
+        "the failed attach was not named; screen was:\n{text}"
+    );
 }
 
 /// A command that merely exits keeps its launch intent: a pane created to run something restores

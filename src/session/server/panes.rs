@@ -712,7 +712,25 @@ impl SessionServer {
                 let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
             })
         };
-        let attached = attach.as_ref().and_then(|launch| start(Some(launch)).ok());
+        let attached = match attach.as_ref().map(|launch| start(Some(launch))) {
+            Some(Ok(pty)) => Some(pty),
+            Some(Err(error)) => {
+                // The banner above promised an attach, so the shell that replaces it has to say
+                // why that did not happen.
+                let label = resume
+                    .as_ref()
+                    .map_or("agent", |resume| resume.label.as_str());
+                let notice = format!("\x1b[2m[rozi] {label} attach failed · {error}\x1b[0m\r\n");
+                bytes.extend_from_slice(notice.as_bytes());
+                let pane = self.pane_mut(owner, id)?;
+                pane.screen_mut().process_bytes(notice.as_bytes());
+                if let Some(log) = pane.log.as_mut() {
+                    let _ = log.write(notice.as_bytes());
+                }
+                None
+            }
+            None => None,
+        };
         let attaching = attached.is_some();
         let spawned = match attached {
             Some(pty) => Ok(pty),

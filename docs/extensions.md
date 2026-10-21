@@ -51,14 +51,16 @@ public GitHub repositories that carry the `rozi-extension` topic.
 Discover reads an index of those repositories, published at
 [`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index). The index
 records each repository's metadata at an exact default-branch commit. It is not a package registry:
-it hosts no packages, resolves no dependencies, and makes no claim that an entry is audited,
-reviewed, safe, or endorsed. Installing from Discover clones the repository at the indexed commit;
+it hosts no packages and resolves no dependencies. rozi marks its author's Claude Code sessions,
+Codex threads, Terminal browser, and Vim and Neovim navigator extensions as **trusted**. Their
+reports show "Trusted · Maintained by the rozi author". Other entries show "Not audited; inspect
+source before installing". Installing from Discover clones the repository at the indexed commit;
 from then on it is an ordinary Git installation that updates from its remote.
 
 To install from Discover:
 
 1. Press `Enter` on a row to open its installation report. The report names the repository and
-   commit, and shows compatibility, contribution counts, and the trust warning.
+   commit, and shows compatibility, contribution counts, and trust status.
 2. Optionally press `Ctrl+L` to open the repository in your browser at that exact commit. This is
    the source `rozi` installs, even if the default branch has moved since the index was built.
 3. Press `Enter` again to install that commit.

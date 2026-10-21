@@ -1468,6 +1468,9 @@ pub(crate) fn catalog_description(
     if installed {
         parts.push("installed".to_string());
     }
+    if entry.is_trusted() {
+        parts.push("trusted".to_string());
+    }
     parts.extend([entry.version.clone(), entry.repository.clone()]);
     if let Some(reason) = entry.incompatibility() {
         parts.push(reason);
@@ -1554,8 +1557,17 @@ pub(crate) fn catalog_report_sections(
             rows: vec![
                 row(
                     "Review",
-                    "Not audited; inspect source before installing".to_string(),
-                    ReportTone::Warning,
+                    if entry.is_trusted() {
+                        "Trusted · Maintained by the rozi author"
+                    } else {
+                        "Not audited; inspect source before installing"
+                    }
+                    .to_string(),
+                    if entry.is_trusted() {
+                        ReportTone::Success
+                    } else {
+                        ReportTone::Warning
+                    },
                 ),
                 row(
                     "Setup",
@@ -1749,41 +1761,94 @@ fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{catalog_source_url, installation_kind_label, version_label};
+    use super::{
+        catalog_description, catalog_report_sections, catalog_source_url, installation_kind_label,
+        version_label,
+    };
+    use crate::config::ReportTone;
     use crate::extension_installation::InstallKind;
     use crate::state::ExtensionUpdateCheck;
 
+    fn catalog_entry() -> crate::extension_catalog::CatalogEntry {
+        serde_json::from_value(serde_json::json!({
+            "repository": "tui-lipan/vim-rozi-navigator",
+            "source": "https://github.com/tui-lipan/vim-rozi-navigator.git",
+            "commit": "5b5c8b9323e260a7c10a63d792274ca155d51e26",
+            "manifest_path": "extension.toml",
+            "id": "vim-rozi-navigator",
+            "title": "Vim and Neovim navigator",
+            "description": "Split-aware navigation",
+            "version": "0.2.1",
+            "api": 1,
+            "min_rozi": null,
+            "platforms": [],
+            "homepage": null,
+            "stars": 0,
+            "updated_at": "2026-09-21T00:00:00Z",
+            "commands": 0,
+            "services": 0,
+            "agents": 0,
+            "sidebar_tabs": 0,
+            "navigation_targets": 0,
+            "suggested_keybindings": 0
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn catalog_source_links_the_indexed_commit() {
-        let entry: crate::extension_catalog::CatalogEntry =
-            serde_json::from_value(serde_json::json!({
-                "repository": "tui-lipan/vim-rozi-navigator",
-                "source": "https://github.com/tui-lipan/vim-rozi-navigator.git",
-                "commit": "5b5c8b9323e260a7c10a63d792274ca155d51e26",
-                "manifest_path": "extension.toml",
-                "id": "vim-rozi-navigator",
-                "title": "Vim and Neovim navigator",
-                "description": "Split-aware navigation",
-                "version": "0.2.1",
-                "api": 1,
-                "min_rozi": null,
-                "platforms": [],
-                "homepage": null,
-                "stars": 0,
-                "updated_at": "2026-09-21T00:00:00Z",
-                "commands": 0,
-                "services": 0,
-                "agents": 0,
-                "sidebar_tabs": 0,
-                "navigation_targets": 0,
-                "suggested_keybindings": 0
-            }))
-            .unwrap();
+        let entry = catalog_entry();
         assert_eq!(
             catalog_source_url(&entry),
             "https://github.com/tui-lipan/vim-rozi-navigator/tree/\
              5b5c8b9323e260a7c10a63d792274ca155d51e26"
         );
+    }
+
+    #[test]
+    fn catalog_trust_identifies_only_the_authors_four_repositories() {
+        let mut entry = catalog_entry();
+        for repository in [
+            "tui-lipan/claude-rozi-sessions",
+            "tui-lipan/codex-rozi-sessions",
+            "tui-lipan/rozi-terminal-browser",
+            "tui-lipan/vim-rozi-navigator",
+        ] {
+            entry.repository = repository.into();
+            for installed in [false, true] {
+                let sections = catalog_report_sections(&entry, installed, None);
+                let review = sections
+                    .iter()
+                    .flat_map(|section| &section.rows)
+                    .find(|row| row.label == "Review")
+                    .unwrap();
+                assert_eq!(review.value, "Trusted · Maintained by the rozi author");
+                assert_eq!(review.tone, ReportTone::Success);
+                assert!(catalog_description(&entry, installed).contains("trusted"));
+            }
+        }
+        // A copied ID/title, a similar owner, or another repository in the organization
+        // does not receive the author's endorsement.
+        for repository in [
+            "someone/vim-rozi-navigator",
+            "tui-lipan-lookalike/vim-rozi-navigator",
+            "tui-lipan/vim-rozi-navigator-copy",
+            "tui-lipan/another-extension",
+        ] {
+            entry.repository = repository.into();
+            let sections = catalog_report_sections(&entry, false, None);
+            let review = sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .find(|row| row.label == "Review")
+                .unwrap();
+            assert_eq!(
+                review.value,
+                "Not audited; inspect source before installing"
+            );
+            assert_eq!(review.tone, ReportTone::Warning);
+            assert!(!catalog_description(&entry, false).contains("trusted"));
+        }
     }
 
     #[test]

@@ -47,6 +47,17 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
+    /// Trust is assigned by rozi to its author's extensions, never by extension metadata.
+    pub(crate) fn is_trusted(&self) -> bool {
+        matches!(
+            self.repository.as_str(),
+            "tui-lipan/claude-rozi-sessions"
+                | "tui-lipan/codex-rozi-sessions"
+                | "tui-lipan/rozi-terminal-browser"
+                | "tui-lipan/vim-rozi-navigator"
+        )
+    }
+
     /// The `owner/name` GitHub repository, which identifies an entry across index refreshes.
     pub fn repository(&self) -> &str {
         &self.repository

@@ -720,6 +720,7 @@ fn extensions_manager_browses_catalog_entries_without_hiding_installed_managemen
                 selected_catalog.contains("tui-lipan/vim-rozi-navigator"),
                 "{selected_catalog}"
             );
+            assert!(selected_catalog.contains("trusted"), "{selected_catalog}");
             backend
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("open catalog detail");
@@ -728,7 +729,11 @@ fn extensions_manager_browses_catalog_entries_without_hiding_installed_managemen
                 detail.contains("Install extension · Vim and Neovim navigator"),
                 "{detail}"
             );
-            assert!(detail.contains("Not audited"), "{detail}");
+            assert!(
+                detail.contains("Trusted · Maintained by the rozi author"),
+                "{detail}"
+            );
+            assert!(!detail.contains("Not audited"), "{detail}");
             assert!(detail.contains("External tools may require"), "{detail}");
             assert!(detail.contains("install Enter"), "{detail}");
 

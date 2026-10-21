@@ -161,6 +161,115 @@ pub fn snapshot(root: &Path) -> Result<Bundle, String> {
     Bundle::from_files(files)
 }
 
+/// Hex SHA-256 of what a client-run process of the extension at `root` is started from, or `None`
+/// when that cannot be read in full.
+///
+/// It covers each file's path, executable bit, and contents, each symbolic link's target, and, on
+/// Unix, the identity of the directory itself. A managed update replaces the whole checkout, so a
+/// service started inside the old one must move even when no file differs.
+///
+/// Unlike [`snapshot`], this never rejects an extension: nothing is carried anywhere, so a link
+/// out of the directory or a large tree only means the files are not tracked. The skipped names
+/// match [`snapshot`], so an interpreter's cache beside the code never moves the digest, and the
+/// manifest is left out.
+pub fn code_digest(root: &Path) -> Option<String> {
+    let mut paths = Vec::new();
+    collect_paths(root, root, &mut paths)?;
+    paths.sort();
+    let mut hasher = Sha256::new();
+    hash_directory_identity(&mut hasher, root)?;
+    let mut size = 0u64;
+    for (relative, path) in paths {
+        hasher.update((relative.len() as u64).to_le_bytes());
+        hasher.update(relative.as_bytes());
+        let is_link = std::fs::symlink_metadata(&path)
+            .ok()?
+            .file_type()
+            .is_symlink();
+        if is_link {
+            // The target itself, so retargeting a link to a directory is seen without walking it.
+            let target = std::fs::read_link(&path).ok()?;
+            let target = target.to_string_lossy();
+            hasher.update([1u8]);
+            hasher.update((target.len() as u64).to_le_bytes());
+            hasher.update(target.as_bytes());
+        }
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            // A link to a directory, or a dangling one, is tracked by its target alone.
+            _ if is_link => continue,
+            _ => return None,
+        };
+        // Checked before reading, so one huge file is refused rather than loaded to be counted.
+        if size.saturating_add(metadata.len()) > MAX_BUNDLE_BYTES {
+            return None;
+        }
+        let contents = std::fs::read(&path).ok()?;
+        size = size.saturating_add(contents.len() as u64);
+        if size > MAX_BUNDLE_BYTES {
+            return None;
+        }
+        hasher.update([u8::from(is_executable(&metadata, &contents))]);
+        hasher.update((contents.len() as u64).to_le_bytes());
+        hasher.update(&contents);
+    }
+    Some(
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+#[cfg(unix)]
+fn hash_directory_identity(hasher: &mut Sha256, root: &Path) -> Option<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(root).ok()?;
+    hasher.update(metadata.dev().to_le_bytes());
+    hasher.update(metadata.ino().to_le_bytes());
+    Some(())
+}
+
+#[cfg(not(unix))]
+fn hash_directory_identity(_hasher: &mut Sha256, _root: &Path) -> Option<()> {
+    Some(())
+}
+
+fn collect_paths(root: &Path, directory: &Path, paths: &mut Vec<(String, PathBuf)>) -> Option<()> {
+    for entry in std::fs::read_dir(directory).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let name = name.to_str()?;
+        let path = entry.path();
+        // A link to a directory is an entry, not a directory to descend into, which also keeps a
+        // link cycle from looping.
+        if entry.file_type().ok()?.is_dir() {
+            if !EXCLUDED_DIRECTORIES.contains(&name) {
+                collect_paths(root, &path, paths)?;
+            }
+            continue;
+        }
+        if EXCLUDED_SUFFIXES
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        {
+            continue;
+        }
+        let relative = path.strip_prefix(root).ok()?.to_str()?.replace('\\', "/");
+        // The manifest's process-facing fields are fingerprinted already; its title, description,
+        // and version are presentation and must not restart a service. It is not counted either,
+        // wherever the directory listing happens to put it.
+        if relative != "extension.toml" {
+            if paths.len() >= MAX_BUNDLE_FILES {
+                return None;
+            }
+            paths.push((relative, path));
+        }
+    }
+    Some(())
+}
+
 fn walk(
     root: &Path,
     directory: &Path,
@@ -400,6 +509,87 @@ mod tests {
         let path = root.join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn code_digest_ignores_the_manifest_and_interpreter_caches() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "extension.toml", b"version = \"1\"");
+        write(temp.path(), "bin/watch", b"run");
+        let before = code_digest(temp.path()).unwrap();
+
+        write(temp.path(), "extension.toml", b"version = \"2\"");
+        write(temp.path(), "bin/__pycache__/watch.pyc", b"cache");
+        assert_eq!(code_digest(temp.path()).unwrap(), before);
+
+        write(temp.path(), "bin/watch", b"run again");
+        assert_ne!(code_digest(temp.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn code_digest_counts_every_file_but_the_manifest_against_the_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "extension.toml", b"");
+        for index in 0..MAX_BUNDLE_FILES {
+            write(temp.path(), &format!("files/{index}"), b"");
+        }
+        assert!(code_digest(temp.path()).is_some());
+        write(temp.path(), "files/one-more", b"");
+        assert_eq!(code_digest(temp.path()), None);
+    }
+
+    #[test]
+    fn code_digest_refuses_an_oversized_file_without_reading_it() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "bin/watch", b"run");
+        // Sparse: it claims more than the limit while taking almost no disk, and reading it would
+        // allocate the whole claimed size.
+        let big = std::fs::File::create(temp.path().join("asset.bin")).unwrap();
+        big.set_len(MAX_BUNDLE_BYTES + 1).unwrap();
+        assert_eq!(code_digest(temp.path()), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_digest_sees_the_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "bin/watch", b"run");
+        let path = temp.path().join("bin/watch");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let before = code_digest(temp.path()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_ne!(code_digest(temp.path()).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_digest_sees_a_directory_link_retargeted() {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), "v1/watch", b"run");
+        write(temp.path(), "v2/watch", b"run");
+        let link = temp.path().join("current");
+        std::os::unix::fs::symlink("v1", &link).unwrap();
+        let before = code_digest(temp.path()).unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("v2", &link).unwrap();
+        assert_ne!(code_digest(temp.path()).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn code_digest_sees_a_replaced_checkout_with_identical_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let extension = temp.path().join("tools");
+        write(&extension, "bin/watch", b"run");
+        let before = code_digest(&extension).unwrap();
+        // How a managed update lands: the new checkout takes the old one's path.
+        let staged = temp.path().join("staged");
+        write(&staged, "bin/watch", b"run");
+        let backup = temp.path().join("backup");
+        std::fs::rename(&extension, &backup).unwrap();
+        std::fs::rename(&staged, &extension).unwrap();
+        assert_ne!(code_digest(&extension).unwrap(), before);
     }
 
     #[test]

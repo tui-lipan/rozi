@@ -234,7 +234,7 @@ pub struct State {
     /// screen instead of the Connecting scene.
     pub connect_hold: Option<ConnectHold>,
     /// Last box the scratchpad's panes tiled inside, in root coordinates. Compared each frame for
-    /// the same reason as [`Self::last_content_viewport`]: the dropdown's box moves while it grows,
+    /// the same reason as [`Self::last_content_viewport`]: the dropdown's box moves while it slides,
     /// and a pane transition chasing it would settle on its own curve instead. `None` while the
     /// dropdown is off screen, so its next appearance counts as a move.
     pub last_scratch_rect: Cell<Option<Rect>>,

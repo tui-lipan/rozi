@@ -15,13 +15,6 @@ use crate::view;
 
 /// Below this much progress the dropdown is treated as fully retracted and not rendered.
 const SCRATCH_ANIM_EPSILON: f32 = 0.01;
-/// Rows the dropdown starts its growth at: two for the pane frame it contains and one for that pane
-/// to have any content. Below this the tiling inset leaves the pane short of the dropdown's own
-/// bottom row, so what shows is a stray line with the workspace still visible beneath it - a glitch
-/// rather than an edge emerging. Growing *from* this rather than skipping it means the dropdown
-/// answers the keystroke on the first frame instead of staying blank for the front half of the
-/// animation and then appearing at three rows.
-const SCRATCH_MIN_DEPLOY_ROWS: f32 = 3.0;
 
 /// Bottom-anchored dropdown rect when fully deployed: full tile width, `height_fraction` of
 /// the tile height, flush with the bottom tile edge. The pane slides up from below to reach it.
@@ -37,22 +30,9 @@ pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32, top_gap: f32
     }
 }
 
-/// The dropdown's rect part-way through its deploy: the deployed box with its height scaled by
-/// `progress` and its **bottom edge pinned** to the bottom of the tile area.
-///
-/// The dropdown opens by *growing* out of the screen edge rather than sliding up as a rigid block,
-/// which is what keeps its bottom border in place for the whole animation. Translating it instead
-/// carried that border off-screen until the very last frame, so the dropdown arrived as a top edge
-/// with nothing under it and then snapped its floor into place.
-///
-/// Growing means the panes inside are genuinely resized as it opens, like the tile beside a
-/// spawning pane. That is affordable here in a way it would not be horizontally: only the row count
-/// changes, and terminal reflow is a function of columns, so the shells take a `SIGWINCH` each but
-/// nothing re-wraps.
-///
-/// Callers must snap their pane transitions while this is in flight - a transition chasing an
-/// animating target settles on its own, longer curve instead of this one, which is what made the
-/// dropdown crawl on the way in and get unmounted mid-motion on the way out.
+/// Translate the fully sized dropdown from below the tile area to its deployed position.
+/// Pane dimensions stay fixed so toggling never resizes the terminal grid.
+/// Callers snap pane transitions to follow this slide's clock directly.
 pub(crate) fn deploying_rect(
     bounds: FloatRect,
     height_fraction: f32,
@@ -60,13 +40,8 @@ pub(crate) fn deploying_rect(
     top_gap: f32,
 ) -> FloatRect {
     let deployed = scratch_rect(bounds, height_fraction, top_gap);
-    let travel = (deployed.h - SCRATCH_MIN_DEPLOY_ROWS).max(0.0);
-    let h = (SCRATCH_MIN_DEPLOY_ROWS + travel * progress.clamp(0.0, 1.0))
-        .round()
-        .min(deployed.h);
     FloatRect {
-        y: deployed.y + deployed.h - h,
-        h,
+        y: deployed.y + (deployed.h * (1.0 - progress.clamp(0.0, 1.0))).round(),
         ..deployed
     }
 }
@@ -498,9 +473,9 @@ pub(crate) fn scratch_panes(
             // Scratch floats are already canvas-absolute; see `WorkspaceLayer::float_origin`.
             float_origin: (0.0, 0.0),
             scratch: true,
-            // Snap on any frame the dropdown's box actually moved, which is what growing it does
-            // every frame: a transition chasing the box would settle on its own, longer curve
-            // instead of this one. Asked as "did it move" rather than "is it still animating"
+            // Snap whenever the dropdown moves during the slide. A transition chasing its box
+            // would settle on its own, longer curve instead of this one. Compare the box rather
+            // than testing whether progress is still animating,
             // because the two disagree on the last frame of the deploy - `round` lands the final
             // row once progress is already within an epsilon of settled, and reading the epsilon
             // instead left that one row to a full geometry transition, so the dropdown hung a line
@@ -587,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn the_dropdown_grows_out_of_the_bottom_edge_it_never_leaves() {
+    fn the_dropdown_slides_at_its_deployed_size() {
         let bounds = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -595,45 +570,20 @@ mod tests {
             h: 40.0,
         };
         let shown = scratch_rect(bounds, 0.4, OUTER_GAP);
-        let floor = shown.y + shown.h;
-
-        // Fully deployed is the settled rect; the growth starts at the floor rather than at
-        // nothing, so the first frame after the keystroke already shows an edge.
-        assert_eq!(deploying_rect(bounds, 0.4, 1.0, OUTER_GAP), shown);
-        assert_eq!(
-            deploying_rect(bounds, 0.4, 0.0, OUTER_GAP).h,
-            SCRATCH_MIN_DEPLOY_ROWS
-        );
-
-        let mut previous = 0.0;
+        let hidden = deploying_rect(bounds, 0.4, 0.0, OUTER_GAP);
+        assert_eq!(hidden.y, shown.y + shown.h);
+        let mut previous = hidden.y;
         for progress in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
             let rect = deploying_rect(bounds, 0.4, progress, OUTER_GAP);
-            // The bottom edge never moves: the dropdown grows up out of it rather than sliding in
-            // from below, so its bottom border holds its row for the whole animation.
-            assert_eq!(rect.y + rect.h, floor);
             assert_eq!(rect.x, shown.x);
             assert_eq!(rect.w, shown.w);
-            assert!(rect.h >= previous, "the dropdown should only ever grow");
-            assert!(rect.h >= SCRATCH_MIN_DEPLOY_ROWS.min(shown.h));
-            assert!(rect.h <= shown.h);
-            previous = rect.h;
+            assert_eq!(rect.h, shown.h);
+            assert!(rect.y <= previous);
+            previous = rect.y;
         }
-
-        // A curve that overshoots must not carry the top edge past its resting row.
+        assert_eq!(deploying_rect(bounds, 0.4, 1.0, OUTER_GAP), shown);
         assert_eq!(deploying_rect(bounds, 0.4, 1.4, OUTER_GAP), shown);
-        assert_eq!(
-            deploying_rect(bounds, 0.4, -0.4, OUTER_GAP).h,
-            SCRATCH_MIN_DEPLOY_ROWS
-        );
-
-        // A dropdown configured shorter than the floor simply has no growth to do.
-        let tiny = deploying_rect(bounds, SCRATCHPAD_MIN_HEIGHT, 0.0, OUTER_GAP);
-        assert_eq!(
-            tiny.h,
-            scratch_rect(bounds, SCRATCHPAD_MIN_HEIGHT, OUTER_GAP)
-                .h
-                .min(tiny.h)
-        );
+        assert_eq!(deploying_rect(bounds, 0.4, -0.4, OUTER_GAP), hidden);
     }
 
     #[test]

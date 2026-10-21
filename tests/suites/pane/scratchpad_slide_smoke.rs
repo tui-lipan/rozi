@@ -1,13 +1,4 @@
-//! Pins the scratchpad's deploy animation.
-//!
-//! The dropdown *grows* out of the bottom edge rather than sliding up as a rigid block, so its
-//! bottom border holds its row for the whole animation and the frame is whole in every frame.
-//! Translating it instead carried that border off the bottom of the screen until the very last
-//! frame, so the dropdown arrived as a top edge with nothing under it and then snapped its floor
-//! into place.
-//!
-//! Growing means the panes inside are resized as it opens. That is affordable here in a way it is
-//! not horizontally: only the row count changes, and terminal reflow is a function of columns.
+//! The scratchpad slides at a fixed size, with its offscreen rows clipped.
 
 use std::time::Duration;
 
@@ -101,71 +92,52 @@ fn deployed(backend: &mut TestBackend<AppRoot>) -> (usize, usize) {
     dropdown_rows(backend).expect("the dropdown should be on screen")
 }
 
-#[test]
-fn the_dropdown_grows_out_of_the_bottom_edge_it_never_leaves() {
-    on_large_stack(|| {
-        let mut backend = backend();
-        assert_eq!(dropdown_rows(&mut backend), None, "hidden to start with");
-
-        set_visible(&mut backend, true);
-        let floor = usize::from(HEIGHT) - 1;
-        let mut tops = Vec::new();
-        for step in IN_FLIGHT {
-            backend.advance(Duration::from_millis(step));
-            let (top, bottom) = deployed(&mut backend);
-            // The whole point: the bottom border holds the last row for the entire animation
-            // instead of arriving with it.
-            assert_eq!(
-                bottom,
-                floor,
-                "the dropdown left its bottom edge behind:\n{}",
-                backend.capture_frame().to_fixed_grid_lines().join("\n")
-            );
-            tops.push(top);
-        }
-        assert!(
-            tops.windows(2).all(|pair| pair[0] > pair[1]),
-            "the top edge should climb steadily, got {tops:?}"
-        );
-
-        backend.advance(Duration::from_millis(4_000));
-        let (settled_top, settled_bottom) = deployed(&mut backend);
-        assert_eq!(settled_bottom, floor);
-        assert!(settled_top < *tops.last().expect("sampled"));
-    });
+fn pane_rect(backend: &TestBackend<AppRoot>) -> Rect {
+    let pane = &backend.state().scratch.panes[0];
+    backend
+        .rect_of_key(&format!("rozi-pane-{}-{}", pane.id, pane.pty_generation).into())
+        .expect("scratch terminal remains mounted")
 }
 
 #[test]
-fn retracting_hands_the_rows_back_the_same_way() {
+fn the_dropdown_slides_without_resizing_its_terminal() {
     on_large_stack(|| {
         let mut backend = backend();
+        assert_eq!(dropdown_rows(&mut backend), None, "hidden to start with");
         set_visible(&mut backend, true);
         backend.advance(Duration::from_millis(4_000));
-        let (deployed_top, _) = deployed(&mut backend);
-
+        let settled = pane_rect(&backend);
         set_visible(&mut backend, false);
-        let floor = usize::from(HEIGHT) - 1;
+        backend.advance(Duration::from_millis(4_000));
+
+        set_visible(&mut backend, true);
         let mut tops = Vec::new();
         for step in IN_FLIGHT {
             backend.advance(Duration::from_millis(step));
-            let Some((top, bottom)) = dropdown_rows(&mut backend) else {
-                break;
-            };
-            assert_eq!(
-                bottom, floor,
-                "the bottom edge stays put on the way out too"
+            let rect = pane_rect(&backend);
+            assert_eq!((rect.w, rect.h), (settled.w, settled.h));
+            assert!(rect.y > settled.y);
+            tops.push(rect.y);
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            assert!(
+                lines.iter().all(|line| !line.contains('╚')),
+                "the bottom border stays offscreen during entry"
             );
-            tops.push(top);
         }
-        assert!(
-            tops.last().is_some_and(|top| *top > deployed_top),
-            "the dropdown should shrink back into the bottom edge, got {tops:?}"
-        );
-        assert!(
-            tops.windows(2).all(|pair| pair[0] < pair[1]),
-            "the top edge should retreat steadily, got {tops:?}"
-        );
+        assert!(tops.windows(2).all(|pair| pair[0] > pair[1]), "{tops:?}");
+        backend.advance(Duration::from_millis(4_000));
+        assert_eq!(pane_rect(&backend), settled);
 
+        set_visible(&mut backend, false);
+        let mut tops = Vec::new();
+        for step in IN_FLIGHT {
+            backend.advance(Duration::from_millis(step));
+            let rect = pane_rect(&backend);
+            assert_eq!((rect.w, rect.h), (settled.w, settled.h));
+            assert!(rect.y >= settled.y);
+            tops.push(rect.y);
+        }
+        assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "{tops:?}");
         backend.advance(Duration::from_millis(4_000));
         assert_eq!(dropdown_rows(&mut backend), None, "fully retracted");
     });

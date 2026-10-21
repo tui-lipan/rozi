@@ -163,6 +163,37 @@ where
     })
 }
 
+/// Spawn, retrying briefly while the executable reports as busy.
+///
+/// A concurrent fork can inherit a writer to a freshly staged executable until it execs.
+/// Retry only `ExecutableFileBusy`; other failures are returned immediately, and a file that
+/// stays busy beyond the bounded backoff is still reported as a failure.
+pub(crate) fn spawn_retrying_on_busy(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
+    retry_executable_busy(|| command.spawn(), std::thread::sleep)
+}
+
+fn retry_executable_busy<T>(
+    mut spawn: impl FnMut() -> std::io::Result<T>,
+    mut wait: impl FnMut(std::time::Duration),
+) -> std::io::Result<T> {
+    const ATTEMPTS: u32 = 10;
+    let mut attempt = 0;
+    loop {
+        match spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < ATTEMPTS =>
+            {
+                attempt += 1;
+                wait(std::time::Duration::from_millis(10 * u64::from(attempt)));
+            }
+            result => return result,
+        }
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn configure_command_group(command: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
@@ -678,6 +709,60 @@ pub fn resolve_launch_argv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_busy_executable_starts_once_its_writer_closes() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut executable = tempfile::NamedTempFile::new().unwrap();
+        executable.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+        executable
+            .as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let (file, path) = executable.into_parts();
+        let mut writer = Some(file);
+        let mut command = std::process::Command::new(&path);
+        // Keep the write handle open through the first actual exec. Close it only when the
+        // retry waits, reproducing the transient busy window without a timing assertion.
+        let mut child = retry_executable_busy(|| command.spawn(), |_| drop(writer.take())).unwrap();
+        assert!(
+            writer.is_none(),
+            "the initial exec must encounter the held writer"
+        );
+        assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn spawn_failures_other_than_busy_are_not_retried() {
+        let result: std::io::Result<()> = retry_executable_busy(
+            || Err(std::io::ErrorKind::PermissionDenied.into()),
+            |_| panic!("permanent failures must not be retried"),
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn an_executable_that_stays_busy_eventually_fails() {
+        let mut attempts = 0;
+        let result: std::io::Result<()> = retry_executable_busy(
+            || {
+                attempts += 1;
+                assert!(attempts < 100, "busy retries must be bounded");
+                Err(std::io::ErrorKind::ExecutableFileBusy.into())
+            },
+            |_| {},
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::ExecutableFileBusy
+        );
+        assert!(attempts > 1, "a busy executable must be retried");
+    }
 
     fn argv(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

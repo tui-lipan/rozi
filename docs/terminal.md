@@ -157,12 +157,28 @@ When the pane prints new output, an open search runs again so its results stay a
 
 ### Hint mode
 
-The `u` command key starts hint mode. It labels visible URLs, paths with optional line numbers, Git
-commit ids, and your `[[hints]]` patterns, including ones that wrap across lines. Type a lowercase
-label to copy the target, or end the label with an uppercase character to open it when it can be
-opened. URL hints use the same handlers as clicked links. A configured `file` handler enables
-path hints; custom patterns can define `on_open` commands. See
+The `u` command key starts hint mode. It labels visible URLs, links that programs mark explicitly
+(OSC 8 hyperlinks), paths with optional line numbers, Git commit ids, and your `[[hints]]` patterns,
+including ones that wrap across lines. Type a lowercase label to copy the target, or end the label
+with an uppercase character to open it when it can be opened. After each key, labels show only the
+keys left to press. URL hints use the same handlers as clicked links. A configured `file` handler
+enables path hints; custom patterns can define `on_open` commands. See
 [Link handlers](configuration.md#links-handlers).
+
+What counts as a target:
+
+- **Links** copy and open their destination, not their visible text, so `PR #200` linked to a pull
+  request gives the pull request URL.
+- **URLs** end at whitespace, quotes, backticks, and angle brackets. Trailing sentence punctuation
+  and closing brackets are left out.
+- **Paths** start with `./`, `../`, `~/`, `/`, or a drive letter, or are relative paths such as
+  `src/main.rs` whose file name has an extension. A path starting with `/` needs a second `/` or an
+  extension, so `/etc/hosts` is a path and a slash command such as `/status` is not. Neither is a
+  bare `and/or` or `feature/branch`.
+- **Git commit ids** are 7 to 40 hex digits containing both a digit and a letter.
+
+A URL or path containing `…` is skipped: the program shortened it, and what remains is not the real
+target.
 
 ### Copy the last command output
 

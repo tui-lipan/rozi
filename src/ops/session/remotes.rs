@@ -479,6 +479,11 @@ pub(crate) fn apply_host_discovery(
             }
         }
         Err(error) => {
+            // Reconnecting stopped the old monitor. Its snapshots are no longer trustworthy,
+            // just as after a monitor failure; live attachments retain their own work and agents.
+            ctx.state.remote.agents.remove(&target);
+            ctx.state.remote.projects.remove(&target);
+            ctx.state.prune_agent_attention();
             // The row stays, carrying the failure. A host is listed because the user said it is one
             // of their machines; a sleeping laptop, a VPN that is down, or a login typed wrong is
             // not that statement being withdrawn. `Enter` retries, `Ctrl+E` corrects, `Ctrl+K`
@@ -1571,6 +1576,147 @@ mod tests {
                 "SSH login rejected"
             );
         });
+    }
+
+    #[test]
+    fn failed_manual_reconnect_invalidates_snapshots_but_keeps_live_project_work() {
+        for with_live_work in [false, true] {
+            with_backend(move |backend| {
+                use crate::session::protocol::{
+                    AgentRecord, AgentRef, AgentState, AgentSummary, ProjectSummary,
+                };
+                use crate::state::{ConnectionState, FirstSighting, HostProbe, Pane};
+
+                let target = RemoteTarget::Alias("workbox".into());
+                primed_connecting_picker(backend, &target, 4);
+                let stale = AgentSummary {
+                    session: "backend".into(),
+                    reference: AgentRef::for_test(8, 1, None),
+                    agent: "codex".into(),
+                    label: "Codex".into(),
+                    state: AgentState::Idle,
+                    reason: None,
+                    task: None,
+                    completions: 1,
+                    changed_at: 0,
+                };
+                {
+                    let state = backend.state_mut();
+                    state.command_link = None;
+                    state.sidebar.hide_all();
+                    state.current_mut().workspaces[0].panes.clear();
+                    state.current_mut().session_name = None;
+                    state.remote.hosts.get_mut(&target).unwrap().probe = HostProbe::Reached;
+                    state.remote_picker.as_mut().unwrap().host_probe = HostProbe::Reached;
+                    state
+                        .remote
+                        .monitors
+                        .push(crate::session::remote::monitor::Monitor::dormant(
+                            target.clone(),
+                            7,
+                        ));
+                    state.remote.projects.insert(
+                        target.clone(),
+                        vec![ProjectSummary {
+                            session: "backend".into(),
+                            root: "/srv/api".into(),
+                            repository: None,
+                            branch: Some("main".into()),
+                            panes: vec![8],
+                            rows: Vec::new(),
+                        }],
+                    );
+                    state
+                        .remote
+                        .agents
+                        .insert(target.clone(), vec![stale.clone()]);
+                    state
+                        .agent_attention
+                        .observe(&stale.reference, 0, FirstSighting::Baseline);
+                    if with_live_work {
+                        let mut pane = Pane::new(41, 100, Default::default());
+                        pane.terminal.project_root = Some("/srv/live".into());
+                        pane.terminal.git_branch = Some("main".into());
+                        let reference = AgentRef::for_test(41, 1, None);
+                        pane.agents.push(AgentRecord {
+                            reference: reference.clone(),
+                            completions: 1,
+                        });
+                        state
+                            .agent_attention
+                            .observe(&reference, 0, FirstSighting::Baseline);
+                        let current = state.current_mut();
+                        current.session_name = Some("attached".into());
+                        current.remote_target = Some(target.clone());
+                        current.connection = ConnectionState::Connected;
+                        current.workspaces[0].panes.push(pane);
+                    }
+                }
+                assert!(
+                    backend
+                        .state()
+                        .agent_attention
+                        .summary_finished_unseen(&stale)
+                );
+                backend
+                    .update_level(Msg::RemotePickerReconnectHost)
+                    .unwrap();
+                assert!(backend.state().remote.monitors.is_empty());
+                let epoch = backend.state().remote_picker.as_ref().unwrap().probe_epoch;
+                assert_ne!(epoch, 4);
+                // An obsolete result must not invalidate a newer connection attempt's snapshot.
+                backend
+                    .update_level(Msg::RemoteHostSessionsDiscovered {
+                        epoch: 4,
+                        target: target.clone(),
+                        rows: Err("old probe failed".into()),
+                    })
+                    .unwrap();
+                assert!(backend.state().remote.projects.contains_key(&target));
+                assert!(backend.state().remote.agents.contains_key(&target));
+
+                backend
+                    .update_level(Msg::RemoteHostSessionsDiscovered {
+                        epoch,
+                        target: target.clone(),
+                        rows: Err("Connection refused".into()),
+                    })
+                    .unwrap();
+
+                let state = backend.state();
+                assert!(!state.remote.projects.contains_key(&target));
+                assert!(!state.remote.agents.contains_key(&target));
+                assert!(!state.agent_attention.summary_finished_unseen(&stale));
+                assert_eq!(state.agent_attention.tracked(), usize::from(with_live_work));
+                assert!(matches!(
+                    state.remote.hosts.get(&target).unwrap().probe,
+                    HostProbe::Failed(_)
+                ));
+                let sections = state.project_sections();
+                assert_eq!(sections.len(), 1);
+                assert_eq!(sections[0].rows[0].content.label, "WORKBOX");
+                let labels: Vec<_> = sections[0]
+                    .rows
+                    .iter()
+                    .map(|row| row.content.label.as_str())
+                    .collect();
+                let expected = if with_live_work {
+                    vec!["WORKBOX", "live", "main", "attached"]
+                } else {
+                    vec!["WORKBOX"]
+                };
+                assert_eq!(labels, expected);
+                let status = if with_live_work {
+                    "Connected"
+                } else {
+                    "Unreachable"
+                };
+                assert_eq!(
+                    sections[0].rows[0].content.description.as_deref(),
+                    Some(status)
+                );
+            });
+        }
     }
 
     /// A host that is not connected has one way in, `Enter`. `Ctrl+R` is the reconnect for a

@@ -138,7 +138,6 @@ These actions are available in the command palette, and you can bind them under 
 - `extensions`
 - `update-rozi` (listed only when a newer release is known)
 - `open-config`
-- `reload-extensions`
 - `apply-profile`
 - `collaborators`
 - `new-temporary-session`
@@ -155,6 +154,8 @@ These actions are available in the command palette, and you can bind them under 
 - `mark-pane-recording` (listed while the focused pane records)
 - `toggle-ui-recording`
 - `mark-ui-recording` (listed while the UI records)
+
+`reload-extensions` is not in the command palette. Bind it under `[keys]`, or run it with `rozi run-action reload-extensions`.
 
 Appearance actions live in **Settings** and can also be bound by their action ids.
 

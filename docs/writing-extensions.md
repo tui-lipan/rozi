@@ -234,7 +234,7 @@ starts while a UI with the extension is attached, receives that UI's
 disabled or removed. A reload that changes a process-facing
 field or setting, any file in the extension directory other than `extension.toml`, or the
 checkout itself (as `rozi extensions update` replaces it) restarts the service; editing only
-`title`, `description`, or `version` in place leaves it running. Services do not run in a detached session.
+`title`, `description`, or `version` in place leaves it running. An extension of more than 32 MiB or 4096 files is not checked for file changes. Services do not run in a detached session.
 
 Let `rozi` supervise the process rather than daemonizing it or writing your own restart loop. Use a
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or

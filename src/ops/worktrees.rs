@@ -2,6 +2,7 @@
 
 use tui_lipan::prelude::*;
 
+use crate::git::worktrees::BranchOutcome;
 use crate::session::discovery::DiscoveredSession;
 use crate::session::protocol::{WorktreeRequest, WorktreeResult};
 use crate::state::{
@@ -977,6 +978,7 @@ fn start_remove(
             path: tree.path,
             force,
             unlock_stale: stale,
+            delete_branch: ctx.state.config.worktrees.delete_branch,
         },
     );
     Update::full()
@@ -1047,11 +1049,33 @@ pub(crate) fn apply_result(
                     worktree.path,
                 );
             }
-            (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path }) => {
+            (WorktreeOperationKind::Remove { .. }, WorktreeResult::Removed { path, branches }) => {
+                for outcome in &branches {
+                    if let BranchOutcome::Kept { reason, .. } = outcome {
+                        // The branch outlived its checkout, which the list alone does not show.
+                        crate::pane::pty_events::notify_info(
+                            ctx,
+                            format!("Kept {}: {reason}", outcome.subject()),
+                        );
+                    }
+                }
                 if picker_here {
                     return refresh(ctx);
                 }
-                crate::pane::pty_events::notify_info(ctx, format!("Removed worktree {path}"));
+                // The sidebar row disappearing is the feedback; a toast would repeat it.
+                if !sidebar_here {
+                    let deleted: Vec<_> = branches
+                        .iter()
+                        .filter(|outcome| matches!(outcome, BranchOutcome::Deleted { .. }))
+                        .map(BranchOutcome::subject)
+                        .collect();
+                    let message = if deleted.is_empty() {
+                        format!("Removed worktree {path}")
+                    } else {
+                        format!("Removed worktree {path} and {}", deleted.join(" and "))
+                    };
+                    crate::pane::pty_events::notify_info(ctx, message);
+                }
             }
             (WorktreeOperationKind::Unlock { .. }, WorktreeResult::Unlocked { path }) => {
                 if picker_here {

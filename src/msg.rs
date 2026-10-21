@@ -3,8 +3,6 @@ use tui_lipan::prelude::*;
 use crate::input::Action;
 use crate::layout::shared::{ClientId, SharedLayout};
 use crate::state::{PaneId, ResizeCorner};
-#[allow(unused_imports)]
-use crate::{config, platform};
 use crate::{control, session};
 
 #[derive(Clone)]
@@ -29,8 +27,8 @@ pub enum Msg {
     FrameworkFocusEnteredPane(Option<PaneId>),
     /// The controlling terminal or console asked this client to go away (Unix `SIGHUP`/`SIGTERM`,
     /// Windows console close/logoff/shutdown). Delivered from
-    /// [`platform::server_lifecycle::on_hangup`]'s worker thread so the clean detach path runs
-    /// instead of the process dying where it stands.
+    /// [`crate::platform::server_lifecycle::on_hangup`]'s worker thread so the clean detach path
+    /// runs instead of the process dying where it stands.
     Hangup,
     RunAction(Action),
     /// One handoff or completion paint for a node-owned visual fade, never a frame ticker.
@@ -128,9 +126,9 @@ pub enum Msg {
     /// Enter on the field at this index: advance to the next field, or apply from the last.
     SettingsNumberEnter(usize),
     CloseThemePicker,
-    /// Index into [`config::theme_choices`]: preview the highlighted theme.
+    /// Index into [`crate::config::theme_choices`]: preview the highlighted theme.
     PreviewTheme(usize),
-    /// Index into [`config::theme_choices`]: commit the chosen theme.
+    /// Index into [`crate::config::theme_choices`]: commit the chosen theme.
     SelectTheme(usize),
     /// The framework's resolved host palette changed; rebuild app-owned theme and pane palettes.
     HostTerminalColorsChanged,

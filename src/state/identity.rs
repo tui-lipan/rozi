@@ -136,15 +136,7 @@ impl SessionRenameState {
         state
     }
 
-    pub fn new_name_ephemeral() -> Self {
-        Self::new("", NamingMode::NameEphemeralSession)
-    }
-
     pub fn new_rename_workspace(index: usize, initial: impl AsRef<str>) -> Self {
         Self::new(initial, NamingMode::RenameWorkspace { index })
-    }
-
-    pub fn new_rename_session(initial: impl AsRef<str>) -> Self {
-        Self::new(initial, NamingMode::RenameSession)
     }
 }

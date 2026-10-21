@@ -450,11 +450,6 @@ impl StatusRow {
         }
     }
 
-    /// Whether this row will draw anything at all.
-    pub fn is_visible(&self) -> bool {
-        self.color
-    }
-
     /// Erase the row, leaving the cursor where the next line can be written normally.
     pub fn finish(&self) {
         if !self.color || !self.painted.swap(false, Ordering::Relaxed) {

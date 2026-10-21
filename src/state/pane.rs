@@ -493,10 +493,6 @@ impl Pane {
         self.identity.set_custom_title(title);
     }
 
-    pub fn clear_custom_title(&mut self) {
-        self.identity.custom_title = None;
-    }
-
     /// The shell's current working directory if it can be discovered live, else `None`.
     pub fn live_cwd(&self) -> Option<String> {
         self.terminal.working_directory()

@@ -580,11 +580,6 @@ fn run_probe_command(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[allow(dead_code)] // CLI / test helper alongside probe_remote_report
-pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<ProbeResult, String> {
-    Ok(select_compatible(&probe_remote_report(target, config)?))
-}
-
 /// Shell startup entry point. Non-interactive invocations never install implicitly.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,

@@ -374,6 +374,8 @@ pub enum WorktreeRequest {
         force: bool,
         /// Lift a lock whose owning process is gone first. The server checks that itself.
         unlock_stale: bool,
+        /// Which copies of the checkout's branch to delete afterwards, when merged.
+        delete_branch: crate::git::worktrees::BranchDeletion,
     },
     /// Lift a linked checkout's Git lock.
     Unlock {
@@ -426,6 +428,9 @@ pub enum WorktreeResult {
     },
     Removed {
         path: String,
+        /// What became of each branch copy the request asked to delete.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        branches: Vec<crate::git::worktrees::BranchOutcome>,
     },
     Unlocked {
         path: String,

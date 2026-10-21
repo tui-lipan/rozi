@@ -931,12 +931,14 @@ fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
     assert!(captured_text(&waited).contains("waited-42"), "{waited:?}");
 
     // What was already on screen does not satisfy a send's wait, so this one runs out its clock
-    // and says so, carrying the screen it gave up on.
+    // and says so, carrying the screen it gave up on. The command is a builtin in every shell, so
+    // PowerShell never hands its console to a native `true.exe` and back just before the `exit`
+    // below; once, on Windows CI, that `exit` then arrived as `exitm` with no Enter.
     let stale = control(
         &session,
         send_keys_waiting(
             pane,
-            &["true", "Enter"],
+            &["cd .", "Enter"],
             pane_wait(Some("waited-42"), None, 150),
         ),
     );

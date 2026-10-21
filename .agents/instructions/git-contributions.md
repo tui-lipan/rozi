@@ -35,6 +35,14 @@ already pushed, do not force-push without explicit approval.
 Contributions use inbound equals outbound under MPL-2.0. The DCO records provenance; it does not
 assign copyright or grant relicensing rights.
 
+## Pull request descriptions
+
+Use `.github/PULL_REQUEST_TEMPLATE.md` when creating or rewriting a pull request description.
+Keep its Summary, Verification, and Checklist headings. Put test results, manual checks, and
+limitations under Verification. Keep the Checklist as a separate list with no blank lines between
+items so GitHub renders it compactly. Wrap continuation lines within the same item; put detailed
+explanations under Verification.
+
 ## Pushing and releases
 
 Commit, push, tag, publish, or create a release only when the user asks. Before any of those actions,

@@ -1146,9 +1146,9 @@ fn row_is_active(state: &State, row: &AgentRow) -> bool {
 /// they share one. Folded, it also counts its runs by state, and its arrow takes the most urgent
 /// run's color.
 ///
-/// Selecting it goes to that most urgent run - its pane and, for a published row, the row itself -
-/// so the glyph and the destination always agree. The arrow only folds. Folded, it is the active
-/// row whenever one of its hidden runs is; open, the run says so itself.
+/// Selecting it folds or unfolds the cluster, as a project header does, so the whole row is the
+/// target rather than the arrow's single cell. Folded, it is the active row whenever one of its
+/// hidden runs is; open, the run says so itself.
 fn cluster_row(
     state: &State,
     members: &[&AgentRow],
@@ -1178,7 +1178,7 @@ fn cluster_row(
         (!spans_workspaces).then(|| super::workspace_badge(state, lead.workspace_index));
     let muted = super::super::fg_only(&theme.muted).dim();
     let placed = |content: Row| {
-        let row = SidebarRow::item(content, agent_target(lead))
+        let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
             .keyed(key.row.clone())
             .collapsible(key.clone(), expanded);
         if expanded {
@@ -2899,7 +2899,7 @@ mod tests {
     }
 
     /// One agent working in one checkout from two panes is one cluster: two jobs in one place, not
-    /// one job in each of two terminals. The cluster leads with its most urgent run and goes there.
+    /// one job in each of two terminals. The cluster leads with its most urgent run and folds.
     #[test]
     fn one_agent_in_one_checkout_clusters_across_panes() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
@@ -2909,18 +2909,19 @@ mod tests {
         state.current_mut().workspaces[1].panes = vec![second];
 
         let rows = agents_rows(&state, &Default::default());
-        assert_eq!(
-            item_targets(&rows),
-            vec![
-                (1, RowTarget::Pane(2)),
-                (2, RowTarget::Pane(2)),
-                (2, RowTarget::Pane(1)),
-            ]
-        );
         let cluster = rows
             .iter()
             .find(|row| row.expansion.is_some())
             .expect("a cluster row");
+        assert_eq!(
+            cluster.target,
+            RowTarget::TreeToggle(cluster.expansion.clone().unwrap())
+        );
+        let targets = item_targets(&rows);
+        assert_eq!(
+            targets[1..],
+            [(2, RowTarget::Pane(2)), (2, RowTarget::Pane(1))]
+        );
         assert_eq!(
             cluster.expansion.as_ref().unwrap().row,
             "cluster:|/x/rozi|claude"
@@ -2943,10 +2944,10 @@ mod tests {
         assert_eq!(item_targets(&rows).len(), 4);
     }
 
-    /// Selecting a cluster goes to its most urgent run itself - for a published session, the
-    /// session, not merely the pane that hosts it.
+    /// Selecting a cluster folds it rather than leaving for a run; its runs still go to their own
+    /// row, a published session's session and not merely the pane that hosts it.
     #[test]
-    fn a_cluster_goes_to_its_most_urgent_runs_own_row() {
+    fn a_cluster_folds_and_its_runs_go_to_their_own_rows() {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut sessions = pane_in_project(1, None, "/x/rozi", "/x/rozi", Some("master"));
         sessions.terminal.published_rows =
@@ -2960,7 +2961,9 @@ mod tests {
             pane_id: 1,
             row: crate::session::protocol::RowKey::new("sessions", "b"),
         };
-        assert_eq!(item_targets(&rows)[0], (1, blocked));
+        let targets = item_targets(&rows);
+        assert!(matches!(targets[0].1, RowTarget::TreeToggle(_)));
+        assert_eq!(targets[1], (2, blocked));
     }
 
     /// Runs are named by their task, else what their terminal says, else the agent - numbered

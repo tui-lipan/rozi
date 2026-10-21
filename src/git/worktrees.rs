@@ -224,35 +224,53 @@ impl BranchDeletion {
     }
 }
 
+/// Which copy of a branch an outcome is about.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchCopy {
+    Local,
+    Remote {
+        /// The remote's name, unknown when the branch has no usable upstream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote: Option<String>,
+    },
+}
+
 /// What happened to one copy of a removed checkout's branch.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "outcome", rename_all = "kebab-case")]
 pub enum BranchOutcome {
     Deleted {
         branch: String,
-        /// The remote the copy was on, or `None` for the local branch.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        remote: Option<String>,
+        copy: BranchCopy,
     },
     /// Git or a guard here kept the branch; `reason` says why.
     Kept {
         branch: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        remote: Option<String>,
+        copy: BranchCopy,
         reason: String,
     },
 }
 
 impl BranchOutcome {
-    /// `branch feat` or `remote branch origin/feat`.
+    /// `branch feat`, `remote branch origin/feat`, or `remote branch feat` when the remote is
+    /// unknown.
     pub fn subject(&self) -> String {
-        let (Self::Deleted { branch, remote } | Self::Kept { branch, remote, .. }) = self;
-        match remote {
-            Some(remote) => format!("remote branch {remote}/{branch}"),
-            None => format!("branch {branch}"),
+        let (Self::Deleted { branch, copy } | Self::Kept { branch, copy, .. }) = self;
+        match copy {
+            BranchCopy::Local => format!("branch {branch}"),
+            BranchCopy::Remote {
+                remote: Some(remote),
+            } => {
+                format!("remote branch {remote}/{branch}")
+            }
+            BranchCopy::Remote { remote: None } => format!("remote branch {branch}"),
         }
     }
 }
+
+/// Why a branch has no remote copy to delete, with the remote's name when it is known.
+type NoUpstream = (Option<String>, String);
 
 /// Remove a linked checkout. `force` only relaxes Git's dirty-checkout guard; it never removes a
 /// Rozi session or overrides a lock. `unlock_stale` first lifts a lock whose owner is gone, judged
@@ -315,14 +333,14 @@ fn delete_branches(cwd: &Path, branch: String, selection: BranchDeletion) -> Vec
         if selection.local {
             outcomes.push(BranchOutcome::Kept {
                 branch: branch.clone(),
-                remote: None,
+                copy: BranchCopy::Local,
                 reason: reason.clone(),
             });
         }
         if let Some(upstream) = &upstream {
             outcomes.push(BranchOutcome::Kept {
                 branch: branch.clone(),
-                remote: upstream.as_ref().ok().cloned(),
+                copy: remote_copy(upstream),
                 reason,
             });
         }
@@ -346,14 +364,23 @@ fn delete_branches(cwd: &Path, branch: String, selection: BranchDeletion) -> Vec
     if let Some(upstream) = upstream {
         outcomes.push(match upstream {
             Ok(remote) => delete_remote_branch(cwd, &branch, remote),
-            Err(reason) => BranchOutcome::Kept {
+            Err((remote, reason)) => BranchOutcome::Kept {
                 branch,
-                remote: None,
+                copy: BranchCopy::Remote { remote },
                 reason,
             },
         });
     }
     outcomes
+}
+
+fn remote_copy(upstream: &Result<String, NoUpstream>) -> BranchCopy {
+    BranchCopy::Remote {
+        remote: match upstream {
+            Ok(remote) => Some(remote.clone()),
+            Err((remote, _)) => remote.clone(),
+        },
+    }
 }
 
 /// Delete a local branch unless Git finds it unmerged.
@@ -363,11 +390,11 @@ fn delete_merged_branch(cwd: &Path, branch: &str) -> BranchOutcome {
     match command::checked(cwd, &args, WORKTREE_MUTATION_TIMEOUT) {
         Ok(_) => BranchOutcome::Deleted {
             branch: branch.to_string(),
-            remote: None,
+            copy: BranchCopy::Local,
         },
         Err(message) => BranchOutcome::Kept {
             branch: branch.to_string(),
-            remote: None,
+            copy: BranchCopy::Local,
             reason: first_line(&message),
         },
     }
@@ -375,24 +402,27 @@ fn delete_merged_branch(cwd: &Path, branch: &str) -> BranchOutcome {
 
 /// The remote a branch tracks, when it tracks a same-named branch there. Deleting a differently
 /// named upstream (a feature branch cut from `origin/main`) would be someone else's branch.
-fn upstream(cwd: &Path, branch: &str) -> Result<String, String> {
+fn upstream(cwd: &Path, branch: &str) -> Result<String, NoUpstream> {
     let config = |key: &str| -> Option<String> {
         let args = argv(&["config", "--get", &format!("branch.{branch}.{key}")]);
         let output = command::checked(cwd, &args, WORKTREE_LIST_TIMEOUT).ok()?;
         Some(String::from_utf8_lossy(&output).trim().to_string()).filter(|value| !value.is_empty())
     };
     let (Some(remote), Some(merge)) = (config("remote"), config("merge")) else {
-        return Err("it has no upstream".to_string());
+        return Err((None, "it has no upstream".to_string()));
     };
     if remote == "." {
-        return Err("it tracks a local branch".to_string());
+        return Err((None, "it tracks a local branch".to_string()));
     }
     match merge.strip_prefix("refs/heads/") {
         Some(name) if name == branch => Ok(remote),
-        _ => Err(format!(
-            "its upstream {remote}/{} is named differently",
-            merge.trim_start_matches("refs/heads/")
-        )),
+        _ => {
+            let reason = format!(
+                "its upstream {remote}/{} is named differently",
+                merge.trim_start_matches("refs/heads/")
+            );
+            Err((Some(remote), reason))
+        }
     }
 }
 
@@ -403,7 +433,9 @@ fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutco
     let tracking = format!("refs/remotes/{remote}/{branch}");
     let kept = |reason: String| BranchOutcome::Kept {
         branch: branch.to_string(),
-        remote: Some(remote.clone()),
+        copy: BranchCopy::Remote {
+            remote: Some(remote.clone()),
+        },
         reason,
     };
     let mut args = argv(&["rev-parse", "--verify", "--quiet"]);
@@ -433,14 +465,32 @@ fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutco
     match command::checked_remote(cwd, &args) {
         Ok(_) => BranchOutcome::Deleted {
             branch: branch.to_string(),
-            remote: Some(remote),
+            copy: BranchCopy::Remote {
+                remote: Some(remote),
+            },
         },
         Err(message) => kept(push_reason(&message)),
     }
 }
 
-/// The line of `git push` output that says why it failed, rather than its progress chatter.
+/// The line of `git push` output that says why it failed, rather than its progress chatter. A
+/// lease refusal, which means the remote branch moved since it was fetched, is named as such.
 fn push_reason(message: &str) -> String {
+    if let Some(rejected) = message
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("rejected]"))
+    {
+        if rejected.contains("(stale info)") {
+            return "it changed since it was fetched".to_string();
+        }
+        if let Some(reason) = rejected
+            .rsplit_once('(')
+            .and_then(|(_, tail)| tail.strip_suffix(')'))
+        {
+            return reason.to_string();
+        }
+    }
     let line = message
         .lines()
         .map(str::trim)
@@ -901,7 +951,12 @@ mod tests {
     fn deleted(branch: &str, remote: Option<&str>) -> BranchOutcome {
         BranchOutcome::Deleted {
             branch: branch.into(),
-            remote: remote.map(Into::into),
+            copy: match remote {
+                Some(remote) => BranchCopy::Remote {
+                    remote: Some(remote.into()),
+                },
+                None => BranchCopy::Local,
+            },
         }
     }
 
@@ -909,11 +964,11 @@ mod tests {
         outcomes
             .iter()
             .find_map(|outcome| match outcome {
-                BranchOutcome::Kept {
-                    remote: found,
-                    reason,
-                    ..
-                } if found.is_some() == remote => Some(reason.clone()),
+                BranchOutcome::Kept { copy, reason, .. }
+                    if matches!(copy, BranchCopy::Remote { .. }) == remote =>
+                {
+                    Some(reason.clone())
+                }
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no kept outcome in {outcomes:?}"))
@@ -1074,13 +1129,37 @@ mod tests {
         commit(&other, "pushed meanwhile");
         git(&other, &["push", "-q", "origin", "feat/stale"]);
         let outcomes = remove(&repo, &stale, false, false, REMOTE).unwrap();
-        assert!(!kept_reason(&outcomes, true).is_empty(), "{outcomes:?}");
+        assert_eq!(
+            kept_reason(&outcomes, true),
+            "it changed since it was fetched",
+            "{outcomes:?}"
+        );
         assert!(on_origin("feat/stale"));
 
         let untracked = temp.path().join("untracked");
         create(&repo, "feat/untracked", "HEAD", &untracked).unwrap();
         let outcomes = remove(&repo, &untracked, false, false, REMOTE).unwrap();
-        assert_eq!(kept_reason(&outcomes, false), "it has no upstream");
+        assert_eq!(kept_reason(&outcomes, true), "it has no upstream");
+        assert_eq!(outcomes[0].subject(), "remote branch feat/untracked");
+        assert!(
+            has_branch(&repo, "feat/untracked"),
+            "only the remote was asked"
+        );
+
+        // The local copy goes and the remote one is reported as the remote one, not as the local.
+        let both = temp.path().join("untracked-both");
+        create(&repo, "feat/untracked-both", "HEAD", &both).unwrap();
+        let outcomes = remove(&repo, &both, false, false, BOTH).unwrap();
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        assert_eq!(outcomes[0], deleted("feat/untracked-both", None));
+        assert_eq!(
+            outcomes[1],
+            BranchOutcome::Kept {
+                branch: "feat/untracked-both".into(),
+                copy: BranchCopy::Remote { remote: None },
+                reason: "it has no upstream".into(),
+            }
+        );
     }
 
     #[test]

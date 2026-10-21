@@ -213,7 +213,9 @@ fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
             path: "C:\\code\\repo-worktrees\\feature".into(),
             branches: vec![crate::git::worktrees::BranchOutcome::Kept {
                 branch: "feature".into(),
-                remote: Some("origin".into()),
+                copy: crate::git::worktrees::BranchCopy::Remote {
+                    remote: Some("origin".into()),
+                },
                 reason: "not merged".into(),
             }],
         },

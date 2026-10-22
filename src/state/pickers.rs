@@ -1468,12 +1468,10 @@ pub struct ExtensionInstallPromptState {
 pub struct ExtensionInstall {
     /// The discovery repository being installed, or `None` for a source typed into the prompt.
     pub repository: Option<String>,
-    /// What the progress modal names: the entry's title, or the typed source.
+    /// What the dialog's progress row names: the entry's title, or the typed source.
     pub label: String,
-    /// A line under the label, such as the repository and commit being installed.
+    /// What follows the label, such as the commit being installed.
     pub detail: Option<String>,
-    /// The user hid the progress modal. The installation continues and reports when it is done.
-    pub hidden: bool,
 }
 
 pub struct ExtensionDetailState {

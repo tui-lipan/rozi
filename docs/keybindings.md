@@ -350,7 +350,7 @@ In **Extensions**:
 | `Enter` on a **Discover** row | Open its installation report |
 | `Enter` again in a discovery report | Install the exact indexed commit |
 | `Ctrl+I` | Open the manual install prompt |
-| `Ctrl+U` | Update a Git-managed installation, or check again when no update is known |
+| `Ctrl+U` | Update a Git-managed installation, or check again when no update is known; also in its report |
 | `Ctrl+R` | Rescan installed manifests on **Installed**; refetch the index on **Discover** |
 | `Ctrl+O` | Open an installed manifest |
 | `Ctrl+Y` | Copy an installed report |

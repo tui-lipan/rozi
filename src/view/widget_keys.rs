@@ -131,10 +131,6 @@ pub fn extensions_key() -> &'static str {
     "rozi-extensions"
 }
 
-pub fn extension_install_progress_key() -> &'static str {
-    "rozi-extension-install-progress"
-}
-
 pub fn extension_detail_key() -> &'static str {
     "rozi-extension-detail"
 }

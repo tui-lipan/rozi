@@ -2,7 +2,8 @@ use super::*;
 
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
-const EXTENSION_PROGRESS_WIDTH: u16 = 60;
+const EXTENSION_PROGRESS_MIN_WIDTH: u16 = 36;
+const EXTENSION_PROGRESS_MAX_WIDTH: u16 = 64;
 
 /// The Extensions manager: installed extensions and the public index, one searchable tab each.
 pub(crate) fn extensions_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -275,6 +276,30 @@ fn catalog_row(
     )
 }
 
+/// `update` once a check found a newer revision, `check` until then. Only a Git installation has
+/// an upstream, and nothing starts while another update or check runs.
+fn update_action(state: &crate::state::ExtensionsState, id: Option<&str>) -> OverlayAction {
+    let git = id.is_some_and(|id| {
+        state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
+    });
+    let check = id.and_then(|id| state.update_checks.get(id));
+    let checking = matches!(check, Some(crate::state::ExtensionUpdateCheck::Checking));
+    let label = if matches!(
+        check,
+        Some(crate::state::ExtensionUpdateCheck::Available { .. })
+    ) {
+        "update"
+    } else {
+        "check"
+    };
+    OverlayAction::new(
+        "ctrl-u",
+        label,
+        Msg::ExtensionsUpdateSelected,
+        git && state.updating_id.is_none() && !checking,
+    )
+}
+
 fn installed_actions(
     ctx: &Context<AppRoot>,
     state: &crate::state::ExtensionsState,
@@ -292,20 +317,7 @@ fn installed_actions(
     let removable = state.updating_id.is_none()
         && selected.is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
     let selected_id = selected.and_then(|entry| entry.id.as_deref());
-    let git = selected_id.is_some_and(|id| {
-        state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
-    });
-    let check = selected_id.and_then(|id| state.update_checks.get(id));
-    let checking = matches!(check, Some(crate::state::ExtensionUpdateCheck::Checking));
-    let updatable = git && state.updating_id.is_none() && !checking;
-    let update_label = if matches!(
-        check,
-        Some(crate::state::ExtensionUpdateCheck::Available { .. })
-    ) {
-        "update"
-    } else {
-        "check"
-    };
+    let update = update_action(state, selected_id);
     vec![
         OverlayAction::new(
             "enter",
@@ -326,12 +338,7 @@ fn installed_actions(
             selected.is_some(),
         ),
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
-        OverlayAction::new(
-            "ctrl-u",
-            update_label,
-            Msg::ExtensionsUpdateSelected,
-            updatable,
-        ),
+        update,
         OverlayAction::new("ctrl-r", "reload", Msg::ExtensionsReload, true),
         OverlayAction::new(
             "ctrl-o",
@@ -456,63 +463,58 @@ fn catalog_status(
     )
 }
 
-/// Shown in place of the report or prompt that started an installation, until it finishes or the
-/// user hides it with `Esc`.
+/// A running installation's progress, stacked one row below the report or prompt that started it,
+/// like every card raised over a list overlay. `Esc` closes that dialog; the installation goes on.
 pub(crate) fn extension_install_progress_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(install) = crate::ops::extensions_manager::visible_install(&ctx.state) else {
         return Text::new("").into();
     };
     let theme = &ctx.state.theme;
-    let actions = vec![OverlayAction::new(
-        "esc",
-        "hide",
-        Msg::ExtensionsHideInstall,
-        true,
-    )];
-    let mut body = VStack::new()
-        .height(Length::Auto)
-        .padding((1, 1, 0, 1))
+    // A report replaces the picker, so its progress is one card below it. The prompt stacks on the
+    // picker, so its progress is one more below that.
+    let (close, layers) = match install.repository {
+        Some(_) => (Msg::CloseExtensionDetail, 1),
+        None => (Msg::ExtensionsCloseInstall, 2),
+    };
+    let mut row = HStack::new()
+        .height(Length::Px(1))
+        .gap(1)
         .child(
-            HStack::new()
-                .height(Length::Px(1))
-                .gap(1)
-                .child(
-                    Spinner::new()
-                        .spinner_style(SpinnerStyle::Dots)
-                        .style(Style::new().fg(theme.status.info)),
-                )
-                .child(
-                    Text::new(install.label.clone())
-                        .overflow(Overflow::Ellipsis)
-                        .width(Length::Flex(1))
-                        .style(fg_only(&theme.primary).bold()),
-                ),
+            Spinner::new()
+                .spinner_style(SpinnerStyle::Dots)
+                .style(Style::new().fg(theme.status.info)),
+        )
+        .child(
+            Text::new(format!("Installing {}", install.label))
+                .overflow(Overflow::Ellipsis)
+                .style(fg_only(&theme.primary).bold()),
         );
     if let Some(detail) = install.detail.as_deref() {
-        // Indented past the spinner so it reads as belonging to the label.
-        body = body.child(
-            HStack::new()
-                .height(Length::Px(1))
-                .padding((0, 0, 0, 2))
-                .child(
-                    Text::new(detail.to_string())
-                        .overflow(Overflow::Ellipsis)
-                        .width(Length::Flex(1))
-                        .style(fg_only(&theme.muted)),
-                ),
+        row = row.child(
+            Text::new(detail.to_string())
+                .overflow(Overflow::Ellipsis)
+                .style(fg_only(&theme.muted)),
         );
     }
-    let content = VStack::new()
+    action_palette_modal(ctx, "Installing extension")
+        .width(Length::Auto)
+        .reserve_height(crate::view::stacked_reserve(
+            ctx,
+            crate::view::ACTION_PALETTE_MAX_HEIGHT_PERCENT,
+            layers,
+        ))
         .height(Length::Auto)
-        .child(body)
-        .child(Spacer::new().height(Length::Px(1)))
-        .child(overlay_hints(ctx, &actions));
-    styled_modal(ctx, "Installing extension", EXTENSION_PROGRESS_WIDTH)
-        .height(Length::Auto)
-        .padding(0)
-        .on_close(ctx.link().callback(|_| Msg::ExtensionsHideInstall))
-        .child(content)
-        .key(crate::view::widget_keys::extension_install_progress_key())
+        .backdrop_style(receding_backdrop(theme))
+        .on_close(ctx.link().callback(move |_| close.clone()))
+        .child(
+            VStack::new()
+                .height(Length::Auto)
+                .padding((1, 1, 1, 1))
+                .child(row),
+        )
+        .key("rozi-extension-install-progress-modal")
+        .min_width(Length::Px(EXTENSION_PROGRESS_MIN_WIDTH))
+        .max_width(Length::Px(EXTENSION_PROGRESS_MAX_WIDTH))
 }
 
 pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
@@ -537,6 +539,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
     let actions = vec![
+        update_action(state, entry.id.as_deref()),
         OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, true),
         OverlayAction::new(
             "ctrl-o",
@@ -595,8 +598,8 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         ctx.state.extensions.as_ref().is_some_and(|state| {
             crate::ops::extensions_manager::catalog_entry_installed(state, entry)
         });
-    // The report is replaced by the progress modal while its own installation runs, so an install
-    // already in flight here is always someone else's.
+    // This entry's own installation shows its progress on top of the report; either way a running
+    // installation blocks starting a second.
     let busy = ctx.state.extension_install.is_some();
     let actions = vec![
         OverlayAction::new(

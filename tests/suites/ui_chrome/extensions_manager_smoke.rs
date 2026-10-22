@@ -249,11 +249,11 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 repository: None,
                 label: "./missing".to_string(),
                 detail: None,
-                hidden: false,
             });
+            let progress = frame(&mut backend);
             assert!(
-                frame(&mut backend).contains("Installing extension"),
-                "the prompt's installation shows progress in its place"
+                progress.contains("Installing ./missing") && progress.contains("Install extension"),
+                "the prompt shows its installation's progress in its footer:\n{progress}"
             );
             backend
                 .dispatch(rozi::Msg::ExtensionsInstallFinished(Err(
@@ -492,7 +492,10 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 !detail.contains("open homepage"),
                 "no homepage declared, so no link to open:\n{detail}"
             );
-            assert!(!detail.contains("Ctrl+U"), "{detail}");
+            assert!(
+                detail.contains("check Ctrl+U"),
+                "a Git installation offers its update check from the report:\n{detail}"
+            );
             assert!(!detail.contains("Search report"), "{detail}");
             // The launch line carries the extension's absolute directory, and a deep enough one
             // wraps inside the file name itself - on Windows the fold lands between `command.` and
@@ -828,8 +831,7 @@ fn installing(repository: &str, label: &str) -> rozi::state::ExtensionInstall {
     rozi::state::ExtensionInstall {
         repository: Some(repository.to_string()),
         label: label.to_string(),
-        detail: Some(format!("{repository} · 5b5c8b9323e2")),
-        hidden: false,
+        detail: Some("5b5c8b9323e2".to_string()),
     }
 }
 
@@ -913,30 +915,24 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                 Some(installing("someone/first", "First fixture"));
             let progress = frame(&mut backend);
             assert!(
-                progress.contains("Installing extension")
-                    && progress.contains("First fixture")
-                    && progress.contains("someone/first · 5b5c8b9323e2")
-                    && progress.contains("hide Esc"),
-                "{progress}"
-            );
-            assert!(
-                !progress.contains("Install extension · First fixture"),
-                "the progress modal takes the report's place:\n{progress}"
+                progress.contains("Install extension · First fixture")
+                    && progress.contains("Installing First fixture")
+                    && progress.contains("5b5c8b9323e2")
+                    && !progress.contains("install Enter"),
+                "the report stays and its footer shows the progress:\n{progress}"
             );
             press(&mut backend, KeyCode::Esc);
-            let hidden = backend
-                .state()
-                .extension_install
-                .as_ref()
-                .expect("still installing");
-            assert!(hidden.hidden, "Esc hides the modal without cancelling");
+            assert!(
+                backend.state().extension_install.is_some(),
+                "closing the report does not cancel the installation"
+            );
             assert!(
                 backend
                     .state()
                     .extensions
                     .as_ref()
                     .is_some_and(|state| state.catalog_detail.is_none()),
-                "and closes the report under it"
+                "it only closes the report"
             );
 
             backend
@@ -968,9 +964,8 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                 "another entry's report stays open and becomes installable:\n{unblocked}"
             );
 
-            let mut hidden = installing("someone/second", "Second fixture");
-            hidden.hidden = true;
-            backend.state_mut().extension_install = Some(hidden);
+            backend.state_mut().extension_install =
+                Some(installing("someone/second", "Second fixture"));
             backend
                 .dispatch(rozi::Msg::CloseExtensionDetail)
                 .expect("close second report");
@@ -978,14 +973,9 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("reopen the installing entry's report");
             assert!(
-                backend
-                    .state()
-                    .extension_install
-                    .as_ref()
-                    .is_some_and(|install| !install.hidden),
+                frame(&mut backend).contains("Installing Second fixture"),
                 "reopening the report of the entry being installed shows its progress again"
             );
-            assert!(frame(&mut backend).contains("Installing extension"));
             backend
                 .dispatch(rozi::Msg::CloseExtensions)
                 .expect("close the manager while installing");

@@ -207,6 +207,8 @@ pub struct SidebarPanelState {
     pub cursor: usize,
     pub suppress_row_hover: bool,
     pub hovered_row: Option<usize>,
+    /// The row whose ✕ is under the pointer, so the row's action word can give way to it.
+    pub hovered_close: Option<usize>,
 }
 
 impl Default for SidebarPanelState {
@@ -219,6 +221,7 @@ impl Default for SidebarPanelState {
             cursor: 0,
             suppress_row_hover: false,
             hovered_row: None,
+            hovered_close: None,
         }
     }
 }
@@ -471,6 +474,9 @@ pub struct SidebarState {
     /// by moving the cursor, so the confirmation never outlives the moment. An armed row keeps its
     /// ✕ visible even unhovered — an invisible armed state is worse than a lingering glyph.
     pub pending_row_close: Option<SidebarClose>,
+    /// Ctrl is held while a Worktrees row is aimed at, so its rows name what Ctrl+click opens.
+    /// Only a terminal that reports lone modifier keys can say so.
+    pub ctrl_held: bool,
     /// The Worktrees tab: the focused pane's repository and its checkouts.
     pub worktrees: SidebarWorktrees,
     /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the

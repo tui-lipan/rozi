@@ -10,8 +10,9 @@ use crate::view::vocabulary::{self, CheckoutKind, SessionPresence};
 /// Each checkout reads like a session row. The branch is the title, PR/CI is the detail, and
 /// the right edge says what the checkout is to Rozi: what kind of checkout it is, then the marker of
 /// the session using it.
-/// The gutter bar marks the checkout the focused pane is in. Enter opens it, and the ✕ removes it
-/// behind the same two-step confirmation every destructive sidebar row uses.
+/// The gutter bar marks the checkout the focused pane is in. Under the pointer or cursor the right
+/// edge names what Enter opens, or with Ctrl held what Ctrl+Enter opens, and the ✕ beside it
+/// removes the checkout behind the same two-step confirmation every destructive sidebar row uses.
 pub(super) fn worktrees_rows(state: &State) -> Vec<SidebarRow> {
     let theme = &state.theme;
     let muted = super::super::fg_only(&theme.muted);
@@ -119,20 +120,22 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
         (false, Some((kind, style)), None) => item.badge_text(kind, style),
         (false, None, None) => item,
     };
-    // Under the pointer the rail says what Enter does. A closable row's hover is its ✕ instead.
-    if state.config.worktrees.sidebar_open == crate::config::WorktreeOpen::Pane {
-        if !row.closable && !row.removing {
-            item = item.hover_badge_text("new pane", muted);
+    // Under the pointer or cursor the rail says, in the accent, what a click opens, beside the ✕
+    // when there is one. Holding Ctrl turns it into what Ctrl+click opens instead.
+    if !row.removing {
+        let mut open = state.config.worktrees.sidebar_open;
+        if state.sidebar.ctrl_held {
+            open = open.other();
         }
-    } else if let Some(strongest) = strongest {
-        let verb = if row.sessions.len() > 1 {
-            "choose"
-        } else {
-            strongest.verb().unwrap_or("open")
+        let verb = match (open, strongest) {
+            (crate::config::WorktreeOpen::Pane, _) => "new pane",
+            (crate::config::WorktreeOpen::Session, None) => "new session",
+            (crate::config::WorktreeOpen::Session, Some(_)) if row.sessions.len() > 1 => "choose",
+            (crate::config::WorktreeOpen::Session, Some(strongest)) => {
+                strongest.verb().unwrap_or("open")
+            }
         };
-        item = item.hover_badge_text(verb, muted);
-    } else if !row.closable && !row.removing {
-        item = item.hover_badge_text("new session", muted);
+        item = item.hover_badge_text(verb, super::super::fg_only(&theme.accent));
     }
 
     let detail_dim = 0.4;

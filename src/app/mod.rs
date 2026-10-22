@@ -382,14 +382,22 @@ impl Component for AppRoot {
     }
 
     fn on_modifiers_changed(&mut self, modifiers: KeyMods, ctx: &mut Context<Self>) -> Update {
-        let Some(keybindings) = ctx.state.keybindings.as_mut() else {
-            return Update::none();
-        };
-        if !keybindings.is_capturing() || keybindings.held_modifiers == modifiers {
-            return Update::none();
+        let ctrl_held =
+            modifiers.ctrl && crate::update::sidebar::worktrees::ctrl_preview_active(&ctx.state);
+        let mut changed = ctx.state.sidebar.ctrl_held != ctrl_held;
+        ctx.state.sidebar.ctrl_held = ctrl_held;
+        if let Some(keybindings) = ctx.state.keybindings.as_mut()
+            && keybindings.is_capturing()
+            && keybindings.held_modifiers != modifiers
+        {
+            keybindings.held_modifiers = modifiers;
+            changed = true;
         }
-        keybindings.held_modifiers = modifiers;
-        Update::full()
+        if changed {
+            Update::full()
+        } else {
+            Update::none()
+        }
     }
 
     fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
@@ -1450,6 +1458,11 @@ mod tests {
                     .current()
                     .focused_pane
                     .expect("focused pane");
+                // A fixed location, so the title fits the frame whatever directory the tests run in.
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target)
+                    .expect("target pane")
+                    .terminal
+                    .display_path = Some("~/src/repo".to_string());
                 let title = crate::pane::lifecycle::find_pane(backend.state(), target)
                     .expect("target pane")
                     .titlebar_title(false);

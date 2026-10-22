@@ -215,6 +215,12 @@ pub enum Msg {
         index: usize,
         hovered: bool,
     },
+    /// The pointer entered or left a sidebar row's ✕.
+    SidebarCloseHover {
+        panel: usize,
+        index: usize,
+        hovered: bool,
+    },
     /// The ✕ on a sidebar row was clicked: arm a confirmation, or commit one already armed.
     SidebarRowClose {
         panel: usize,

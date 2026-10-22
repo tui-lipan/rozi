@@ -443,23 +443,24 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 
 ### Tab settings
 
-Activity, Files, Git, and extension tabs that offer them have settings of their own. In
-**Sidebar tabs…**, highlight the tab and press `Ctrl+E`, or run **Sidebar tab settings…** from the
-command palette to open the settings of the tab shown in the focused panel. Each row shows a
+Activity, Files, Git, Worktrees, and extension tabs that offer them have settings of their own. In
+**Sidebar tabs…**, highlight the tab and press `Ctrl+E` to open its settings. Each row shows a
 setting's current value:
 
 | Setting | Enter |
 | --- | --- |
 | `Enabled` or `Disabled` | Switches it |
 | A choice, such as **Root** | Lists the values; `Enter` applies one |
+| A set, such as **Delete branch on remove** | Lists the members; `Enter` switches one and the list stays open |
 | A number or text | Asks for the value; a number outside its range is refused |
 
 `Ctrl+R` puts the highlighted setting back to its default. Each change is saved to `config.toml`
-and takes effect at once; `Esc` returns to **Sidebar tabs…**, or to your panes when you opened the
-settings from the command palette.
+and takes effect at once; `Esc` returns to **Sidebar tabs…**.
 
 A built-in tab's settings are saved in `[sidebar.settings.<tab>]`; see
-[Built-in tab settings](configuration.md#built-in-tab-settings) for the keys. An extension tab's
+[Built-in tab settings](configuration.md#built-in-tab-settings) for the keys. Worktrees has one,
+**Delete branch on remove**, which is `[worktrees] delete_branch`, shared with the removal picker and
+the CLI. An extension tab's
 settings are the extension's own, saved in `[extensions.<id>]`, and the picker names the extension
 in its header. Changing one restarts the extension's services, as editing the file would.
 

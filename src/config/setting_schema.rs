@@ -120,6 +120,9 @@ pub enum SettingKind {
     Text,
     /// One string out of a fixed set.
     Choice(Vec<SettingChoice>),
+    /// Any subset of a fixed set of strings, stored as a list. A picker toggles one member at a
+    /// time.
+    Flags(Vec<SettingChoice>),
     /// A list of strings. Carried and displayed, but edited only in `config.toml`.
     List,
 }
@@ -214,6 +217,27 @@ impl SettingSpec {
         }
     }
 
+    /// A subset of `choices`, none by default.
+    pub fn flags(key: &str, label: &str, choices: &[(&str, &str)]) -> Self {
+        Self {
+            key: key.to_string(),
+            label: label.to_string(),
+            description: None,
+            kind: SettingKind::Flags(
+                choices
+                    .iter()
+                    .map(|(value, label)| SettingChoice::new(*value, *label))
+                    .collect(),
+            ),
+            default: SettingValue::List(Vec::new()),
+        }
+    }
+
+    pub fn with_description(mut self, description: &str) -> Self {
+        self.description = Some(description.to_string());
+        self
+    }
+
     /// Whether a picker can edit this setting. Lists are edited in `config.toml`.
     pub fn editable(&self) -> bool {
         !matches!(self.kind, SettingKind::List)
@@ -269,6 +293,23 @@ impl SettingSpec {
                     Err(Rejection::NotAChoice { found })
                 }
             }
+            (SettingKind::Flags(choices), SettingValue::List(found)) => {
+                match found
+                    .iter()
+                    .find(|item| !choices.iter().any(|choice| &choice.value == *item))
+                {
+                    Some(unknown) => Err(Rejection::NotAChoice {
+                        found: unknown.clone(),
+                    }),
+                    None => Ok(Checked::Value(SettingValue::List(
+                        choices
+                            .iter()
+                            .filter(|choice| found.contains(&choice.value))
+                            .map(|choice| choice.value.clone())
+                            .collect(),
+                    ))),
+                }
+            }
             (SettingKind::Integer { min, max }, SettingValue::Integer(requested)) => {
                 let clamped = requested
                     .max(min.unwrap_or(i64::MIN))
@@ -304,7 +345,7 @@ impl SettingSpec {
 
     /// The choices, quoted and joined, as a message lists them: `` `a`, `b`, or `c` ``.
     pub fn expected_choices(&self) -> String {
-        let SettingKind::Choice(choices) = &self.kind else {
+        let (SettingKind::Choice(choices) | SettingKind::Flags(choices)) = &self.kind else {
             return String::new();
         };
         let quoted: Vec<_> = choices
@@ -330,6 +371,18 @@ impl SettingSpec {
                 .map_or_else(|| value.clone(), |choice| choice.label.clone()),
             (_, SettingValue::Integer(value)) => value.to_string(),
             (_, SettingValue::String(value)) => value.clone(),
+            (SettingKind::Flags(choices), SettingValue::List(values)) => {
+                let labels: Vec<_> = choices
+                    .iter()
+                    .filter(|choice| values.contains(&choice.value))
+                    .map(|choice| choice.label.as_str())
+                    .collect();
+                if labels.is_empty() {
+                    "None".to_string()
+                } else {
+                    labels.join(", ")
+                }
+            }
             (_, SettingValue::List(values)) => values.join(", "),
         }
     }
@@ -362,6 +415,9 @@ pub enum SettingsOwner {
     /// An extension's settings, in `[extensions.<id>]`. An extension's sidebar tab offers a subset
     /// of them; changing one there changes it for every process of that extension.
     Extension(String),
+    /// The `[worktrees]` table, which the CLI and the removal picker read as well as the
+    /// Worktrees tab.
+    Worktrees,
 }
 
 impl SettingsOwner {
@@ -370,6 +426,7 @@ impl SettingsOwner {
         match self {
             Self::SidebarTab(tab) => vec!["sidebar".into(), "settings".into(), tab.clone()],
             Self::Extension(id) => vec!["extensions".into(), id.clone()],
+            Self::Worktrees => vec!["worktrees".into()],
         }
     }
 }
@@ -399,6 +456,24 @@ impl SettingsGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flags_keep_members_in_the_order_of_their_set_and_refuse_strangers() {
+        let spec = SettingSpec::flags("branches", "Branches", &[("a", "A"), ("b", "B")]);
+        let list =
+            |items: &[&str]| SettingValue::List(items.iter().map(|i| i.to_string()).collect());
+        assert_eq!(
+            spec.accept(list(&["b", "a"])),
+            Ok(Checked::Value(list(&["a", "b"])))
+        );
+        assert_eq!(
+            spec.accept(list(&["a", "c"])),
+            Err(Rejection::NotAChoice { found: "c".into() })
+        );
+        assert_eq!(spec.display(&list(&[])), "None");
+        assert_eq!(spec.display(&list(&["b"])), "B");
+        assert_eq!(spec.display(&list(&["a", "b"])), "A, B");
+    }
 
     #[test]
     fn values_round_trip_through_toml() {

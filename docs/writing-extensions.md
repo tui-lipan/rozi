@@ -588,7 +588,7 @@ on_click = { send = "{line}" }
 ### Tab settings
 
 `settings` lists [settings](#settings) the tab offers in its settings picker, which users open with
-`Ctrl+E` in **Sidebar tabs…** or **Sidebar tab settings…** in the command palette. The picker lists
+`Ctrl+E` in **Sidebar tabs…**. The picker lists
 them in this order, edits them in `[extensions.<id>]`, and puts one back to its default with
 `Ctrl+R`:
 

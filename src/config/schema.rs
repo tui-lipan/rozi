@@ -2258,8 +2258,12 @@ impl Default for SidebarConfig {
             SidebarTab::Worktrees,
             SidebarTab::Projects,
         ];
-        let tab_settings =
+        let mut tab_settings =
             super::sidebar::apply_builtin_settings(&mut tabs, &Default::default(), &mut Vec::new());
+        tab_settings.insert(
+            "worktrees".to_string(),
+            super::sidebar::worktrees_group(Default::default(), false),
+        );
         Self {
             startup: false,
             migrated_docks: None,

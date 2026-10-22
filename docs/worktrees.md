@@ -159,7 +159,8 @@ until the host finishes or reports an error.
 ### Delete the branch too
 
 Removing a checkout keeps its branch unless `[worktrees] delete_branch` lists what to delete:
-`["local"]`, `["remote"]`, or `["local", "remote"]`. Nothing is ever force-deleted, and forcing a
+`["local"]`, `["remote"]`, or `["local", "remote"]`. Press `Ctrl+E` on Worktrees in **Sidebar tabs…**
+to set it without editing the file. Nothing is ever force-deleted, and forcing a
 dirty checkout does not change that.
 
 - **`local`** deletes the local branch with `git branch -d`, so Git's own merge rule applies: the

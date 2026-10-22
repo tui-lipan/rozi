@@ -961,6 +961,7 @@ fn load_config_from_text_with_extensions(
             )),
         }
     }
+    let delete_branch_set = parsed.worktrees.delete_branch.is_some();
     if let Some(delete_branch) = parsed.worktrees.delete_branch {
         // An empty list is the default, spelled out.
         let parsed = if delete_branch.is_empty() {
@@ -1364,6 +1365,10 @@ fn load_config_from_text_with_extensions(
             tab_settings: contributions.sidebar_tab_settings,
         },
         &mut warnings,
+    );
+    config.sidebar.tab_settings.insert(
+        "worktrees".to_string(),
+        super::sidebar::worktrees_group(config.worktrees.delete_branch, delete_branch_set),
     );
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hints = build_hints(parsed.hints, &mut warnings);

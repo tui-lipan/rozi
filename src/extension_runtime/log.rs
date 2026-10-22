@@ -13,12 +13,12 @@
 //! process starts with its output discarded as before.
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::platform::paths::{self, PlatformEnv};
 
@@ -37,6 +37,12 @@ const ROTATED_SUFFIX: &str = "log.1";
 /// left a descendant holding its pipe open would otherwise hold the line back for as long as that
 /// descendant lives.
 const DRAIN_WAIT: Duration = Duration::from_millis(250);
+
+/// The longest a write or a read waits for another client to finish with a unit's files.
+const LOCK_WAIT: Duration = Duration::from_millis(250);
+
+/// How often a waiting write or read tries the lock again.
+const LOCK_POLL: Duration = Duration::from_millis(2);
 
 /// Every writer to one unit's file in this process, so they share one lock handle.
 static SINKS: Mutex<Option<HashMap<PathBuf, Weak<Mutex<Sink>>>>> = Mutex::new(None);
@@ -75,10 +81,26 @@ impl Sink {
     /// log, never the process. A lock that cannot be taken is not a reason to lose the output: the
     /// write goes ahead without it, which risks only the bound, not the lines.
     fn append(&mut self, bytes: &[u8], on_fresh_line: bool) {
-        let locked = self.lock.lock().is_ok();
+        let locked = lock_for_a_while(&self.lock);
         let _ = append_locked(&self.path, bytes, on_fresh_line);
         if locked {
             let _ = self.lock.unlock();
+        }
+    }
+}
+
+/// Take the unit's lock, waiting at most [`LOCK_WAIT`]. A client that holds it suspended must not
+/// hold up a caller that may be the UI, so a lock that is not free in time is given up on and the
+/// caller goes ahead without it.
+fn lock_for_a_while(lock: &File) -> bool {
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return true,
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(LOCK_POLL);
+            }
+            Err(_) => return false,
         }
     }
 }
@@ -345,19 +367,43 @@ fn tail_in(
     lines: usize,
 ) -> io::Result<Vec<String>> {
     let live = log_dir(env, extension)?.join(format!("{}.log", stem(unit)));
-    let mut text = String::new();
-    for path in [live.with_extension(ROTATED_SUFFIX), live] {
-        match read_lossy(&path) {
-            Ok(part) => text.push_str(&part),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
+    let text = snapshot(&live)?;
     let all: Vec<&str> = text.lines().collect();
     Ok(all[all.len().saturating_sub(lines)..]
         .iter()
         .map(|line| (*line).to_string())
         .collect())
+}
+
+/// Both generations of a unit's log, oldest first, read as one moment. A writer that rotates
+/// between the two reads would otherwise take the file the first read missed out of both.
+///
+/// Held under the same lock writers take, so a rotation is wholly before or wholly after. Where the
+/// lock is not free in time, or there is no lock file because nothing ever wrote, the files are
+/// read as they are.
+fn snapshot(live: &Path) -> io::Result<String> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(live.with_extension("lock"))
+        .ok();
+    let locked = lock.as_ref().is_some_and(lock_for_a_while);
+    let mut text = String::new();
+    let mut result = Ok(());
+    for path in [live.with_extension(ROTATED_SUFFIX), live.to_path_buf()] {
+        match read_lossy(&path) {
+            Ok(part) => text.push_str(&part),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        }
+    }
+    if locked && let Some(lock) = &lock {
+        let _ = lock.unlock();
+    }
+    result.map(|()| text)
 }
 
 fn read_lossy(path: &Path) -> io::Result<String> {
@@ -496,6 +542,88 @@ mod tests {
                 "{line:?}"
             );
         }
+    }
+
+    /// Windows refuses to lock a handle that can neither read nor write, which an append-only
+    /// handle is, and a refused lock used to cost every write. The lock must work as opened.
+    #[test]
+    fn the_unit_lock_can_be_taken_and_released_as_soon_as_the_sink_is_open() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let sink = Sink::open(dir.join("commands.log")).unwrap();
+        sink.lock.lock().expect("the lock can be taken");
+        sink.lock.unlock().expect("and released");
+        assert!(lock_for_a_while(&sink.lock));
+        sink.lock.unlock().unwrap();
+    }
+
+    /// Another client that holds a unit's lock and stops must not hold up this one for good.
+    #[test]
+    fn a_write_gives_up_on_a_lock_held_elsewhere_after_a_short_wait_and_still_lands() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        let (held, release) = std::sync::mpsc::channel::<()>();
+        let (taken, locked) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let other = Sink::open(path).unwrap();
+                other.lock.lock().unwrap();
+                taken.send(()).unwrap();
+                let _ = release.recv();
+                other.lock.unlock().unwrap();
+            })
+        };
+        locked.recv().unwrap();
+        let mut sink = Sink::open(path.clone()).unwrap();
+        let started = Instant::now();
+        sink.write(b"still lands\n");
+        let waited = started.elapsed();
+        held.send(()).unwrap();
+        holder.join().unwrap();
+        assert!(
+            waited >= LOCK_WAIT / 2 && waited < Duration::from_secs(5),
+            "{waited:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "still lands\n");
+    }
+
+    /// A reader that arrives while another client is rotating must see the rotation finished,
+    /// not the moment between moving the file and starting the new one.
+    #[test]
+    fn a_read_taken_mid_rotation_waits_for_it_and_sees_both_generations() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        fs::write(&path, "old\n").unwrap();
+        let (moved, mid_rotation) = std::sync::mpsc::channel::<()>();
+        let rotator = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let other = Sink::open(path.clone()).unwrap();
+                other.lock.lock().unwrap();
+                fs::rename(&path, path.with_extension(ROTATED_SUFFIX)).unwrap();
+                moved.send(()).unwrap();
+                // Within the wait a reader gives a lock, so it sees the rotation finished.
+                std::thread::sleep(LOCK_WAIT / 5);
+                fs::write(&path, "new\n").unwrap();
+                other.lock.unlock().unwrap();
+            })
+        };
+        mid_rotation.recv().unwrap();
+        let lines = tail_in(&env, "tool", "commands", 10).unwrap();
+        rotator.join().unwrap();
+        assert_eq!(lines, ["old", "new"]);
+    }
+
+    /// With no client writing, a reader finds no lock to take and reads what is there.
+    #[test]
+    fn a_read_of_a_log_with_no_lock_file_still_reads_it() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        fs::write(dir.join("commands.log"), "only\n").unwrap();
+        assert_eq!(tail_in(&env, "tool", "commands", 10).unwrap(), ["only"]);
     }
 
     #[test]

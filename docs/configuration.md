@@ -430,8 +430,8 @@ the repository, since an outside path names a directory on this machine. Otherwi
 starts as one shell in its checkout. rozi reports why a profile failed to load or was skipped.
 
 With `delete_branch`, `"local"` deletes the branch with `git branch -d` and `"remote"` deletes the
-branch on the remote it tracks, when its fetched tip is merged into the primary checkout and has not
-moved since. An unmerged branch, a branch another checkout still has checked out, and a detached
+branch on the remote it tracks, when its fetched tip is merged into the primary checkout, or a merged
+GitHub pull request ended at it, and has not moved since. An unmerged branch, a branch another checkout still has checked out, and a detached
 checkout are left alone, and rozi says when a branch was kept. An unknown entry ignores the whole
 setting with a warning. A running Rozi UI sends its own `delete_branch` with each removal;
 `rozi worktrees remove` reads the value on the host that owns the repository, and

@@ -426,7 +426,8 @@ fn upstream(cwd: &Path, branch: &str) -> Result<String, NoUpstream> {
     }
 }
 
-/// Delete `branch` on `remote` when the fetched tip is merged into the primary checkout's `HEAD`.
+/// Delete `branch` on `remote` when the fetched tip is merged into the primary checkout's `HEAD`,
+/// or a merged pull request ended at it.
 /// The push only goes through while the remote still has that tip, so commits pushed since the
 /// last fetch are never lost.
 fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutcome {
@@ -451,7 +452,9 @@ fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutco
     match command::run(cwd, &args, WORKTREE_LIST_TIMEOUT) {
         Ok(output) if output.status == Some(0) => {}
         Ok(output) if output.status == Some(1) => {
-            return kept("it is not merged into the primary checkout".to_string());
+            if let Some(reason) = unmerged_reason(cwd, &remote, branch, &tip) {
+                return kept(reason);
+            }
         }
         Ok(_) => return kept("its merge state could not be read".to_string()),
         Err(message) => return kept(message),
@@ -470,6 +473,31 @@ fn delete_remote_branch(cwd: &Path, branch: &str, remote: String) -> BranchOutco
             },
         },
         Err(message) => kept(push_reason(&message)),
+    }
+}
+
+/// Why a remote tip that is not an ancestor of `HEAD` still counts as unmerged, or `None` when a
+/// merged pull request ended at exactly that tip, as a squash or rebase merge leaves it.
+fn unmerged_reason(cwd: &Path, remote: &str, branch: &str, tip: &str) -> Option<String> {
+    const UNMERGED: &str = "it is not merged into the primary checkout";
+    // Only a hosted remote has pull requests to ask about.
+    let mut args = argv(&["remote", "get-url", "--"]);
+    args.push(remote.into());
+    let hosted = command::checked(cwd, &args, WORKTREE_LIST_TIMEOUT).is_ok_and(|url| {
+        super::pull_requests::url_owner(String::from_utf8_lossy(&url).trim()).is_some()
+    });
+    if !hosted {
+        return Some(UNMERGED.to_string());
+    }
+    match super::pull_requests::merged_at_tip(cwd, branch, tip) {
+        Ok(true) => None,
+        Ok(false) => Some(format!(
+            "{UNMERGED}, and no merged pull request ends at its tip"
+        )),
+        Err(message) => Some(format!(
+            "{UNMERGED}, and its pull request could not be checked: {}",
+            first_line(&message)
+        )),
     }
 }
 

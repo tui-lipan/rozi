@@ -230,20 +230,26 @@ pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
         styles.paint("Created", OutputTone::Success),
         destination.display()
     );
-    println!(
-        "{}  {}",
-        styles.paint("Validate", OutputTone::Muted),
-        styles.paint(
-            &format!("rozi extensions check {}", destination.display()),
-            OutputTone::Accent
-        )
-    );
-    println!(
-        "{}    {}",
-        styles.paint("Invoke", OutputTone::Muted),
-        styles.paint(&format!("rozi run-action {id}.hello"), OutputTone::Accent)
-    );
+    for (index, step) in scaffold_next_steps(id).iter().enumerate() {
+        let label = if index == 0 { "Next" } else { "" };
+        println!(
+            "{}  {}",
+            styles.paint(&format!("{label:<4}"), OutputTone::Muted),
+            styles.paint(step, OutputTone::Accent)
+        );
+    }
     Ok(())
+}
+
+/// From a fresh scaffold to its command running in the current `rozi`.
+fn scaffold_next_steps(id: &str) -> [String; 5] {
+    [
+        format!("cd {id}"),
+        "rozi extensions check .".to_string(),
+        "rozi extensions install --link .".to_string(),
+        "rozi run-action reload-extensions".to_string(),
+        format!("rozi run-action {id}.hello"),
+    ]
 }
 
 fn extension_status_tone(status: crate::config::ExtensionStatus) -> OutputTone {
@@ -454,8 +460,9 @@ pub(crate) fn run_list_extensions_cli(json: bool, verbose: bool) -> Result<()> {
 pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Result<bool> {
     let extension = crate::config::check_extension(path);
     let info = &extension.info;
+    let hints = crate::config::authoring_hints(info);
     if json {
-        let document = crate::config::ExtensionCheckDocument::new(info.clone());
+        let document = crate::config::ExtensionCheckDocument::new(info.clone(), hints);
         super::output::print_or_stop(&format!(
             "{}\n",
             serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
@@ -463,7 +470,21 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
         return Ok(info.status == crate::config::ExtensionStatus::Loaded);
     }
     let styles = OutputStyles::detect();
-    let sections = crate::config::report_sections(info, &info.settings);
+    let mut sections = crate::config::report_sections(info, &info.settings);
+    if !hints.is_empty() {
+        sections.push(crate::config::ReportSection {
+            title: "Hints",
+            rows: hints
+                .into_iter()
+                .map(|hint| crate::config::ReportRow {
+                    label: "Hint".to_string(),
+                    value: hint,
+                    tone: crate::config::ReportTone::Warning,
+                    kind: crate::config::ReportKind::Info,
+                })
+                .collect(),
+        });
+    }
     super::output::print_or_stop(&format_check_text(&sections, styles));
     Ok(info.status == crate::config::ExtensionStatus::Loaded)
 }

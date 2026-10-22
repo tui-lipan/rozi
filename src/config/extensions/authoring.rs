@@ -146,3 +146,65 @@ fn cleanup_partial_scaffold(destination: &Path) {
     let _ = std::fs::remove_dir(destination.join("bin"));
     let _ = std::fs::remove_dir(destination);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MANIFEST: &str = "[extension]\n\
+        id = \"my-extension\"\n\
+        title = \"my-extension\"\n\
+        description = \"A Rozi extension\"\n\
+        version = \"0.1.0\"\n\
+        api = 1\n\
+        \n\
+        [[commands]]\n\
+        id = \"hello\"\n\
+        label = \"Hello from my-extension\"\n\
+        exec = [\"python3\", \"{extension_dir}/bin/hello.py\"]\n";
+
+    fn scaffold(python: PythonLaunch) -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("my-extension");
+        std::fs::create_dir(&destination).unwrap();
+        write_scaffold("my-extension", &destination, &python).unwrap();
+        temp
+    }
+
+    /// The first manifest an author reads stays this small, and the guide shows exactly it.
+    #[test]
+    fn the_scaffold_manifest_is_tiny_and_the_one_the_guide_shows() {
+        let temp = scaffold(PythonLaunch {
+            program: "python3",
+            prefix_arg: None,
+        });
+        let manifest =
+            std::fs::read_to_string(temp.path().join("my-extension/extension.toml")).unwrap();
+        assert_eq!(manifest, MANIFEST);
+        assert!(manifest.lines().count() <= 15);
+        let guide = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/writing-extensions.md"),
+        )
+        .unwrap();
+        assert!(
+            guide.contains(&format!("```toml\n{MANIFEST}```")),
+            "docs/writing-extensions.md shows a different scaffold manifest"
+        );
+    }
+
+    #[test]
+    fn the_scaffold_checks_clean_wherever_python_runs() {
+        let Ok(python) = scaffold_python() else {
+            return;
+        };
+        let temp = scaffold(python);
+        let info = crate::config::check_extension(&temp.path().join("my-extension")).info;
+        assert_eq!(
+            info.status,
+            crate::config::ExtensionStatus::Loaded,
+            "{:?}",
+            info.errors
+        );
+        assert_eq!(crate::config::authoring_hints(&info), Vec::<String>::new());
+    }
+}

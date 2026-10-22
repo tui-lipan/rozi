@@ -19,6 +19,9 @@ const EXAMPLES: &[(&str, &[&str], &[&str])] = &[
         &["agent-activity.open"],
         &["agent-activity.watch"],
     ),
+    ("hello", &["hello.greet", "hello.pick"], &[]),
+    ("project-status", &[], &["project-status.watch"]),
+    ("agent-board", &[], &["agent-board.board"]),
 ];
 
 fn repository_root() -> PathBuf {
@@ -46,6 +49,11 @@ fn canonical_extensions_conform_to_public_manifest_and_launch_contracts() {
     for (id, expected_commands, expected_services) in EXAMPLES {
         let document = check_extension(&root.join(id));
         assert_eq!(document["schema_version"], 1);
+        assert!(
+            document.get("hints").is_none(),
+            "{id}: {}",
+            document["hints"]
+        );
         let extension = &document["extension"];
         assert_eq!(extension["id"], *id);
         assert_eq!(extension["api"], rozi::config::EXTENSION_API_VERSION);

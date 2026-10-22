@@ -7,12 +7,16 @@ Run from the extension directory:
 
 from __future__ import annotations
 
+import io
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
 
@@ -44,6 +48,71 @@ class SnapshotTest(unittest.TestCase):
         status = Status("/src/app", "feature", ["a"])
         (row,) = project_status.snapshot(status, 0, 3 * 3600 + 5)["rows"]
         self.assertEqual((row["status"], row["reason"]), ("working", "1 uncommitted file for 3h"))
+
+
+class FocusTest(unittest.TestCase):
+    def test_unknown_focus_never_falls_back_to_the_first_pane(self) -> None:
+        with patch.object(project_status.subprocess, "run") as command:
+            self.assertIsNone(project_status.focused_cwd(None))
+        command.assert_not_called()
+
+    def test_missing_focus_or_invalid_layout_has_no_initial_pane(self) -> None:
+        for payload in ('{}', '{"client": null}', '{"client": {"focused_pane": null}}', 'invalid'):
+            with self.subTest(payload=payload), patch.object(
+                project_status.subprocess, "run", return_value=SimpleNamespace(stdout=payload)
+            ):
+                self.assertIsNone(project_status.current_focus())
+
+    def test_first_publication_uses_initial_focus_and_queued_focus_changes(self) -> None:
+        # Pane 1 comes first, but the UI starts on pane 5. A queued event can move it to 7.
+        for event_pane, expected in ((None, "5"), ("7", "7")):
+            with self.subTest(event_pane=event_pane), tempfile.TemporaryDirectory() as state_dir:
+                output = io.StringIO()
+                publisher = SimpleNamespace(stdin=output, poll=Mock(side_effect=[None, 0]))
+                event = {"event": "focus-changed", "data": {"pane": event_pane}}
+                events = SimpleNamespace(
+                    stdout=io.StringIO(json.dumps(event) + "\n" if event_pane else ""),
+                    poll=lambda: None,
+                )
+                commands = []
+
+                def start(arguments, **kwargs):
+                    commands.append(arguments[1:])
+                    return publisher if arguments[1] == "publish" else events
+
+                def query(arguments, **kwargs):
+                    commands.append(arguments[1:])
+                    if arguments[1] == "layout":
+                        payload = {"client": {"focused_pane": 5}}
+                    else:
+                        payload = [{"id": pane, "cwd": f"/repo/{pane}"} for pane in (1, 5, 7)]
+                    return SimpleNamespace(stdout=json.dumps(payload))
+
+                # Drain the already queued events deterministically when the reader starts.
+                def reader(target, **kwargs):
+                    return SimpleNamespace(start=target)
+
+                with (
+                    patch.dict(project_status.os.environ, {
+                        "ROZI_EXTENSION": "project-status",
+                        "ROZI_EXTENSION_STATE_DIR": state_dir,
+                    }),
+                    patch.object(project_status.subprocess, "Popen", side_effect=start),
+                    patch.object(project_status.subprocess, "run", side_effect=query),
+                    patch.object(project_status.threading, "Thread", side_effect=reader),
+                    patch.object(project_status.time, "sleep"),
+                    patch.object(project_status, "git_status", return_value=Status(
+                        f"/repo/{expected}", "main", []
+                    )) as git,
+                ):
+                    self.assertEqual(project_status.run(), 0)
+                git.assert_called_once_with(f"/repo/{expected}")
+                (row,) = json.loads(output.getvalue())["rows"]
+                self.assertEqual(row["title"], f"{expected} · main")
+                self.assertLess(
+                    commands.index(["subscribe", "focus-changed", "pane-exited"]),
+                    commands.index(["layout", "get", "--format", "json"]),
+                )
 
 
 class DirtySinceTest(unittest.TestCase):

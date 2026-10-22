@@ -1,7 +1,7 @@
 [extension]
 id = "agent-board"
 title = "Agent board"
-description = "Lists every session's agents in a sidebar tab, and teaches Rozi a demo agent"
+description = "Lists the active session's agents in a sidebar tab, and teaches Rozi a demo agent"
 version = "1.0.0"
 api = 1
 
@@ -25,8 +25,8 @@ name = "agents"
 label = "Agents"
 stream = true
 
-# One board per attached session, on that session's host, local or over SSH.
+# Follow the session on screen, on that session's host, local or over SSH.
 [[services]]
 name = "board"
 exec = ["python3", "{extension_dir}/bin/board.py"]
-placement = "each-session"
+placement = "active-session"

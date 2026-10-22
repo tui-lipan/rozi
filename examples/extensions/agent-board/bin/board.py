@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """List the session's agents in the Agents tab, and sum them up in one Activity row.
 
-Rozi starts one board per attached session, on the session's host. The board sees panes only
-while its session is on screen, so it keeps its last rows while you look at another session.
+Rozi runs the board on the active session's host and restarts it when you switch sessions.
 """
 
 from __future__ import annotations
@@ -29,8 +28,17 @@ def agent_panes(panes: list[dict[str, object]]) -> list[dict[str, object]]:
 
 
 def state_of(pane: dict[str, object]) -> str:
-    """What the agent says it is doing, else what Rozi reads from its screen."""
-    return str(pane.get("reported_status") or pane.get("agent_state") or "idle")
+    """Rozi's effective state: a detected block overrides a quiescent report."""
+    reported = pane.get("reported_status")
+    detected = pane.get("agent_state")
+    if detected == "blocked" and str(reported).strip().lower() in {"idle", "done"}:
+        return "blocked"
+    status = reported if reported is not None else detected
+    if status is None:
+        return "idle"
+    normalized = str(status).strip().lower()
+    # Core treats custom status text as working.
+    return normalized if normalized in TONES else "working"
 
 
 def tab_snapshot(agents: list[dict[str, object]]) -> dict[str, object]:
@@ -98,12 +106,8 @@ def run() -> int:
                 subprocess.run(command, check=False)
 
     threading.Thread(target=read_events, daemon=True).start()
-    agents: list[dict[str, object]] = []
     while tab.poll() is None and activity.poll() is None:
-        panes = list_panes()
-        # No panes means this session is not on screen: keep showing what it last had.
-        if panes:
-            agents = agent_panes(panes)
+        agents = agent_panes(list_panes())
         snapshots = [(tab, tab_snapshot(agents)), (activity, activity_snapshot(agents))]
         try:
             for stream, snapshot in snapshots:

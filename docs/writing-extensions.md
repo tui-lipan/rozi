@@ -924,7 +924,7 @@ Three examples build on each other, each with its own tests:
 2. [Project status](../examples/extensions/project-status/) — a service that subscribes to events,
    publishes an Activity row, and keeps state
 3. [Agent board](../examples/extensions/agent-board/) — an agent definition, a sidebar stream tab,
-   and a service that runs beside each session, local or remote
+   and a service that follows the active session, local or remote
 
 The repository also includes these example extensions:
 

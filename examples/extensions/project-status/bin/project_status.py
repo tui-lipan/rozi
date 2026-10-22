@@ -106,7 +106,23 @@ def snapshot(status: Status | None, since: float | None, now: float) -> dict[str
     return {"rows": [row]}
 
 
+def current_focus() -> str | None:
+    """The UI's focused pane, which list-panes does not identify."""
+    result = subprocess.run(
+        [ROZI, "layout", "get", "--format", "json"], capture_output=True, text=True, check=False
+    )
+    try:
+        layout = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    client = layout.get("client") or {}
+    pane = client.get("focused_pane")
+    return str(pane) if pane is not None else None
+
+
 def focused_cwd(pane: str | None) -> str | None:
+    if pane is None:
+        return None
     result = subprocess.run(
         [ROZI, "list-panes", "--format", "json"], capture_output=True, text=True, check=False
     )
@@ -115,7 +131,7 @@ def focused_cwd(pane: str | None) -> str | None:
     except json.JSONDecodeError:
         return None
     for entry in panes if isinstance(panes, list) else []:
-        if pane is None or str(entry.get("id")) == pane:
+        if str(entry.get("id")) == pane:
             return entry.get("cwd")
     return None
 
@@ -130,7 +146,8 @@ def run() -> int:
         [ROZI, "subscribe", "focus-changed", "pane-exited"], stdout=subprocess.PIPE, text=True
     )
     assert publisher.stdin is not None and events.stdout is not None
-    focused: list[str | None] = [None]
+    # Subscribe before taking the snapshot so focus changes during the read stay queued.
+    focused: list[str | None] = [current_focus()]
 
     def follow_focus() -> None:
         for line in events.stdout:

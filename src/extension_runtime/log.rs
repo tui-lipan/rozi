@@ -118,29 +118,47 @@ fn append_to(path: &Path, bytes: &[u8], on_fresh_line: bool, locked: bool) -> io
     if bytes.is_empty() {
         return Ok(());
     }
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    // Everything below about the file - its length, its last byte, where the write lands - goes
+    // through this one handle, so it describes the same file the write targets even if another
+    // client renames the path in the meantime. Reopening the path could find another file, or none.
+    let mut file = open_for_append(path)?;
     let len = file.metadata()?.len();
-    let mut data = Vec::with_capacity(bytes.len() + 1);
     // An earlier process may have been cut off mid-line.
-    if on_fresh_line && len > 0 && !ends_with_newline(path, len)? {
-        data.push(b'\n');
-    }
-    data.extend_from_slice(bytes);
-    if locked && len + data.len() as u64 > CAP {
+    let mut needs_newline = on_fresh_line && len > 0 && !ends_with_newline(&mut file, len)?;
+    let size = len + u64::from(needs_newline) + bytes.len() as u64;
+    if locked && size > CAP {
         // Another client may have rotated since this one last wrote, so the file is measured and
         // moved here, under the lock, never from a size remembered earlier.
         if fs::rename(path, path.with_extension(ROTATED_SUFFIX)).is_ok() {
             drop(file);
-            file = OpenOptions::new().create(true).append(true).open(path)?;
+            file = open_for_append(path)?;
         } else {
-            file.set_len(0)?;
+            // Truncating needs write access, which an append handle does not have on Windows.
+            OpenOptions::new().write(true).open(path)?.set_len(0)?;
         }
+        // The new file starts clean; what the old one lacked is made up when the two are read.
+        needs_newline = false;
     }
+    let mut data = Vec::with_capacity(bytes.len() + 1);
+    if needs_newline {
+        data.push(b'\n');
+    }
+    data.extend_from_slice(bytes);
     file.write_all(&data)
 }
 
-fn ends_with_newline(path: &Path, len: u64) -> io::Result<bool> {
-    let mut file = File::open(path)?;
+/// Readable as well as appendable, so the same handle can say how the file ends.
+fn open_for_append(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)
+}
+
+/// Whether the file behind `file`, `len` bytes long, ends a line. Appending ignores where the
+/// handle was left, so seeking to look does not move the write.
+fn ends_with_newline(file: &mut File, len: u64) -> io::Result<bool> {
     file.seek(SeekFrom::Start(len - 1))?;
     let mut last = [0u8; 1];
     file.read_exact(&mut last)?;
@@ -383,21 +401,40 @@ fn tail_in(
 /// Both generations of a unit's log, oldest first, read as one moment. A writer that rotates
 /// between the two reads would otherwise take the file the first read missed out of both.
 ///
-/// Held under the same lock writers take, so a rotation is wholly before or wholly after. Where the
-/// lock is not free in time, or there is no lock file because nothing ever wrote, the files are
-/// read as they are.
+/// Held under the same lock writers take, so a rotation is wholly before or wholly after. A lock
+/// that is not free in time is an error, [`io::ErrorKind::WouldBlock`], not a reason to read
+/// anyway: unlocked, the two reads can straddle a rotation and return a tail that skips a
+/// generation without saying so. Where there is no lock file, nothing ever wrote, and the files
+/// are read as they are.
 fn snapshot(live: &Path) -> io::Result<String> {
-    let lock = OpenOptions::new()
+    let lock = match OpenOptions::new()
         .read(true)
         .write(true)
         .open(live.with_extension("lock"))
-        .ok();
-    let locked = lock.as_ref().is_some_and(lock_for_a_while);
+    {
+        Ok(lock) => Some(lock),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(lock) = &lock
+        && !lock_for_a_while(lock)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "another rozi is writing this log right now; try again in a moment",
+        ));
+    }
     let mut text = String::new();
     let mut result = Ok(());
     for path in [live.with_extension(ROTATED_SUFFIX), live.to_path_buf()] {
         match read_lossy(&path) {
-            Ok(part) => text.push_str(&part),
+            Ok(part) => {
+                // A generation can end mid-line, and the next must not continue it.
+                if !text.is_empty() && !text.ends_with('\n') && !part.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&part);
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
                 result = Err(error);
@@ -405,7 +442,7 @@ fn snapshot(live: &Path) -> io::Result<String> {
             }
         }
     }
-    if locked && let Some(lock) = &lock {
+    if let Some(lock) = &lock {
         let _ = lock.unlock();
     }
     result.map(|()| text)
@@ -667,6 +704,88 @@ mod tests {
         let lines = tail_in(&env, "tool", "commands", 10).unwrap();
         rotator.join().unwrap();
         assert_eq!(lines, ["old", "new"]);
+    }
+
+    /// Read unlocked, the two generations can straddle a rotation and the tail skips one without
+    /// saying so. A reader that cannot get the lock says so instead.
+    #[test]
+    fn a_read_that_cannot_get_the_lock_reports_it_busy_not_a_tail_that_may_skip_a_generation() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        fs::write(&path, "line\n").unwrap();
+        let (held, release) = std::sync::mpsc::channel::<()>();
+        let (taken, locked) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let other = Sink::open(path).unwrap();
+                other.lock.lock().unwrap();
+                taken.send(()).unwrap();
+                let _ = release.recv();
+                other.lock.unlock().unwrap();
+            })
+        };
+        locked.recv().unwrap();
+        let started = Instant::now();
+        let busy = tail_in(&env, "tool", "commands", 10).unwrap_err();
+        let waited = started.elapsed();
+        held.send(()).unwrap();
+        holder.join().unwrap();
+        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock, "{busy}");
+        assert!(waited < Duration::from_secs(5), "{waited:?}");
+        // Once the lock is free it reads as before.
+        assert_eq!(tail_in(&env, "tool", "commands", 10).unwrap(), ["line"]);
+    }
+
+    /// The write targets the file it opened, so what it learns about that file must come from the
+    /// same handle: another client can rename the path between the open and the check.
+    #[test]
+    fn what_a_write_learns_about_the_file_comes_from_its_own_handle_not_the_path() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        fs::write(&path, "cut off mid-li").unwrap();
+        let mut handle = open_for_append(&path).unwrap();
+        let len = handle.metadata().unwrap().len();
+        // Another client rotates the file under it.
+        fs::rename(&path, path.with_extension(ROTATED_SUFFIX)).unwrap();
+        assert!(!path.exists());
+        assert!(!ends_with_newline(&mut handle, len).unwrap());
+        // And the write still lands, in the file the handle was opened on.
+        handle.write_all(b"ne\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(path.with_extension(ROTATED_SUFFIX)).unwrap(),
+            "cut off mid-line\n"
+        );
+    }
+
+    /// A generation that ends mid-line must not be continued by the next.
+    #[test]
+    fn generations_are_joined_on_a_line_boundary() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        fs::write(path.with_extension(ROTATED_SUFFIX), "ends mid-line").unwrap();
+        fs::write(&path, "starts fresh\n").unwrap();
+        assert_eq!(
+            tail_in(&env, "tool", "commands", 10).unwrap(),
+            ["ends mid-line", "starts fresh"]
+        );
+    }
+
+    /// Rotating a file that was cut off mid-line must not leave a blank first line in the new one.
+    #[test]
+    fn a_rotation_after_an_unterminated_line_starts_the_new_file_clean() {
+        let (_scratch, env) = env();
+        let log = open_in(&env, "tool", "commands").unwrap();
+        let almost_full = "x".repeat(usize::try_from(CAP).unwrap() - 5);
+        log.sink.lock().unwrap().write(almost_full.as_bytes());
+        log.note("exited with status 1");
+        let dir = paths::extension_log_dir(&env, "tool");
+        let live = fs::read_to_string(dir.join("commands.log")).unwrap();
+        assert!(live.starts_with('['), "{live:?}");
+        assert!(fs::metadata(dir.join("commands.log.1")).is_ok());
     }
 
     /// With no client writing, a reader finds no lock to take and reads what is there.

@@ -901,6 +901,8 @@ The name and ID are the ones in `extension.toml`, without the extension's own ID
 A log keeps only the most recent output, about 100 KB per log. An extension that prints a lot
 should print less or write its own file in its [state directory](#keep-state).
 
+If the command reports that another `rozi` is writing a log right now, run it again.
+
 Logs belong to the machine the process ran on. A placed process logs on its host, so run
 `rozi extensions logs` there to read it. Removing an extension deletes its logs; `--purge` is only
 needed for [state](#keep-state).

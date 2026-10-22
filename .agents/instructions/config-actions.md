@@ -74,7 +74,9 @@ instead of adding an unlinked snippet.
   both generations under the same lock; keep it that way. No caller may wait on that lock for more
   than a moment (`LOCK_WAIT`): a lock that is not free in time is skipped, not waited for, since
   the caller can be the UI thread. A write without the lock only appends; it never renames or
-  truncates, because the client holding the lock may be about to rotate.
+  truncates, because the client holding the lock may be about to rotate, and what it learns about
+  the file it reads through its own handle, never by reopening the path. A read that cannot get the
+  lock fails with `WouldBlock` instead of reading unlocked, which could skip a generation.
   A unit is named `<kind>.<id without the extension prefix>`, and a name too long or altered for a
   file name carries a hash of the whole. A log is diagnostics: it never decides whether a
   process starts, and `extensions remove` always deletes it. A placed `Spawn` names its unit; a

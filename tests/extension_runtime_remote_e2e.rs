@@ -486,7 +486,15 @@ fn main_case() {
     pump_until(backend, Duration::from_secs(15), "the activation", |_| {
         read(&dir.join("activations")).contains("r1")
     });
-    // A reload with nothing changed keeps the generation and is heard by the subscriber.
+    // A reload with nothing changed keeps the generation and is heard by the subscriber. The probe
+    // starts `rozi subscribe` in the background, so an event published before it is listening is
+    // never delivered.
+    pump_until(
+        backend,
+        Duration::from_secs(15),
+        "the subscription",
+        |backend| backend.state().event_hub.subscriber_count() > 0,
+    );
     let generation = backend.state().extension_generations[EXTENSION_ID].clone();
     backend
         .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))

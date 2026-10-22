@@ -181,6 +181,10 @@ pub enum Message {
         platforms: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture: Option<Capture>,
+        /// What the process is for, as the log that keeps its output names it (`command.<id>`,
+        /// `service.<name>`, `tab.<id>`). A client that names none gets the unit `placed`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
     },
     /// Runtime: the process started.
     Spawned { worker: u64, pid: u32 },

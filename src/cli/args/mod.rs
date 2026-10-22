@@ -253,6 +253,13 @@ pub(crate) enum ExtensionsCommand {
         id: String,
         config_path: Option<String>,
     },
+    /// Print what an extension's processes on this machine printed.
+    Logs {
+        id: String,
+        /// Only this unit's log; every unit's when `None`.
+        unit: Option<String>,
+        lines: usize,
+    },
     /// Serve a client's extension runtime over stdio. Started by Rozi itself over SSH; not listed
     /// in help.
     Runtime,

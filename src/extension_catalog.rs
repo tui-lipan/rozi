@@ -16,7 +16,7 @@ const INDEX_URL: &str = "https://tui-lipan.github.io/rozi-extension-index/v1/ind
 /// Keep equal to `MAX_INDEX_BYTES` in the index generator, which sheds entries to stay under it.
 const MAX_INDEX_BYTES: usize = 1024 * 1024;
 /// How long a cached index is shown without asking the network, matching the index host's
-/// `Cache-Control: max-age`. The index is rebuilt daily, so this only spares repeated opens.
+/// `Cache-Control: max-age`. The index is rebuilt hourly, so this only spares repeated opens.
 const CACHE_FRESH_FOR: Duration = Duration::from_secs(10 * 60);
 pub(crate) const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
 /// Longest accepted value, in characters, of each metadata field. Keep equal to `MAX_FIELD_CHARS`

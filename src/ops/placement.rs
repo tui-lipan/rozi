@@ -426,6 +426,13 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
             detail: "the extension is no longer active".to_string(),
         })?;
     let session_name = bound_session_name(state, &spec.binding);
+    // The name the host's log for this process goes by.
+    let (kind, public_id) = match &spec.kind {
+        WorkerKind::Service { name } => ("service", name),
+        WorkerKind::Command { id } => ("command", id),
+        WorkerKind::Tab { id } => ("tab", id),
+    };
+    let unit = crate::extension_runtime::log::unit_name(kind, &spec.placements.id, public_id);
     let worker = state.extension_workers.issue(
         ExtensionProvenance {
             id: spec.placements.id.clone(),
@@ -452,6 +459,7 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
         credential,
         platforms: spec.placements.platforms.clone(),
         capture: spec.capture,
+        unit: Some(unit),
     };
     state.extension_runtime.processes.insert(
         id,
@@ -1553,6 +1561,7 @@ mod tests {
                 credential: "secret".to_string(),
                 platforms: Vec::new(),
                 capture: None,
+                unit: None,
             };
             state.extension_runtime.sent.insert(worker, message.clone());
             state.extension_runtime.pending.push(PendingLaunch {

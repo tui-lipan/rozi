@@ -132,11 +132,73 @@ fn installed_extension_summary(id: &str) -> Option<InstalledExtensionSummary> {
     })
 }
 
+/// An extension's logs go with it: they describe an installation that no longer exists. Failing
+/// to delete them is not worth failing the removal for.
+fn delete_logs(id: &str) {
+    let _ = crate::platform::paths::remove_extension_logs(
+        &crate::platform::paths::PlatformEnv::from_process(),
+        id,
+    );
+}
+
+/// `extensions logs`: what an extension's processes on this machine printed, one block per unit.
+pub(crate) fn run_logs_extension_cli(id: &str, unit: Option<&str>, lines: usize) -> Result<()> {
+    use crate::extension_runtime::log;
+
+    if !crate::platform::paths::valid_extension_id(id) {
+        return Err(std::io::Error::other(format!("`{id}` is not an extension id")).into());
+    }
+    let available = log::units(id)?;
+    let shown: Vec<&String> = match unit {
+        None => available.iter().collect(),
+        Some(unit) => {
+            let wanted = log::stem(unit);
+            let matched: Vec<&String> = available.iter().filter(|name| **name == wanted).collect();
+            if matched.is_empty() && !available.is_empty() {
+                return Err(std::io::Error::other(format!(
+                    "`{id}` has no log for `{unit}` here (units: {})",
+                    available.join(", ")
+                ))
+                .into());
+            }
+            matched
+        }
+    };
+    let styles = OutputStyles::detect();
+    if shown.is_empty() {
+        println!(
+            "{}",
+            styles.paint(
+                &format!(
+                    "No output recorded for `{id}` on this machine. An extension's output is kept \
+                     on the machine its process ran on; run this there for placed processes."
+                ),
+                OutputTone::Muted
+            )
+        );
+        return Ok(());
+    }
+    for (index, name) in shown.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        println!(
+            "{}",
+            styles.paint(&format!("==> {name} <=="), OutputTone::Heading)
+        );
+        for line in log::tail(id, name, lines)? {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     // `--purge` also clears what an extension removed earlier left behind.
     if purge && !crate::extension_installation::is_installed(id) {
         let purged =
             crate::extension_installation::purge_state(id).map_err(std::io::Error::other)?;
+        delete_logs(id);
         if !purged {
             return Err(std::io::Error::other(format!(
                 "Extension `{id}` is not installed and has no state on this machine"
@@ -152,6 +214,7 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
         return Ok(());
     }
     let removed = crate::extension_installation::remove(id).map_err(std::io::Error::other)?;
+    delete_logs(id);
     let purged = purge
         .then(|| crate::extension_installation::purge_state(id))
         .transpose()

@@ -9,6 +9,8 @@ pub struct RunningService {
     pub config: ServiceConfig,
     pub child: Child,
     pub group: CommandGroup,
+    /// The copy of the service's output into its extension's log, when it has one.
+    pub log: Option<crate::extension_runtime::log::Attached>,
     pub started_at: Instant,
     pub backoff_delay: Duration,
     pub consecutive_failures: u32,

@@ -367,11 +367,6 @@ pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
     command_available(action, state)
         && match action {
             Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
-            // Depends on which sidebar tab is active, which changes without the registry being
-            // rebuilt. A binding still reaches the handler, which does nothing without one.
-            Action::SidebarTabSettings => {
-                crate::ops::tab_settings::active_tab_with_settings(state).is_some()
-            }
             _ => true,
         }
 }
@@ -1593,28 +1588,6 @@ mod tests {
             .terminal
             .project_root = Some("/repo".to_string());
         assert!(palette_visible(Action::OpenWorktrees, &state));
-    }
-
-    /// Which tab is active changes without the registry being rebuilt, so a binding must stay
-    /// live; only the palette follows the active tab.
-    #[test]
-    fn sidebar_tab_settings_stays_bindable_and_the_palette_follows_the_active_tab() {
-        let mut state = State::new(Config::default(), Theme::default());
-        assert!(command_available(Action::SidebarTabSettings, &state));
-        assert!(!palette_visible(Action::SidebarTabSettings, &state));
-
-        state.sidebar.shown = [true, false];
-        let config = state.config.sidebar.clone();
-        state.sidebar.apply_configured_panels(&config);
-        assert_eq!(
-            state.sidebar.active_tab().map(|id| id.as_str()),
-            Some("activity")
-        );
-        assert!(palette_visible(Action::SidebarTabSettings, &state));
-
-        state.sidebar.panels[0].active_tab = Some(crate::config::SidebarTabId::new("panes"));
-        assert!(command_available(Action::SidebarTabSettings, &state));
-        assert!(!palette_visible(Action::SidebarTabSettings, &state));
     }
 
     #[test]

@@ -36,17 +36,6 @@ pub(crate) fn tab_has_settings(state: &crate::state::State, tab: &str) -> bool {
         .is_some_and(|group| !group.specs.is_empty())
 }
 
-/// The tab the command palette's "Sidebar tab settings…" opens: the active tab of the focused
-/// sidebar panel, when that panel's dock is showing and the tab has settings. The active panel
-/// can sit in a dock hidden since it was focused, and a tab out of sight is not the one meant.
-pub(crate) fn active_tab_with_settings(state: &crate::state::State) -> Option<String> {
-    if !state.sidebar_panel_visible(state.sidebar.active_panel_index()) {
-        return None;
-    }
-    let tab = state.sidebar.active_tab()?.as_str();
-    tab_has_settings(state, tab).then(|| tab.to_string())
-}
-
 pub(crate) fn open(ctx: &mut Context<AppRoot>, tab: String) -> Update {
     let Some(first) = ctx
         .state
@@ -59,7 +48,6 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>, tab: String) -> Update {
     else {
         return Update::none();
     };
-    ctx.state.show_palette = false;
     let mut picker = TabSettingsState::new(tab);
     picker.selected = Some(first);
     ctx.state.tab_settings = Some(picker);
@@ -67,18 +55,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>, tab: String) -> Update {
     Update::full()
 }
 
-pub(crate) fn open_for_active_tab(ctx: &mut Context<AppRoot>) -> Update {
-    match active_tab_with_settings(&ctx.state) {
-        Some(tab) => {
-            // Opened from the palette, so it leads back to the panes rather than to Sidebar tabs.
-            ctx.state.sidebar_manager = None;
-            open(ctx, tab)
-        }
-        None => Update::none(),
-    }
-}
-
-/// Esc: close an open choice list, otherwise leave the picker for wherever it was opened from.
+/// Esc: close an open choice list, otherwise leave the picker for Sidebar tabs.
 pub(crate) fn back(ctx: &mut Context<AppRoot>) -> Update {
     let Some(picker) = ctx.state.tab_settings.as_mut() else {
         return Update::none();
@@ -93,8 +70,6 @@ pub(crate) fn back(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(manager) = ctx.state.sidebar_manager.as_mut() {
         manager.selected = Some(tab);
         ctx.request_focus("sidebar-manager");
-    } else {
-        crate::ops::focus::request_current_pane_focus(ctx);
     }
     Update::full()
 }

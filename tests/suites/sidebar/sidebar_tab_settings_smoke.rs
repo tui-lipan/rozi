@@ -1,6 +1,4 @@
-use rozi::config::{
-    SidebarPosition, SidebarTab, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
-};
+use rozi::config::{SidebarTab, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView};
 use rozi::input::Action;
 use rozi::state::SettingsAction;
 use rozi::{AppRoot, Msg};
@@ -237,66 +235,5 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();
         assert!(b.state().sidebar_manager.is_none());
         assert!(b.state().show_settings);
-    });
-}
-
-/// Hiding the dock that holds the active panel leaves that panel active but out of sight; the
-/// command must not open settings for a tab the user cannot see.
-#[test]
-fn the_palette_command_ignores_a_tab_in_a_hidden_dock() {
-    on_stack(|| {
-        let mut b = backend();
-        let state = b.state_mut();
-        state
-            .config
-            .sidebar
-            .layout
-            .place("git", SidebarPosition::Right, 0);
-        state.sidebar.shown = [true, true];
-        let config = state.config.sidebar.clone();
-        state.sidebar.apply_configured_panels(&config);
-        assert_eq!(
-            state.sidebar.active_tab().map(|id| id.as_str()),
-            Some("activity")
-        );
-
-        // The left dock goes away while focus is on a pane, so the active panel stays put.
-        state.sidebar.shown = [false, true];
-        b.dispatch(Msg::RunAction(Action::SidebarTabSettings))
-            .unwrap();
-        assert!(b.state().tab_settings.is_none());
-    });
-}
-
-/// The palette command opens the settings of the focused panel's tab, and is unavailable when
-/// that tab has none or the sidebar is hidden.
-#[test]
-fn the_palette_command_opens_the_active_tabs_settings() {
-    on_stack(|| {
-        let mut b = backend();
-        b.dispatch(Msg::RunAction(Action::SidebarTabSettings))
-            .unwrap();
-        assert!(
-            b.state().tab_settings.is_none(),
-            "a hidden sidebar has no active tab"
-        );
-
-        b.state_mut().sidebar.shown = [true, false];
-        let config = b.state().config.sidebar.clone();
-        b.state_mut().sidebar.apply_configured_panels(&config);
-        let active = b.state().sidebar.active_tab().cloned();
-        assert_eq!(active.as_ref().map(|id| id.as_str()), Some("activity"));
-        b.dispatch(Msg::RunAction(Action::SidebarTabSettings))
-            .unwrap();
-        assert_eq!(
-            b.state().tab_settings.as_ref().map(|p| p.tab.as_str()),
-            Some("activity")
-        );
-        assert!(screen(&mut b).contains("Activity settings"));
-
-        // Opened from the palette, Esc goes back to the panes.
-        b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();
-        assert!(b.state().tab_settings.is_none());
-        assert!(b.state().sidebar_manager.is_none());
     });
 }

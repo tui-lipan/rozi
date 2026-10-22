@@ -444,8 +444,7 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 ### Tab settings
 
 Activity, Files, Git, and extension tabs that offer them have settings of their own. In
-**Sidebar tabs…**, highlight the tab and press `Ctrl+E`, or run **Sidebar tab settings…** from the
-command palette to open the settings of the tab shown in the focused panel. Each row shows a
+**Sidebar tabs…**, highlight the tab and press `Ctrl+E` to open its settings. Each row shows a
 setting's current value:
 
 | Setting | Enter |

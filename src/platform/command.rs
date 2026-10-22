@@ -1025,17 +1025,27 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn bounded_shell_command_enforces_capture_limit_and_status() {
+        // A shell builtin produces twice the capture limit without an external program
+        // whose failure could be hidden by the final exit status. This tests capture, not timing;
+        // leave room for the shell and reader threads to run on a busy CI host.
         let output = run_bounded_shell_command(
             &ShellCommand::new("/bin/sh").arg("-c"),
-            "dd if=/dev/zero bs=1024 count=128 2>/dev/null; printf err >&2; exit 7",
-            std::time::Duration::from_secs(2),
+            "printf '%131072s' '' && printf err >&2 && exit 7",
+            std::time::Duration::from_secs(10),
             64 * 1024,
         )
         .unwrap();
+        assert!(
+            !output.timed_out,
+            "capture command timed out: status {:?}, stdout {} bytes, stderr {:?}",
+            output.status,
+            output.stdout.len(),
+            output.stderr,
+        );
+        assert_eq!(output.status, Some(7), "stderr: {:?}", output.stderr);
         assert_eq!(output.stdout.len(), 64 * 1024);
+        assert!(output.stdout.iter().all(|byte| *byte == b' '));
         assert_eq!(output.stderr, b"err");
-        assert_eq!(output.status, Some(7));
-        assert!(!output.timed_out);
     }
 
     #[cfg(unix)]

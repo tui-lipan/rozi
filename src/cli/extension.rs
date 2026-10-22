@@ -124,8 +124,30 @@ fn installed_extension_summary(id: &str) -> Option<InstalledExtensionSummary> {
     })
 }
 
-pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
+pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
+    // `--purge` also clears what an extension removed earlier left behind.
+    if purge && !crate::extension_installation::is_installed(id) {
+        let purged =
+            crate::extension_installation::purge_state(id).map_err(std::io::Error::other)?;
+        if !purged {
+            return Err(std::io::Error::other(format!(
+                "Extension `{id}` is not installed and has no state on this machine"
+            ))
+            .into());
+        }
+        let styles = OutputStyles::detect();
+        println!(
+            "{} {}",
+            styles.paint("Purged", OutputTone::Success),
+            styles.paint(id, OutputTone::Accent)
+        );
+        return Ok(());
+    }
     let removed = crate::extension_installation::remove(id).map_err(std::io::Error::other)?;
+    let purged = purge
+        .then(|| crate::extension_installation::purge_state(id))
+        .transpose()
+        .map_err(std::io::Error::other)?;
     let styles = OutputStyles::detect();
     println!(
         "{} {}",
@@ -144,6 +166,19 @@ pub(crate) fn run_remove_extension_cli(id: &str) -> Result<()> {
             "{}  The source checkout was not changed.",
             styles.paint("Source", OutputTone::Muted)
         );
+    }
+    let state = match purged {
+        Some(true) => Some("Deleted on this machine.".to_string()),
+        Some(false) => None,
+        None => crate::platform::paths::extension_state_dir(
+            &crate::platform::paths::PlatformEnv::from_process(),
+            id,
+        )
+        .exists()
+        .then(|| format!("Kept. Delete it with `rozi extensions remove {id} --purge`.")),
+    };
+    if let Some(state) = state {
+        println!("{}   {state}", styles.paint("State", OutputTone::Muted));
     }
     println!(
         "{}  {}",

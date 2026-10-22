@@ -242,6 +242,24 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
     })
 }
 
+/// Whether an installation declares `id`, valid or not.
+pub(crate) fn is_installed(id: &str) -> bool {
+    crate::config::scan_extensions()
+        .entries()
+        .iter()
+        .any(|entry| entry.id.as_deref() == Some(id))
+}
+
+/// Delete `id`'s state directory on this machine. `Ok(false)` when it had none.
+pub(crate) fn purge_state(id: &str) -> Result<bool, String> {
+    crate::config::validate_extension_installation_id(id)?;
+    crate::platform::paths::remove_extension_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+        id,
+    )
+    .map_err(|error| format!("Could not delete the state of `{id}`: {error}"))
+}
+
 pub(crate) fn remove(id: &str) -> Result<RemovedExtension, String> {
     crate::config::validate_extension_installation_id(id)?;
     let user = crate::config::read_user_extension_config()?;

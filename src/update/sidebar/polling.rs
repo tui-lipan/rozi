@@ -208,20 +208,28 @@ pub(crate) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: Sideb
         group_prefix: command_group_prefix(ctx, &tab_id),
         format: command_format(ctx, &tab_id),
     };
-    let env = command_tab_env(ctx, &tab_id);
+    let mut env = command_tab_env(ctx, &tab_id);
+    if !env.is_empty() {
+        env.push((
+            crate::config::SESSION_NAME_ENV.to_string(),
+            ctx.state.current().session_name.clone().unwrap_or_default(),
+        ));
+    }
     let cwd = client_poll_cwd(&ctx.state);
     Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let (rows, tree) = command_listing(
-            crate::platform::command::run_bounded_shell_command_with_env(
-                &shell,
-                &command_line,
-                &env,
-                cwd.as_deref(),
-                COMMAND_TIMEOUT,
-                COMMAND_CAPTURE_BYTES,
-            ),
-            &parse,
-        );
+        let output = crate::config::prepare_state_dir(env.iter().map(|(key, value)| (key, value)))
+            .map_err(std::io::Error::other)
+            .and_then(|()| {
+                crate::platform::command::run_bounded_shell_command_with_env(
+                    &shell,
+                    &command_line,
+                    &env,
+                    cwd.as_deref(),
+                    COMMAND_TIMEOUT,
+                    COMMAND_CAPTURE_BYTES,
+                )
+            });
+        let (rows, tree) = command_listing(output, &parse);
         link.send(crate::Msg::SidebarCommandOutput {
             epoch,
             tree,

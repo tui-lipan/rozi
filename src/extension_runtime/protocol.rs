@@ -17,6 +17,11 @@ pub const VERSION: u32 = 1;
 /// listed by `rozi api describe`.
 pub const CAPABILITY: &str = "remote-extension-runtime";
 
+/// The capability a host's runtime advertises when it gives every process it starts a state
+/// directory on that host. A client places nothing on a runtime without it, since an extension
+/// may rely on `ROZI_EXTENSION_STATE_DIR` being there. Also listed by `rozi api describe`.
+pub const STATE_CAPABILITY: &str = "extension-state-dir";
+
 /// Largest frame either side accepts. Bundles travel in [`STAGE_CHUNK`]-sized pieces and bridged
 /// control traffic is line-oriented JSON, so nothing legitimate comes close.
 pub const MAX_FRAME: usize = 4 * 1024 * 1024;
@@ -48,7 +53,7 @@ impl Hello {
         Self {
             protocol_min: VERSION,
             protocol_max: VERSION,
-            capabilities: vec![CAPABILITY.to_string()],
+            capabilities: vec![CAPABILITY.to_string(), STATE_CAPABILITY.to_string()],
             version: os.as_ref().map(|_| env!("CARGO_PKG_VERSION").to_string()),
             os,
         }

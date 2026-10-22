@@ -245,6 +245,8 @@ pub(crate) enum ExtensionsCommand {
     },
     Remove {
         id: String,
+        /// Also delete the extension's state directory on this machine.
+        purge: bool,
         config_path: Option<String>,
     },
     Update {

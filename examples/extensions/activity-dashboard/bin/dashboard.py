@@ -17,7 +17,7 @@ ROZI = os.environ.get("ROZI_BIN", "rozi")
 MAX_EVENTS = 40
 events: collections.deque[dict[str, object]] = collections.deque(maxlen=MAX_EVENTS)
 lock = threading.Lock()
-state_path = Path(os.environ.get("ROZI_EXTENSION_DIR", ".")) / ".activity.json"
+state_path = Path(os.environ["ROZI_EXTENSION_STATE_DIR"]) / "activity.json"
 
 
 def load_events() -> None:

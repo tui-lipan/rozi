@@ -296,6 +296,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-wait",
     "command-visibility",
     "extension-link-handlers",
+    "extension-state-dir",
     "global-agents",
     "layout-control",
     "pane-control",
@@ -319,6 +320,10 @@ only concerns how two rozi binaries talk to each other.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](writing-extensions.md#link-handlers) through their manifest.
+
+`extension-state-dir` means extension processes receive a
+[state directory](writing-extensions.md#keep-state) in `ROZI_EXTENSION_STATE_DIR`, and
+`ROZI_SESSION_NAME`. A host needs it to run placed contributions.
 
 `publish-kind` means [`publish`](#published-activity) accepts `--kind` and `--name`: published
 rows are activities unless declared agents, and several publishers can share a pane. An older

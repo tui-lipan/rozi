@@ -105,9 +105,13 @@ pub fn run() -> Result<()> {
                 apply_config_path(config_path);
                 return cli::run_install_extension_cli(&source, link);
             }
-            cli::ExtensionsCommand::Remove { id, config_path } => {
+            cli::ExtensionsCommand::Remove {
+                id,
+                purge,
+                config_path,
+            } => {
                 apply_config_path(config_path);
-                return cli::run_remove_extension_cli(&id);
+                return cli::run_remove_extension_cli(&id, purge);
             }
             cli::ExtensionsCommand::Update { id, config_path } => {
                 apply_config_path(config_path);

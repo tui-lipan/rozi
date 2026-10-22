@@ -62,9 +62,8 @@ subprocess.run([rozi, "notify", f"Hello from {extension}"], check=False)
 The scaffold picks the Python launcher available on your machine (`python3`, `python`, or `py -3` on
 Windows); adjust `exec` if you share the extension with a platform whose launcher differs.
 
-Keep mutable files out of the extension directory. Write state, caches, and runtime files to the
-normal user state, cache, or runtime directories; only immutable package data belongs beside the
-manifest.
+Keep mutable files out of the extension directory: only immutable package data belongs beside the
+manifest. Write anything the extension keeps to its [state directory](#keep-state).
 
 ## Extension metadata
 
@@ -318,7 +317,7 @@ shows a notification with the reason, once per reason, and the contribution stay
 | Reason | Meaning |
 | --- | --- |
 | `unsupported-platform` | `platforms` excludes the host's operating system. |
-| `runtime-unsupported` | The host's `rozi` is too old to run extension processes. Update `rozi` on the host. |
+| `runtime-unsupported` | The host's `rozi` is too old to run extension processes or to give them a [state directory](#keep-state). Update `rozi` on the host. |
 | `missing-executable` | The program is not on the host's `PATH`. Install it, then run `reload-extensions`. |
 | `bundle-failed` | The extension's files could not be stored or verified on the host. |
 | `runtime-unreachable` | The SSH connection to the host failed or dropped. `rozi` reconnects with backoff. |
@@ -393,8 +392,8 @@ accidental changes, and verification before every launch catches any change, del
 but a process on the host that can change the snapshot can also change what runs there in other
 ways.
 
-Placed contributions need `rozi` with the `remote-extension-runtime` capability on the client and
-on every host they run on. Set `min_rozi` to a release that has it (see
+Placed contributions need `rozi` with the `remote-extension-runtime` and `extension-state-dir`
+capabilities on the client and on every host they run on. Set `min_rozi` to a release that has it (see
 [Check the installed API](control.md#check-the-installed-api)); an older `rozi` rejects the
 `placement` key.
 
@@ -729,6 +728,38 @@ cannot leave a callable stale handler. These are static declarations; no extensi
 movement or terminal rendering. Check `rozi api describe` for `extension-link-handlers` before
 relying on this additive extension API 1 feature.
 
+## Keep state
+
+Every extension process receives `ROZI_EXTENSION_STATE_DIR`, a directory where the extension can
+keep files between runs. `rozi` creates it before starting the process, readable only by the user.
+It is the same directory for every process of the extension on one machine: commands, services,
+command tabs, link handlers, and [placed](#run-on-the-session-host) processes.
+
+```python
+import json, os
+from pathlib import Path
+
+path = Path(os.environ["ROZI_EXTENSION_STATE_DIR"]) / "history.json"
+history = json.loads(path.read_text()) if path.exists() else []
+```
+
+The directory belongs to the extension ID and the machine, and nothing else:
+
+- It survives updates, reloads, disabling and enabling, reinstalling, and removal.
+  `rozi extensions remove <id> --purge` deletes it on the machine where you run it.
+- It is never copied, never part of a placed contribution's snapshot, and never moved between
+  machines. A placed process uses the state directory of the host it runs on, so an
+  `active-session` contribution keeps its state on the host of the session it ran for, not with you.
+  Attaching to another host gives it that host's state.
+- Every process of the extension on a machine shares it, including `each-session` instances and
+  processes started by different `rozi` clients. Use your own locking or atomic writes (write a
+  temporary file, then rename it) when more than one process may write.
+- To keep state per session, name files after `ROZI_SESSION_NAME`, the name of the session the
+  process works for; see [Runtime environment](#runtime-environment) for which processes have one.
+
+Settings stay in `[settings]` and `ROZI_EXTENSION_CONFIG`; the state directory is for what the
+extension itself writes.
+
 ## Runtime environment
 
 Every extension command and service receives:
@@ -737,6 +768,7 @@ Every extension command and service receives:
 | --- | --- |
 | `ROZI_EXTENSION` | The extension's manifest ID. |
 | `ROZI_EXTENSION_DIR` | Absolute installation directory. |
+| `ROZI_EXTENSION_STATE_DIR` | The extension's [state directory](#keep-state) on this machine. |
 | `ROZI_EXTENSION_CONFIG` | Merged settings as a compact JSON object; `{}` when none are declared. |
 | `ROZI_EXTENSION_GENERATION` | Opaque token identifying the currently loaded extension. |
 | `ROZI_BIN` | The running `rozi` executable, when available. |
@@ -748,6 +780,7 @@ differences:
 | Variable | Value |
 | --- | --- |
 | `ROZI_EXTENSION_DIR` | The extension's snapshot directory on the host that runs it. |
+| `ROZI_EXTENSION_STATE_DIR` | The extension's state directory on the host that runs it. |
 | `ROZI_BIN` | The host's `rozi` executable. |
 | `ROZI_SOCKET` | The host's extension runtime, which relays requests to your client. |
 | `ROZI_EXTENSION_CREDENTIAL` | The process's own credential. Never pass it on or log it. |
@@ -758,8 +791,19 @@ and its session instance. Link handlers receive these variables for the source p
 the [link context](configuration.md#links-handlers), for both client and placed commands.
 Ordinary `run` and `popup` commands and services do not receive these variables automatically.
 
-A service's `env` cannot override the four `ROZI_EXTENSION*` variables, and the runtime replaces
-any `ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.
+`ROZI_SESSION_NAME` holds the name of the session a process works for. Client `exec` commands, link
+handlers, and command tabs receive the session on screen, and an `active-session` or
+`each-session` contribution receives its own session. It is empty when no session is attached.
+Services that run on the client and `each-host` services serve no single session and do not
+receive it. Renaming a session restarts its `active-session` and `each-session` services with
+the updated name.
+
+For a session attached with `--remote`, `run` panes outside the scratchpad and all `popup`
+commands open on the remote host. Neither receives `ROZI_EXTENSION_STATE_DIR`. A `run` pane in
+the scratchpad opens on the client and receives the client's state directory.
+
+A service's `env` cannot override the `ROZI_EXTENSION*` variables, and the runtime replaces any
+`ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.
 
 Call `rozi` through `ROZI_BIN` rather than assuming it is on `PATH`, and pass `ROZI_SOCKET` back to
 it:
@@ -841,7 +885,8 @@ Extension API 1 is frozen. Within API 1, `rozi` will not break:
   key forwarding, and an explicit `[navigation] editors` list replaces all declarations;
 - suggested keybindings: they target only the documented action allowlist, rank below user and
   built-in bindings, and never put extension code on the input path;
-- the `ROZI_EXTENSION*` environment variables and their meanings;
+- the `ROZI_EXTENSION*` environment variables and their meanings, and `ROZI_SESSION_NAME`;
+- the state directory: one per extension ID and machine, kept until purged;
 - `placement` and what a placed process may do, as described under
   [Run on the session host](#run-on-the-session-host);
 - the `rozi` control commands documented in [Control](control.md), and their exit codes;

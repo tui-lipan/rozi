@@ -192,6 +192,18 @@ Removal deletes a copied extension or a `rozi`-owned Git clone. For a linked ext
 only the symlink, never the checkout it points to. After a CLI removal, run
 `rozi run-action reload-extensions` in running clients.
 
+Removal keeps the files the extension saved in its
+[state directory](writing-extensions.md#keep-state), so reinstalling it picks up where it left
+off. To delete them too:
+
+```sh
+rozi extensions remove git-tools --purge
+```
+
+`--purge` deletes the state on the machine where you run it. An extension that ran placed
+contributions on a remote host keeps its state there; run the command on that host to delete it.
+`--purge` also deletes the state of an extension that is no longer installed.
+
 ## Bind a key to an extension command
 
 An extension command's public ID is `<extension-id>.<command-id>`. Bind it in `[keys]` like any

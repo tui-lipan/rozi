@@ -507,6 +507,7 @@ pub(super) fn validate_service(
     extension_id: &str,
     directory: &Path,
     extension_dir: &str,
+    state_dir: &str,
     seen: &mut HashSet<String>,
     info: &mut ExtensionInfo,
     services: &mut Vec<ServiceConfig>,
@@ -621,6 +622,8 @@ pub(super) fn validate_service(
         .insert("ROZI_EXTENSION".to_string(), extension_id.to_string());
     raw.env
         .insert("ROZI_EXTENSION_DIR".to_string(), extension_dir.to_string());
+    raw.env
+        .insert(super::STATE_DIR_ENV.to_string(), state_dir.to_string());
     let restart = match raw.restart.as_deref().map(str::trim) {
         None | Some("") | Some("on-failure") => Some(ServiceRestart::OnFailure),
         Some("always") => Some(ServiceRestart::Always),
@@ -637,6 +640,7 @@ pub(super) fn validate_service(
     {
         let mut env = raw.env.clone();
         env.remove("ROZI_EXTENSION_DIR");
+        env.remove(super::STATE_DIR_ENV);
         placed.services.push(PlacedService {
             name: name.clone(),
             placement,

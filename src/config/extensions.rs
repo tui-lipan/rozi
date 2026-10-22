@@ -54,12 +54,40 @@ const RESERVED_EXTENSION_IDS: &[&str] = &["app", "command", "rozi", "user", "wor
 const RESERVED_EXTENSION_ENV: &[&str] = &[
     "ROZI_EXTENSION",
     "ROZI_EXTENSION_DIR",
+    STATE_DIR_ENV,
     SETTINGS_ENV,
     runtime::GENERATION_ENV,
 ];
 
 /// Where an extension process reads its merged settings, as a compact JSON object.
 pub const SETTINGS_ENV: &str = "ROZI_EXTENSION_CONFIG";
+
+/// The extension's own durable directory on the host running the process.
+pub const STATE_DIR_ENV: &str = "ROZI_EXTENSION_STATE_DIR";
+
+/// The name of the session an extension process runs for: the one on screen for a command or a
+/// command tab, the bound one for a session-placed service. A name rather than the session's
+/// instance, which changes every time its server starts, so state keyed by it lasts.
+pub const SESSION_NAME_ENV: &str = "ROZI_SESSION_NAME";
+
+/// Create the state directory an extension process is about to be given, before it starts.
+///
+/// Takes the extension from the process's own `ROZI_EXTENSION` rather than trusting a path, so
+/// a launch can only ever prepare the directory of the extension it is for. Environment without
+/// an extension (a `config.toml` command) needs nothing.
+pub(crate) fn prepare_state_dir<'a>(
+    env: impl IntoIterator<Item = (&'a String, &'a String)>,
+) -> Result<(), String> {
+    let Some((_, id)) = env.into_iter().find(|(key, _)| *key == "ROZI_EXTENSION") else {
+        return Ok(());
+    };
+    crate::platform::paths::ensure_extension_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+        id,
+    )
+    .map(|_| ())
+    .map_err(|error| format!("could not prepare the state directory of `{id}`: {error}"))
+}
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -555,9 +583,16 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         .unwrap_or_else(|| "extension".to_string());
     let category = info.title.clone().unwrap_or_else(|| validation_id.clone());
     let extension_dir = directory.to_string_lossy().to_string();
+    let state_dir = crate::platform::paths::extension_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+        &validation_id,
+    )
+    .to_string_lossy()
+    .to_string();
     let command_env = vec![
         ("ROZI_EXTENSION".to_string(), validation_id.clone()),
         ("ROZI_EXTENSION_DIR".to_string(), extension_dir.clone()),
+        (STATE_DIR_ENV.to_string(), state_dir.clone()),
     ];
     let mut seen_commands = HashSet::new();
     for raw in manifest.commands {
@@ -677,6 +712,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &validation_id,
             &directory,
             &extension_dir,
+            &state_dir,
             &mut seen_services,
             &mut info,
             &mut services,
@@ -2421,10 +2457,12 @@ mod tests {
             [
                 "ROZI_EXTENSION",
                 "ROZI_EXTENSION_DIR",
+                "ROZI_EXTENSION_STATE_DIR",
                 "ROZI_EXTENSION_CONFIG",
                 "ROZI_EXTENSION_GENERATION"
             ]
         );
+        assert_eq!(SESSION_NAME_ENV, "ROZI_SESSION_NAME");
         assert_eq!(EXTENSION_API_VERSION, 1);
         assert_eq!(EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, 1);
     }
@@ -2466,7 +2504,36 @@ mod tests {
         let env: std::collections::HashMap<_, _> = tab.env().iter().cloned().collect();
         assert_eq!(env["ROZI_EXTENSION"], "tasks");
         assert_eq!(env["ROZI_EXTENSION_DIR"], expected);
+        assert_eq!(
+            Path::new(&env[STATE_DIR_ENV]),
+            crate::platform::paths::extension_state_dir(
+                &crate::platform::paths::PlatformEnv::from_process(),
+                "tasks"
+            )
+        );
         assert_eq!(env[SETTINGS_ENV], r#"{"runner":"just"}"#);
+    }
+
+    #[test]
+    fn a_launch_makes_its_extensions_state_directory_first() {
+        let env = |id: &str| {
+            vec![
+                ("ROZI_EXTENSION".to_string(), id.to_string()),
+                ("OTHER".to_string(), "x".to_string()),
+            ]
+        };
+        let state = crate::platform::paths::extension_state_dir(
+            &crate::platform::paths::PlatformEnv::from_process(),
+            "prepared-probe",
+        );
+        let _ = std::fs::remove_dir_all(&state);
+        let launch = env("prepared-probe");
+        prepare_state_dir(launch.iter().map(|(key, value)| (key, value))).unwrap();
+        assert!(state.is_dir());
+        let plain = [("OTHER".to_string(), "x".to_string())];
+        prepare_state_dir(plain.iter().map(|(key, value)| (key, value))).unwrap();
+        let escape = env("../escape");
+        assert!(prepare_state_dir(escape.iter().map(|(key, value)| (key, value))).is_err());
     }
 
     /// Disabling an extension withdraws its tab but keeps the extension in `installed_ids`, which is
@@ -2530,6 +2597,7 @@ mod tests {
         assert_eq!(placed.services[0].placement, placement::Placement::EachHost);
         assert_eq!(placed.services[0].cwd, "bin");
         assert!(!placed.services[0].env.contains_key("ROZI_EXTENSION_DIR"));
+        assert!(!placed.services[0].env.contains_key(STATE_DIR_ENV));
         assert_eq!(placed.services[0].env["ROZI_EXTENSION"], "sessions");
         assert!(placed.commands.contains_key("sessions.there"));
         assert!(!placed.commands.contains_key("sessions.here"));

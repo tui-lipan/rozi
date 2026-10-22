@@ -9,8 +9,8 @@ This example exercises the long-running extension contract without importing Roz
 - activating the published row raises `rozi pick`;
 - `activity-dashboard.open` opens the same picker directly.
 
-Recent events are written atomically beside the installed extension, so a supervised restart or
-config reload retains the dashboard history. Rozi intentionally does not watch extension trees.
+Recent events are written atomically to `$ROZI_EXTENSION_STATE_DIR/activity.json`, so a supervised
+restart, a reload, or an update of the extension keeps the dashboard history.
 
 It requires Python 3 available as `python`. Validate and link the example checkout, then reload:
 

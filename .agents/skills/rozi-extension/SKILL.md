@@ -231,7 +231,8 @@ placement = "each-host"   # client | active-session | each-host | each-session
 - `platforms` is checked on each host; a missing program, an old host Rozi, or an unreachable host
   makes the contribution unavailable with a reason. Nothing falls back to the client.
 - Diagnose with `rozi extensions status` and `rozi extensions list --verbose`.
-- Set `min_rozi` to a release with the `remote-extension-runtime` capability.
+- Set `min_rozi` to a release with the `remote-extension-runtime` and `extension-state-dir`
+  capabilities.
 
 ## Environment
 
@@ -239,9 +240,20 @@ Every extension command and service receives:
 
 - `ROZI_EXTENSION`: stable manifest ID.
 - `ROZI_EXTENSION_DIR`: absolute lexical installation directory.
+- `ROZI_EXTENSION_STATE_DIR`: private directory for files the extension keeps, one per extension
+  ID and machine, created before launch. It is never snapshotted or copied; placed processes get
+  the host's. It survives update, reload, disable, and remove; only `remove --purge` deletes it.
+- `ROZI_EXTENSION_CONFIG`: merged settings as compact JSON.
 - `ROZI_EXTENSION_GENERATION`: opaque runtime fencing token.
 - `ROZI_BIN`: the matching running Rozi executable when control is available.
 - `ROZI_SOCKET`: the current UI endpoint when control is available.
+
+All processes of an extension on a machine share the state directory, `each-session` instances
+included: lock or write atomically (temp file + rename), and namespace per session with
+`ROZI_SESSION_NAME` (client exec commands, link handlers and command tabs, plus `active-session`
+and `each-session` placements; empty with no session). Never write state into the extension
+directory or invent a config directory; settings come only from `ROZI_EXTENSION_CONFIG`. In tests,
+point `ROZI_EXTENSION_STATE_DIR` at a temp directory.
 
 Call `${ROZI_BIN:-rozi}` conceptually, but preserve argv in real code: read `ROZI_BIN` and pass it as
 the program to the process API. Do not open `ROZI_SOCKET` directly; the `rozi` CLI bridge handles

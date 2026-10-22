@@ -43,8 +43,8 @@ cannot be deleted from the picker; change them in `config.toml`.
 
 ## State
 
-Saved rows live in `$XDG_STATE_HOME/rozi-snippets/commands/<id>.json` (or
-`~/.local/state/rozi-snippets/commands/`), never inside the installed extension directory. Each
+Saved rows live in `$ROZI_EXTENSION_STATE_DIR/commands/<id>.json`, the directory rozi gives the
+extension for its own state, never inside the installed extension directory. Each
 saved command is its own file, so two Rozi clients can add or delete at the same time without
 overwriting each other.
 

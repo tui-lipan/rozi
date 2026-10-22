@@ -30,7 +30,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Link and enable a development checkout",
             ),
             row("update <ID>", "Update a managed Git extension"),
-            row("remove <ID>", "Remove an installed extension"),
+            row("remove <ID> [--purge]", "Remove an installed extension"),
             row("new <ID>", "Create a valid extension scaffold"),
             row("check <PATH> [--json]", "Validate an unpacked extension"),
             row(
@@ -73,13 +73,19 @@ const REMOVE_HELP_SECTIONS: &[HelpSection] = &[
         heading: "USAGE",
         advanced_only: false,
         note: "",
-        rows: &[row("rozi extensions remove <ID>", "")],
+        rows: &[row("rozi extensions remove <ID> [--purge]", "")],
     },
     HelpSection {
         heading: "OPTIONS",
         advanced_only: false,
         note: "",
-        rows: &[row("-h, --help", "Print help")],
+        rows: &[
+            row(
+                "--purge",
+                "Also delete the extension's state on this machine",
+            ),
+            row("-h, --help", "Print help"),
+        ],
     },
 ];
 
@@ -279,10 +285,29 @@ fn parse_remove(
     iter: &mut impl Iterator<Item = String>,
     config_path: Option<String>,
 ) -> std::result::Result<ParsedCli, String> {
-    let id = require_value(iter, "extensions remove requires an extension id")?;
-    reject_trailing_control_args(iter, "extensions remove")?;
+    let mut id = None;
+    let mut purge = false;
+    for arg in iter {
+        match arg.as_str() {
+            "--purge" if !purge => purge = true,
+            "--purge" => {
+                return Err("extensions remove --purge specified more than once".to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown extensions remove option `{other}`"));
+            }
+            _ if id.is_none() => id = Some(arg),
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after extensions remove"
+                ));
+            }
+        }
+    }
+    let id = id.ok_or_else(|| "extensions remove requires an extension id".to_string())?;
     Ok(ParsedCli::Extensions(ExtensionsCommand::Remove {
         id,
+        purge,
         config_path,
     }))
 }
@@ -440,8 +465,29 @@ mod tests {
                 "git-tools".into(),
             ])
             .expect("parses"),
-            ParsedCli::Extensions(ExtensionsCommand::Remove { id, .. }) if id == "git-tools"
+            ParsedCli::Extensions(ExtensionsCommand::Remove { id, purge: false, .. }) if id == "git-tools"
         ));
+        for args in [
+            ["extensions", "remove", "git-tools", "--purge"],
+            ["extensions", "remove", "--purge", "git-tools"],
+        ] {
+            assert!(matches!(
+                parse_cli_args(args.iter().map(|arg| arg.to_string()).collect()).expect("parses"),
+                ParsedCli::Extensions(ExtensionsCommand::Remove { id, purge: true, .. })
+                    if id == "git-tools"
+            ));
+        }
+        for args in [
+            vec!["extensions", "remove", "git-tools", "--purge", "--purge"],
+            vec!["extensions", "remove", "git-tools", "--force"],
+            vec!["extensions", "remove", "git-tools", "other"],
+            vec!["extensions", "remove", "--purge"],
+        ] {
+            assert!(
+                parse_cli_args(args.iter().map(|arg| arg.to_string()).collect()).is_err(),
+                "{args:?}"
+            );
+        }
         assert!(parse_cli_args(vec!["extensions".into(), "new".into()]).is_err());
         assert!(
             parse_cli_args(vec!["extensions".into(), "install".into(), "--link".into()]).is_err()

@@ -417,6 +417,28 @@ mod tests {
     }
 
     #[test]
+    fn minimum_versions_match_the_discover_conformance_corpus() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/discover-eligibility.json"))
+                .unwrap();
+        for case in cases.as_array().unwrap().iter().filter(|case| {
+            case["name"]
+                .as_str()
+                .unwrap()
+                .starts_with("minimum version ")
+        }) {
+            let manifest: toml::Value = toml::from_str(case["manifest"].as_str().unwrap()).unwrap();
+            let minimum = manifest["extension"]["min_rozi"].as_str().unwrap();
+            let document = VALID.replace("0.0.16", minimum);
+            assert_eq!(
+                !parse(&document).unwrap().is_empty(),
+                case["eligible"].as_bool().unwrap(),
+                "{minimum}"
+            );
+        }
+    }
+
+    #[test]
     fn cached_index_is_revalidated_and_ages_out() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache/extension-index-v1.json");

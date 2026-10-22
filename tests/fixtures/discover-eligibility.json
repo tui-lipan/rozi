@@ -196,5 +196,60 @@
     "name": "non-array suggested_keybindings",
     "manifest": "suggested_keybindings = {}\n[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\n",
     "eligible": false
+  },
+  {
+    "name": "minimum version major maximum",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"18446744073709551615.0.0\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version major overflow",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"18446744073709551616.0.0\"\n",
+    "eligible": false
+  },
+  {
+    "name": "minimum version minor maximum",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"0.18446744073709551615.0\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version minor overflow",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"0.18446744073709551616.0\"\n",
+    "eligible": false
+  },
+  {
+    "name": "minimum version patch maximum",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"0.0.18446744073709551615\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version patch overflow",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"0.0.18446744073709551616\"\n",
+    "eligible": false
+  },
+  {
+    "name": "minimum version all components at maximum",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"18446744073709551615.18446744073709551615.18446744073709551615\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version large numeric prerelease",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"1.0.0-18446744073709551616\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version large numeric build metadata",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"1.0.0+18446744073709551616\"\n",
+    "eligible": true
+  },
+  {
+    "name": "minimum version non-ASCII core digit",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"1.٢.0\"\n",
+    "eligible": false
+  },
+  {
+    "name": "minimum version non-ASCII prerelease digit",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"1.0.0-1٢\"\n",
+    "eligible": false
   }
 ]

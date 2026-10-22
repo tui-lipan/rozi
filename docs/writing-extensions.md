@@ -886,7 +886,8 @@ commit updates the listing at the next build.
 A repository with the topic that a build leaves out is listed, with the reason, in
 [`skipped.json`](https://tui-lipan.github.io/rozi-extension-index/v1/skipped.json). `check`
 reports the same problems before you publish. It also needs `extension.toml` at the root of a Git
-repository, and it cannot tell whether the repository is public or has the topic.
+repository. It cannot tell whether the repository is public, has the topic, or is archived,
+disabled, or a fork.
 
 Being listed is not a review. The index only checks that the metadata is well formed, and anyone
 can list a repository, so Discover shows what it found, not what anyone vouched for. Read an

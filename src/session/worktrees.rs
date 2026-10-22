@@ -405,8 +405,22 @@ fn explicit_path(operand: &str) -> bool {
 /// checkout; two different checkouts are an error rather than a choice by precedence.
 fn resolve_operand(base: &Path, operand: &str) -> Result<ResolvedCheckout, String> {
     let path = host_path_in(operand, base)?;
-    let by_path = path.exists().then(|| containing_worktree(&path));
+    // Only an entry that is certainly absent stops being a path candidate. A dangling symlink is
+    // an entry, and an entry that cannot be read may exist.
+    let by_path = match std::fs::symlink_metadata(&path) {
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            None
+        }
+        Err(err) => Some(Err(format!("cannot read {}: {err}", path.display()))),
+        Ok(_) => Some(containing_worktree(&path)),
+    };
     let by_branch = match branch_checkouts(base, operand) {
+        // A branch checked out several times returns here, whatever the path side found.
         Ok((found, trees)) => Ok(single_branch_checkout(operand, found, trees)?),
         Err(err) => Err(err),
     };
@@ -888,7 +902,75 @@ mod tests {
                 "{blocked}"
             );
             assert!(resolve(&repo, CheckoutSelector::Branch("feat-link".into())).is_ok());
+
+            // A dangling symlink is an entry too, though `exists` says otherwise.
+            std::os::unix::fs::symlink(temp.path().join("gone"), repo.join("dangling")).unwrap();
+            run_host_call(HostCall::Create {
+                cwd: Some(repo.to_string_lossy().into_owned()),
+                branch: "dangling".into(),
+                base: "HEAD".into(),
+                path: None,
+            });
+            let blocked = resolve(&repo, auto("dangling")).expect_err("blocked");
+            assert!(
+                blocked.starts_with("`dangling` is an existing path that names no checkout"),
+                "{blocked}"
+            );
         }
+    }
+
+    /// Git checks a branch out twice only when forced. The branch side is then ambiguous on its
+    /// own, so a path match never decides for it.
+    #[test]
+    fn a_branch_checked_out_twice_is_refused_even_when_the_path_matches() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        crate::test_support::isolate_user_dirs();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let feature = repo_with_feature_checkout(&repo);
+        let feature_dir = PathBuf::from(&feature.path);
+        git(&repo, &["branch", "target"]);
+        for name in ["target-a", "target-b"] {
+            let path = temp.path().join(name).to_string_lossy().into_owned();
+            git(
+                &repo,
+                &["worktree", "add", "--force", "-q", &path, "target"],
+            );
+        }
+        std::fs::create_dir(feature_dir.join("target")).unwrap();
+        let cwd = Some(feature.path.clone());
+        let auto = || CheckoutSelector::Auto("target".into());
+
+        let refused = |reply: HostReply| match reply {
+            HostReply::Failed { message } => {
+                assert!(
+                    message.starts_with("branch `target` is checked out in several checkouts"),
+                    "{message}"
+                );
+            }
+            other => panic!("selected a checkout: {other:?}"),
+        };
+        refused(run_host_call(HostCall::Resolve {
+            cwd: cwd.clone(),
+            checkout: auto(),
+        }));
+        refused(run_host_call(HostCall::Unlock {
+            cwd: cwd.clone(),
+            checkout: auto(),
+        }));
+        refused(run_host_call(HostCall::Remove {
+            cwd: cwd.clone(),
+            checkout: auto(),
+            force: true,
+            delete_branch: None,
+        }));
+        assert!(feature_dir.exists());
+        assert_eq!(
+            resolve(&feature_dir, CheckoutSelector::Auto("./target".into())),
+            Ok(feature)
+        );
     }
 
     #[test]

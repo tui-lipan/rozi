@@ -75,7 +75,9 @@ instead of adding an unlinked snippet.
   than a moment (`LOCK_WAIT`): a lock that is not free in time is skipped, not waited for, since
   the caller can be the UI thread. A write without the lock only appends; it never renames or
   truncates, because the client holding the lock may be about to rotate, and what it learns about
-  the file it reads through its own handle, never by reopening the path. A read that cannot get the
+  the file it reads through its own handle, never by reopening the path. The lock file itself is
+  opened by path for each operation and never kept, since `extensions remove` deletes the whole
+  directory and a kept handle would lock a file no one else finds. A read that cannot get the
   lock fails with `WouldBlock` instead of reading unlocked, which could skip a generation.
   A unit is named `<kind>.<id without the extension prefix>`, and a name too long or altered for a
   file name carries a hash of the whole. A log is diagnostics: it never decides whether a

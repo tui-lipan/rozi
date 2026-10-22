@@ -44,25 +44,23 @@ const LOCK_WAIT: Duration = Duration::from_millis(250);
 /// How often a waiting write or read tries the lock again.
 const LOCK_POLL: Duration = Duration::from_millis(2);
 
-/// Every writer to one unit's file in this process, so they share one lock handle.
+/// Every writer to one unit's file in this process.
 static SINKS: Mutex<Option<HashMap<PathBuf, Weak<Mutex<Sink>>>>> = Mutex::new(None);
 
+/// The way to one unit's log: its path and nothing else. The lock file, the log, and the directory
+/// around them are all found by path on each write, never held, so deleting and recreating the
+/// directory - as removing an extension does - cannot leave a writer locking a file that is no
+/// longer the one beside the log.
 #[derive(Debug)]
 struct Sink {
     path: PathBuf,
-    lock: File,
 }
 
 impl Sink {
     fn open(path: PathBuf) -> io::Result<Self> {
-        // Read and write rather than append: Windows only locks a handle that can read or write.
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(path.with_extension("lock"))?;
-        Ok(Self { path, lock })
+        // Fail here, where the caller can decide to go without a log, if there is no lock to take.
+        open_lock(&path)?;
+        Ok(Self { path })
     }
 
     fn write(&mut self, bytes: &[u8]) {
@@ -86,11 +84,38 @@ impl Sink {
     /// still holds the lock mid-rotation. The file may then run past [`CAP`] until the next write
     /// that does hold the lock, which rotates it as it finds it.
     fn append(&mut self, bytes: &[u8], on_fresh_line: bool) {
-        let locked = lock_for_a_while(&self.lock);
+        // Opened for this write, so it is the lock file beside the log as it is now, and closing
+        // it releases the lock.
+        let lock = open_lock(&self.path).ok();
+        let locked = lock.as_ref().is_some_and(lock_for_a_while);
         let _ = append_to(&self.path, bytes, on_fresh_line, locked);
-        if locked {
-            let _ = self.lock.unlock();
+        if let (true, Some(lock)) = (locked, &lock) {
+            let _ = lock.unlock();
         }
+    }
+}
+
+/// The lock file of the log at `path`, created, and the directory with it if it is gone.
+///
+/// Read and write rather than append: Windows only locks a handle that can read or write.
+fn open_lock(path: &Path) -> io::Result<File> {
+    let lock_path = path.with_extension("lock");
+    let open = || {
+        OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+    };
+    match open() {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if let Some(dir) = path.parent() {
+                crate::platform::fs_security::ensure_private_dir(dir)?;
+            }
+            open()
+        }
+        other => other,
     }
 }
 
@@ -594,14 +619,67 @@ mod tests {
     /// Windows refuses to lock a handle that can neither read nor write, which an append-only
     /// handle is, and a refused lock used to cost every write. The lock must work as opened.
     #[test]
-    fn the_unit_lock_can_be_taken_and_released_as_soon_as_the_sink_is_open() {
+    fn the_unit_lock_can_be_taken_and_released_as_soon_as_it_is_opened() {
         let (_scratch, env) = env();
         let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
-        let sink = Sink::open(dir.join("commands.log")).unwrap();
-        sink.lock.lock().expect("the lock can be taken");
-        sink.lock.unlock().expect("and released");
-        assert!(lock_for_a_while(&sink.lock));
-        sink.lock.unlock().unwrap();
+        let lock = open_lock(&dir.join("commands.log")).unwrap();
+        lock.lock().expect("the lock can be taken");
+        lock.unlock().expect("and released");
+        assert!(lock_for_a_while(&lock));
+        lock.unlock().unwrap();
+    }
+
+    /// Removing an extension deletes its whole log directory, and a running client may write to the
+    /// unit again before it reloads. The lock must be the file beside the log as it is now, or two
+    /// clients each lock a different file and both believe they own the log.
+    #[test]
+    fn a_sink_outliving_its_directory_still_contends_on_the_current_lock_file() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        let mut survivor = Sink::open(path.clone()).unwrap();
+        survivor.write(b"before\n");
+
+        // `extensions remove`, then the directory coming back for the same extension.
+        fs::remove_dir_all(&dir).unwrap();
+        paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        // Another client opens the unit afresh and takes its lock.
+        let newcomer = open_lock(&path).unwrap();
+        newcomer.lock().expect("the fresh lock is free");
+
+        // The survivor must find that same lock file and be held off by it, not lock a deleted
+        // one of its own: it gives up after the wait and writes append-only.
+        let started = Instant::now();
+        survivor.write(b"after\n");
+        assert!(
+            started.elapsed() >= LOCK_WAIT / 2,
+            "{:?}",
+            started.elapsed()
+        );
+        newcomer.unlock().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "after\n");
+        // Free again, the survivor locks as usual.
+        let again = Instant::now();
+        survivor.write(b"and again\n");
+        assert!(again.elapsed() < LOCK_WAIT, "{:?}", again.elapsed());
+    }
+
+    /// A write to a unit whose directory was removed brings the directory back.
+    #[test]
+    fn a_write_after_its_directory_was_removed_recreates_it_privately() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        let mut sink = Sink::open(path.clone()).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        sink.write(b"back\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "back\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
     }
 
     /// Another client that holds a unit's lock and stops must not hold up this one for good.
@@ -615,11 +693,11 @@ mod tests {
         let holder = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let other = Sink::open(path).unwrap();
-                other.lock.lock().unwrap();
+                let other = open_lock(&path).unwrap();
+                other.lock().unwrap();
                 taken.send(()).unwrap();
                 let _ = release.recv();
-                other.lock.unlock().unwrap();
+                other.unlock().unwrap();
             })
         };
         locked.recv().unwrap();
@@ -652,11 +730,11 @@ mod tests {
         let holder = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let other = Sink::open(path).unwrap();
-                other.lock.lock().unwrap();
+                let other = open_lock(&path).unwrap();
+                other.lock().unwrap();
                 taken.send(()).unwrap();
                 let _ = release.recv();
-                other.lock.unlock().unwrap();
+                other.unlock().unwrap();
             })
         };
         locked.recv().unwrap();
@@ -695,14 +773,14 @@ mod tests {
         let rotator = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let other = Sink::open(path.clone()).unwrap();
-                other.lock.lock().unwrap();
+                let other = open_lock(&path).unwrap();
+                other.lock().unwrap();
                 fs::rename(&path, path.with_extension(ROTATED_SUFFIX)).unwrap();
                 moved.send(()).unwrap();
                 // Within the wait a reader gives a lock, so it sees the rotation finished.
                 std::thread::sleep(LOCK_WAIT / 5);
                 fs::write(&path, "new\n").unwrap();
-                other.lock.unlock().unwrap();
+                other.unlock().unwrap();
             })
         };
         mid_rotation.recv().unwrap();
@@ -724,11 +802,11 @@ mod tests {
         let holder = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let other = Sink::open(path).unwrap();
-                other.lock.lock().unwrap();
+                let other = open_lock(&path).unwrap();
+                other.lock().unwrap();
                 taken.send(()).unwrap();
                 let _ = release.recv();
-                other.lock.unlock().unwrap();
+                other.unlock().unwrap();
             })
         };
         locked.recv().unwrap();

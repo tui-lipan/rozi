@@ -49,9 +49,12 @@ struct Sink {
 
 impl Sink {
     fn open(path: PathBuf) -> io::Result<Self> {
+        // Read and write rather than append: Windows only locks a handle that can read or write.
         let lock = OpenOptions::new()
             .create(true)
-            .append(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
             .open(path.with_extension("lock"))?;
         Ok(Self { path, lock })
     }
@@ -68,18 +71,19 @@ impl Sink {
         self.append(line.as_bytes(), true);
     }
 
-    /// Add `bytes` to the unit's file. A failure - a full disk, a vanished directory, a lock that
-    /// cannot be taken - costs the log, never the process.
+    /// Add `bytes` to the unit's file. A failure - a full disk, a vanished directory - costs the
+    /// log, never the process. A lock that cannot be taken is not a reason to lose the output: the
+    /// write goes ahead without it, which risks only the bound, not the lines.
     fn append(&mut self, bytes: &[u8], on_fresh_line: bool) {
-        if self.lock.lock().is_err() {
-            return;
-        }
+        let locked = self.lock.lock().is_ok();
         let _ = append_locked(&self.path, bytes, on_fresh_line);
-        let _ = self.lock.unlock();
+        if locked {
+            let _ = self.lock.unlock();
+        }
     }
 }
 
-/// The write itself, with the unit's lock held by the caller.
+/// The write itself, with the unit's lock held by the caller when it could be taken.
 fn append_locked(path: &Path, bytes: &[u8], on_fresh_line: bool) -> io::Result<()> {
     // A chunk larger than the cap keeps only its end, which is the part worth reading.
     let keep = usize::try_from(CAP).unwrap_or(usize::MAX);

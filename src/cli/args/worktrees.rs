@@ -4,6 +4,7 @@ use std::vec::IntoIter;
 use super::{CliArgs, ListFormat, ParsedCli, parse_list_format, require_value};
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
 use crate::session;
+use crate::session::worktrees::CheckoutSelector;
 
 pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
@@ -19,7 +20,9 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         heading: "COMMANDS",
         advanced_only: false,
         note: "Paths resolve on the host that owns the repository: `~` is that host's\n    \
-               home, and a relative path starts in its working directory.",
+               home, and a relative path starts in its working directory.\n    \
+               CHECKOUT is a branch or a path inside the checkout. One starting with\n    \
+               ./, ../, /, or ~ is only a path; any other must not name two checkouts.",
         rows: &[
             row(
                 "list [--cwd <DIR>] [--format text|json]",
@@ -30,11 +33,11 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Check out BRANCH in a linked worktree",
             ),
             row(
-                "open <PATH> [--name <SESSION>]",
+                "open <CHECKOUT> [OPTIONS]",
                 "Open the checkout's session, or create one",
             ),
-            row("remove <PATH> [OPTIONS]", "Remove a linked checkout"),
-            row("unlock <PATH>", "Lift a checkout's Git lock"),
+            row("remove <CHECKOUT> [OPTIONS]", "Remove a linked checkout"),
+            row("unlock <CHECKOUT> [OPTIONS]", "Lift a checkout's Git lock"),
             row(
                 "exclude [DIR] [--cwd <DIR>]",
                 "Add an in-repo worktree directory to",
@@ -52,6 +55,19 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row("--cwd <DIR>", "A directory in the repository"),
             row("--open", "Open the new checkout in a session"),
             row("--format text|json", "Print the new checkout"),
+        ],
+    },
+    HelpSection {
+        heading: "OPEN, REMOVE, AND UNLOCK OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row(
+                "--branch <NAME>",
+                "Select by branch only, instead of CHECKOUT",
+            ),
+            row("--cwd <DIR>", "A directory in the repository"),
+            row("--name <SESSION>", "open: the session to open or create"),
         ],
     },
     HelpSection {
@@ -104,17 +120,20 @@ pub(crate) enum WorktreesCommand {
         open: bool,
     },
     Open {
-        path: String,
+        checkout: CheckoutSelector,
+        cwd: Option<String>,
         name: Option<String>,
     },
     Remove {
-        path: String,
+        checkout: CheckoutSelector,
+        cwd: Option<String>,
         force: bool,
         /// `None` follows `[worktrees] delete_branch` on the host.
         delete_branch: Option<crate::git::worktrees::BranchDeletion>,
     },
     Unlock {
-        path: String,
+        checkout: CheckoutSelector,
+        cwd: Option<String>,
     },
     Exclude {
         directory: Option<String>,
@@ -192,6 +211,11 @@ pub(super) fn parse(
                 require_value(iter, "--path requires a directory")?,
                 &arg,
             )?,
+            "--branch" => once(
+                &mut flags.branch,
+                require_value(iter, "--branch requires a branch name")?,
+                &arg,
+            )?,
             "--name" => {
                 let name = require_value(iter, "--name requires a session name")?;
                 if !session::discovery::valid_session_name(&name) {
@@ -251,9 +275,10 @@ pub(super) fn parse(
             }
         }
         "open" => {
-            flags.allow(&verb, &["--name"])?;
+            flags.allow(&verb, &["--branch", "--cwd", "--name"])?;
             WorktreesCommand::Open {
-                path: operand.ok_or("worktrees open requires a checkout path")?,
+                checkout: checkout_selector(operand, flags.branch, &verb)?,
+                cwd: flags.cwd,
                 name: flags.name,
             }
         }
@@ -265,17 +290,28 @@ pub(super) fn parse(
             }
         }
         "remove" => {
-            flags.allow(&verb, &["--force", "--delete-branch", "--keep-branch"])?;
+            flags.allow(
+                &verb,
+                &[
+                    "--branch",
+                    "--cwd",
+                    "--force",
+                    "--delete-branch",
+                    "--keep-branch",
+                ],
+            )?;
             WorktreesCommand::Remove {
-                path: operand.ok_or("worktrees remove requires a checkout path")?,
+                checkout: checkout_selector(operand, flags.branch, &verb)?,
+                cwd: flags.cwd,
                 force: flags.force,
                 delete_branch: flags.delete_branch,
             }
         }
         "unlock" => {
-            flags.allow(&verb, &[])?;
+            flags.allow(&verb, &["--branch", "--cwd"])?;
             WorktreesCommand::Unlock {
-                path: operand.ok_or("worktrees unlock requires a checkout path")?,
+                checkout: checkout_selector(operand, flags.branch, &verb)?,
+                cwd: flags.cwd,
             }
         }
         other => {
@@ -297,6 +333,7 @@ struct Flags {
     format: Option<ListFormat>,
     base: Option<String>,
     path: Option<String>,
+    branch: Option<String>,
     name: Option<String>,
     open: bool,
     force: bool,
@@ -311,6 +348,7 @@ impl Flags {
             ("--format", self.format.is_some()),
             ("--base", self.base.is_some()),
             ("--path", self.path.is_some()),
+            ("--branch", self.branch.is_some()),
             ("--name", self.name.is_some()),
             ("--open", self.open),
             ("--force", self.force),
@@ -331,6 +369,25 @@ fn once<T>(slot: &mut Option<T>, value: T, flag: &str) -> std::result::Result<()
         return Err(format!("{flag} specified more than once"));
     }
     Ok(())
+}
+
+/// The checkout an `open`, `remove`, or `unlock` names: the operand, which the host reads as a path
+/// or a branch, or `--branch`, which only matches a branch.
+fn checkout_selector(
+    operand: Option<String>,
+    branch: Option<String>,
+    verb: &str,
+) -> std::result::Result<CheckoutSelector, String> {
+    match (operand, branch) {
+        (Some(_), Some(_)) => Err(format!(
+            "worktrees {verb} takes a checkout or --branch, not both"
+        )),
+        (Some(operand), None) => Ok(CheckoutSelector::Auto(operand)),
+        (None, Some(branch)) => Ok(CheckoutSelector::Branch(branch)),
+        (None, None) => Err(format!(
+            "worktrees {verb} requires a checkout path or branch"
+        )),
+    }
 }
 
 fn reject_operand(operand: Option<String>, verb: &str) -> std::result::Result<(), String> {
@@ -405,8 +462,25 @@ mod tests {
         assert_eq!(
             command(&["worktrees", "open", "../wt", "--name", "feat-x"]).command,
             WorktreesCommand::Open {
-                path: "../wt".into(),
+                checkout: CheckoutSelector::Auto("../wt".into()),
+                cwd: None,
                 name: Some("feat-x".into()),
+            }
+        );
+        assert_eq!(
+            command(&[
+                "worktrees",
+                "open",
+                "--branch",
+                "feat/x",
+                "--cwd",
+                "~/src/rozi"
+            ])
+            .command,
+            WorktreesCommand::Open {
+                checkout: CheckoutSelector::Branch("feat/x".into()),
+                cwd: Some("~/src/rozi".into()),
+                name: None,
             }
         );
         assert_eq!(
@@ -434,7 +508,8 @@ mod tests {
             assert_eq!(
                 command(&args).command,
                 WorktreesCommand::Remove {
-                    path: "/wt/x".into(),
+                    checkout: CheckoutSelector::Auto("/wt/x".into()),
+                    cwd: None,
                     force: false,
                     delete_branch: Some(crate::git::worktrees::BranchDeletion { local, remote }),
                 }
@@ -443,9 +518,10 @@ mod tests {
         assert!(parse(&["worktrees", "remove", "/wt/x", "--delete-branch", "all"]).is_err());
         assert!(parse(&["worktrees", "remove", "/wt/x", "--delete-branch"]).is_err());
         assert_eq!(
-            command(&["worktrees", "remove", "/wt/x", "--force"]).command,
+            command(&["worktrees", "remove", "feat/x", "--force"]).command,
             WorktreesCommand::Remove {
-                path: "/wt/x".into(),
+                checkout: CheckoutSelector::Auto("feat/x".into()),
+                cwd: None,
                 force: true,
                 delete_branch: None,
             }
@@ -453,7 +529,15 @@ mod tests {
         assert_eq!(
             command(&["worktrees", "unlock", "~/wt/x"]).command,
             WorktreesCommand::Unlock {
-                path: "~/wt/x".into(),
+                checkout: CheckoutSelector::Auto("~/wt/x".into()),
+                cwd: None,
+            }
+        );
+        assert_eq!(
+            command(&["worktrees", "unlock", "--branch", "agent", "--cwd", "repo"]).command,
+            WorktreesCommand::Unlock {
+                checkout: CheckoutSelector::Branch("agent".into()),
+                cwd: Some("repo".into()),
             }
         );
     }
@@ -496,7 +580,15 @@ mod tests {
             ),
             (
                 &["worktrees", "remove"][..],
-                "worktrees remove requires a checkout path",
+                "worktrees remove requires a checkout path or branch",
+            ),
+            (
+                &["worktrees", "remove", "feat/x", "--branch", "feat/x"][..],
+                "worktrees remove takes a checkout or --branch, not both",
+            ),
+            (
+                &["worktrees", "create", "x", "--branch", "y"][..],
+                "worktrees create does not take --branch",
             ),
             (
                 &["worktrees", "create", "x", "--open", "--format", "json"][..],
@@ -516,7 +608,7 @@ mod tests {
             ),
             (
                 &["worktrees", "unlock"][..],
-                "worktrees unlock requires a checkout path",
+                "worktrees unlock requires a checkout path or branch",
             ),
         ] {
             assert_eq!(parse(args).expect_err("must reject"), message, "{args:?}");

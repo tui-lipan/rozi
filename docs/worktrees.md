@@ -199,8 +199,8 @@ rozi worktrees list                         # checkouts of the repository around
 rozi worktrees list --cwd ~/src/rozi --format json
 rozi worktrees create feat/login            # new branch from HEAD, at the default path
 rozi worktrees create fix/ssh --base origin/main --open
-rozi worktrees open ~/src/rozi-worktrees/feat-login
-rozi worktrees remove ~/src/rozi-worktrees/feat-login
+rozi worktrees open feat/login
+rozi worktrees remove feat/login --cwd ~/src/rozi
 rozi worktrees unlock ~/src/rozi/.claude/worktrees/fix-ssh
 rozi worktrees exclude                      # add the in-repository worktree directory to .git/info/exclude
 ```
@@ -209,15 +209,31 @@ rozi worktrees exclude                      # add the in-repository worktree dir
 | --- | --- |
 | `list` | Lists checkouts, with `locked` or `stale-lock` in the state column. With `--format json`, prints a `worktrees` array; each entry includes the `sessions` whose recorded origin is that checkout, and a `lock` that is `null` or holds Git's lock `reason` and whether it is `stale`. |
 | `create <BRANCH>` | Checks out an existing local branch, or creates it from `--base` (`HEAD` by default). Without `--path`, uses the default location. Prints the new checkout's path, or a `worktree` object with `--format json`. `--open` then opens it like `open`, and cannot be combined with `--format json`. |
-| `open <PATH>` | Opens the checkout that contains `PATH`. |
-| `remove <PATH>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. `--delete-branch local`, `remote`, or `local,remote` overrides `[worktrees] delete_branch` for this removal, and `--keep-branch` keeps every branch. Deleted branches are printed; a kept one is reported on stderr. |
-| `unlock <PATH>` | Removes the lock from the checkout that contains `PATH`, whether or not the lock is stale. |
+| `open <CHECKOUT>` | Opens the checkout's session, or creates one. |
+| `remove <CHECKOUT>` | Removes a checkout under the same rules as the picker, except that it refuses every locked checkout, stale or not. `--force` only lets Git remove a dirty checkout. `--delete-branch local`, `remote`, or `local,remote` overrides `[worktrees] delete_branch` for this removal, and `--keep-branch` keeps every branch. Deleted branches are printed; a kept one is reported on stderr. |
+| `unlock <CHECKOUT>` | Removes the checkout's lock, whether or not the lock is stale. |
 | `exclude [DIR]` | Adds the relative `[worktrees] directory`, or `DIR`, to `.git/info/exclude`. |
 
 When `create` puts a checkout inside the repository in a directory Git does not ignore, it prints a
 warning, and the JSON output marks the checkout as `unignored`.
 
-`open` accepts any path inside a checkout:
+### Name a checkout
+
+`open`, `remove`, and `unlock` take a checkout as its branch or as any path inside it. A detached
+checkout has no branch, so name it by path.
+
+- An argument that starts with `./`, `../`, `/`, or `~` is always a path.
+- Any other argument, such as `feat/login`, is looked up both as a path and as a branch. If only one
+  matches, or both lead to the same checkout, that checkout is used. If they lead to different
+  checkouts — for example, a `feat/login` directory in the primary checkout and a branch
+  `feat/login` checked out elsewhere — the command fails and lists both. Write `./feat/login` for
+  the path or `--branch feat/login` for the branch.
+- `--branch <NAME>` matches only the branch, and replaces the argument.
+- `--cwd <DIR>` sets the repository that branches are looked up in and that relative paths start
+  from. Without it, both use the current directory. An absolute path is not limited to that
+  repository.
+
+`open` then chooses a session:
 
 - With exactly one associated session, it attaches to that session.
 - Otherwise, it creates a session named `wt-<branch>` whose first shell starts in the checkout and

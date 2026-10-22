@@ -35,14 +35,21 @@ pub struct ExtensionCheckDocument {
     /// loading.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
+    /// Whether the public extension index would list this extension, and what stops it.
+    pub discover: super::DiscoverReadiness,
 }
 
 impl ExtensionCheckDocument {
-    pub(crate) fn new(extension: ExtensionInfo, hints: Vec<String>) -> Self {
+    pub(crate) fn new(
+        extension: ExtensionInfo,
+        hints: Vec<String>,
+        discover: super::DiscoverReadiness,
+    ) -> Self {
         Self {
             schema_version: EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
             extension,
             hints,
+            discover,
         }
     }
 }

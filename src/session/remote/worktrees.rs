@@ -112,6 +112,55 @@ pub fn run_remote_worktrees() -> Result<HostReply, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::protocol::PROTOCOL_VERSION;
+    use crate::session::worktrees::CheckoutSelector;
+
+    /// The protocol version at which [`HostCall`] last changed shape. The far side decodes only its
+    /// own build's shape and [`forward`] picks that build by protocol range alone, so a shape change
+    /// bumps `PROTOCOL_VERSION` and this together.
+    const HOST_CALL_SHAPE_SINCE: u32 = 37;
+    const _: () = assert!(PROTOCOL_VERSION >= HOST_CALL_SHAPE_SINCE);
+
+    #[test]
+    fn host_call_shapes_are_pinned_to_a_protocol_version() {
+        let calls = [
+            HostCall::Resolve {
+                cwd: None,
+                checkout: CheckoutSelector::Auto("feat/x".into()),
+            },
+            HostCall::Unlock {
+                cwd: Some("~/src/repo".into()),
+                checkout: CheckoutSelector::Branch("feat/x".into()),
+            },
+            HostCall::Remove {
+                cwd: None,
+                checkout: CheckoutSelector::Path("/wt/x".into()),
+                force: false,
+                delete_branch: None,
+            },
+        ];
+        assert_eq!(
+            serde_json::to_value(calls).expect("encodes"),
+            serde_json::json!([
+                {"op": "resolve", "cwd": null, "checkout": {"auto": "feat/x"}},
+                {"op": "unlock", "cwd": "~/src/repo", "checkout": {"branch": "feat/x"}},
+                {"op": "remove", "cwd": null, "checkout": {"path": "/wt/x"}, "force": false},
+            ]),
+            "HostCall changed shape: bump PROTOCOL_VERSION and HOST_CALL_SHAPE_SINCE"
+        );
+    }
+
+    #[test]
+    fn a_remote_rozi_from_before_the_current_shape_is_not_selected() {
+        let older = HOST_CALL_SHAPE_SINCE - 1;
+        let report = super::super::bootstrap::parse_probe_output(&format!(
+            "candidate=/old\nspeaks_remote=1\nprotocol_min={older}\nprotocol_max={older}\n"
+        ));
+        assert!(matches!(
+            super::super::bootstrap::select_compatible(&report),
+            super::super::bootstrap::ProbeResult::Missing { .. }
+        ));
+    }
 
     #[test]
     fn the_reply_is_found_past_a_login_banner() {

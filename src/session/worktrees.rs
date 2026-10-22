@@ -419,6 +419,13 @@ fn resolve_operand(base: &Path, operand: &str) -> Result<ResolvedCheckout, Strin
             }
         }
         (Some(Ok(by_path)), _) => Ok(by_path),
+        // An existing path that cannot be resolved is still a candidate, so it never yields to
+        // the branch.
+        (Some(Err(err)), Ok(Some(by_branch))) => Err(format!(
+            "`{operand}` is an existing path that names no checkout ({err}), and the branch of \
+             {}\nuse `--branch {operand}` for the branch",
+            describe_checkout(&by_branch.0)
+        )),
         (_, Ok(Some(by_branch))) => Ok(by_branch),
         (by_path, by_branch) => {
             let path_reason = match by_path {
@@ -516,10 +523,15 @@ fn primary_of(trees: &[WorktreeInfo]) -> Result<PathBuf, String> {
 }
 
 /// The registered checkout that contains `path`, preferring the innermost when checkouts nest,
-/// with every checkout of its repository (primary first).
+/// with every checkout of its repository (primary first). Git runs in a directory, so a file is
+/// looked up from its parent and then matched by its own path.
 fn containing_worktree(path: &Path) -> Result<ResolvedCheckout, String> {
     let path = canonical(path);
-    let trees = worktrees::list(&path)?;
+    let discover_from = match path.parent() {
+        Some(parent) if path.exists() && !path.is_dir() => parent,
+        _ => &path,
+    };
+    let trees = worktrees::list(discover_from)?;
     let tree = trees
         .iter()
         .filter(|tree| path.starts_with(canonical(Path::new(&tree.path))))
@@ -804,6 +816,79 @@ mod tests {
                 branches: Vec::new(),
             }
         );
+    }
+
+    /// A file names the checkout it is in, so a file and a branch of the same name are as
+    /// ambiguous as a directory would be; neither may fall back to the other.
+    #[test]
+    fn files_are_path_candidates_and_never_yield_to_a_branch() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        crate::test_support::isolate_user_dirs();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let feature = repo_with_feature_checkout(&repo);
+        let is_primary = |tree: &WorktreeInfo| worktrees::same_path(Path::new(&tree.path), &repo);
+        let auto = |operand: &str| CheckoutSelector::Auto(operand.into());
+        let HostReply::Created { worktree, .. } = run_host_call(HostCall::Create {
+            cwd: Some(repo.to_string_lossy().into_owned()),
+            branch: "target".into(),
+            base: "HEAD".into(),
+            path: None,
+        }) else {
+            panic!("create failed");
+        };
+
+        std::fs::write(repo.join("Cargo.toml"), "").unwrap();
+        assert!(resolve(&repo, auto("Cargo.toml")).is_ok_and(|tree| is_primary(&tree)));
+        let in_feature = Path::new(&feature.path).join("notes.txt");
+        std::fs::write(&in_feature, "").unwrap();
+        assert_eq!(
+            resolve(
+                temp.path(),
+                CheckoutSelector::Path(in_feature.to_string_lossy().into_owned())
+            ),
+            Ok(feature.clone())
+        );
+
+        std::fs::write(repo.join("target"), "").unwrap();
+        let ambiguous = resolve(&repo, auto("target")).expect_err("ambiguous");
+        assert!(
+            ambiguous.starts_with("`target` names two checkouts:"),
+            "{ambiguous}"
+        );
+        assert!(ambiguous.contains(&worktree.path), "{ambiguous}");
+        assert!(matches!(
+            run_host_call(HostCall::Remove {
+                cwd: Some(repo.to_string_lossy().into_owned()),
+                checkout: auto("target"),
+                force: true,
+                delete_branch: None,
+            }),
+            HostReply::Failed { .. }
+        ));
+        assert!(Path::new(&worktree.path).exists());
+
+        // A path that exists but resolves outside every checkout still blocks the branch.
+        #[cfg(unix)]
+        {
+            let elsewhere = temp.path().join("elsewhere");
+            std::fs::create_dir(&elsewhere).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, repo.join("feat-link")).unwrap();
+            run_host_call(HostCall::Create {
+                cwd: Some(repo.to_string_lossy().into_owned()),
+                branch: "feat-link".into(),
+                base: "HEAD".into(),
+                path: None,
+            });
+            let blocked = resolve(&repo, auto("feat-link")).expect_err("blocked");
+            assert!(
+                blocked.starts_with("`feat-link` is an existing path that names no checkout"),
+                "{blocked}"
+            );
+            assert!(resolve(&repo, CheckoutSelector::Branch("feat-link".into())).is_ok());
+        }
     }
 
     #[test]

@@ -427,11 +427,12 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
         })?;
     let session_name = bound_session_name(state, &spec.binding);
     // The name the host's log for this process goes by.
-    let unit = match &spec.kind {
-        WorkerKind::Service { name } => format!("service.{name}"),
-        WorkerKind::Command { id } => format!("command.{id}"),
-        WorkerKind::Tab { id } => format!("tab.{id}"),
+    let (kind, public_id) = match &spec.kind {
+        WorkerKind::Service { name } => ("service", name),
+        WorkerKind::Command { id } => ("command", id),
+        WorkerKind::Tab { id } => ("tab", id),
     };
+    let unit = crate::extension_runtime::log::unit_name(kind, &spec.placements.id, public_id);
     let worker = state.extension_workers.issue(
         ExtensionProvenance {
             id: spec.placements.id.clone(),

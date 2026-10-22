@@ -152,7 +152,8 @@ pub(crate) fn run_logs_extension_cli(id: &str, unit: Option<&str>, lines: usize)
     let shown: Vec<&String> = match unit {
         None => available.iter().collect(),
         Some(unit) => {
-            let matched: Vec<&String> = available.iter().filter(|name| *name == unit).collect();
+            let wanted = log::stem(unit);
+            let matched: Vec<&String> = available.iter().filter(|name| **name == wanted).collect();
             if matched.is_empty() && !available.is_empty() {
                 return Err(std::io::Error::other(format!(
                     "`{id}` has no log for `{unit}` here (units: {})",

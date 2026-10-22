@@ -878,7 +878,8 @@ yourself, run the resolved argv from the verbose output in an isolated test envi
 ### Read an extension's logs
 
 What a command, a service, or a placed process writes to standard output or standard error is kept
-in a log, with a timestamped line when the process starts and when it exits:
+in a log, with a timestamped line when the process starts and when it ends. A service that `rozi`
+stops, because its extension was reloaded, disabled, or removed, is recorded as stopped:
 
 ```sh
 rozi extensions logs my-extension
@@ -891,9 +892,11 @@ changes the count. Each kind of process has its own log, listed by its heading:
 | Log | Holds the output of |
 | --- | --- |
 | `commands` | `exec` and `shell` commands that run on the client |
-| `service.<name>` | A service |
-| `command.<id>` | A [placed](#run-on-the-session-host) command |
-| `tab.<id>` | A placed sidebar tab |
+| `service.<name>` | The service with that `name` |
+| `command.<id>` | The [placed](#run-on-the-session-host) command with that `id` |
+| `tab.<id>` | The placed sidebar tab with that `id` |
+
+The name and ID are the ones in `extension.toml`, without the extension's own ID in front.
 
 A log keeps only the most recent output, about 100 KB per log. An extension that prints a lot
 should print less or write its own file in its [state directory](#keep-state).

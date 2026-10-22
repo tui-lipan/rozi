@@ -49,13 +49,16 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         // Already reaped and contained by `reap_if_exited`; terminating again would signal a group
         // id the kernel is free to have reused.
         let config = running.config.clone();
-        drop(running);
+        let log = running.log;
 
         let (is_success, failure_detail) = match exit_result {
             Ok(status) => (status.success(), status.to_string()),
             Err(err) => (false, format!("could not read exit status: {err}")),
         };
-        crate::ops::services::note_service_exit(&config, &format!("exited: {failure_detail}"));
+        // After the service's last output, which its log may still be reading.
+        if let Some(log) = log {
+            log.finish(&format!("exited: {failure_detail}"));
+        }
         let hint = crate::ops::services::log_hint(&config);
 
         match config.restart {
@@ -187,13 +190,14 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                 command_shell.as_deref(),
                 control_socket.as_deref(),
             ) {
-                Ok((child, group)) => {
+                Ok((child, group, log)) => {
                     ctx.state.services.running.insert(
                         name,
                         RunningService {
                             config: pending.config,
                             child,
                             group,
+                            log,
                             started_at: Instant::now(),
                             backoff_delay: pending.backoff_delay,
                             consecutive_failures: pending.consecutive_failures,

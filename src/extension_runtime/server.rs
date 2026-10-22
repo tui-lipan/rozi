@@ -97,14 +97,14 @@ struct Running {
     started: Instant,
     digest: String,
     capture: Option<(Capture, std::thread::JoinHandle<Vec<u8>>)>,
-    log: Option<super::log::Log>,
+    log: Option<super::log::Attached>,
 }
 
 impl Running {
-    /// Record in the process's log how it ended.
+    /// Record in the process's log how it ended, after the last of its output.
     fn note(&self, outcome: &str) {
         if let Some(log) = &self.log {
-            log.note(outcome);
+            log.finish(outcome);
         }
     }
 }
@@ -438,14 +438,14 @@ impl Runtime {
                 });
             }
         };
-        if let Some(log) = &log {
+        let log = log.map(|log| {
             log.note(&format!("started pid {}", child.id()));
             if capture.is_some() {
-                log.attach_stderr(&mut child);
+                log.attach_stderr(&mut child)
             } else {
-                log.attach(&mut child);
+                log.attach(&mut child)
             }
-        }
+        });
         let capture = capture.map(|capture| {
             let mut stdout = child.stdout.take().expect("piped stdout");
             let limit = capture.max_bytes;
@@ -978,7 +978,13 @@ mod tests {
         loop {
             let lines = super::super::log::tail("logprobe", "command.noisy", 20).unwrap();
             let has = |needle: &str| lines.iter().any(|line| line.contains(needle));
-            if has("placed-out") && has("placed-err") && has("exited with status 2") {
+            if has("exited with status 2") {
+                // The exit is the last line: everything the process printed came before it.
+                assert!(
+                    lines.last().unwrap().ends_with("] exited with status 2"),
+                    "{lines:?}"
+                );
+                assert!(has("placed-out") && has("placed-err"), "{lines:?}");
                 assert!(has("started pid"), "{lines:?}");
                 break;
             }

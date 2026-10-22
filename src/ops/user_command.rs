@@ -276,26 +276,21 @@ fn exec_argv(
         }
         let failure = match process.spawn() {
             Ok(mut child) => {
-                if let Some(log) = &log {
+                let attached = log.as_ref().map(|log| {
                     log.note(&format!("started pid {}: {label}", child.id()));
-                    log.attach(&mut child);
-                }
+                    log.attach(&mut child)
+                });
                 match child.wait() {
-                    Ok(status) if status.success() => {
-                        if let Some(log) = &log {
-                            log.note("exited with status 0");
-                        }
-                        None
-                    }
                     Ok(status) => {
                         let outcome = match status.code() {
                             Some(code) => format!("exited with status {code}"),
                             None => "was terminated by a signal".to_string(),
                         };
-                        if let Some(log) = &log {
-                            log.note(&outcome);
+                        // After the command's last output, which the log may still be reading.
+                        if let Some(attached) = &attached {
+                            attached.finish(&outcome);
                         }
-                        Some(format!("`{label}` {outcome}"))
+                        (!status.success()).then(|| format!("`{label}` {outcome}"))
                     }
                     Err(err) => Some(format!("`{label}` could not be waited on: {err}")),
                 }
@@ -542,7 +537,13 @@ mod tests {
                 let _ = backend.pump();
                 let lines = crate::extension_runtime::log::tail("logtool", "commands", 20).unwrap();
                 let has = |needle: &str| lines.iter().any(|line| line.contains(needle));
-                if has("said-out") && has("said-err") && has("exited with status 3") {
+                if has("exited with status 3") {
+                    // The exit is the last line: everything the command printed came before it.
+                    assert!(
+                        lines.last().unwrap().ends_with("] exited with status 3"),
+                        "{lines:?}"
+                    );
+                    assert!(has("said-out") && has("said-err"), "{lines:?}");
                     assert!(has("started pid"), "{lines:?}");
                     return;
                 }

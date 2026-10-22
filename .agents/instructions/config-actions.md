@@ -69,7 +69,10 @@ instead of adding an unlinked snippet.
   deletes it.
 - An extension's process output is kept per host and per extension in `extension_runtime/log.rs`
   (`platform::paths::extension_log_dir`), one capped file plus one rotated generation per unit, and
-  `extensions logs` reads only this machine's. A log is diagnostics: it never decides whether a
+  `extensions logs` reads only this machine's. Several clients share the files, so every write
+  holds the unit's lock file and measures and rotates the file as it is on disk; keep it that way.
+  A unit is named `<kind>.<id without the extension prefix>`, and a name too long or altered for a
+  file name carries a hash of the whole. A log is diagnostics: it never decides whether a
   process starts, and `extensions remove` always deletes it. A placed `Spawn` names its unit; a
   runtime that is not sent one logs under `placed`.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus

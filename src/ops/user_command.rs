@@ -28,11 +28,14 @@ pub(crate) fn execute_with_env_from_pane(
     mut env: Vec<(String, String)>,
     source: Option<PaneId>,
 ) -> Update {
-    // A `run` pane of a `--remote` session starts on that host, where this client's state
-    // directory does not exist. Everything else here starts on the client.
-    let remote_pane = matches!(action, UserCommandAction::Run { .. })
-        && ctx.state.current().remote_host.is_some()
-        && !ctx.state.scratch_visible;
+    // Popups always use the current session server; run panes use it outside the scratchpad.
+    // A remote server must never receive this client's state directory.
+    let remote_pane = ctx.state.current().remote_host.is_some()
+        && match action {
+            UserCommandAction::Run { .. } => !ctx.state.scratch_visible,
+            UserCommandAction::Popup { .. } => true,
+            _ => false,
+        };
     if remote_pane {
         env.retain(|(key, _)| key != crate::config::STATE_DIR_ENV);
     } else if !matches!(action, UserCommandAction::Send(_))
@@ -370,6 +373,76 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn remote_extension_popups_never_send_the_client_state_directory() {
+        for scratch_visible in [false, true] {
+            on_test_thread(move || {
+                let mut backend = settled_backend();
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().remote_host = Some("pc".to_string());
+                // Queue the wire request while the remote attachment reconnects.
+                state.current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "remote".to_string(),
+                        client: None,
+                        autostart: false,
+                        read_only: false,
+                        reconnect: true,
+                        remote_host: Some("pc".to_string()),
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                state.scratch_visible = scratch_visible;
+                state.config.commands.push(crate::config::NamedCommand {
+                    id: "extension.popup".to_string(),
+                    label: None,
+                    action: UserCommandAction::Popup {
+                        command: "echo popup".to_string(),
+                        keep_open: false,
+                    },
+                    category: "Test".to_string(),
+                    env: vec![
+                        ("ROZI_EXTENSION".to_string(), "extension".to_string()),
+                        (
+                            crate::config::STATE_DIR_ENV.to_string(),
+                            "/client/state".to_string(),
+                        ),
+                    ],
+                    default_key: None,
+                    hidden: false,
+                });
+                let index = state.config.commands.len() - 1;
+                backend
+                    .dispatch(crate::Msg::RunAction(
+                        crate::input::Action::RunNamedCommand(index),
+                    ))
+                    .unwrap();
+                let request = backend
+                    .state()
+                    .current()
+                    .pending_spawns
+                    .iter()
+                    .find(|request| request.pane_id == crate::state::POPUP_PANE_ID)
+                    .expect("popup spawn queued for the remote server");
+                assert!(
+                    request
+                        .env
+                        .iter()
+                        .any(|(key, value)| key == "ROZI_EXTENSION" && value == "extension")
+                );
+                assert!(
+                    !request
+                        .env
+                        .iter()
+                        .any(|(key, _)| key == crate::config::STATE_DIR_ENV)
+                );
+            });
+        }
     }
 
     /// A local pane's directory is a directory here, so a client-run command starts in it.

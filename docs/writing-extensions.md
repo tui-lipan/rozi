@@ -795,10 +795,12 @@ Ordinary `run` and `popup` commands and services do not receive these variables 
 handlers, and command tabs receive the session on screen, and an `active-session` or
 `each-session` contribution receives its own session. It is empty when no session is attached.
 Services that run on the client and `each-host` services serve no single session and do not
-receive it.
+receive it. Renaming a session restarts its `active-session` and `each-session` services with
+the updated name.
 
-A `run` command of a session attached with `--remote` opens its pane on that host, where the
-client's state directory does not exist, so that pane receives no `ROZI_EXTENSION_STATE_DIR`.
+For a session attached with `--remote`, `run` panes outside the scratchpad and all `popup`
+commands open on the remote host. Neither receives `ROZI_EXTENSION_STATE_DIR`. A `run` pane in
+the scratchpad opens on the client and receives the client's state directory.
 
 A service's `env` cannot override the `ROZI_EXTENSION*` variables, and the runtime replaces any
 `ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.

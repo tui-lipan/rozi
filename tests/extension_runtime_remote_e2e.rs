@@ -144,6 +144,7 @@ ROZI_EXTENSION_CREDENTIAL=ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 ( printf '{"rows":[{"id":"r1","title":"Row","status":"working"}]}\n'; exec sleep 300 ) \
   | ROZI_PANE=1 "$ROZI_BIN" publish > "$dir/activations" 2> "$dir/publish.err" &
 "$ROZI_BIN" subscribe config-reloaded > "$dir/events" 2> "$dir/subscribe.err" &
+printf '%s\n' "$ROZI_SESSION_NAME" > "$dir/session-name"
 touch "$dir/ready"
 while :; do
   "$ROZI_BIN" list-panes --format json > "$dir/panes.tmp" 2> "$dir/panes.err" && mv "$dir/panes.tmp" "$dir/panes"
@@ -402,6 +403,7 @@ fn remote_runtime_case() {
             "platform" => platform_case(),
             "missing" => missing_case(),
             "sessions" => sessions_case(),
+            "rename" => rename_case(),
             "client" => client_case(),
             "detach" => detach_case(),
             other => panic!("unknown case {other}"),
@@ -776,6 +778,31 @@ fn sessions_case() {
     );
 }
 
+/// A session keeps its instance across renames, but its services need a fresh environment.
+fn rename_case() {
+    for placement in ["each-session", "active-session"] {
+        let mut app = client(&standard_service().replace("each-host", placement));
+        let backend = &mut app.0;
+        backend.state_mut().current_mut().session_name = Some("foo".to_string());
+        show_session(backend, Some(pc()));
+        let instance = backend.state().current().session_instance.clone();
+        let (pid, dir) = worker(backend, &[]);
+        assert_eq!(read(&dir.join("session-name")), "foo\n");
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .dispatch(Msg::SessionRenamed {
+                epoch,
+                session: "bar".to_string(),
+            })
+            .unwrap();
+        let (new_pid, new_dir) = worker(backend, &[pid]);
+        assert_ne!(pid, new_pid);
+        assert_eq!(read(&new_dir.join("session-name")), "bar\n");
+        assert_eq!(backend.state().current().session_instance, instance);
+        wait_dead(backend, pid);
+    }
+}
+
 /// Detaching the host's last session ends its runtime and everything it ran, while the client
 /// keeps running.
 fn detach_case() {
@@ -830,6 +857,11 @@ fn a_host_platform_the_extension_excludes_is_reported() {
 #[test]
 fn a_program_missing_on_the_host_is_reported() {
     World::new().run("missing", &[]);
+}
+
+#[test]
+fn renaming_a_session_restarts_session_bound_services_with_its_new_name() {
+    World::new().run("rename", &[]);
 }
 
 #[test]

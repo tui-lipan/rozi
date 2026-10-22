@@ -129,7 +129,10 @@ fn signature(state: &State) -> u64 {
         placements.bundle_digest().hash(&mut hasher);
     }
     let (_, sessions) = attached(state);
-    sessions.hash(&mut hasher);
+    for binding in &sessions {
+        binding.hash(&mut hasher);
+        bound_session_name(state, binding).hash(&mut hasher);
+    }
     active_binding(state).hash(&mut hasher);
     hasher.finish()
 }
@@ -170,13 +173,16 @@ pub(crate) fn tick(ctx: &mut Context<AppRoot>) -> Update {
 /// have installed what was missing and reloaded.
 fn reconcile(ctx: &mut Context<AppRoot>, changed: bool) {
     let wanted = desired(&ctx.state);
-    let wanted_keys: HashSet<&InstanceKey> = wanted.iter().map(|(key, _, _)| key).collect();
+    let wanted_names: std::collections::HashMap<_, _> = wanted
+        .iter()
+        .map(|(key, _, _)| (key, bound_session_name(&ctx.state, &key.binding)))
+        .collect();
 
     // Instances nobody wants any more, or of a retired generation, stop.
     let generations = ctx.state.extension_generations.clone();
     let mut stale = Vec::new();
     ctx.state.extension_runtime.instances.retain(|instance| {
-        let keep = wanted_keys.contains(&instance.key)
+        let keep = wanted_names.get(&instance.key) == Some(&instance.session_name)
             && generations.get(&instance.extension) == Some(&instance.generation);
         if !keep {
             stale.push(instance.status.clone());
@@ -333,6 +339,7 @@ fn start_instance(
         env,
         capture: None,
     };
+    let session_name = bound_session_name(&ctx.state, &key.binding);
     let status = match launch(&mut ctx.state, spec) {
         Ok(worker) => InstanceStatus::Running { worker },
         Err(reason) => InstanceStatus::Unavailable(reason),
@@ -348,6 +355,7 @@ fn start_instance(
             let instance = &mut ctx.state.extension_runtime.instances[index];
             instance.status = status;
             instance.generation = generation;
+            instance.session_name = session_name;
             if matches!(instance.status, InstanceStatus::Running { .. }) {
                 instance.started_at = Some(Instant::now());
             }
@@ -355,6 +363,7 @@ fn start_instance(
         None => {
             ctx.state.extension_runtime.instances.push(PlacedInstance {
                 key: key.clone(),
+                session_name,
                 extension: placements.id.clone(),
                 generation,
                 started_at: matches!(status, InstanceStatus::Running { .. }).then(Instant::now),
@@ -1760,6 +1769,7 @@ mod tests {
                 );
                 state.extension_runtime.instances.push(PlacedInstance {
                     key,
+                    session_name: None,
                     extension: "sessions".to_string(),
                     generation: "g1".to_string(),
                     status: InstanceStatus::Running { worker },

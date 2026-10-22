@@ -173,6 +173,8 @@ pub enum InstanceStatus {
 
 #[derive(Clone, Debug)]
 pub struct PlacedInstance {
+    /// Session name used for this instance's environment, so a rename retires it.
+    pub session_name: Option<String>,
     pub key: InstanceKey,
     pub extension: String,
     pub generation: String,

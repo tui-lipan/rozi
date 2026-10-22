@@ -296,7 +296,15 @@ fn the_worktrees_tab_edits_which_branches_removal_deletes() {
 
         // Esc closes the list; the row shows the value, and reset puts the default back.
         b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();
-        assert!(screen(&mut b).contains("Local branch"));
+        let grid = screen(&mut b);
+        let row = grid
+            .lines()
+            .find(|line| line.contains("Delete branch on remove"))
+            .unwrap_or_else(|| panic!("the setting is listed:\n{grid}"));
+        assert!(
+            row.contains("remove  ") && row.contains("Local │") && !row.contains("Remote"),
+            "{row}"
+        );
         b.send_key(key(KeyCode::Char('r'), KeyMods::CTRL)).unwrap();
         assert_eq!(delete_branch(), None);
         assert!(!b.state().config.worktrees.delete_branch.any());

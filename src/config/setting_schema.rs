@@ -380,7 +380,7 @@ impl SettingSpec {
                 if labels.is_empty() {
                     "None".to_string()
                 } else {
-                    labels.join(", ")
+                    labels.join(" + ")
                 }
             }
             (_, SettingValue::List(values)) => values.join(", "),
@@ -472,7 +472,7 @@ mod tests {
         );
         assert_eq!(spec.display(&list(&[])), "None");
         assert_eq!(spec.display(&list(&["b"])), "B");
-        assert_eq!(spec.display(&list(&["a", "b"])), "A, B");
+        assert_eq!(spec.display(&list(&["a", "b"])), "A + B");
     }
 
     #[test]

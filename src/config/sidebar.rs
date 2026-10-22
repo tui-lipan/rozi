@@ -103,7 +103,7 @@ pub fn worktrees_tab_settings() -> Vec<SettingSpec> {
         SettingSpec::flags(
             "delete_branch",
             "Delete branch on remove",
-            &[("local", "Local branch"), ("remote", "Remote branch")],
+            &[("local", "Local"), ("remote", "Remote")],
         )
         .with_description(
             "Which copies of a removed checkout's branch to delete too. Only merged branches are deleted.",

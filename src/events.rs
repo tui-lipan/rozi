@@ -176,6 +176,11 @@ impl EventHub {
         rx
     }
 
+    /// How many subscriptions are listening, counting any that have closed since the last publish.
+    pub fn subscriber_count(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
     /// Publish an event that belongs to no session. Placed workers do not hear it.
     pub fn publish(&self, event: &Event) {
         self.publish_scoped(event, None);

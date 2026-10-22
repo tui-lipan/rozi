@@ -166,9 +166,11 @@ dirty checkout does not change that.
 - **`local`** deletes the local branch with `git branch -d`, so Git's own merge rule applies: the
   branch must be merged into its upstream or into the primary checkout's `HEAD`.
 - **`remote`** deletes the branch on the remote it tracks, only when the branch tracks a branch of
-  the same name, the fetched remote tip is merged into the primary checkout's `HEAD`, and nobody has
-  pushed to it since you last fetched. A branch merged by squash or rebase is not an ancestor, so
-  its remote copy is kept; delete it on the host or let the host do it when the pull request merges.
+  the same name, it is merged, and nobody has pushed to it since you last fetched. The branch is
+  merged when the fetched remote tip is in the primary checkout's `HEAD`, or when a merged GitHub
+  pull request from that branch ended at exactly that tip, as a squash or rebase merge leaves it.
+  The pull request check uses `gh` on the session host, like the
+  [work status](#read-work-status).
 
 A branch that another checkout has checked out, and a detached checkout, are left alone. Rozi
 reports each copy it kept and why. Remote deletion needs access to the remote without a prompt, and

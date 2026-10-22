@@ -244,7 +244,7 @@ fn parse_heads<'a>(
 
 /// The owner segment of a hosted remote URL, `owner` in `https://host/owner/repo.git` or
 /// `git@host:owner/repo.git`. Local paths name no host and so no owner.
-fn url_owner(url: &str) -> Option<&str> {
+pub(super) fn url_owner(url: &str) -> Option<&str> {
     let path = match url.split_once("://") {
         Some((_, rest)) => rest.split_once('/')?.1,
         None => {
@@ -306,41 +306,8 @@ fn fetch(
             result.unavailable = true;
             break;
         }
-        let output = crate::platform::command::run_bounded_argv_command_with_env(
-            "gh",
-            &[
-                "api".to_string(),
-                "graphql".into(),
-                "-F".into(),
-                "owner={owner}".into(),
-                "-F".into(),
-                "name={repo}".into(),
-                "-f".into(),
-                format!("query={}", query(chunk, heads)),
-            ],
-            &[("GH_PROMPT_DISABLED".into(), "1".into())],
-            Some(cwd),
-            Duration::from_secs(10),
-            1024 * 1024,
-        )
-        .map_err(|error| error.to_string())?;
-        if output.timed_out {
-            return Err("GitHub status timed out".into());
-        }
-        if output.status != Some(0) {
-            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if error.is_empty() {
-                "GitHub status unavailable".into()
-            } else {
-                error
-            });
-        }
-        let data: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let data = repository_query(cwd, &query(chunk, heads))?;
         let repository = &data["data"]["repository"];
-        if !repository.is_object() || data.get("errors").is_some() {
-            return Err(format!("GitHub status unavailable: {}", data["errors"]));
-        }
         for (index, branch) in chunk.iter().enumerate() {
             let nodes = repository[format!("b{index}")]["nodes"]
                 .as_array()
@@ -363,6 +330,73 @@ fn fetch(
         }
     }
     Ok(result)
+}
+
+/// Run a GraphQL query against the GitHub repository `gh` resolves for `cwd`, which receives it as
+/// `$owner` and `$name`. The reply is returned only when it holds that repository and no errors.
+fn repository_query(cwd: &Path, query: &str) -> Result<serde_json::Value, String> {
+    let output = crate::platform::command::run_bounded_argv_command_with_env(
+        "gh",
+        &[
+            "api".to_string(),
+            "graphql".into(),
+            "-F".into(),
+            "owner={owner}".into(),
+            "-F".into(),
+            "name={repo}".into(),
+            "-f".into(),
+            format!("query={query}"),
+        ],
+        &[("GH_PROMPT_DISABLED".into(), "1".into())],
+        Some(cwd),
+        Duration::from_secs(10),
+        1024 * 1024,
+    )
+    .map_err(|error| error.to_string())?;
+    if output.timed_out {
+        return Err("GitHub status timed out".into());
+    }
+    if output.status != Some(0) {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() {
+            "GitHub status unavailable".into()
+        } else {
+            error
+        });
+    }
+    let data: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    if !data["data"]["repository"].is_object() || data.get("errors").is_some() {
+        return Err(format!("GitHub status unavailable: {}", data["errors"]));
+    }
+    Ok(data)
+}
+
+/// Whether a merged pull request from `branch` ended at `tip`. A squash or rebase merge leaves no
+/// ancestry for Git to find, and its pull request is then the only record that exactly these
+/// commits were merged.
+pub(super) fn merged_at_tip(cwd: &Path, branch: &str, tip: &str) -> Result<bool, String> {
+    if !crate::platform::command::program_exists("gh") {
+        return Err("gh is not installed on the session host".into());
+    }
+    // JSON string escaping is also GraphQL string escaping; branch names are never query code.
+    let branch = serde_json::to_string(branch).map_err(|e| e.to_string())?;
+    let data = repository_query(
+        cwd,
+        &format!(
+            "query($owner:String!,$name:String!){{repository(owner:$owner,name:$name){{pullRequests(headRefName:{branch},states:MERGED,first:20,orderBy:{{field:CREATED_AT,direction:DESC}}){{nodes{{headRefOid}}}}}}}}"
+        ),
+    )?;
+    let nodes = data["data"]["repository"]["pullRequests"]["nodes"]
+        .as_array()
+        .ok_or("invalid GitHub status")?;
+    Ok(merged_head(nodes, tip))
+}
+
+fn merged_head(nodes: &[serde_json::Value], tip: &str) -> bool {
+    nodes
+        .iter()
+        .any(|pr| pr["headRefOid"].as_str() == Some(tip))
 }
 
 /// `owner` is the push remote's owner. Without one, only same-repository PRs count as pushed from
@@ -541,6 +575,19 @@ mod tests {
                 "feat/renamed"
             );
         }
+    }
+
+    /// A squash merge is recognized only by the exact commit the pull request ended at: a branch
+    /// pushed to after the merge, or reused for new work, is not merged.
+    #[test]
+    fn only_a_merged_pull_request_ending_at_the_tip_counts() {
+        let nodes = [
+            serde_json::json!({"headRefOid": "reused-later"}),
+            serde_json::json!({"headRefOid": "dc754058"}),
+        ];
+        assert!(merged_head(&nodes, "dc754058"));
+        assert!(!merged_head(&nodes, "pushed-after-merge"));
+        assert!(!merged_head(&[], "dc754058"));
     }
 
     #[test]

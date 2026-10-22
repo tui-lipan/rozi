@@ -845,7 +845,9 @@ pane's directory instead of the extension's. A hint does not make an extension i
 hinted manifest even when it loads. `check --json` lists them in `hints`.
 
 The report ends with **Discover**: whether the public index would list the extension, or what stops
-it. `check --json` reports the same in `discover`, as `ready` and `problems`. See
+it. This checks catalog eligibility separately from install validity, so **Ready** can appear
+alongside errors in commands or services. Fix those errors before publishing. `check --json` reports
+the eligibility result in `discover`, as `ready` and `problems`. See
 [Publish to Discover](#publish-to-discover).
 
 Then test in the isolated environment described in [Extension testing](extension-testing.md).
@@ -871,7 +873,8 @@ Listing a public GitHub repository in **Discover** needs no submission or review
 
 1. Put `extension.toml` at the repository root.
 2. Include `id`, `title`, `description`, `version`, and `api`.
-3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility.
+3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility. Use distinct, exact
+   lowercase platform names: `linux`, `macos`, `windows`, `freebsd`, or `netbsd`.
 4. Run `rozi extensions check .` and fix everything its **Discover** section lists.
 5. Push to the default branch, and add the `rozi-extension` topic to the repository.
 

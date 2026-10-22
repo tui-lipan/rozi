@@ -73,7 +73,8 @@ instead of adding an unlinked snippet.
   holds the unit's lock file and measures and rotates the file as it is on disk, and a read takes
   both generations under the same lock; keep it that way. No caller may wait on that lock for more
   than a moment (`LOCK_WAIT`): a lock that is not free in time is skipped, not waited for, since
-  the caller can be the UI thread.
+  the caller can be the UI thread. A write without the lock only appends; it never renames or
+  truncates, because the client holding the lock may be about to rotate.
   A unit is named `<kind>.<id without the extension prefix>`, and a name too long or altered for a
   file name carries a hash of the whole. A log is diagnostics: it never decides whether a
   process starts, and `extensions remove` always deletes it. A placed `Spawn` names its unit; a

@@ -78,11 +78,16 @@ impl Sink {
     }
 
     /// Add `bytes` to the unit's file. A failure - a full disk, a vanished directory - costs the
-    /// log, never the process. A lock that cannot be taken is not a reason to lose the output: the
-    /// write goes ahead without it, which risks only the bound, not the lines.
+    /// log, never the process.
+    ///
+    /// With the lock, this measures, rotates, and appends. A lock that cannot be taken in time is
+    /// not a reason to lose the output, but nor is it a licence to move files: without it the write
+    /// only appends and never renames or truncates, so no generation can be lost to a client that
+    /// still holds the lock mid-rotation. The file may then run past [`CAP`] until the next write
+    /// that does hold the lock, which rotates it as it finds it.
     fn append(&mut self, bytes: &[u8], on_fresh_line: bool) {
         let locked = lock_for_a_while(&self.lock);
-        let _ = append_locked(&self.path, bytes, on_fresh_line);
+        let _ = append_to(&self.path, bytes, on_fresh_line, locked);
         if locked {
             let _ = self.lock.unlock();
         }
@@ -105,8 +110,8 @@ fn lock_for_a_while(lock: &File) -> bool {
     }
 }
 
-/// The write itself, with the unit's lock held by the caller when it could be taken.
-fn append_locked(path: &Path, bytes: &[u8], on_fresh_line: bool) -> io::Result<()> {
+/// The write itself. `locked` says the caller holds the unit's lock; only then may it rotate.
+fn append_to(path: &Path, bytes: &[u8], on_fresh_line: bool, locked: bool) -> io::Result<()> {
     // A chunk larger than the cap keeps only its end, which is the part worth reading.
     let keep = usize::try_from(CAP).unwrap_or(usize::MAX);
     let bytes = &bytes[bytes.len().saturating_sub(keep)..];
@@ -121,7 +126,7 @@ fn append_locked(path: &Path, bytes: &[u8], on_fresh_line: bool) -> io::Result<(
         data.push(b'\n');
     }
     data.extend_from_slice(bytes);
-    if len + data.len() as u64 > CAP {
+    if locked && len + data.len() as u64 > CAP {
         // Another client may have rotated since this one last wrote, so the file is measured and
         // moved here, under the lock, never from a size remembered earlier.
         if fs::rename(path, path.with_extension(ROTATED_SUFFIX)).is_ok() {
@@ -587,6 +592,53 @@ mod tests {
             "{waited:?}"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "still lands\n");
+    }
+
+    /// A write that gave up on the lock must not move files: the client holding it may be about to
+    /// rotate on a decision it already made, and two rotations lose a generation.
+    #[test]
+    fn a_write_that_timed_out_on_the_lock_only_appends_and_loses_no_generation() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        let rotated = path.with_extension(ROTATED_SUFFIX);
+        // Five bytes short of full, so the ten-byte write below would rotate if it were allowed to.
+        let preexisting = format!("pre-{}\n", "x".repeat(usize::try_from(CAP).unwrap() - 10));
+        fs::write(&path, &preexisting).unwrap();
+        let (held, release) = std::sync::mpsc::channel::<()>();
+        let (taken, locked) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let other = Sink::open(path).unwrap();
+                other.lock.lock().unwrap();
+                taken.send(()).unwrap();
+                let _ = release.recv();
+                other.lock.unlock().unwrap();
+            })
+        };
+        locked.recv().unwrap();
+
+        let mut sink = Sink::open(path.clone()).unwrap();
+        sink.write(b"timed-out\n");
+        assert!(!rotated.exists(), "a write without the lock moved the log");
+        assert!(
+            fs::metadata(&path).unwrap().len() > CAP,
+            "the fixture should leave the file past the cap"
+        );
+
+        held.send(()).unwrap();
+        holder.join().unwrap();
+        // The next write that holds the lock rotates the file as it finds it.
+        sink.write(b"after\n");
+        assert!(rotated.exists());
+        let kept = tail_in(&env, "tool", "commands", 10).unwrap();
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        assert!(
+            kept[0].starts_with("pre-"),
+            "the earlier generation was lost"
+        );
+        assert_eq!(kept[1..], ["timed-out", "after"]);
     }
 
     /// A reader that arrives while another client is rotating must see the rotation finished,

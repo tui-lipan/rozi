@@ -1450,6 +1450,11 @@ mod tests {
                     .current()
                     .focused_pane
                     .expect("focused pane");
+                // A fixed location, so the title fits the frame whatever directory the tests run in.
+                crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target)
+                    .expect("target pane")
+                    .terminal
+                    .display_path = Some("~/src/repo".to_string());
                 let title = crate::pane::lifecycle::find_pane(backend.state(), target)
                     .expect("target pane")
                     .titlebar_title(false);

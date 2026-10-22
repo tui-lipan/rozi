@@ -804,11 +804,16 @@ impl ExtensionReportFormatter {
             }
         } else {
             let value = compact_home_paths(&row.value, self.home.as_deref());
+            // A name leads its row; every other label steps back for its value.
+            let label_style = match row.kind {
+                crate::config::ReportKind::Command(_) => self.value,
+                _ => self.key,
+            };
             push_wrapped_report_line(
                 lines,
                 source_line,
                 0,
-                vec![Span::new(format!("{:<label_width$}   ", row.label)).style(self.key)],
+                vec![Span::new(format!("{:<label_width$}   ", row.label)).style(label_style)],
                 label_width + 3,
                 &value,
                 tone,

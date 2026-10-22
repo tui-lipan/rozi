@@ -769,7 +769,7 @@ fn extensions_manager_browses_catalog_entries_without_hiding_installed_managemen
                 "{detail}"
             );
             assert!(!detail.contains("Not audited"), "{detail}");
-            assert!(detail.contains("Runs as you, with no sandbox"), "{detail}");
+            assert!(detail.contains("Unsandboxed · runs as you"), "{detail}");
             assert!(detail.contains("External tools may require"), "{detail}");
             assert!(detail.contains("install Enter"), "{detail}");
 

@@ -1212,7 +1212,91 @@ fn installed_report_sections(
             },
         );
     }
-    sections
+    arrange_installed_report(entry, sections)
+}
+
+/// Reorders the shared report for someone using the extension rather than writing it: what it is
+/// and whether it works first, what it adds next, and the machinery (identity, paths, environment,
+/// launch lines) last, where it is still one scroll away but no longer buries the settings.
+fn arrange_installed_report(
+    entry: &ExtensionInfo,
+    sections: Vec<ReportSection>,
+) -> Vec<ReportSection> {
+    // What a reader wants in the first lines; the rest of the overview is machinery.
+    const HEADLINE: [&str; 5] = ["Status", "Version", "Update", "Update check", "Homepage"];
+    const IDENTITY: [&str; 4] = ["ID", "API", "Directory", "Manifest"];
+
+    let mut rest = sections;
+    let mut take = |title: &str| {
+        rest.iter()
+            .position(|section| section.title == title)
+            .map(|index| rest.remove(index))
+    };
+    let Some(mut overview) = take("Overview") else {
+        return rest;
+    };
+    let errors = take("Errors");
+    let commands = take("Commands");
+    let services = take("Services");
+    let environment = take("Environment");
+
+    let (headline, other): (Vec<_>, Vec<_>) = std::mem::take(&mut overview.rows)
+        .into_iter()
+        .partition(|row| HEADLINE.contains(&row.label.as_str()));
+    overview.rows = headline;
+    let mut identity: Vec<ReportRow> = other
+        .into_iter()
+        .filter(|row| IDENTITY.contains(&row.label.as_str()))
+        .collect();
+    identity.sort_by_key(|row| IDENTITY.iter().position(|label| *label == row.label));
+
+    // The kind makes the report draw a name as a value, since it is what the reader scans for.
+    let summary = |title: &'static str, rows: Vec<(String, String)>| ReportSection {
+        title,
+        rows: rows
+            .into_iter()
+            .map(|(label, value)| ReportRow {
+                kind: ReportKind::Command(label.clone()),
+                label,
+                value,
+                tone: ReportTone::Muted,
+            })
+            .collect(),
+    };
+    let mut arranged = vec![overview];
+    arranged.extend(errors);
+    arranged.push(summary(
+        "Commands",
+        entry
+            .command_details
+            .iter()
+            .map(|command| (command.id.clone(), command.cwd.clone()))
+            .collect(),
+    ));
+    arranged.push(summary(
+        "Services",
+        entry
+            .service_details
+            .iter()
+            .map(|service| (service.id.clone(), service.restart.clone()))
+            .collect(),
+    ));
+    arranged.extend(rest);
+    arranged.push(ReportSection {
+        title: "Technical",
+        rows: identity,
+    });
+    arranged.extend(environment);
+    arranged.push(ReportSection {
+        title: "Launch",
+        rows: commands
+            .into_iter()
+            .chain(services)
+            .flat_map(|section| section.rows)
+            .collect(),
+    });
+    arranged.retain(|section| !section.rows.is_empty());
+    arranged
 }
 
 fn short_revision(revision: &str) -> &str {
@@ -1502,7 +1586,12 @@ pub(crate) fn catalog_report_sections(
             title: "Source",
             rows: vec![
                 row("Repository", entry.repository.clone(), ReportTone::Accent),
-                row("Commit", entry.commit.clone(), ReportTone::Muted),
+                // `Ctrl+L` opens the full commit, and the installation uses it.
+                row(
+                    "Commit",
+                    entry.commit[..entry.commit.len().min(12)].to_string(),
+                    ReportTone::Muted,
+                ),
             ],
         },
         ReportSection {
@@ -1540,7 +1629,7 @@ pub(crate) fn catalog_report_sections(
                 ),
                 row(
                     "Access",
-                    crate::extension_installation::UNSANDBOXED_NOTICE.to_string(),
+                    "Unsandboxed · runs as you".to_string(),
                     ReportTone::Warning,
                 ),
                 row(
@@ -1804,10 +1893,7 @@ mod tests {
                     .flat_map(|section| &section.rows)
                     .find(|row| row.label == "Access")
                     .unwrap();
-                assert_eq!(
-                    access.value,
-                    crate::extension_installation::UNSANDBOXED_NOTICE
-                );
+                assert_eq!(access.value, "Unsandboxed · runs as you");
                 assert!(catalog_description(&entry, installed).contains("trusted"));
             }
         }

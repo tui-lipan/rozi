@@ -296,21 +296,38 @@ pub fn ensure_extension_log_dir(env: &PlatformEnv, id: &str) -> io::Result<PathB
     Ok(dir)
 }
 
-/// Delete one extension's logs on this host. Logs that do not exist are not an error.
-pub fn remove_extension_log_dir(env: &PlatformEnv, id: &str) -> io::Result<bool> {
+/// Delete one extension's logs on this host: every `*.log` and `*.log.1` file. Logs that do not
+/// exist are not an error; `Ok(false)` says there were none.
+///
+/// The directory and the `*.lock` files in it stay. They are what every client that writes these
+/// logs synchronizes on, and deleting them while one holds a lock would let it and the next client
+/// each lock a different file and both believe they own the log.
+pub fn remove_extension_logs(env: &PlatformEnv, id: &str) -> io::Result<bool> {
     if !valid_extension_id(id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("`{id}` is not an extension id"),
         ));
     }
-    let dir = extension_log_dir(env, id);
-    match fs::symlink_metadata(&dir) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-        Ok(metadata) if !metadata.is_dir() => fs::remove_file(&dir).map(|()| true),
-        Ok(_) => fs::remove_dir_all(&dir).map(|()| true),
+    let entries = match fs::read_dir(extension_log_dir(env, id)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let mut removed = false;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if (name.ends_with(".log") || name.ends_with(".log.1")) && !entry.file_type()?.is_dir() {
+            match fs::remove_file(entry.path()) {
+                Ok(()) => removed = true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
+    Ok(removed)
 }
 
 /// Whether `id` could be a manifest id (`[a-z0-9_-]+`), and so may name a directory.
@@ -1240,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    fn extension_logs_are_private_per_extension_and_leave_with_it() {
+    fn extension_logs_are_private_per_extension_and_removal_leaves_the_locks() {
         let root = tempfile::tempdir().unwrap();
         let env = PlatformEnv {
             xdg_data_home: Some(root.path().to_path_buf()),
@@ -1259,10 +1276,25 @@ mod tests {
             assert_eq!(mode & 0o777, 0o700);
         }
         assert!(ensure_extension_log_dir(&env, "../escape").is_err());
-        assert!(remove_extension_log_dir(&env, "../escape").is_err());
-        assert!(remove_extension_log_dir(&env, "git-tools").unwrap());
-        assert!(!dir.exists());
-        assert!(!remove_extension_log_dir(&env, "git-tools").unwrap());
+        assert!(remove_extension_logs(&env, "../escape").is_err());
+        // Removal takes the logs and leaves what the writers synchronize on.
+        for kept in ["commands.lock", "notes.txt"] {
+            std::fs::write(dir.join(kept), "").unwrap();
+        }
+        for gone in ["commands.log", "commands.log.1", "service.watch.log"] {
+            std::fs::write(dir.join(gone), "output\n").unwrap();
+        }
+        assert!(remove_extension_logs(&env, "git-tools").unwrap());
+        assert!(dir.is_dir());
+        let mut left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["commands.lock", "notes.txt"]);
+        assert!(!remove_extension_logs(&env, "git-tools").unwrap());
+        // An extension that never logged has nothing to remove.
+        assert!(!remove_extension_logs(&env, "never-ran").unwrap());
     }
 
     #[test]

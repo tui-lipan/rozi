@@ -76,13 +76,14 @@ instead of adding an unlinked snippet.
   the caller can be the UI thread. A write without the lock only appends; it never renames or
   truncates, because the client holding the lock may be about to rotate, and what it learns about
   the file it reads through its own handle, never by reopening the path. The lock file itself is
-  opened by path for each operation and never kept, since `extensions remove` deletes the whole
-  directory and a kept handle would lock a file no one else finds. A read that cannot get the
-  lock fails with `WouldBlock` instead of reading unlocked, which could skip a generation.
-  A unit is named `<kind>.<id without the extension prefix>`, and a name too long or altered for a
-  file name carries a hash of the whole. A log is diagnostics: it never decides whether a
-  process starts, and `extensions remove` always deletes it. A placed `Spawn` names its unit; a
-  runtime that is not sent one logs under `placed`.
+  opened by path for each operation and never kept. `extensions remove` deletes only the `*.log`
+  and `*.log.1` files and leaves the directory and the `*.lock` files: a lock deleted while a
+  writer holds it would let the next writer lock a new file and both own the log. A read that
+  cannot get the lock fails with `WouldBlock` instead of reading unlocked, which could skip a
+  generation. A unit is named `<kind>.<id without the extension prefix>`, and a name too long or
+  altered for a file name carries a hash of the whole. A log is diagnostics: it never decides
+  whether a process starts. A placed `Spawn` names its unit; a runtime that is not sent one logs
+  under `placed`.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus
   `ROZI_REMOTE_HOST` for remote attachments. Use `events::EventKind::ALL` as the current event list
   rather than copying a count into documentation.

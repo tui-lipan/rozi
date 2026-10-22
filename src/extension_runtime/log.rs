@@ -48,9 +48,9 @@ const LOCK_POLL: Duration = Duration::from_millis(2);
 static SINKS: Mutex<Option<HashMap<PathBuf, Weak<Mutex<Sink>>>>> = Mutex::new(None);
 
 /// The way to one unit's log: its path and nothing else. The lock file, the log, and the directory
-/// around them are all found by path on each write, never held, so deleting and recreating the
-/// directory - as removing an extension does - cannot leave a writer locking a file that is no
-/// longer the one beside the log.
+/// around them are all found by path on each write, never held, so a directory deleted and
+/// recreated by hand cannot leave a writer locking a file that is no longer the one beside the log.
+/// Removing an extension takes only the logs and leaves the lock files, so writers still share one.
 #[derive(Debug)]
 struct Sink {
     path: PathBuf,
@@ -629,9 +629,34 @@ mod tests {
         lock.unlock().unwrap();
     }
 
-    /// Removing an extension deletes its whole log directory, and a running client may write to the
-    /// unit again before it reloads. The lock must be the file beside the log as it is now, or two
-    /// clients each lock a different file and both believe they own the log.
+    /// Removing an extension must not pull the lock out from under a writer that holds it: the next
+    /// writer would then create and take a new lock file while the first still believes it owns the
+    /// log. Removal takes the logs and leaves the lock files, so they all keep one lock.
+    #[test]
+    fn removing_an_extensions_logs_leaves_the_lock_every_writer_shares() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        let path = dir.join("commands.log");
+        let mid_write = open_lock(&path).unwrap();
+        mid_write.lock().expect("the lock is free");
+        fs::write(&path, "output\n").unwrap();
+
+        // `extensions remove` runs while that writer is between taking the lock and writing.
+        assert!(paths::remove_extension_logs(&env, "tool").unwrap());
+        assert!(!path.exists());
+
+        // The next writer opens the lock file by path. It must be the same file, still held.
+        let next = open_lock(&path).unwrap();
+        match next.try_lock() {
+            Err(TryLockError::WouldBlock) => {}
+            other => panic!("the next writer took a lock the first one holds: {other:?}"),
+        }
+        mid_write.unlock().unwrap();
+        next.lock().expect("free once the first writer is done");
+    }
+
+    /// A directory deleted by hand, rather than through `extensions remove`, is not a reason for a
+    /// writer that outlives it to lock a stale file. The lock must be the one beside the log now.
     #[test]
     fn a_sink_outliving_its_directory_still_contends_on_the_current_lock_file() {
         let (_scratch, env) = env();

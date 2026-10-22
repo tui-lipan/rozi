@@ -135,7 +135,7 @@ fn installed_extension_summary(id: &str) -> Option<InstalledExtensionSummary> {
 /// An extension's logs go with it: they describe an installation that no longer exists. Failing
 /// to delete them is not worth failing the removal for.
 fn delete_logs(id: &str) {
-    let _ = crate::platform::paths::remove_extension_log_dir(
+    let _ = crate::platform::paths::remove_extension_logs(
         &crate::platform::paths::PlatformEnv::from_process(),
         id,
     );

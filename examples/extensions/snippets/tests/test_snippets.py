@@ -22,16 +22,16 @@ import snippets  # noqa: E402
 class IsolatedState(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.saved_state = os.environ.get("XDG_STATE_HOME")
+        self.saved_state = os.environ.get("ROZI_EXTENSION_STATE_DIR")
         self.saved_config = os.environ.get("ROZI_EXTENSION_CONFIG")
-        os.environ["XDG_STATE_HOME"] = self.temporary_directory.name
+        os.environ["ROZI_EXTENSION_STATE_DIR"] = self.temporary_directory.name
         os.environ.pop("ROZI_EXTENSION_CONFIG", None)
 
     def tearDown(self) -> None:
         if self.saved_state is None:
-            os.environ.pop("XDG_STATE_HOME", None)
+            os.environ.pop("ROZI_EXTENSION_STATE_DIR", None)
         else:
-            os.environ["XDG_STATE_HOME"] = self.saved_state
+            os.environ["ROZI_EXTENSION_STATE_DIR"] = self.saved_state
         if self.saved_config is None:
             os.environ.pop("ROZI_EXTENSION_CONFIG", None)
         else:
@@ -50,7 +50,7 @@ class IsolatedState(unittest.TestCase):
         path = directory / f"{added.id}.json"
         self.assertTrue(path.is_file())
         self.assertEqual(directory.name, "commands")
-        self.assertEqual(directory.parent.name, "rozi-snippets")
+        self.assertEqual(directory.parent, Path(self.temporary_directory.name))
 
     def test_adds_and_deletes_are_independent_files(self) -> None:
         first = snippets.add_snippet("echo one")

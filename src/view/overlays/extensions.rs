@@ -668,9 +668,14 @@ fn report_height(ctx: &Context<AppRoot>, formatter: &ExtensionReportFormatter) -
                 .iter()
                 .map(|line| {
                     let budget = usize::from(TEXT_WIDTH.saturating_sub(line.indent)).max(1);
-                    tui_lipan::utils::spans::line_width(&line.spans)
-                        .div_ceil(budget)
-                        .max(1) as u32
+                    let width = tui_lipan::utils::spans::line_width(&line.spans);
+                    if width <= budget {
+                        return 1;
+                    }
+                    // A wrapped row loses the tail it could not break, which on a long path or a
+                    // `KEY=value` list is a sizeable part of it. Counting each row at three quarters
+                    // keeps the estimate above the real height instead of under it.
+                    width.div_ceil((budget * 3 / 4).max(1)) as u32
                 })
                 .sum(),
             _ => 0,

@@ -25,9 +25,23 @@ pub(crate) fn execute_with_env(
 pub(crate) fn execute_with_env_from_pane(
     ctx: &mut Context<AppRoot>,
     action: &UserCommandAction,
-    env: Vec<(String, String)>,
+    mut env: Vec<(String, String)>,
     source: Option<PaneId>,
 ) -> Update {
+    // A `run` pane of a `--remote` session starts on that host, where this client's state
+    // directory does not exist. Everything else here starts on the client.
+    let remote_pane = matches!(action, UserCommandAction::Run { .. })
+        && ctx.state.current().remote_host.is_some()
+        && !ctx.state.scratch_visible;
+    if remote_pane {
+        env.retain(|(key, _)| key != crate::config::STATE_DIR_ENV);
+    } else if !matches!(action, UserCommandAction::Send(_))
+        && let Err(error) =
+            crate::config::prepare_state_dir(env.iter().map(|(key, value)| (key, value)))
+    {
+        crate::pane::pty_events::notify_error(ctx, "Command failed", error);
+        return Update::full();
+    }
     let spawn_cwd = match source {
         Some(id) => crate::pane::lifecycle::find_pane(&ctx.state, id)
             .and_then(|pane| {
@@ -211,6 +225,12 @@ fn exec_argv(
             ctx.state.current().remote_host.clone().unwrap_or_default(),
         ),
     ];
+    if env.iter().any(|(key, _)| key == "ROZI_EXTENSION") {
+        environment.push((
+            crate::config::SESSION_NAME_ENV.to_string(),
+            ctx.state.current().session_name.clone().unwrap_or_default(),
+        ));
+    }
     if let Some(path) = ctx.state.control_socket_path.as_deref() {
         environment.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }

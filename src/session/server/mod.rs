@@ -2120,6 +2120,8 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "ROZI_EXTENSION_DIR",
     "ROZI_EXTENSION_GENERATION",
     "ROZI_EXTENSION_CONFIG",
+    crate::config::STATE_DIR_ENV,
+    crate::config::SESSION_NAME_ENV,
     crate::state::CREDENTIAL_ENV,
     "ROZI_SERVICE",
     // Fish and PowerShell export this guard. Each new shell must install its own hooks.

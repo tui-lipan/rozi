@@ -305,6 +305,10 @@ fn handshake(
             false,
         ));
     }
+    if let Err(unavailable) = require_state_dir(&hello) {
+        let _ = connection.shutdown(std::net::Shutdown::Both);
+        return Err((unavailable, false));
+    }
     let _ = connection.set_read_timeout(None);
     let reader = connection.try_clone().map_err(|error| {
         (
@@ -316,6 +320,23 @@ fn handshake(
     })?;
     *writer.lock().unwrap() = Some(connection);
     Ok((reader, hello))
+}
+
+/// Refuse a runtime that would start processes without their state directory.
+fn require_state_dir(hello: &Hello) -> Result<(), Unavailable> {
+    if hello
+        .capabilities
+        .iter()
+        .any(|item| item == protocol::STATE_CAPABILITY)
+    {
+        return Ok(());
+    }
+    Err(Unavailable::RuntimeUnsupported {
+        detail: format!(
+            "the host's Rozi cannot give extensions a state directory ({}); update Rozi there",
+            protocol::STATE_CAPABILITY
+        ),
+    })
 }
 
 /// Explain a runtime that never answered. An old Rozi on the host refuses the subcommand, which is
@@ -689,5 +710,19 @@ mod tests {
         let (reason, retry) = classify(&eof, "ssh: connect to host pc port 22: No route to host");
         assert!(matches!(reason, Unavailable::RuntimeUnreachable { .. }));
         assert!(retry);
+    }
+
+    #[test]
+    fn a_runtime_that_gives_no_state_directory_places_nothing() {
+        let current = Hello::current(Some("linux".to_string()));
+        assert!(require_state_dir(&current).is_ok());
+        let mut old = current;
+        old.capabilities
+            .retain(|item| item != protocol::STATE_CAPABILITY);
+        assert!(old.validate().is_ok(), "still speaks the protocol");
+        let Err(Unavailable::RuntimeUnsupported { detail }) = require_state_dir(&old) else {
+            panic!("an old host is unsupported, not retried");
+        };
+        assert!(detail.contains(protocol::STATE_CAPABILITY));
     }
 }

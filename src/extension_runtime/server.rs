@@ -32,6 +32,7 @@ const OWNED_ENV: &[&str] = &[
     "ROZI_BIN",
     "ROZI_SOCKET",
     "ROZI_EXTENSION_DIR",
+    crate::config::STATE_DIR_ENV,
     crate::state::CREDENTIAL_ENV,
 ];
 
@@ -43,6 +44,8 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "ROZI_EXTENSION",
     "ROZI_EXTENSION_GENERATION",
     "ROZI_EXTENSION_CONFIG",
+    crate::config::STATE_DIR_ENV,
+    crate::config::SESSION_NAME_ENV,
     "ROZI_SERVICE",
 ];
 
@@ -339,6 +342,22 @@ impl Runtime {
             StoreError::Corrupt(detail) => SpawnFailure::BundleCorrupt { detail },
             StoreError::Io(detail) => SpawnFailure::SpawnFailed { detail },
         })?;
+        // This host's own directory for the extension, never one the client names: state stays
+        // with the machine that wrote it.
+        let extension = env
+            .iter()
+            .find(|(key, _)| key == "ROZI_EXTENSION")
+            .map(|(_, id)| id.as_str())
+            .ok_or_else(|| SpawnFailure::SpawnFailed {
+                detail: "the launch names no extension".to_string(),
+            })?;
+        let state_dir = crate::platform::paths::ensure_extension_state_dir(
+            &crate::platform::paths::PlatformEnv::from_process(),
+            extension,
+        )
+        .map_err(|error| SpawnFailure::SpawnFailed {
+            detail: format!("cannot prepare the extension's state directory: {error}"),
+        })?;
         let mut command = build_command(launch, &bundle_dir)?;
         match cwd {
             SpawnCwd::Bundle { path } => {
@@ -370,6 +389,7 @@ impl Runtime {
         }
         command.env("ROZI_SOCKET", &self.bridge_path);
         command.env("ROZI_EXTENSION_DIR", &bundle_dir);
+        command.env(crate::config::STATE_DIR_ENV, &state_dir);
         command.env(crate::state::CREDENTIAL_ENV, credential);
         command.stdin(std::process::Stdio::piped());
         command.stdout(if capture.is_some() {
@@ -783,6 +803,14 @@ mod tests {
                         "ROZI_SOCKET".to_string(),
                         "/client/path/must/not/leak".to_string(),
                     ),
+                    (
+                        crate::config::STATE_DIR_ENV.to_string(),
+                        "/client/state/must/not/leak".to_string(),
+                    ),
+                    (
+                        crate::config::SESSION_NAME_ENV.to_string(),
+                        "dev".to_string(),
+                    ),
                 ],
                 credential: "c".repeat(64),
                 platforms: Vec::new(),
@@ -823,7 +851,8 @@ mod tests {
         let mut client = Client::start();
         let bundle = script(
             "printf '%s\\n' \"$ROZI\" \"$ROZI_EXTENSION\" \"$ROZI_EXTENSION_DIR\" \"$PWD\" \
-             \"$ROZI_SOCKET\" \"$ROZI_EXTENSION_CREDENTIAL\" \"$ROZI_BIN\"",
+             \"$ROZI_SOCKET\" \"$ROZI_EXTENSION_CREDENTIAL\" \"$ROZI_BIN\" \
+             \"$ROZI_EXTENSION_STATE_DIR\" \"$ROZI_SESSION_NAME\"",
         );
         client.stage(&bundle);
         client.spawn(1, &bundle, probe(), true);
@@ -858,6 +887,46 @@ mod tests {
         );
         assert_eq!(lines[5], "c".repeat(64));
         assert!(!lines[6].is_empty());
+        // State lives in this host's data directory, made before the launch, never in the bundle
+        // and never where the client said.
+        let state = crate::platform::paths::extension_state_dir(
+            &crate::platform::paths::PlatformEnv::from_process(),
+            "probe",
+        );
+        assert_eq!(Path::new(lines[7]), state);
+        assert!(!Path::new(lines[7]).starts_with(lines[2]));
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&state).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        assert_eq!(lines[8], "dev");
+        client.close();
+    }
+
+    #[test]
+    fn a_launch_for_no_valid_extension_gets_no_state_and_does_not_start() {
+        let mut client = Client::start();
+        let bundle = script("exit 0");
+        client.stage(&bundle);
+        client.send(Message::Spawn {
+            worker: 1,
+            digest: bundle.digest().to_string(),
+            launch: probe(),
+            cwd: SpawnCwd::Inherit,
+            env: vec![("ROZI_EXTENSION".to_string(), "../escape".to_string())],
+            credential: "c".repeat(64),
+            platforms: Vec::new(),
+            capture: None,
+        });
+        let Message::SpawnFailed {
+            worker: 1,
+            failure: SpawnFailure::SpawnFailed { detail },
+        } = client.next_message()
+        else {
+            panic!("refused");
+        };
+        assert!(detail.contains("state directory"), "{detail}");
         client.close();
     }
 

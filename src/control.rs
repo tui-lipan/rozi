@@ -133,6 +133,7 @@ impl ApiDescription {
                 CAPTURE_WAIT_CAPABILITY,
                 COMMAND_VISIBILITY_CAPABILITY,
                 "extension-link-handlers",
+                crate::extension_runtime::protocol::STATE_CAPABILITY,
                 GLOBAL_AGENTS_CAPABILITY,
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,

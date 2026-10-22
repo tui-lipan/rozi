@@ -48,13 +48,10 @@ def settings() -> dict:
 
 
 def commands_dir() -> Path | None:
-    base = os.environ.get("XDG_STATE_HOME")
+    base = os.environ.get("ROZI_EXTENSION_STATE_DIR")
     if not base:
-        if os.name == "nt":
-            base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        else:
-            base = str(Path.home() / ".local" / "state")
-    directory = Path(base) / "rozi-snippets" / "commands"
+        return None
+    directory = Path(base) / "commands"
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError:

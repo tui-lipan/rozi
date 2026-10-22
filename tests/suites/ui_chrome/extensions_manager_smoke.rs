@@ -4,6 +4,15 @@ use rozi::AppRoot;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
+/// Long on purpose: the report echoes the extension's directory into several lines, and a deep
+/// directory (a Windows temp path is one) makes them wrap, which is the case worth covering on
+/// every platform.
+fn direct_dir_name(extensions: &Path) -> String {
+    const PATH_LEN: usize = 105;
+    let pad = PATH_LEN.saturating_sub(extensions.as_os_str().len()).max(8);
+    format!("z{}", "d".repeat(pad - 1))
+}
+
 fn copy_fixture(name: &str, destination: &Path) {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/extensions")
@@ -65,11 +74,12 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 Err(err) => panic!("clear the shared config file: {err}"),
             }
             let extensions = extensions_root(root);
+            let direct_dir = direct_dir_name(&extensions);
             // Keep filesystem order different from display-group order so selection must be
             // restored by entry identity rather than by the raw scan index.
             copy_fixture("invalid/incompatible-api", &extensions.join("a-future-api"));
-            copy_fixture("valid/direct-command", &extensions.join("z-direct"));
-            let manifest = extensions.join("z-direct/extension.toml");
+            copy_fixture("valid/direct-command", &extensions.join(&direct_dir));
+            let manifest = extensions.join(&direct_dir).join("extension.toml");
             let mut text = std::fs::read_to_string(&manifest)
                 .expect("read copied manifest")
                 .replacen("[extension]\n", "[extension]\nversion = \"0.2.1\"\n", 1);
@@ -460,6 +470,14 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             backend
                 .dispatch(rozi::Msg::ExtensionsOpenDetail)
                 .expect("open extension detail");
+            // Tall enough that the whole report fits whatever length the directory has; the
+            // scrolling behaviour is exercised below in deliberately short viewports.
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 200,
+            });
             let detail = frame(&mut backend);
             for group in ["Overview", "Commands", "Suggested keybindings", "Settings"] {
                 assert!(detail.contains(group), "missing {group}:\n{detail}");
@@ -525,13 +543,23 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 w: 110,
                 h: 52,
             });
-            backend
-                .send_key(KeyEvent {
-                    code: KeyCode::PageDown,
-                    mods: KeyMods::NONE,
-                })
-                .expect("scroll extension report");
-            let bottom = frame(&mut backend);
+            // The report's length follows the length of the extension directory (it is echoed
+            // into the env lines and wraps), so page down until the frame stops moving instead
+            // of counting pages.
+            let mut bottom = frame(&mut backend);
+            for _ in 0..16 {
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::PageDown,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("scroll extension report");
+                let next = frame(&mut backend);
+                if next == bottom {
+                    break;
+                }
+                bottom = next;
+            }
             assert!(
                 bottom
                     .lines()
@@ -616,9 +644,9 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::ExtensionsRemoveSelected)
                 .expect("remove duplicate fixture");
             assert!(!duplicate.exists());
-            assert!(extensions.join("z-direct").exists());
+            assert!(extensions.join(&direct_dir).exists());
             let state = backend.state().extensions.as_ref().unwrap();
-            assert_eq!(std::path::Path::new(&state.entries[state.selected].path).file_name(), Some(std::ffi::OsStr::new("z-direct")), "removal keeps the adjacent disabled installation selected");
+            assert_eq!(std::path::Path::new(&state.entries[state.selected].path).file_name(), Some(std::ffi::OsStr::new(&direct_dir)), "removal keeps the adjacent disabled installation selected");
             let config = std::fs::read_to_string(rozi::config::config_path()).unwrap();
             assert!(
                 config.contains("disabled = [\"fixture-direct\"]"),

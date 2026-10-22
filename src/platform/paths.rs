@@ -232,6 +232,56 @@ pub fn extensions_dir(env: &PlatformEnv) -> PathBuf {
     data_dir(env).join("extensions")
 }
 
+/// Durable state one extension keeps on this host (`data_dir/extension-state/<id>`).
+///
+/// Beside [`extensions_dir`] rather than inside it, so updating, reinstalling, or removing the
+/// installation never touches it, and nothing in it is part of a placed contribution's snapshot.
+pub fn extension_state_dir(env: &PlatformEnv, id: &str) -> PathBuf {
+    data_dir(env).join("extension-state").join(id)
+}
+
+/// [`extension_state_dir`], created private to the current user if missing and validated as such.
+///
+/// `id` names a directory, so anything but a manifest id (`[a-z0-9_-]+`) is refused rather than
+/// joined: a runtime on a session host takes it from the client that asked for a launch.
+pub fn ensure_extension_state_dir(env: &PlatformEnv, id: &str) -> io::Result<PathBuf> {
+    if !valid_extension_id(id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("`{id}` is not an extension id"),
+        ));
+    }
+    let dir = extension_state_dir(env, id);
+    fs_security::ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Delete one extension's state on this host. A state directory that does not exist is not an
+/// error: there is nothing to purge.
+pub fn remove_extension_state_dir(env: &PlatformEnv, id: &str) -> io::Result<bool> {
+    if !valid_extension_id(id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("`{id}` is not an extension id"),
+        ));
+    }
+    let dir = extension_state_dir(env, id);
+    match fs::symlink_metadata(&dir) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+        // A link is removed as a link; its target is not this extension's to delete.
+        Ok(metadata) if !metadata.is_dir() => fs::remove_file(&dir).map(|()| true),
+        Ok(_) => fs::remove_dir_all(&dir).map(|()| true),
+    }
+}
+
+fn valid_extension_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+}
+
 /// The command path owned by a managed installation. Unix keeps the stable command as an absolute
 /// symlink into [`data_dir`]; Windows keeps a stable launcher beside the active-version selector.
 pub fn managed_command_path(env: &PlatformEnv) -> PathBuf {
@@ -1148,6 +1198,51 @@ mod tests {
             data_dir(&env),
             PathBuf::from(r"C:\Users\user\AppData\Local\rozi")
         );
+    }
+
+    #[test]
+    fn extension_state_is_private_beside_the_installations_and_survives_nothing_but_a_purge() {
+        let root = tempfile::tempdir().unwrap();
+        let env = PlatformEnv {
+            xdg_data_home: Some(root.path().to_path_buf()),
+            home: Some(root.path().to_path_buf()),
+            local_appdata: Some(root.path().to_path_buf()),
+            ..PlatformEnv::default()
+        };
+        let dir = ensure_extension_state_dir(&env, "git-tools").unwrap();
+        assert_eq!(dir, extension_state_dir(&env, "git-tools"));
+        assert!(!dir.starts_with(extensions_dir(&env)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        fs::write(dir.join("cache.json"), b"{}").unwrap();
+        assert_eq!(ensure_extension_state_dir(&env, "git-tools").unwrap(), dir);
+        assert!(
+            dir.join("cache.json").is_file(),
+            "ensuring again keeps state"
+        );
+
+        assert!(remove_extension_state_dir(&env, "git-tools").unwrap());
+        assert!(!dir.exists());
+        assert!(!remove_extension_state_dir(&env, "git-tools").unwrap());
+    }
+
+    #[test]
+    fn extension_state_refuses_anything_but_an_extension_id() {
+        let env = env_with_home("/home/user");
+        for id in ["", "..", "../x", "a/b", "A", "a\\b"] {
+            assert_eq!(
+                ensure_extension_state_dir(&env, id).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput,
+                "{id:?}"
+            );
+            assert!(remove_extension_state_dir(&env, id).is_err(), "{id:?}");
+        }
     }
 
     #[test]

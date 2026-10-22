@@ -100,7 +100,8 @@ done
 ```
 
 Run these inside the lab too. A test that does not touch user directories today may start doing so
-later.
+later. A unit test that exercises an extension's saved state sets `ROZI_EXTENSION_STATE_DIR` to a
+temporary directory of its own, as the snippets example's tests do.
 
 ## Test Git tools
 
@@ -194,8 +195,9 @@ For the activity dashboard:
 "$ROZI_BIN" status --clear
 ```
 
-The dashboard keeps a history file, which is acceptable only because the installed copy is inside
-`$LAB`. Run `rozi run-action reload-extensions` and check that the history survives the service restart.
+The dashboard keeps its history in its state directory, which the lab's `XDG_DATA_HOME` places
+under `$LAB/data/rozi/extension-state`. Run `rozi run-action reload-extensions` and check that the
+history survives the service restart.
 
 ## Test reload and service cleanup
 

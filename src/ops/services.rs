@@ -81,6 +81,7 @@ pub(crate) fn spawn_service_child(
     command_shell: Option<&[String]>,
     control_socket: Option<&std::path::Path>,
 ) -> std::io::Result<(std::process::Child, CommandGroup)> {
+    crate::config::prepare_state_dir(&config.env).map_err(std::io::Error::other)?;
     let mut command = match &config.launch {
         ServiceLaunch::Direct(argv) => {
             let Some((program, args)) = argv.split_first() else {

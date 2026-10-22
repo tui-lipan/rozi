@@ -137,8 +137,8 @@ pub struct PlacedService {
     /// Relative to the extension's files on the executing host.
     pub cwd: String,
     pub restart: ServiceRestart,
-    /// Declared and Rozi-injected environment, without `ROZI_EXTENSION_DIR`, which differs per
-    /// host and is set where the process starts.
+    /// Declared and Rozi-injected environment, without `ROZI_EXTENSION_DIR` and
+    /// `ROZI_EXTENSION_STATE_DIR`, which differ per host and are set where the process starts.
     pub env: BTreeMap<String, String>,
 }
 

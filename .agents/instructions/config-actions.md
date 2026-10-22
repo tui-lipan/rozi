@@ -62,6 +62,11 @@ instead of adding an unlinked snippet.
   there can read credentials, so policy must hold for the union of what a host's workers may do,
   and a runtime may only answer for workers it was given (`ops/placement.rs` `ownership`). Adding a `ControlCommand` means choosing its gate there
   too: anything that could start a process on the client, or reads the whole client, is denied.
+- `ROZI_EXTENSION_STATE_DIR` is keyed by extension ID and machine only (`platform::paths`), created
+  private before every launch, and never snapshotted or sent. A placed runtime derives it on the
+  host from `ROZI_EXTENSION` and overrides whatever the client sent; hosts without the
+  `extension-state-dir` capability get no placed processes. Only `extensions remove --purge`
+  deletes it.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus
   `ROZI_REMOTE_HOST` for remote attachments. Use `events::EventKind::ALL` as the current event list
   rather than copying a count into documentation.

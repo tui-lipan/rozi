@@ -416,6 +416,7 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
         .ok_or_else(|| Unavailable::SpawnFailed {
             detail: "the extension is no longer active".to_string(),
         })?;
+    let session_name = bound_session_name(state, &spec.binding);
     let worker = state.extension_workers.issue(
         ExtensionProvenance {
             id: spec.placements.id.clone(),
@@ -428,12 +429,17 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
     );
     let (id, credential) = (worker.id, worker.credential().to_string());
     let digest = spec.placements.bundle_digest().to_string();
+    let mut env = spec.env;
+    env.retain(|(key, _)| key != crate::config::SESSION_NAME_ENV);
+    if let Some(name) = session_name {
+        env.push((crate::config::SESSION_NAME_ENV.to_string(), name));
+    }
     let message = Message::Spawn {
         worker: id.0,
         digest: digest.clone(),
         launch: (&spec.launch).into(),
         cwd: spec.cwd,
-        env: spec.env,
+        env,
         credential,
         platforms: spec.placements.platforms.clone(),
         capture: spec.capture,
@@ -456,6 +462,15 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
     });
     flush(state, &host);
     Ok(id)
+}
+
+/// The name of the attached session a worker is bound to. `None` for a host-wide worker.
+fn bound_session_name(state: &State, binding: &WorkerBinding) -> Option<String> {
+    let instance = binding.session.as_ref()?;
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .find(|attachment| attachment.session_instance.as_ref() == Some(instance))
+        .and_then(|attachment| attachment.session_name.clone())
 }
 
 /// The current epoch of `host`'s runtime, starting one if there is none. A runtime that failed is

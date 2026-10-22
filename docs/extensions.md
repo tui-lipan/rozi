@@ -9,8 +9,19 @@ An extension is a directory containing an `extension.toml` manifest and, usually
 manifest launches. Those programs talk to `rozi` through the same
 [`rozi` control commands](control.md) that scripts use.
 
-**Extensions are not sandboxed.** Their programs run with your user account's permissions.
-Installing an extension is equivalent to installing any other software from that source.
+**Extensions are trusted programs, not sandboxed ones.** An extension's programs run as you, with
+your user account's permissions: they can read and change your files, use your credentials, reach
+the network, and start other programs. Installing an extension is equivalent to installing any
+other software from that source. "Trusted" in **Discover** says who maintains an extension; it
+grants it nothing extra.
+
+`rozi` does limit which `rozi` requests an extension may make. A
+[placed](writing-extensions.md#run-on-the-session-host) process can only act on panes in its own
+session or host, and it cannot run other actions or read the whole client. Those limits apply only
+to what it asks `rozi` to do. It still runs as you on its host, with your account's access there.
+
+The install report in **Discover**, the install prompt, and `rozi extensions install` all repeat
+this.
 
 ## Review an extension before installing
 
@@ -60,7 +71,8 @@ from then on it is an ordinary Git installation that updates from its remote.
 To install from Discover:
 
 1. Press `Enter` on a row to open its installation report. The report names the repository and
-   commit, and shows compatibility, contribution counts, and trust status.
+   commit, and shows compatibility, contribution counts, trust status, and that the extension
+   will run without a sandbox.
 2. Optionally press `Ctrl+L` to open the repository in your browser at that exact commit. This is
    the source `rozi` installs, even if the default branch has moved since the index was built.
 3. Press `Enter` again to install that commit.

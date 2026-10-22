@@ -379,6 +379,11 @@ behaves the same wherever it runs.
 
 ### Security
 
+Placement is not a sandbox. The rules above limit what a placed process may ask `rozi` to do. The
+process itself runs as the user on its host, like any program they start, and can do anything their
+account can there. An extension of any placement is software the user trusts; see
+[Extensions](extensions.md).
+
 The trust boundary is the host, not the process. Any process running as the same user on a host can
 read the credentials of the placed processes there, and can change their files, so a credential
 does not tell one process on a host from another. What it does is tie a request to one host, one

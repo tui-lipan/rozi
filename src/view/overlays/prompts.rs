@@ -329,7 +329,9 @@ pub(crate) fn extension_install_prompt_overlay(ctx: &Context<AppRoot>) -> Elemen
     else {
         return Text::new("").into();
     };
-    let caption = prompt.error.as_deref().map(PromptCaption::Note);
+    let caption = Some(PromptCaption::Note(prompt.error.as_deref().unwrap_or(
+        "An extension runs as you, with no sandbox. Install only a source you have reviewed.",
+    )));
     let caption_document = prompt.error.as_ref().map(|_| PromptDocument {
         key: extension_install_error_key(),
         max_height: 6,

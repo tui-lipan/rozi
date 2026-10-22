@@ -32,6 +32,14 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
         action,
         installed.destination.display()
     );
+    println!(
+        "{}  {}",
+        styles.paint("Access", OutputTone::Muted),
+        styles.paint(
+            crate::extension_installation::UNSANDBOXED_NOTICE,
+            OutputTone::Warning
+        )
+    );
     if let Some(summary) = installed_extension_summary(&installed.id) {
         if summary.navigation_programs > 0 {
             println!(

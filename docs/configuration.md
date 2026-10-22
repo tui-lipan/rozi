@@ -104,6 +104,7 @@ session's panes.
 | `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
 | `sidebar.startup` | Boolean, default `false`. Open the remembered dock combination at client startup. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
+| `session.on_attach` | Next writable attach by this client after reload. |
 | `session.resurrect`, `session.resurrect_foreground`, `session.resurrect_agents`, `session.allow_takeover` | Session servers started after the change. |
 | `logging.*` | Session servers started after the change. |
 | `remote.*` | New SSH connections. |
@@ -569,6 +570,7 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 | `startup` | string | `"picker"` | What a bare `rozi` launch opens: `"picker"`, `"ephemeral"` (a temporary session), `"last"`, or `"profile"`. |
 | `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is written with mode `0600` in rozi's state directory; a path you choose keeps ordinary permissions. |
 | `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |
+| `on_attach` | string | `"ask"` | When another client controls the session: `"ask"` offers Follow, control, or Cancel; `"follow"` follows without prompting; `"take"` requests control without prompting, subject to the running session's takeover policy. `sessions attach --follow` or `--take-control` overrides it for one attach. |
 
 See [Sessions](sessions.md).
 

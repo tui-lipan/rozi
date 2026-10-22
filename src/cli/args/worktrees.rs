@@ -163,6 +163,7 @@ pub(super) fn parse(
         (cli.attach_session.is_some(), "a session target"),
         (cli.profile.is_some(), "--profile"),
         (cli.read_only, "--read-only"),
+        (cli.on_attach.is_some(), "--take-control/--follow"),
         (cli.pick, "--pick"),
         (cli.cwd.is_some(), "--cwd"),
     ] {

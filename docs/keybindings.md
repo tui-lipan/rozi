@@ -333,7 +333,9 @@ leave the search text unchanged even when there are no matches.
   highlighted row. `Enter` toggles a two-option row. A row with more values shows `…` after its
   label; `Enter` opens a small picker where the highlight previews the value, `Enter` saves, and
   `Esc` restores the old one. `Shift+Enter` cycles the live value without opening the picker.
-  **Theme** and **Terminal padding** have their own editors.
+  **Theme** and **Terminal padding** have their own editors. In the **Sessions** category,
+  **On shared attach** chooses Ask, Follow, or Take control for writable attaches to a session
+  another client controls.
 - **Extensions:** `Tab`, `Shift+Tab`, and `Left`/`Right` switch between **Installed** and
   **Discover**. See the list below.
 - **Collaborators:** `Enter` grants control, `Ctrl+D` declines a request, and `Ctrl+K` twice removes

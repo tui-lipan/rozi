@@ -1879,12 +1879,17 @@ fn local_attach_failure_does_not_retry_into_an_ephemeral_loop() {
                     left: None,
                     parked_epoch: None,
                 });
+            backend.state_mut().attach_mode_override = Some(crate::config::SessionOnAttach::Take);
             backend
                 .dispatch(Msg::SessionAttachFailed {
                     epoch: 42,
                     message: "no local server".into(),
                 })
                 .expect("dispatch local attach failure");
+            assert!(
+                backend.state().attach_mode_override.is_none(),
+                "a failed startup attach must not override the next attach"
+            );
             assert!(
                 backend.state().current().pending_session_attach.is_none(),
                 "a local ephemeral failure must clear the pending attach and not re-arm one"
@@ -2298,19 +2303,40 @@ fn failed_local_create_restores_the_parked_session() {
 /// Attaching where another client already holds the lease: the client must ask what to do
 /// instead of quietly becoming a follower. `controller` is who the server says holds it.
 fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect: bool) -> bool {
+    attach_policy_result(
+        Some(controller),
+        reconnect,
+        false,
+        false,
+        crate::config::SessionOnAttach::Ask,
+        None,
+    )
+    .0
+}
+
+fn attach_policy_result(
+    controller: Option<crate::layout::shared::ClientId>,
+    reconnect: bool,
+    read_only: bool,
+    allow_takeover: bool,
+    mode: crate::config::SessionOnAttach,
+    mode_override: Option<crate::config::SessionOnAttach>,
+) -> (bool, bool) {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().config.session.on_attach = mode;
+            backend.state_mut().attach_mode_override = mode_override;
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch: 1,
                     name: "dev".into(),
                     client: Some(client),
                     autostart: false,
-                    read_only: false,
+                    read_only,
                     reconnect,
                     remote_host: None,
                     intent: crate::state::AttachIntent::Plain,
@@ -2326,15 +2352,40 @@ fn attach_with_controller(controller: crate::layout::shared::ClientId, reconnect
                     panes: Vec::new(),
                     layout_rev: 0,
                     layout: None,
-                    controller: Some(controller),
+                    controller,
                     clients: Vec::new(),
                     input_locked: false,
-                    allow_takeover: false,
-                    read_only: false,
+                    allow_takeover,
+                    read_only,
                     origin: crate::session::origin::SessionOrigin::default(),
                 })
                 .expect("dispatch attach");
-            tx.send(backend.state().follow_prompt.is_some())
+            let requested = outbound.try_iter().any(|message| {
+                matches!(
+                    message,
+                    crate::session::client::ClientOutbound::Control(
+                        crate::session::protocol::ClientMessage::RequestControl
+                    )
+                )
+            });
+            assert_eq!(
+                backend
+                    .state()
+                    .current()
+                    .shared
+                    .as_ref()
+                    .unwrap()
+                    .controller,
+                controller,
+                "only the server can transfer control"
+            );
+            if !reconnect {
+                assert!(
+                    backend.state().attach_mode_override.is_none(),
+                    "override is consumed even when policy is skipped"
+                );
+            }
+            tx.send((backend.state().follow_prompt.is_some(), requested))
                 .expect("report result");
         })
         .expect("spawn follow-prompt test")
@@ -2471,6 +2522,51 @@ fn a_new_sessions_first_panes_arrive_with_it_instead_of_animating_open() {
 fn only_a_fresh_attach_reveals_a_new_session_view() {
     assert_eq!(session_view_revision_step(false), 1);
     assert_eq!(session_view_revision_step(true), 0);
+}
+
+#[test]
+fn shared_attach_policies_and_one_shot_overrides() {
+    use crate::config::SessionOnAttach::{Ask, Follow, Take};
+    for allow_takeover in [false, true] {
+        assert_eq!(
+            attach_policy_result(Some(1), false, false, allow_takeover, Ask, None),
+            (true, false)
+        );
+        assert_eq!(
+            attach_policy_result(Some(1), false, false, allow_takeover, Follow, None),
+            (false, false)
+        );
+        assert_eq!(
+            attach_policy_result(Some(1), false, false, allow_takeover, Take, None),
+            (false, true)
+        );
+        assert_eq!(
+            attach_policy_result(Some(1), false, false, allow_takeover, Take, Some(Follow)),
+            (false, false)
+        );
+        assert_eq!(
+            attach_policy_result(Some(1), false, false, allow_takeover, Follow, Some(Take)),
+            (false, true)
+        );
+        for mode in [Ask, Follow, Take] {
+            assert_eq!(
+                attach_policy_result(None, false, false, allow_takeover, mode, Some(Take)),
+                (false, false)
+            );
+            assert_eq!(
+                attach_policy_result(Some(1), false, true, allow_takeover, mode, None),
+                (false, false)
+            );
+            assert_eq!(
+                attach_policy_result(Some(1), true, false, allow_takeover, mode, None),
+                (false, false)
+            );
+            assert_eq!(
+                attach_policy_result(Some(2), false, false, allow_takeover, mode, Some(Take)),
+                (false, false)
+            );
+        }
+    }
 }
 
 #[test]

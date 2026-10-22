@@ -26,7 +26,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("watch", "Serve the host metadata protocol over stdio"),
             row(
-                "attach <NAME> [--read-only]",
+                "attach <NAME> [OPTIONS]",
                 "Attach to a running session, never create",
             ),
             row(
@@ -47,7 +47,15 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         heading: "OPTIONS",
         advanced_only: false,
         note: "",
-        rows: &[row("-h, --help", "Print help")],
+        rows: &[
+            row("--read-only", "Attach as a viewer; cannot type or tile"),
+            row("--follow", "Follow, overriding session.on_attach"),
+            row(
+                "--take-control",
+                "Request control, overriding session.on_attach",
+            ),
+            row("-h, --help", "Print help"),
+        ],
     },
 ];
 
@@ -162,6 +170,32 @@ fn parse_kill(
     }))
 }
 
+pub(super) fn parse_attach_mode(cli: &mut CliArgs, flag: &str) -> Result<(), String> {
+    let mode = if flag == "--follow" {
+        crate::config::SessionOnAttach::Follow
+    } else {
+        crate::config::SessionOnAttach::Take
+    };
+    if cli.on_attach.is_some_and(|previous| previous != mode) {
+        return Err("--take-control cannot be combined with --follow".into());
+    }
+    cli.on_attach = Some(mode);
+    Ok(())
+}
+
+pub(super) fn validate_attach_mode(cli: &CliArgs) -> Result<(), String> {
+    if cli.on_attach.is_none() {
+        return Ok(());
+    }
+    if cli.read_only {
+        return Err("--take-control and --follow cannot be combined with --read-only".into());
+    }
+    if cli.session_command != SessionCommand::Attach {
+        return Err("--take-control and --follow can only be used with sessions attach".into());
+    }
+    Ok(())
+}
+
 fn set_launch_target(
     iter: &mut impl Iterator<Item = String>,
     cli: &mut CliArgs,
@@ -260,6 +294,54 @@ mod tests {
         assert_eq!(created.session_command, SessionCommand::New);
         assert_eq!(created.profile.as_deref(), Some("p"));
         assert!(created.pick);
+    }
+
+    #[test]
+    fn attach_mode_flags_parse_and_reject_conflicts() {
+        for (flag, expected) in [
+            ("--follow", crate::config::SessionOnAttach::Follow),
+            ("--take-control", crate::config::SessionOnAttach::Take),
+        ] {
+            let ParsedCli::Run(cli) = parse_cli_args(
+                ["sessions", "attach", "dev", flag]
+                    .map(String::from)
+                    .to_vec(),
+            )
+            .expect("attach mode parses") else {
+                panic!("expected attach")
+            };
+            assert_eq!(cli.on_attach, Some(expected));
+            for args in [
+                vec!["sessions", "attach", "dev", flag, "--read-only"],
+                vec!["--read-only", "sessions", "attach", "dev", flag],
+            ] {
+                let error =
+                    parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err();
+                assert!(
+                    error.contains("cannot be combined with --read-only"),
+                    "{error}"
+                );
+            }
+            for args in [vec![flag], vec!["sessions", "new", "dev", flag]] {
+                let error =
+                    parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err();
+                assert!(
+                    error.contains("can only be used with sessions attach"),
+                    "{error}"
+                );
+            }
+        }
+        for flags in [
+            ["--follow", "--take-control"],
+            ["--take-control", "--follow"],
+        ] {
+            let mut args = vec!["sessions", "attach", "dev"];
+            args.extend(flags);
+            assert_eq!(
+                parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err(),
+                "--take-control cannot be combined with --follow"
+            );
+        }
     }
 
     #[test]

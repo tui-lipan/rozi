@@ -109,6 +109,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     let was_remote = pending.remote_host.is_some();
     let was_reconnect = pending.reconnect;
     let parked_epoch = pending.parked_epoch;
+    ctx.state.attach_mode_override = None;
     crate::update::cancel_attach_askpass(ctx, epoch);
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));
@@ -436,11 +437,10 @@ pub(crate) fn attached(
     // the one it was aiming at. Before the follow prompt, which takes the keyboard for itself:
     // choosing to follow or not is the last word on where focus sits.
     crate::ops::agents::land_on_pending_agent(ctx);
-    // Landing on a session someone else is driving is a fork in the road, not a fait accompli: ask
-    // before this client settles in as a follower. Raised last so the attach is fully installed —
-    // cancelling from the prompt leaves the session the same way switching away from it would.
+    // Apply the occupied-session policy after the attach is fully installed. Cancelling from
+    // the prompt leaves the session the same way switching away from it would.
     if !reconnect {
-        crate::ops::session::prompt_follow_if_occupied(ctx);
+        crate::ops::session::apply_attach_policy_if_occupied(ctx);
     }
     if ctx.state.pending_session_action.is_some() {
         let deferred = crate::ops::session::run_pending_session_action(ctx);

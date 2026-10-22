@@ -2,7 +2,7 @@ use tui_lipan::prelude::{CapStyle, TextInput};
 
 use crate::config::{
     Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
-    RightClickClipboardAction, SessionPickerOpenOn, SessionStartup, WhichKey,
+    RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::layout::anim::PaneAnimationStyle;
 
@@ -167,6 +167,7 @@ pub enum SettingsAction {
     ToggleKeepAwakeWhileAgentsWork,
     ToggleSessionResurrect,
     CycleResurrectForeground,
+    CycleSessionOnAttach,
 }
 
 impl SettingsAction {
@@ -264,6 +265,7 @@ impl SettingsAction {
             Self::ToggleKeepAwakeWhileAgentsWork,
             Self::ToggleSessionResurrect,
             Self::CycleResurrectForeground,
+            Self::CycleSessionOnAttach,
         ]
     }
 
@@ -468,6 +470,12 @@ impl SettingsAction {
                     SessionStartup::label,
                 ))
             }
+            Self::CycleSessionOnAttach => Some(choice_ring(
+                "On shared attach",
+                SessionOnAttach::all(),
+                config.session.on_attach,
+                SessionOnAttach::label,
+            )),
             Self::CycleResurrectForeground => Some(choice_ring(
                 "Restored running commands",
                 ForegroundRestore::all(),
@@ -635,6 +643,9 @@ impl SettingsAction {
             Self::CycleStartupMode => {
                 let choices = SessionStartup::choices(config.profile.default.is_some());
                 assign_choice(&choices, index, &mut config.session.startup)
+            }
+            Self::CycleSessionOnAttach => {
+                assign_choice(SessionOnAttach::all(), index, &mut config.session.on_attach)
             }
             Self::CycleResurrectForeground => assign_choice(
                 ForegroundRestore::all(),

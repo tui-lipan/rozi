@@ -89,6 +89,7 @@ const SESSION_KEYS: &[&str] = &[
     "resurrect_foreground",
     "resurrect_agents",
     "allow_takeover",
+    "on_attach",
 ];
 
 const REMOTE_KEYS: &[&str] = &[

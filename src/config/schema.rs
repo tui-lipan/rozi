@@ -491,6 +491,46 @@ impl ForegroundRestore {
     }
 }
 
+/// What a writable client does when another client controls the session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionOnAttach {
+    #[default]
+    Ask,
+    Follow,
+    Take,
+}
+
+impl SessionOnAttach {
+    pub fn all() -> &'static [Self] {
+        &[Self::Ask, Self::Follow, Self::Take]
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "ask" => Some(Self::Ask),
+            "follow" => Some(Self::Follow),
+            "take" => Some(Self::Take),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Follow => "follow",
+            Self::Take => "take",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask",
+            Self::Follow => "Follow",
+            Self::Take => "Take control",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
@@ -521,6 +561,8 @@ pub struct SessionConfig {
     /// symmetric and instantly reversible; set `false` for a session shared with another person,
     /// or attach that person with `--read-only`.
     pub allow_takeover: bool,
+    /// Policy for a writable attach to an occupied session.
+    pub on_attach: SessionOnAttach,
 }
 
 impl Default for SessionConfig {
@@ -535,6 +577,7 @@ impl Default for SessionConfig {
             resurrect_foreground: ForegroundRestore::default(),
             resurrect_agents: true,
             allow_takeover: true,
+            on_attach: SessionOnAttach::default(),
         }
     }
 }

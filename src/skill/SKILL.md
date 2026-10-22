@@ -306,7 +306,7 @@ inherited the variable, not the extension itself.
 
 ```bash
 rozi sessions list --format json
-rozi sessions attach <NAME>
+rozi sessions attach <NAME> [--read-only | --follow | --take-control]
 rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
 rozi sessions kill <NAME>
 rozi sessions list --remote <HOST>
@@ -336,6 +336,10 @@ another agent may still be working in a checkout with a live lock.
 ## Safety
 
 - Mutate or kill only panes and sessions the user explicitly requested or this agent created.
+- `[session] on_attach` defaults to `"ask"` when another client controls the session. `"follow"`
+  follows without prompting; `"take"` takes or requests control under the running server's policy.
+  `sessions attach --follow` and `--take-control` override it for one attach and conflict with
+  each other and with `--read-only`.
 - A read-only client cannot type, set status, or change layout. Do not retry those failures.
 - Layout changes through a UI require controller status. Treat `not controller` as final until
   control changes hands.

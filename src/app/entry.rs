@@ -401,7 +401,8 @@ pub fn run() -> Result<()> {
                 plan.want_picker,
                 plan.last_session,
             )
-            .with_startup_cwd(plan.cwd),
+            .with_startup_cwd(plan.cwd)
+            .with_on_attach(cli.on_attach),
         )
         .exit_view(crate::view::exit::exit_view)
         .run();

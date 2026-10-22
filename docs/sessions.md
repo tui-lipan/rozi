@@ -31,12 +31,19 @@ rozi dev                     # attach to dev, or launch profile dev
 rozi --session dev           # same target, explicit spelling
 rozi sessions attach dev              # attach only
 rozi sessions attach dev --read-only  # attach without input or layout authority
+rozi sessions attach dev --follow     # follow without prompting
+rozi sessions attach dev --take-control # take or request layout control without prompting
 rozi sessions new dev                 # create a fresh empty named session
 rozi sessions new review --profile dev
 rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions list
 rozi sessions kill dev
 ```
+
+For a session another client controls, `[session] on_attach` chooses whether to ask, follow,
+or request control. Set it in **Settings**, **Sessions**, **On shared attach**. `--follow` and
+`--take-control` override it for one `sessions attach`; they conflict with each other and with
+`--read-only`. Taking control follows the [running session's policy](shared-sessions.md#layout-control).
 
 `rozi dev` attaches to a running session named `dev`. If there is none, it launches the profile
 named `dev`. If neither exists, it reports an error; it never creates an empty session with an

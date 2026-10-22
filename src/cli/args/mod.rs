@@ -56,6 +56,7 @@ pub(crate) struct CliArgs {
     /// discovery does not describe.
     pub(crate) pick: bool,
     pub(crate) read_only: bool,
+    pub(crate) on_attach: Option<crate::config::SessionOnAttach>,
     /// SSH remote host alias or `ssh://` URL (`--remote`).
     pub(crate) remote: Option<String>,
     /// First-pane directory for a `sessions new` session, on the session's host (`--cwd`).
@@ -527,6 +528,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "--pick" => {
                 cli.pick = true;
+            }
+            "--take-control" | "--follow" => {
+                sessions::parse_attach_mode(&mut cli, &arg)?;
             }
             "--read-only" => {
                 cli.read_only = true;
@@ -1322,6 +1326,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
         }
     }
+    sessions::validate_attach_mode(&cli)?;
     if socket_flag_seen {
         return Err("--socket requires a control command".to_string());
     }
@@ -1620,6 +1625,8 @@ pub(super) fn control_endpoint(
         && !matches!(command, control::ControlCommand::NewPane { .. })
     {
         "--config"
+    } else if cli.on_attach.is_some() {
+        "--take-control/--follow"
     } else if cli.read_only {
         "--read-only"
     } else if cli.pick {
@@ -3592,6 +3599,8 @@ mod tests {
         for args in [
             vec!["--config", "/tmp/other.toml", "list-panes"],
             vec!["--read-only", "list-panes"],
+            vec!["--follow", "list-panes"],
+            vec!["--take-control", "list-panes"],
             vec!["--pick", "metrics"],
             // `--remote` qualifies a session target; on its own it names nothing a control command
             // can address, and answering from this machine instead would be the wrong host.

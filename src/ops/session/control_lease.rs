@@ -173,13 +173,13 @@ pub(crate) fn can_evict(state: &crate::state::State) -> bool {
     })
 }
 
-/// Raise the follow prompt if this attach landed on a session another client is actively driving.
-///
-/// Following used to be what happened to whoever attached second, which is a poor way to learn that
-/// your keyboard no longer shapes the layout. It is now a decision: watch along, ask for the lease,
-/// or back out. A session with no active controller — including one whose only other client is
-/// parked — needs no prompt, because attaching there gets control outright.
-pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<AppRoot>) {
+/// Apply the client policy when another client actively controls a fresh writable attach.
+pub(crate) fn apply_attach_policy_if_occupied(ctx: &mut Context<AppRoot>) {
+    let mode = ctx
+        .state
+        .attach_mode_override
+        .take()
+        .unwrap_or(ctx.state.config.session.on_attach);
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return;
     };
@@ -204,6 +204,17 @@ pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.collaboration = None;
+    match mode {
+        crate::config::SessionOnAttach::Ask => {}
+        crate::config::SessionOnAttach::Follow => {
+            let _ = resolve_follow_prompt(ctx, crate::state::FollowChoice::Follow);
+            return;
+        }
+        crate::config::SessionOnAttach::Take => {
+            let _ = resolve_follow_prompt(ctx, crate::state::FollowChoice::AskForControl);
+            return;
+        }
+    }
     ctx.state.follow_prompt = Some(crate::state::FollowPromptState {
         session,
         controller_label,

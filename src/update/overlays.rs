@@ -408,7 +408,8 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         | CycleWorkbarAlert
         | CycleSessionPickerOpenOn
         | CycleStartupMode
-        | CycleResurrectForeground => {
+        | CycleResurrectForeground
+        | CycleSessionOnAttach => {
             return open_settings_choice(ctx, action);
         }
         ToggleWorkbarGap => {
@@ -920,6 +921,14 @@ fn persist_applied_settings_choice(
             if let Err(err) = crate::config::persist_session_string(
                 "startup",
                 ctx.state.config.session.startup.id(),
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleSessionOnAttach => {
+            if let Err(err) = crate::config::persist_session_string(
+                "on_attach",
+                ctx.state.config.session.on_attach.as_str(),
             ) {
                 preference_error(ctx, err);
             }
@@ -1990,6 +1999,29 @@ mod tests {
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Picker
             );
+        });
+    }
+
+    #[test]
+    fn settings_shared_attach_cycles_and_persists() {
+        on_large_stack(|| {
+            let _guard = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            let action = crate::state::SettingsAction::CycleSessionOnAttach;
+            use crate::config::SessionOnAttach::{Ask, Follow, Take};
+            for expected in [Follow, Take, Ask] {
+                backend.dispatch(Msg::SettingsCycleChoice(action)).unwrap();
+                assert_eq!(backend.state().config.session.on_attach, expected);
+                assert_eq!(backend.state().settings_selected, Some(action));
+                assert!(backend.state().show_settings);
+                let saved = crate::config::load_config();
+                assert_eq!(saved.config.session.on_attach, expected);
+            }
+            backend.dispatch(Msg::SettingsActivate(action)).unwrap();
+            backend.dispatch(Msg::SettingsChoicePick(2)).unwrap();
+            assert_eq!(backend.state().config.session.on_attach, Take);
+            assert_eq!(crate::config::load_config().config.session.on_attach, Take);
         });
     }
 

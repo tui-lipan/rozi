@@ -2,6 +2,18 @@ use super::*;
 
 const EXTENSIONS_WIDTH: u16 = 84;
 const EXTENSION_DETAIL_WIDTH: u16 = 76;
+/// Columns a report line can use: the modal less its border, the document's own horizontal
+/// padding, and its scrollbar column.
+const REPORT_TEXT_WIDTH: u16 = EXTENSION_DETAIL_WIDTH - 5;
+/// Columns a wrapped report line leaves free, so a line the estimate counts one short is not
+/// wrapped again by the document.
+const REPORT_WRAP_SLACK: usize = 1;
+/// The narrowest a wrapped value is squeezed to, however deep its label or indent.
+const REPORT_MIN_WRAP_WIDTH: usize = 20;
+/// Columns one step of a report line's `indent` moves it.
+const REPORT_INDENT_COLUMNS: usize = 2;
+/// Indent of a list item's detail lines, under its bullet.
+const REPORT_ITEM_INDENT: u16 = 2;
 const EXTENSION_PROGRESS_MIN_WIDTH: u16 = 36;
 const EXTENSION_PROGRESS_MAX_WIDTH: u16 = 64;
 
@@ -656,8 +668,6 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
 fn report_height(ctx: &Context<AppRoot>, formatter: &ExtensionReportFormatter) -> Length {
     // Modal border, hint row, and one row of slack.
     const CHROME_ROWS: u16 = 4;
-    // Modal border, the document's own horizontal padding, and its scrollbar column.
-    const TEXT_WIDTH: u16 = EXTENSION_DETAIL_WIDTH - 5;
 
     let cap = (ctx.viewport().h * 65 / 100)
         .saturating_sub(CHROME_ROWS)
@@ -670,7 +680,9 @@ fn report_height(ctx: &Context<AppRoot>, formatter: &ExtensionReportFormatter) -
             FormattedBlock::Lines(lines) => lines
                 .iter()
                 .map(|line| {
-                    let budget = usize::from(TEXT_WIDTH.saturating_sub(line.indent)).max(1);
+                    let budget = usize::from(REPORT_TEXT_WIDTH)
+                        .saturating_sub(usize::from(line.indent) * REPORT_INDENT_COLUMNS)
+                        .max(1);
                     let width = tui_lipan::utils::spans::line_width(&line.spans);
                     if width <= budget {
                         return 1;
@@ -696,6 +708,8 @@ struct ExtensionReportFormatter {
     sections: Vec<crate::config::ReportSection>,
     heading: Style,
     label: Style,
+    /// A row's label: quieter than its value, so the values carry the report.
+    key: Style,
     value: Style,
     muted: Style,
     success: Style,
@@ -710,6 +724,7 @@ impl ExtensionReportFormatter {
             sections,
             heading: rozi_fg(theme).bold(),
             label: fg_only(&theme.primary).bold(),
+            key: fg_only(&theme.muted),
             value: fg_only(&theme.primary),
             muted: fg_only(&theme.muted),
             success: Style::new().fg(theme.status.success),
@@ -756,39 +771,47 @@ impl ExtensionReportFormatter {
     ) {
         let tone = self.tone(row.tone);
         if row.value.contains('\n') {
-            let (label, detail_indent) = match &row.kind {
-                crate::config::ReportKind::Command(_) => (
-                    vec![
-                        Span::new("• ").style(self.heading),
-                        Span::new(row.label.as_str()).style(self.label),
-                    ],
-                    2,
-                ),
-                _ => (vec![Span::new(row.label.as_str()).style(tone.bold())], 1),
+            // A list item: its name on a line of its own, its details indented beneath.
+            let name = match row.tone {
+                crate::config::ReportTone::Accent => self.label,
+                _ => tone.bold(),
             };
-            push_report_line(lines, source_line, 0, label);
-            for detail in row.value.lines() {
-                let detail = compact_home_paths(detail, self.home.as_deref());
-                let spans = match detail.split_once(": ") {
-                    Some((key, value)) => vec![
-                        Span::new(format!("{key}: ")).style(self.muted),
-                        Span::new(value.to_string()).style(self.detail_tone(row.tone)),
-                    ],
-                    None => vec![Span::new(detail).style(self.detail_tone(row.tone))],
-                };
-                push_report_line(lines, source_line, detail_indent, spans);
-            }
-        } else {
-            let value = compact_home_paths(&row.value, self.home.as_deref());
             push_report_line(
                 lines,
                 source_line,
                 0,
                 vec![
-                    Span::new(format!("{:<label_width$}", row.label)).style(self.label),
-                    Span::new("   "),
-                    Span::new(value).style(tone),
+                    Span::new("• ").style(self.heading),
+                    Span::new(row.label.as_str()).style(name),
                 ],
+            );
+            for detail in row.value.lines() {
+                let detail = compact_home_paths(detail, self.home.as_deref());
+                let (key, value) = match detail.split_once(": ") {
+                    Some((key, value)) => (format!("{key}: "), value.to_string()),
+                    None => (String::new(), detail),
+                };
+                let lead_width = key.chars().count();
+                push_wrapped_report_line(
+                    lines,
+                    source_line,
+                    REPORT_ITEM_INDENT,
+                    vec![Span::new(key).style(self.key)],
+                    lead_width,
+                    &value,
+                    self.detail_tone(row.tone),
+                );
+            }
+        } else {
+            let value = compact_home_paths(&row.value, self.home.as_deref());
+            push_wrapped_report_line(
+                lines,
+                source_line,
+                0,
+                vec![Span::new(format!("{:<label_width$}   ", row.label)).style(self.key)],
+                label_width + 3,
+                &value,
+                tone,
             );
         }
     }
@@ -863,6 +886,86 @@ impl ContentFormatter for ExtensionReportFormatter {
     }
 }
 
+/// Pushes `lead` and as much of `text` as fits, then the rest on continuation lines that hang
+/// under where the text began, so a wrapped value never reads as a new row. The wrap is made here
+/// rather than by the document: its own wrapping returns to the line's indent, not to the value.
+///
+/// Continuation lines share the source line of the first, which is the one line of the copied
+/// report text.
+fn push_wrapped_report_line(
+    lines: &mut Vec<FormattedLine>,
+    source_line: &mut usize,
+    indent: u16,
+    lead: Vec<Span>,
+    lead_width: usize,
+    text: &str,
+    style: Style,
+) {
+    let hang = usize::from(indent) * REPORT_INDENT_COLUMNS + lead_width;
+    let width = usize::from(REPORT_TEXT_WIDTH)
+        .saturating_sub(hang + REPORT_WRAP_SLACK)
+        .max(REPORT_MIN_WRAP_WIDTH);
+    let mut chunks = wrap_report_text(text, width).into_iter();
+    let mut spans = lead;
+    spans.push(Span::new(chunks.next().unwrap_or_default()).style(style));
+    push_report_line(lines, source_line, indent, spans);
+    for chunk in chunks {
+        lines.push(FormattedLine {
+            // Spaces rather than `indent`, which moves in steps of two columns.
+            spans: vec![Span::new(" ".repeat(hang)), Span::new(chunk).style(style)],
+            source_line: *source_line - 1,
+            indent: 0,
+            links: Vec::new(),
+        });
+    }
+}
+
+/// Breaks `text` into lines of at most `width` columns at spaces. A word wider than a line, such as
+/// a path or a JSON list without spaces, is cut after its last `/`, `,` or `-` that fits, or at the
+/// width when it has none.
+fn wrap_report_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    for word in text.split(' ') {
+        let mut word = word;
+        let mut word_width = word.chars().count();
+        while word_width > width {
+            if current_width > 0 {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            let fit: Vec<(usize, char)> = word.char_indices().take(width).collect();
+            let cut = fit
+                .iter()
+                .rposition(|(_, ch)| matches!(ch, '/' | ',' | '-'))
+                .filter(|&at| at + 1 > width / 2)
+                .map_or(fit.len(), |at| at + 1);
+            let end = word
+                .char_indices()
+                .nth(cut)
+                .map_or(word.len(), |(byte, _)| byte);
+            lines.push(word[..end].to_string());
+            word = &word[end..];
+            word_width = word.chars().count();
+        }
+        if current_width > 0 && current_width + 1 + word_width > width {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        if current_width > 0 {
+            current.push(' ');
+            current_width += 1;
+        }
+        current.push_str(word);
+        current_width += word_width;
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 fn push_report_line(
     lines: &mut Vec<FormattedLine>,
     source_line: &mut usize,
@@ -880,7 +983,29 @@ fn push_report_line(
 
 #[cfg(test)]
 mod extension_report_tests {
-    use super::compact_home_paths;
+    use super::{compact_home_paths, wrap_report_text};
+
+    #[test]
+    fn report_text_wraps_at_spaces_and_cuts_long_words_at_separators() {
+        assert_eq!(
+            wrap_report_text("split aware navigation policy", 14),
+            ["split aware", "navigation", "policy"]
+        );
+        assert_eq!(wrap_report_text("", 10), [""]);
+        let lines = wrap_report_text(r#"["python","/data/ext/bin/install_hooks.py"]"#, 20);
+        assert!(
+            lines.iter().all(|line| line.chars().count() <= 20),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.concat(),
+            r#"["python","/data/ext/bin/install_hooks.py"]"#
+        );
+        assert!(
+            lines[0].ends_with(',') || lines[0].ends_with('/'),
+            "{lines:?}"
+        );
+    }
 
     #[test]
     fn report_paths_collapse_home_prefixes_without_touching_sibling_names() {

@@ -1502,31 +1502,24 @@ pub(crate) fn catalog_report_sections(
             title: "Source",
             rows: vec![
                 row("Repository", entry.repository.clone(), ReportTone::Accent),
-                row("Commit", entry.commit.clone(), ReportTone::Plain),
+                row("Commit", entry.commit.clone(), ReportTone::Muted),
             ],
         },
         ReportSection {
             title: "Contributions",
-            rows: vec![
-                row("Commands", entry.commands.to_string(), ReportTone::Plain),
-                row("Services", entry.services.to_string(), ReportTone::Plain),
-                row("Agents", entry.agents.to_string(), ReportTone::Plain),
-                row(
-                    "Sidebar tabs",
-                    entry.sidebar_tabs.to_string(),
-                    ReportTone::Plain,
-                ),
-                row(
-                    "Navigation targets",
-                    entry.navigation_targets.to_string(),
-                    ReportTone::Plain,
-                ),
-                row(
-                    "Suggested keys",
-                    entry.suggested_keybindings.to_string(),
-                    ReportTone::Plain,
-                ),
-            ],
+            // Only what the extension adds: a row of zeros says nothing and buries the others.
+            rows: [
+                ("Commands", entry.commands),
+                ("Services", entry.services),
+                ("Agents", entry.agents),
+                ("Sidebar tabs", entry.sidebar_tabs),
+                ("Navigation targets", entry.navigation_targets),
+                ("Suggested keys", entry.suggested_keybindings),
+            ]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(label, count)| row(label, count.to_string(), ReportTone::Plain))
+            .collect(),
         },
         ReportSection {
             title: "Trust",
@@ -1558,6 +1551,7 @@ pub(crate) fn catalog_report_sections(
             ],
         },
     ];
+    sections.retain(|section| !section.rows.is_empty());
     if let Some(error) = error {
         sections.push(ReportSection {
             title: "Installation failed",

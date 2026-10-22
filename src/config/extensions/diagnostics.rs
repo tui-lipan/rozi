@@ -102,8 +102,8 @@ pub(crate) fn report_sections(
             optional_info_row("Version", info.version.clone()),
             optional_info_row("API", info.api.map(|api| api.to_string())),
             optional_info_row("ID", info.id.clone()),
-            info_row("Directory", info.path.clone()),
-            info_row("Manifest", info.manifest_path.clone()),
+            muted_info_row("Directory", info.path.clone()),
+            muted_info_row("Manifest", info.manifest_path.clone()),
         ],
     }];
     // Optional and rarely set, so it only takes a row when the manifest declares it.
@@ -235,7 +235,7 @@ pub(crate) fn report_sections(
             &mut sections,
             "Environment",
             env.iter()
-                .map(|(key, value)| info_row(key, value.clone()))
+                .map(|(key, value)| muted_info_row(key, value.clone()))
                 .collect(),
         );
     }
@@ -300,6 +300,15 @@ fn info_row(label: &str, value: String) -> ReportRow {
         value,
         tone: ReportTone::Plain,
         kind: ReportKind::Info,
+    }
+}
+
+/// A row of technical detail, such as a path, that the reader seldom needs but should be able to
+/// find.
+fn muted_info_row(label: &str, value: String) -> ReportRow {
+    ReportRow {
+        tone: ReportTone::Muted,
+        ..info_row(label, value)
     }
 }
 

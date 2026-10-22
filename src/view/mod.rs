@@ -476,30 +476,24 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     {
         root = root.child(extensions_overlay(ctx));
     }
-    // A running installation's progress takes the place of the report or prompt that started it.
-    let installing = crate::ops::extensions_manager::visible_install(&ctx.state).is_some();
-    if !installing
-        && ctx
-            .state
-            .extensions
-            .as_ref()
-            .is_some_and(|state| state.detail.is_some() || state.catalog_detail.is_some())
+    if ctx
+        .state
+        .extensions
+        .as_ref()
+        .is_some_and(|state| state.detail.is_some() || state.catalog_detail.is_some())
     {
         root = root.child(extension_detail_overlay(ctx));
     }
-    if !installing
-        && ctx
-            .state
-            .extensions
-            .as_ref()
-            .and_then(|state| state.install_prompt.as_ref())
-            .is_some()
+    if ctx
+        .state
+        .extensions
+        .as_ref()
+        .and_then(|state| state.install_prompt.as_ref())
+        .is_some()
     {
         root = root.child(extension_install_prompt_overlay(ctx));
     }
-    if installing {
-        root = root.child(extension_install_progress_overlay(ctx));
-    }
+    root = root.child(extension_install_progress_overlay(ctx));
     if let Some(keybindings) = ctx.state.keybindings.as_ref() {
         root = root.child(help_overlay(ctx, keybindings));
     }

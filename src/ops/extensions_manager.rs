@@ -311,7 +311,6 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
         repository: None,
         label: source.clone(),
         detail: None,
-        hidden: false,
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
@@ -329,20 +328,20 @@ pub(crate) fn install_finished(
     ctx: &mut Context<AppRoot>,
     result: std::result::Result<String, String>,
 ) -> Update {
-    let Some(install) = ctx
+    if ctx
         .state
         .extension_install
         .take_if(|install| install.repository.is_none())
-    else {
+        .is_none()
+    {
         return Update::none();
-    };
-    let waiting = !install.hidden
-        && ctx
-            .state
-            .extensions
-            .as_ref()
-            .is_some_and(|state| state.install_prompt.is_some());
-    finish_install(ctx, waiting, result, |ctx, error| {
+    }
+    let waiting = ctx
+        .state
+        .extensions
+        .as_ref()
+        .is_some_and(|state| state.install_prompt.is_some());
+    finish_install(ctx, Origin::Prompt, waiting, result, |ctx, error| {
         let Some(prompt) = ctx
             .state
             .extensions
@@ -358,26 +357,37 @@ pub(crate) fn install_finished(
     })
 }
 
+/// Where an installation was started, which decides what a finished one shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    /// A discovery report: it stays open and turns into the installed report, so the Discover
+    /// list and the user's place in it are untouched.
+    Report,
+    /// The install prompt: a typed source has no Discover row, so the new Installed row is shown.
+    Prompt,
+}
+
 /// The presentation shared by both installation paths. The installation is already on disk, so a
 /// success always reloads extensions, even when the manager closed meanwhile. A user still
-/// `waiting` on the progress modal is taken to the new row, or shown the failure where they
+/// `waiting` in the dialog that started it sees the result there, or the failure where they
 /// started; anyone who moved on is told in a toast.
 fn finish_install(
     ctx: &mut Context<AppRoot>,
+    origin: Origin,
     waiting: bool,
     result: std::result::Result<String, String>,
     show_error: impl FnOnce(&mut Context<AppRoot>, String),
 ) -> Update {
     match result {
         Ok(id) => {
-            if waiting && let Some(state) = ctx.state.extensions.as_mut() {
+            let show_row = waiting && origin == Origin::Prompt;
+            if show_row && let Some(state) = ctx.state.extensions.as_mut() {
                 state.install_prompt = None;
-                state.catalog_detail = None;
                 crate::ops::focus::request_extensions_focus(ctx);
             }
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             if ctx.state.extensions.is_some() {
-                if waiting {
+                if show_row {
                     show_installed(ctx, &id);
                 }
                 warn_about_key_conflicts(ctx, &id);
@@ -399,15 +409,12 @@ fn finish_install(
     }
 }
 
-/// The installation whose progress modal is showing: not hidden, and its report or prompt still
-/// open in the manager.
+/// The running installation whose progress modal shows: the one the open report or install prompt
+/// started. Anyone else's installation only blocks starting a second.
 pub(crate) fn visible_install(
     state: &crate::state::State,
 ) -> Option<&crate::state::ExtensionInstall> {
-    let install = state
-        .extension_install
-        .as_ref()
-        .filter(|install| !install.hidden)?;
+    let install = state.extension_install.as_ref()?;
     let extensions = state.extensions.as_ref()?;
     let origin_open = match install.repository.as_deref() {
         Some(repository) => extensions
@@ -417,31 +424,6 @@ pub(crate) fn visible_install(
         None => extensions.install_prompt.is_some(),
     };
     origin_open.then_some(install)
-}
-
-/// Hides the progress modal and the dialog under it. The installation continues.
-pub(crate) fn hide_install(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(install) = ctx.state.extension_install.as_mut() else {
-        return Update::none();
-    };
-    install.hidden = true;
-    let repository = install.repository.clone();
-    if let Some(state) = ctx.state.extensions.as_mut() {
-        match repository {
-            Some(repository) => {
-                if state
-                    .catalog_detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.entry.repository == repository)
-                {
-                    state.catalog_detail = None;
-                }
-            }
-            None => state.install_prompt = None,
-        }
-        crate::ops::focus::request_extensions_focus(ctx);
-    }
-    Update::full()
 }
 
 pub(crate) fn catalog_loaded(
@@ -521,8 +503,7 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.extension_install = Some(crate::state::ExtensionInstall {
         repository: Some(repository.clone()),
         label: entry.title.clone(),
-        detail: Some(format!("{repository} · {}", &entry.commit[..12])),
-        hidden: false,
+        detail: Some(entry.commit[..12].to_string()),
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
@@ -548,21 +529,21 @@ pub(crate) fn catalog_install_finished(
     repository: String,
     result: std::result::Result<String, String>,
 ) -> Update {
-    let Some(install) = ctx
+    if ctx
         .state
         .extension_install
         .take_if(|install| install.repository.as_deref() == Some(repository.as_str()))
-    else {
+        .is_none()
+    {
         return Update::none();
-    };
-    let waiting = !install.hidden
-        && ctx.state.extensions.as_ref().is_some_and(|state| {
-            state
-                .catalog_detail
-                .as_ref()
-                .is_some_and(|detail| detail.entry.repository == repository)
-        });
-    finish_install(ctx, waiting, result, |ctx, error| {
+    }
+    let waiting = ctx.state.extensions.as_ref().is_some_and(|state| {
+        state
+            .catalog_detail
+            .as_ref()
+            .is_some_and(|detail| detail.entry.repository == repository)
+    });
+    finish_install(ctx, Origin::Report, waiting, result, |ctx, error| {
         if let Some(detail) = ctx
             .state
             .extensions
@@ -866,11 +847,6 @@ pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
         let Some(entry) = selected_catalog_entry(&ctx.state).cloned() else {
             return Update::none();
         };
-        if let Some(install) = ctx.state.extension_install.as_mut()
-            && install.repository.as_deref() == Some(entry.repository.as_str())
-        {
-            install.hidden = false;
-        }
         let Some(state) = ctx.state.extensions.as_mut() else {
             return Update::none();
         };
@@ -1236,7 +1212,91 @@ fn installed_report_sections(
             },
         );
     }
-    sections
+    arrange_installed_report(entry, sections)
+}
+
+/// Reorders the shared report for someone using the extension rather than writing it: what it is
+/// and whether it works first, what it adds next, and the machinery (identity, paths, environment,
+/// launch lines) last, where it is still one scroll away but no longer buries the settings.
+fn arrange_installed_report(
+    entry: &ExtensionInfo,
+    sections: Vec<ReportSection>,
+) -> Vec<ReportSection> {
+    // What a reader wants in the first lines; the rest of the overview is machinery.
+    const HEADLINE: [&str; 5] = ["Status", "Version", "Update", "Update check", "Homepage"];
+    const IDENTITY: [&str; 4] = ["ID", "API", "Directory", "Manifest"];
+
+    let mut rest = sections;
+    let mut take = |title: &str| {
+        rest.iter()
+            .position(|section| section.title == title)
+            .map(|index| rest.remove(index))
+    };
+    let Some(mut overview) = take("Overview") else {
+        return rest;
+    };
+    let errors = take("Errors");
+    let commands = take("Commands");
+    let services = take("Services");
+    let environment = take("Environment");
+
+    let (headline, other): (Vec<_>, Vec<_>) = std::mem::take(&mut overview.rows)
+        .into_iter()
+        .partition(|row| HEADLINE.contains(&row.label.as_str()));
+    overview.rows = headline;
+    let mut identity: Vec<ReportRow> = other
+        .into_iter()
+        .filter(|row| IDENTITY.contains(&row.label.as_str()))
+        .collect();
+    identity.sort_by_key(|row| IDENTITY.iter().position(|label| *label == row.label));
+
+    // The kind makes the report draw a name as a value, since it is what the reader scans for.
+    let summary = |title: &'static str, rows: Vec<(String, String)>| ReportSection {
+        title,
+        rows: rows
+            .into_iter()
+            .map(|(label, value)| ReportRow {
+                kind: ReportKind::Command(label.clone()),
+                label,
+                value,
+                tone: ReportTone::Muted,
+            })
+            .collect(),
+    };
+    let mut arranged = vec![overview];
+    arranged.extend(errors);
+    arranged.push(summary(
+        "Commands",
+        entry
+            .command_details
+            .iter()
+            .map(|command| (command.id.clone(), command.cwd.clone()))
+            .collect(),
+    ));
+    arranged.push(summary(
+        "Services",
+        entry
+            .service_details
+            .iter()
+            .map(|service| (service.id.clone(), service.restart.clone()))
+            .collect(),
+    ));
+    arranged.extend(rest);
+    arranged.push(ReportSection {
+        title: "Technical",
+        rows: identity,
+    });
+    arranged.extend(environment);
+    arranged.push(ReportSection {
+        title: "Launch",
+        rows: commands
+            .into_iter()
+            .chain(services)
+            .flat_map(|section| section.rows)
+            .collect(),
+    });
+    arranged.retain(|section| !section.rows.is_empty());
+    arranged
 }
 
 fn short_revision(revision: &str) -> &str {
@@ -1526,31 +1586,29 @@ pub(crate) fn catalog_report_sections(
             title: "Source",
             rows: vec![
                 row("Repository", entry.repository.clone(), ReportTone::Accent),
-                row("Commit", entry.commit.clone(), ReportTone::Plain),
+                // `Ctrl+L` opens the full commit, and the installation uses it.
+                row(
+                    "Commit",
+                    entry.commit[..entry.commit.len().min(12)].to_string(),
+                    ReportTone::Muted,
+                ),
             ],
         },
         ReportSection {
             title: "Contributions",
-            rows: vec![
-                row("Commands", entry.commands.to_string(), ReportTone::Plain),
-                row("Services", entry.services.to_string(), ReportTone::Plain),
-                row("Agents", entry.agents.to_string(), ReportTone::Plain),
-                row(
-                    "Sidebar tabs",
-                    entry.sidebar_tabs.to_string(),
-                    ReportTone::Plain,
-                ),
-                row(
-                    "Navigation targets",
-                    entry.navigation_targets.to_string(),
-                    ReportTone::Plain,
-                ),
-                row(
-                    "Suggested keys",
-                    entry.suggested_keybindings.to_string(),
-                    ReportTone::Plain,
-                ),
-            ],
+            // Only what the extension adds: a row of zeros says nothing and buries the others.
+            rows: [
+                ("Commands", entry.commands),
+                ("Services", entry.services),
+                ("Agents", entry.agents),
+                ("Sidebar tabs", entry.sidebar_tabs),
+                ("Navigation targets", entry.navigation_targets),
+                ("Suggested keys", entry.suggested_keybindings),
+            ]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(label, count)| row(label, count.to_string(), ReportTone::Plain))
+            .collect(),
         },
         ReportSection {
             title: "Trust",
@@ -1571,7 +1629,7 @@ pub(crate) fn catalog_report_sections(
                 ),
                 row(
                     "Access",
-                    crate::extension_installation::UNSANDBOXED_NOTICE.to_string(),
+                    "Unsandboxed · runs as you".to_string(),
                     ReportTone::Warning,
                 ),
                 row(
@@ -1582,6 +1640,7 @@ pub(crate) fn catalog_report_sections(
             ],
         },
     ];
+    sections.retain(|section| !section.rows.is_empty());
     if let Some(error) = error {
         sections.push(ReportSection {
             title: "Installation failed",
@@ -1834,10 +1893,7 @@ mod tests {
                     .flat_map(|section| &section.rows)
                     .find(|row| row.label == "Access")
                     .unwrap();
-                assert_eq!(
-                    access.value,
-                    crate::extension_installation::UNSANDBOXED_NOTICE
-                );
+                assert_eq!(access.value, "Unsandboxed · runs as you");
                 assert!(catalog_description(&entry, installed).contains("trusted"));
             }
         }

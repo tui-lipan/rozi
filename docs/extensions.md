@@ -78,9 +78,11 @@ To install from Discover:
 3. Press `Enter` again to install that commit.
 
 `rozi` validates the complete extension before moving it into its private data directory. While it
-installs, a progress modal names the extension, repository, and commit. `Esc` hides the modal
-without cancelling; when installation finishes, `rozi` loads the extension and reports the result,
-even if the manager was closed. Reopening that entry's report shows the progress again. Only one
+installs, a small progress card with a spinner, the extension, and the commit sits over the report,
+which stays open beneath it. When installation finishes, the report shows the extension as
+installed, and `Esc` returns to the **Discover** list with your place kept. `Esc` while installing
+closes the report without cancelling; `rozi` still loads the extension and reports the result, even
+if the manager was closed. Reopening that entry's report shows the progress again. Only one
 installation runs at a time, whether it started from a report or from the install prompt.
 
 Extensions you already have stay listed, marked `installed`, and their report says so instead of
@@ -161,8 +163,9 @@ Rows show where an extension came from: a linked checkout shows `linked`, and a 
 with an update shows both versions, such as `0.2.1 → 0.2.2 · git`.
 
 The install prompt accepts the same local paths and Git HTTPS or SSH URLs as
-`rozi extensions install <SOURCE>`, and shows the same progress modal. Use the CLI's `--link` option
-when the checkout must stay yours.
+`rozi extensions install <SOURCE>`, and shows the same progress card over the prompt. A finished
+installation opens **Installed** on the new row. Use the CLI's `--link` option when the checkout
+must stay yours.
 
 Scripts and other tools can read the same information from the CLI:
 

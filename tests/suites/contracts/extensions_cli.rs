@@ -514,8 +514,8 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
     assert!(stdout.contains(r#"launch: ["python","#));
     assert!(stdout.contains("arg with space"));
     assert!(stdout.contains("cwd: focused-pane"));
-    assert!(stdout.contains("ROZI_EXTENSION=diagnostic"));
-    assert!(stdout.contains("ROZI_EXTENSION_GENERATION=<assigned-at-load>"));
+    assert!(stdout.contains("ROZI_EXTENSION  diagnostic"));
+    assert!(stdout.contains("ROZI_EXTENSION_GENERATION  <assigned-at-load>"));
     assert!(stdout.contains("NAVIGATION TARGETS"));
     assert!(stdout.contains("vim  vim, nvim"));
     assert!(stdout.contains("manifest env: TOKEN (values redacted)"));

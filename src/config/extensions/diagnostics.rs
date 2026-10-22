@@ -102,8 +102,8 @@ pub(crate) fn report_sections(
             optional_info_row("Version", info.version.clone()),
             optional_info_row("API", info.api.map(|api| api.to_string())),
             optional_info_row("ID", info.id.clone()),
-            info_row("Directory", info.path.clone()),
-            info_row("Manifest", info.manifest_path.clone()),
+            muted_info_row("Directory", info.path.clone()),
+            muted_info_row("Manifest", info.manifest_path.clone()),
         ],
     }];
     // Optional and rarely set, so it only takes a row when the manifest declares it.
@@ -111,6 +111,13 @@ pub(crate) fn report_sections(
         sections[0].rows.insert(4, info_row("Homepage", homepage));
     }
 
+    // Every process an extension launches gets the same injected variables, so the report says them
+    // once instead of under each command and service.
+    let shared_env = shared_injected_env(info);
+    let env_line = |env: &std::collections::BTreeMap<String, String>| match shared_env {
+        Some(_) => String::new(),
+        None => format!("\nenv: {}", format_env(env)),
+    };
     push_section(
         &mut sections,
         "Commands",
@@ -119,10 +126,10 @@ pub(crate) fn report_sections(
             .map(|command| ReportRow {
                 label: command.id.clone(),
                 value: format!(
-                    "launch: {}\ncwd: {}\nenv: {}",
+                    "launch: {}\ncwd: {}{}",
                     format_launch(&command.launch),
                     command.cwd,
-                    format_env(&command.injected_env)
+                    env_line(&command.injected_env)
                 ),
                 tone: ReportTone::Accent,
                 kind: ReportKind::Command(command.id.clone()),
@@ -136,11 +143,11 @@ pub(crate) fn report_sections(
             .iter()
             .map(|service| {
                 let mut value = format!(
-                    "launch: {}\ncwd: {}\nrestart: {}\nenv: {}",
+                    "launch: {}\ncwd: {}\nrestart: {}{}",
                     format_launch(&service.launch),
                     service.cwd,
                     service.restart,
-                    format_env(&service.injected_env)
+                    env_line(&service.injected_env)
                 );
                 if !service.configured_env_keys.is_empty() {
                     value.push_str("\nmanifest env: ");
@@ -223,6 +230,15 @@ pub(crate) fn report_sections(
             })
             .collect(),
     );
+    if let Some(env) = shared_env {
+        push_section(
+            &mut sections,
+            "Environment",
+            env.iter()
+                .map(|(key, value)| muted_info_row(key, value.clone()))
+                .collect(),
+        );
+    }
     push_section(
         &mut sections,
         "Errors",
@@ -287,6 +303,15 @@ fn info_row(label: &str, value: String) -> ReportRow {
     }
 }
 
+/// A row of technical detail, such as a path, that the reader seldom needs but should be able to
+/// find.
+fn muted_info_row(label: &str, value: String) -> ReportRow {
+    ReportRow {
+        tone: ReportTone::Muted,
+        ..info_row(label, value)
+    }
+}
+
 fn optional_info_row(label: &str, value: Option<String>) -> ReportRow {
     match value {
         Some(value) => info_row(label, value),
@@ -326,6 +351,23 @@ fn format_launch(launch: &ExtensionLaunchDiagnostic) -> String {
         ExtensionLaunchDiagnostic::Shell { command } => format!("shell {command:?}"),
         ExtensionLaunchDiagnostic::Send { text } => format!("send {text:?}"),
     }
+}
+
+/// The injected variables every command and service shares, when there are any and they agree.
+fn shared_injected_env(
+    info: &ExtensionInfo,
+) -> Option<&std::collections::BTreeMap<String, String>> {
+    let mut envs = info
+        .command_details
+        .iter()
+        .map(|command| &command.injected_env)
+        .chain(
+            info.service_details
+                .iter()
+                .map(|service| &service.injected_env),
+        );
+    let first = envs.next().filter(|env| !env.is_empty())?;
+    envs.all(|env| env == first).then_some(first)
 }
 
 fn format_env(env: &std::collections::BTreeMap<String, String>) -> String {

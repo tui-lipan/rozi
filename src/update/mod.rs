@@ -280,6 +280,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             index,
             hovered,
         } => sidebar::row_hover(ctx, panel, index, hovered),
+        Msg::SidebarCloseHover {
+            panel,
+            index,
+            hovered,
+        } => sidebar::close_hover(ctx, panel, index, hovered),
         Msg::SidebarRowClose { panel, index } => sidebar::row_close(ctx, panel, index),
         Msg::SidebarRowExpanded {
             panel,

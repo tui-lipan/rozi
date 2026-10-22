@@ -512,6 +512,7 @@ fn close_affordance(
         panel,
         index,
         armed,
+        pointed: hovered && panel_state.hovered_close == Some(index),
     })
 }
 

@@ -272,10 +272,37 @@ pub(crate) fn row_hover(
         return Update::none();
     }
     panel.hovered_row = next;
+    if panel.hovered_close != next {
+        panel.hovered_close = None;
+    }
     // A click-only region does not repaint on a hover transition by itself, and the ✕ appearing is
     // exactly what the transition has to show — so the view has to run. `layout` rather than `full`:
     // the row list is described the same way either side of the transition, one glyph aside, so
     // re-running the view and reconciling is enough without rebuilding the whole element tree.
+    Update::layout()
+}
+
+/// The pointer entered or left a row's ✕. Like [`row_hover`], a leave only clears its own row.
+pub(crate) fn close_hover(
+    ctx: &mut Context<AppRoot>,
+    panel: usize,
+    index: usize,
+    hovered: bool,
+) -> Update {
+    let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) else {
+        return Update::none();
+    };
+    let next = if hovered {
+        Some(index)
+    } else if panel.hovered_close == Some(index) {
+        None
+    } else {
+        return Update::none();
+    };
+    if panel.hovered_close == next {
+        return Update::none();
+    }
+    panel.hovered_close = next;
     Update::layout()
 }
 

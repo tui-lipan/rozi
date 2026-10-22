@@ -314,9 +314,9 @@ markers as the [Sessions picker](sessions.md#use-the-session-picker):
 A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
 `Stale lock`, or `Prunable` appears to its left when it applies; see
 [Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover a row, or select it in a focused
-sidebar, the right edge changes to what activating it does: `open`, `switch`, `connect`, `attach`,
-`restore`, `choose`, `new session`, or `new pane`. A checkout you can remove also shows its `✕`
-beside that word.
+sidebar, the right edge changes to what activating it does, in the accent colour: `open`, `switch`,
+`connect`, `attach`, `restore`, `choose`, `new session`, or `new pane`. A checkout you can remove
+also shows its `✕` beside that word; while the pointer is on the `✕`, the word is muted.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.
@@ -325,7 +325,7 @@ Ctrl+click, or `Ctrl+Enter` on the selected row, opens a shell in the checkout a
 current session instead. Pane placement follows the usual rules, and it needs a client that may
 change the layout. Set `[worktrees] sidebar_open = "pane"` to make a plain click open the pane, and
 Ctrl+click or `Ctrl+Enter` the session. Hold `Ctrl` while hovering or selecting a row and the word
-on its right edge changes, in the accent colour, to what Ctrl+click opens. This needs a terminal
+on its right edge changes to what Ctrl+click opens. This needs a terminal
 that reports physical modifier presses through the Kitty keyboard protocol; elsewhere Ctrl+click
 still works but the word does not change.
 

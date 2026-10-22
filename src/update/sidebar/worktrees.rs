@@ -802,6 +802,40 @@ mod tests {
                 "{plain}"
             );
 
+            // The word wears the accent until the pointer moves onto the ✕, which is muted.
+            let colours = |backend: &mut TestBackend<AppRoot>| {
+                backend.render();
+                let frame = backend.capture_frame();
+                let lines = frame.to_fixed_grid_lines();
+                let y = lines.iter().position(|line| line.contains("feat")).unwrap();
+                let column = |needle: &str| {
+                    let byte = lines[y].find(needle).unwrap();
+                    lines[y][..byte].chars().count() as u16
+                };
+                (
+                    frame.cell(column("new session"), y as u16).fg,
+                    frame.cell(column("✕"), y as u16).fg,
+                )
+            };
+            let (word, close) = colours(&mut backend);
+            assert_ne!(word, close, "the action word is accented");
+            backend
+                .dispatch(Msg::SidebarCloseHover {
+                    panel: 0,
+                    index: 2,
+                    hovered: true,
+                })
+                .unwrap();
+            let (word, close) = colours(&mut backend);
+            assert_eq!(word, close, "aiming at the ✕ mutes the action word");
+            backend
+                .dispatch(Msg::SidebarCloseHover {
+                    panel: 0,
+                    index: 2,
+                    hovered: false,
+                })
+                .unwrap();
+
             backend
                 .set_held_modifiers(KeyMods {
                     ctrl: true,

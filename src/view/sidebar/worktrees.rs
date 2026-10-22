@@ -120,12 +120,11 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
         (false, Some((kind, style)), None) => item.badge_text(kind, style),
         (false, None, None) => item,
     };
-    // Under the pointer or cursor the rail says what a click opens, beside the ✕ when there is one.
-    // Holding Ctrl turns it into what Ctrl+click opens instead, in the accent.
+    // Under the pointer or cursor the rail says, in the accent, what a click opens, beside the ✕
+    // when there is one. Holding Ctrl turns it into what Ctrl+click opens instead.
     if !row.removing {
-        let alternate = state.sidebar.ctrl_held;
         let mut open = state.config.worktrees.sidebar_open;
-        if alternate {
+        if state.sidebar.ctrl_held {
             open = open.other();
         }
         let verb = match (open, strongest) {
@@ -136,12 +135,7 @@ fn checkout_row(state: &State, row: WorktreeTabRow) -> SidebarRow {
                 strongest.verb().unwrap_or("open")
             }
         };
-        let style = if alternate {
-            super::super::fg_only(&theme.accent)
-        } else {
-            muted
-        };
-        item = item.hover_badge_text(verb, style);
+        item = item.hover_badge_text(verb, super::super::fg_only(&theme.accent));
     }
 
     let detail_dim = 0.4;

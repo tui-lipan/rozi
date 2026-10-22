@@ -158,6 +158,8 @@ pub(super) struct CloseAffordance {
     pub index: usize,
     /// Armed for the confirming second click.
     pub armed: bool,
+    /// The pointer is on the ✕ itself rather than elsewhere on the row.
+    pub pointed: bool,
 }
 
 /// Content columns supplied to the framework Tree, which owns the intervening tree prefix.
@@ -405,7 +407,15 @@ impl Row {
             self.badge.take()
         };
         let description = if affordance {
-            std::mem::take(&mut self.hover_description)
+            let mut words = std::mem::take(&mut self.hover_description);
+            // Aiming at the ✕ means the row's own click is not what happens next.
+            if close.is_some_and(|close| close.pointed) {
+                let muted = super::super::fg_only(&ctx.state.theme.muted);
+                for (_, style) in &mut words {
+                    *style = muted;
+                }
+            }
+            words
         } else if trailing.is_some() {
             Vec::new()
         } else {
@@ -524,6 +534,13 @@ fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
         }))
         .on_mouse_move(crate::view::sidebar::callback(ctx, move |_| {
             Msg::SidebarPointerMoved(panel)
+        }))
+        .on_hover_change(crate::view::sidebar::callback(ctx, move |hovered| {
+            Msg::SidebarCloseHover {
+                panel,
+                index,
+                hovered,
+            }
         }))
         .hover_effect(VisualEffect::transform_fg(ColorTransform::tint(
             ctx.state.theme.status.error,

@@ -207,6 +207,8 @@ pub struct SidebarPanelState {
     pub cursor: usize,
     pub suppress_row_hover: bool,
     pub hovered_row: Option<usize>,
+    /// The row whose ✕ is under the pointer, so the row's action word can give way to it.
+    pub hovered_close: Option<usize>,
 }
 
 impl Default for SidebarPanelState {
@@ -219,6 +221,7 @@ impl Default for SidebarPanelState {
             cursor: 0,
             suppress_row_hover: false,
             hovered_row: None,
+            hovered_close: None,
         }
     }
 }

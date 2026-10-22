@@ -15,6 +15,10 @@ const INSTALLATION_SCHEMA_VERSION: u32 = 1;
 const CONTROL_DIRECTORY: &str = ".rozi";
 static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
+/// What installing any extension grants, trusted or not, shown wherever one is installed.
+pub(crate) const UNSANDBOXED_NOTICE: &str =
+    "Runs as you, with no sandbox: it can read and change anything your account can";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InstallRequest {
     Source(String),

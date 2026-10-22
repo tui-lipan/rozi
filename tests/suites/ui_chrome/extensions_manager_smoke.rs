@@ -233,6 +233,10 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 "{install_prompt}"
             );
             assert!(
+                install_prompt.contains("runs as you, with no sandbox"),
+                "{install_prompt}"
+            );
+            assert!(
                 backend
                     .focused_key()
                     .is_some_and(|key| key.as_ref() == "rozi-extension-install-source")
@@ -762,6 +766,7 @@ fn extensions_manager_browses_catalog_entries_without_hiding_installed_managemen
                 "{detail}"
             );
             assert!(!detail.contains("Not audited"), "{detail}");
+            assert!(detail.contains("Runs as you, with no sandbox"), "{detail}");
             assert!(detail.contains("External tools may require"), "{detail}");
             assert!(detail.contains("install Enter"), "{detail}");
 

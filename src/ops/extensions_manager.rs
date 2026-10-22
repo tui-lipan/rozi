@@ -1570,6 +1570,11 @@ pub(crate) fn catalog_report_sections(
                     },
                 ),
                 row(
+                    "Access",
+                    crate::extension_installation::UNSANDBOXED_NOTICE.to_string(),
+                    ReportTone::Warning,
+                ),
+                row(
                     "Setup",
                     "External tools may require separate setup".to_string(),
                     ReportTone::Muted,
@@ -1824,6 +1829,15 @@ mod tests {
                     .unwrap();
                 assert_eq!(review.value, "Trusted · Maintained by the rozi author");
                 assert_eq!(review.tone, ReportTone::Success);
+                let access = sections
+                    .iter()
+                    .flat_map(|section| &section.rows)
+                    .find(|row| row.label == "Access")
+                    .unwrap();
+                assert_eq!(
+                    access.value,
+                    crate::extension_installation::UNSANDBOXED_NOTICE
+                );
                 assert!(catalog_description(&entry, installed).contains("trusted"));
             }
         }

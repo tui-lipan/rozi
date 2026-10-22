@@ -237,3 +237,68 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         assert!(b.state().show_settings);
     });
 }
+
+/// The Worktrees tab's setting is `[worktrees] delete_branch`, shared with the CLI, and its list of
+/// branches stays open so both copies can be set in one visit.
+#[test]
+fn the_worktrees_tab_edits_which_branches_removal_deletes() {
+    on_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let mut b = backend();
+        std::fs::write(
+            rozi::config::config_path(),
+            "[animations]\nenabled = false\n\n[pane]\nshow_workbar = false\n",
+        )
+        .unwrap();
+        let delete_branch = || {
+            saved()
+                .get("worktrees")
+                .and_then(|table| table.get("delete_branch"))
+                .cloned()
+        };
+        let names = |branches: &[&str]| {
+            toml::Value::Array(
+                branches
+                    .iter()
+                    .map(|name| toml::Value::String((*name).to_string()))
+                    .collect(),
+            )
+        };
+
+        b.dispatch(Msg::RunAction(Action::OpenSettings)).unwrap();
+        b.dispatch(Msg::SettingsActivate(SettingsAction::SidebarTabs))
+            .unwrap();
+        b.dispatch(Msg::SidebarManagerSelect("worktrees".into()))
+            .unwrap();
+        b.send_key(key(KeyCode::Char('e'), KeyMods::CTRL)).unwrap();
+        let grid = screen(&mut b);
+        assert!(grid.contains("Worktrees settings"), "{grid}");
+        assert!(grid.contains("Delete branch on remove"), "{grid}");
+        assert!(grid.contains("None"), "{grid}");
+
+        // Enter opens the two copies; each Enter flips the highlighted one and keeps the list open.
+        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        assert_eq!(delete_branch(), Some(names(&["local"])));
+        assert!(b.state().tab_settings.as_ref().unwrap().choosing.is_some());
+        b.send_key(key(KeyCode::Down, KeyMods::NONE)).unwrap();
+        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        assert_eq!(delete_branch(), Some(names(&["local", "remote"])));
+        assert_eq!(
+            b.state().config.worktrees.delete_branch,
+            rozi::git::worktrees::BranchDeletion {
+                local: true,
+                remote: true
+            }
+        );
+        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        assert_eq!(delete_branch(), Some(names(&["local"])));
+
+        // Esc closes the list; the row shows the value, and reset puts the default back.
+        b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();
+        assert!(screen(&mut b).contains("Local branch"));
+        b.send_key(key(KeyCode::Char('r'), KeyMods::CTRL)).unwrap();
+        assert_eq!(delete_branch(), None);
+        assert!(!b.state().config.worktrees.delete_branch.any());
+    });
+}

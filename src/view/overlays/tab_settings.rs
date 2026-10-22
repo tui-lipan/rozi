@@ -17,7 +17,7 @@ fn tab_label(ctx: &Context<AppRoot>, id: &str) -> String {
 fn activate_verb(spec: &SettingSpec) -> &'static str {
     match spec.kind {
         SettingKind::Toggle => "toggle",
-        SettingKind::Choice(_) => "choose",
+        SettingKind::Choice(_) | SettingKind::Flags(_) => "choose",
         _ => "edit",
     }
 }
@@ -122,6 +122,7 @@ pub(crate) fn tab_settings_overlay(ctx: &Context<AppRoot>) -> Element {
     // as if it touched only this tab.
     let header = group.and_then(|group| match &group.owner {
         SettingsOwner::Extension(id) => Some(format!("from {id}")),
+        SettingsOwner::Worktrees => Some("in [worktrees]".to_string()),
         SettingsOwner::SidebarTab(_) => None,
     });
     let mut palette = OverlayPalette::new(
@@ -167,26 +168,39 @@ fn choice_overlay(
     highlight: Option<&str>,
     depth: u16,
 ) -> Element {
-    let SettingKind::Choice(choices) = &spec.kind else {
+    let (SettingKind::Choice(choices) | SettingKind::Flags(choices)) = &spec.kind else {
         return Text::new("").into();
     };
+    let flags = matches!(spec.kind, SettingKind::Flags(_));
     let current = value
         .and_then(crate::config::SettingValue::as_str)
         .or_else(|| spec.default.as_str());
     let default = spec.default.as_str();
+    let members = match value.unwrap_or(&spec.default) {
+        crate::config::SettingValue::List(members) => members.as_slice(),
+        _ => &[],
+    };
     let entries = choices
         .iter()
         .map(|choice| {
             let mut item = SearchItem::new(choice.label.clone(), choice.value.clone())
                 .alias(choice.value.clone());
-            let status = match (
-                Some(choice.value.as_str()) == current,
-                Some(choice.value.as_str()) == default,
-            ) {
-                (true, true) => "current  default",
-                (true, false) => "current",
-                (false, true) => "default",
-                (false, false) => "",
+            let status = if flags {
+                if members.contains(&choice.value) {
+                    "on"
+                } else {
+                    "off"
+                }
+            } else {
+                match (
+                    Some(choice.value.as_str()) == current,
+                    Some(choice.value.as_str()) == default,
+                ) {
+                    (true, true) => "current  default",
+                    (true, false) => "current",
+                    (false, true) => "default",
+                    (false, false) => "",
+                }
             };
             if !status.is_empty() {
                 item = item.description(picker_description(status));
@@ -196,7 +210,11 @@ fn choice_overlay(
         .collect::<Vec<_>>();
     // The footer's `apply` is clickable, so it applies the live highlight, not the value the list
     // opened on.
-    let highlight = highlight.or(current);
+    let highlight = highlight.or(current).or_else(|| {
+        flags
+            .then(|| choices.first().map(|choice| choice.value.as_str()))
+            .flatten()
+    });
     let selected = choices
         .iter()
         .position(|choice| Some(choice.value.as_str()) == highlight);
@@ -205,7 +223,7 @@ fn choice_overlay(
         actions.push(
             OverlayAction::new(
                 "enter",
-                "apply",
+                if flags { "toggle" } else { "apply" },
                 Msg::TabSettingsChoose(highlight.to_string()),
                 true,
             )

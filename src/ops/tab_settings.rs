@@ -110,7 +110,7 @@ pub(crate) fn activate(ctx: &mut Context<AppRoot>, key: String) -> Update {
         (SettingKind::Toggle, SettingValue::Bool(current)) => {
             write(ctx, &key, Some(SettingValue::Bool(!current)))
         }
-        (SettingKind::Choice(_), _) => {
+        (SettingKind::Choice(_) | SettingKind::Flags(_), _) => {
             if let Some(picker) = ctx.state.tab_settings.as_mut() {
                 picker.choosing = Some(key);
                 picker.choice_highlight = value.as_str().map(str::to_string);
@@ -158,7 +158,28 @@ pub(crate) fn choose(ctx: &mut Context<AppRoot>, value: String) -> Update {
     let Some(key) = picker.choosing.take() else {
         return Update::none();
     };
-    write(ctx, &key, Some(SettingValue::String(value)))
+    let flags = open_group(&ctx.state).and_then(|group| {
+        match (&group.spec(&key)?.kind, group.value(&key)) {
+            (SettingKind::Flags(_), Some(SettingValue::List(members))) => Some(members.clone()),
+            _ => None,
+        }
+    });
+    let Some(mut members) = flags else {
+        return write(ctx, &key, Some(SettingValue::String(value)));
+    };
+    // A set is toggled one member at a time, and the list stays open on that member for the next.
+    if let Some(at) = members.iter().position(|member| *member == value) {
+        members.remove(at);
+    } else {
+        members.push(value.clone());
+    }
+    if let Some(picker) = ctx.state.tab_settings.as_mut() {
+        picker.choosing = Some(key.clone());
+        picker.choice_highlight = Some(value);
+    }
+    let update = write(ctx, &key, Some(SettingValue::List(members)));
+    ctx.request_focus(TAB_SETTING_CHOICES_KEY);
+    update
 }
 
 pub(crate) fn choice_select(ctx: &mut Context<AppRoot>, value: String) -> Update {

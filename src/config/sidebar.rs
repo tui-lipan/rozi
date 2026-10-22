@@ -96,6 +96,44 @@ pub fn builtin_tab_settings(id: &str) -> Vec<SettingSpec> {
     }
 }
 
+/// The Worktrees tab's settings. They live in `[worktrees]`, which the CLI reads too, not in
+/// `[sidebar.settings.worktrees]`, so they are declared apart from [`builtin_tab_settings`].
+pub fn worktrees_tab_settings() -> Vec<SettingSpec> {
+    vec![
+        SettingSpec::flags(
+            "delete_branch",
+            "Delete branch on remove",
+            &[("local", "Local branch"), ("remote", "Remote branch")],
+        )
+        .with_description(
+            "Which copies of a removed checkout's branch to delete too. Only merged branches are deleted.",
+        ),
+    ]
+}
+
+/// The Worktrees tab's settings group at the values `[worktrees]` holds. `set` is whether
+/// `config.toml` names `delete_branch`.
+pub(crate) fn worktrees_group(
+    deletion: crate::git::worktrees::BranchDeletion,
+    set: bool,
+) -> SettingsGroup {
+    let branches = [(deletion.local, "local"), (deletion.remote, "remote")]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, name)| name.to_string())
+        .collect();
+    SettingsGroup {
+        owner: SettingsOwner::Worktrees,
+        specs: worktrees_tab_settings(),
+        values: BTreeMap::from([("delete_branch".to_string(), SettingValue::List(branches))]),
+        overridden: if set {
+            std::collections::BTreeSet::from(["delete_branch".to_string()])
+        } else {
+            std::collections::BTreeSet::new()
+        },
+    }
+}
+
 /// Read `[sidebar.settings.<tab>]` for one built-in tab against its declared settings.
 ///
 /// An unknown key, a value of the wrong type, and an unknown choice are reported and leave the
@@ -891,7 +929,7 @@ mod tests {
     fn builtin_groups_exist_at_their_defaults() {
         let config = SidebarConfig::default();
         let keys: Vec<_> = config.tab_settings.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["activity", "files", "git"]);
+        assert_eq!(keys, ["activity", "files", "git", "worktrees"]);
         let git = &config.tab_settings["git"];
         assert!(git.overridden.is_empty());
         assert_eq!(git.values["diff_stats"], SettingValue::Bool(true));

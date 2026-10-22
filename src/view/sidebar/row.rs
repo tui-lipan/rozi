@@ -289,8 +289,9 @@ impl Row {
         self
     }
 
-    /// What the badge becomes while the pointer is on the row: an affordance in place of a status,
-    /// the same trade the ✕ makes. It costs no line of its own, which is what lets a row say both
+    /// What the badge becomes while the pointer or keyboard cursor is on the row: an affordance in
+    /// place of a status. A visible ✕ joins it rather than replacing it. It costs no line of its
+    /// own, which is what lets a row say both
     /// what it is and what clicking it does without growing — and a row that grows under the
     /// pointer shifts everything below it out from under the hand that is aiming.
     pub(super) fn hover_badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
@@ -344,7 +345,8 @@ impl Row {
             cells = cells.child(glyph);
         }
 
-        let title = self.title_line(ctx, hovered, close);
+        // The keyboard cursor aims at a row the way the pointer does, so it learns the same thing.
+        let title = self.title_line(ctx, hovered || selected, close);
 
         // The cursor changes the background only; every span keeps the color that carries its
         // meaning, so agent status, git state, and error red stay readable underneath it.
@@ -386,23 +388,26 @@ impl Row {
     fn title_line(
         &mut self,
         ctx: &Context<AppRoot>,
-        hovered: bool,
+        aimed: bool,
         close: Option<CloseAffordance>,
     ) -> Element {
         // A visible ✕ takes the badge slot rather than fighting it for width. The badge is ambient
         // and comes back the moment the pointer leaves; the ✕ is the thing being aimed at, so in a
-        // column this narrow it gets the space.
+        // column this narrow it gets the space. What a click on the row does keeps its place beside
+        // the ✕, so a closable row still says it can be opened; an armed row asks only to confirm.
+        let armed = close.is_some_and(|close| close.armed);
+        let affordance = aimed && !armed && !self.hover_description.is_empty();
         let trailing = if let Some(close) = close {
             Some(close_affordance(ctx, close))
-        } else if hovered && !self.hover_description.is_empty() {
+        } else if affordance {
             None
         } else {
             self.badge.take()
         };
-        let description = if trailing.is_some() {
-            Vec::new()
-        } else if hovered && !self.hover_description.is_empty() {
+        let description = if affordance {
             std::mem::take(&mut self.hover_description)
+        } else if trailing.is_some() {
+            Vec::new()
         } else {
             std::mem::take(&mut self.description)
         };

@@ -471,6 +471,9 @@ pub struct SidebarState {
     /// by moving the cursor, so the confirmation never outlives the moment. An armed row keeps its
     /// ✕ visible even unhovered — an invisible armed state is worse than a lingering glyph.
     pub pending_row_close: Option<SidebarClose>,
+    /// Ctrl is held while a Worktrees row is aimed at, so its rows name what Ctrl+click opens.
+    /// Only a terminal that reports lone modifier keys can say so.
+    pub ctrl_held: bool,
     /// The Worktrees tab: the focused pane's repository and its checkouts.
     pub worktrees: SidebarWorktrees,
     /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the

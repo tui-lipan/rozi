@@ -22,6 +22,26 @@ pub(crate) fn worktrees_active(ctx: &Context<AppRoot>) -> bool {
             .any(|id| id.as_str() == TAB_ID)
 }
 
+/// Whether the pointer or the keyboard cursor is in a Worktrees tab, where holding Ctrl changes
+/// what a click opens and the rows say so.
+pub(crate) fn ctrl_preview_active(state: &crate::state::State) -> bool {
+    state.modal_overlay().is_none()
+        && state
+            .sidebar
+            .panels
+            .iter()
+            .enumerate()
+            .any(|(index, panel)| {
+                state.sidebar_panel_visible(index)
+                    && matches!(
+                        state.active_sidebar_tab(index),
+                        Some(crate::config::SidebarTab::Worktrees)
+                    )
+                    && ((panel.hovered_row.is_some() && !panel.suppress_row_hover)
+                        || (state.sidebar.focused && state.sidebar.active_panel_index() == index))
+            })
+}
+
 /// Whether the repository the tab lists is still the focused pane's. Compared by borrow: this runs
 /// after every message, so the steady state must not allocate.
 fn source_is_current(ctx: &Context<AppRoot>) -> bool {
@@ -738,6 +758,62 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(spawned_pane_dirs(&outbound), vec![Some(LINKED.to_string())]);
+        });
+    }
+
+    /// A removable checkout under the pointer names what a click opens beside its ✕, and holding
+    /// Ctrl names what Ctrl+click opens instead.
+    #[test]
+    fn a_hovered_checkout_names_its_click_beside_the_close_and_ctrl_names_the_other() {
+        use tui_lipan::prelude::{KeyMods, Rect};
+        on_large_stack(|| {
+            let (mut backend, outbound) = backend();
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 16,
+            });
+            backend.state_mut().config.animations.enabled = false;
+            nudge(&mut backend);
+            let (id, _) = sent_worktree_requests(&outbound).remove(0);
+            list(&mut backend, id);
+            // Rows: header, primary, linked checkout, "New worktree".
+            let hover = |hovered| Msg::SidebarRowHover {
+                panel: 0,
+                index: 2,
+                hovered,
+            };
+            let checkout_line = |backend: &mut TestBackend<AppRoot>| {
+                backend.render();
+                backend
+                    .capture_frame()
+                    .to_fixed_grid_lines()
+                    .into_iter()
+                    .find(|line| line.contains("feat"))
+                    .expect("the checkout row")
+            };
+
+            backend.dispatch(hover(true)).unwrap();
+            assert!(backend.modifier_key_reporting_enabled());
+            let plain = checkout_line(&mut backend);
+            assert!(
+                plain.contains("new session") && plain.contains('✕'),
+                "{plain}"
+            );
+
+            backend
+                .set_held_modifiers(KeyMods {
+                    ctrl: true,
+                    ..KeyMods::NONE
+                })
+                .unwrap();
+            let held = checkout_line(&mut backend);
+            assert!(held.contains("new pane") && held.contains('✕'), "{held}");
+
+            backend.dispatch(hover(false)).unwrap();
+            assert!(!backend.state().sidebar.ctrl_held);
+            assert!(!backend.modifier_key_reporting_enabled());
         });
     }
 

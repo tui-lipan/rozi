@@ -5,6 +5,7 @@ use super::args::UpdateCommand;
 use super::output::{OutputStyles, OutputTone};
 use crate::platform::install::InstallError;
 use crate::platform::install_source::InstallSource;
+use relswap::ReleaseError;
 
 pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> {
     crate::platform::install::from_process()
@@ -68,7 +69,7 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
         UpdateCommand::Check => {
             let result = installation
                 .check_latest()
-                .map_err(|error| format!("update check failed: {error}"))?;
+                .map_err(|error| describe_failure("update check failed", &error))?;
             let running = semver::Version::parse(env!("CARGO_PKG_VERSION"))
                 .map_err(|error| format!("invalid running version: {error}"))?;
             let current = result.current.as_ref().unwrap_or(&running);
@@ -127,7 +128,7 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                 .inspect_err(|_| row.finish())
                 .map_err(|error| match error {
                     InstallError::Unmanaged => unmanaged_channel_clause(),
-                    error => format!("update failed: {error}"),
+                    error => describe_failure("update failed", &error),
                 })?;
             if result.changed {
                 println!(
@@ -171,6 +172,34 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
         }
     }
     Ok(())
+}
+
+/// Phrases a failed download carries when the machine simply is not online. `relswap` reports
+/// every download failure as one string, so this is the only way to tell "offline" from a bad
+/// response.
+const OFFLINE_MARKERS: &[&str] = &[
+    "name resolution",
+    "lookup address",
+    "failed to lookup",
+    "network is unreachable",
+    "connection refused",
+    "connection reset",
+    "timed out",
+    "no route to host",
+];
+
+/// `prefix: error`, except that being offline reads as an instruction instead of a stack of
+/// nested library errors.
+fn describe_failure(prefix: &str, error: &InstallError) -> String {
+    if let InstallError::Release(ReleaseError::Download(detail)) = error {
+        let detail = detail.to_ascii_lowercase();
+        if OFFLINE_MARKERS.iter().any(|marker| detail.contains(marker)) {
+            return format!(
+                "{prefix}: could not reach the release server - check your internet connection and try again"
+            );
+        }
+    }
+    format!("{prefix}: {error}")
 }
 
 fn report_skill_refresh(command_path: &std::path::Path, version: &str, styles: OutputStyles) {
@@ -232,4 +261,29 @@ fn refresh_skills(command_path: &std::path::Path, version: &str) -> Result<(), S
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_download_reads_as_connection_advice() {
+        let error = InstallError::Release(ReleaseError::Download(
+            "io: failed to lookup address information: Temporary failure in name resolution".into(),
+        ));
+        assert_eq!(
+            describe_failure("update failed", &error),
+            "update failed: could not reach the release server - check your internet connection and try again"
+        );
+    }
+
+    #[test]
+    fn other_download_failures_keep_their_detail() {
+        let error = InstallError::Release(ReleaseError::Download("http status: 404".into()));
+        assert_eq!(
+            describe_failure("update failed", &error),
+            "update failed: release verification error: release download error: http status: 404"
+        );
+    }
 }

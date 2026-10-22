@@ -913,7 +913,7 @@ Listing a public GitHub repository in **Discover** needs no submission or review
 4. Run `rozi extensions check .` and fix everything its **Discover** section lists.
 5. Push to the default branch, and add the `rozi-extension` topic to the repository.
 
-The index is rebuilt daily. Each build reads the root `extension.toml` from the default branch,
+The index is rebuilt hourly. Each build reads the root `extension.toml` from the default branch,
 records the exact commit, and never runs the repository's code. **Install** in Discover installs
 that commit, and `rozi` validates the whole extension again before installing it. Pushing a new
 commit updates the listing at the next build.

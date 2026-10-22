@@ -921,8 +921,8 @@ In practice:
 Three examples build on each other, each with its own tests:
 
 1. [Hello](../examples/extensions/hello/) — a command, and a picker when you want one
-2. [Project status](../examples/extensions/project-status/) — a service that subscribes to events,
-   publishes an Activity row, and keeps state
+2. [Project status](../examples/extensions/project-status/) — a service on the active session's
+   host that subscribes to events, publishes an Activity row, and keeps per-host state
 3. [Agent board](../examples/extensions/agent-board/) — an agent definition, a sidebar stream tab,
    and a service that follows the active session, local or remote
 

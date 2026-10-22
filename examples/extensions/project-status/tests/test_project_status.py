@@ -2,7 +2,7 @@
 
 Run from the extension directory:
 
-    python -m unittest discover -s tests
+    python3 -m unittest discover -s tests
 """
 
 from __future__ import annotations
@@ -24,6 +24,19 @@ import project_status  # noqa: E402
 from project_status import DirtySince, Status  # noqa: E402
 
 PORCELAIN = "## main...origin/main [ahead 1]\n M src/lib.rs\n?? notes.md\n"
+
+
+class ManifestTest(unittest.TestCase):
+    def test_git_service_runs_on_the_active_session_host(self) -> None:
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            self.skipTest("tomllib needs Python 3.11")
+        root = Path(__file__).resolve().parent.parent
+        manifest = tomllib.loads((root / "extension.toml").read_text(encoding="utf-8"))
+        (service,) = manifest["services"]
+        self.assertEqual(service["placement"], "active-session")
+        self.assertEqual(service["exec"][0], "python3")
 
 
 class ParseTest(unittest.TestCase):

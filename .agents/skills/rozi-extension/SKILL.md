@@ -25,8 +25,8 @@ rozi run-action my-extension.hello
 
 Treat every `Hint` row from `check` (`hints` in `--json`) as a bug even when the status is
 `loaded`. Model new work on `examples/extensions/hello` (command and picker),
-`project-status` (service, subscribe/publish, state), and `agent-board` (agents, stream tab,
-`active-session` placement), each with Python tests that stub `rozi`.
+`project-status` (service, subscribe/publish, per-host state), and `agent-board` (agents, stream tab).
+Both services use `active-session` placement. Each example has Python tests that stub `rozi`.
 
 A normal extension is an independent directory:
 

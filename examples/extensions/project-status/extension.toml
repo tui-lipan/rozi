@@ -7,5 +7,6 @@ api = 1
 
 [[services]]
 name = "watch"
-exec = ["python", "{extension_dir}/bin/project_status.py"]
+exec = ["python3", "{extension_dir}/bin/project_status.py"]
+placement = "active-session"
 restart = "on-failure"

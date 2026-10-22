@@ -18,7 +18,17 @@ const MAX_INDEX_BYTES: usize = 1024 * 1024;
 /// How long a cached index is shown without asking the network, matching the index host's
 /// `Cache-Control: max-age`. The index is rebuilt daily, so this only spares repeated opens.
 const CACHE_FRESH_FOR: Duration = Duration::from_secs(10 * 60);
-const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
+pub(crate) const KNOWN_PLATFORMS: [&str; 5] = ["linux", "macos", "windows", "freebsd", "netbsd"];
+/// Longest accepted value, in characters, of each metadata field. Keep equal to `MAX_FIELD_CHARS`
+/// in the index generator, so a record it publishes is one Rozi accepts.
+pub(crate) const FIELD_LIMITS: [(&str, usize); 6] = [
+    ("id", 64),
+    ("title", 80),
+    ("description", 280),
+    ("version", 64),
+    ("min_rozi", 64),
+    ("homepage", 256),
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -105,16 +115,14 @@ impl CatalogEntry {
                 return Err(format!("catalog entry has an empty `{name}`"));
             }
         }
-        // Longest accepted value, in characters. Keep equal to `MAX_FIELD_CHARS` in the index
-        // generator, so a record it publishes is one Rozi accepts.
-        for (name, value, limit) in [
-            ("id", Some(self.id.as_str()), 64),
-            ("title", Some(self.title.as_str()), 80),
-            ("description", Some(self.description.as_str()), 280),
-            ("version", Some(self.version.as_str()), 64),
-            ("min_rozi", self.min_rozi.as_deref(), 64),
-            ("homepage", self.homepage.as_deref(), 256),
-        ] {
+        for ((name, limit), value) in FIELD_LIMITS.into_iter().zip([
+            Some(self.id.as_str()),
+            Some(self.title.as_str()),
+            Some(self.description.as_str()),
+            Some(self.version.as_str()),
+            self.min_rozi.as_deref(),
+            self.homepage.as_deref(),
+        ]) {
             if value.is_some_and(|value| value.chars().count() > limit) {
                 return Err(format!(
                     "catalog entry `{}` has a `{name}` longer than {limit} characters",

@@ -844,6 +844,10 @@ key, `exec` written as a string, or a script path that a command would look for 
 pane's directory instead of the extension's. A hint does not make an extension invalid, so fix a
 hinted manifest even when it loads. `check --json` lists them in `hints`.
 
+The report ends with **Discover**: whether the public index would list the extension, or what stops
+it. `check --json` reports the same in `discover`, as `ready` and `problems`. See
+[Publish to Discover](#publish-to-discover).
+
 Then test in the isolated environment described in [Extension testing](extension-testing.md).
 Do not test by copying unfinished code into your normal extension directory.
 
@@ -863,15 +867,30 @@ diagnostics to a test-owned file, or run it in a test pane.
 
 ## Publish to Discover
 
-To list a public GitHub repository in **Discover**:
+Listing a public GitHub repository in **Discover** needs no submission or review:
 
 1. Put `extension.toml` at the repository root.
 2. Include `id`, `title`, `description`, `version`, and `api`.
 3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility.
-4. Add the `rozi-extension` topic to the repository.
+4. Run `rozi extensions check .` and fix everything its **Discover** section lists.
+5. Push to the default branch, and add the `rozi-extension` topic to the repository.
 
-The index reads the root `extension.toml` from the default branch and records the exact commit. It
-keeps each entry short, and leaves out a repository whose metadata exceeds a limit:
+The index is rebuilt daily. Each build reads the root `extension.toml` from the default branch,
+records the exact commit, and never runs the repository's code. **Install** in Discover installs
+that commit, and `rozi` validates the whole extension again before installing it. Pushing a new
+commit updates the listing at the next build.
+
+A repository with the topic that a build leaves out is listed, with the reason, in
+[`skipped.json`](https://tui-lipan.github.io/rozi-extension-index/v1/skipped.json). `check`
+reports the same problems before you publish. It also needs `extension.toml` at the root of a Git
+repository, and it cannot tell whether the repository is public or has the topic.
+
+Being listed is not a review. The index only checks that the metadata is well formed, and anyone
+can list a repository, so Discover shows what it found, not what anyone vouched for. Read an
+extension's source before you install it; see
+[Review an extension before installing](extensions.md#review-an-extension-before-installing).
+
+The index keeps each entry short, and leaves out a repository whose metadata exceeds a limit:
 
 | Field | Maximum length |
 | --- | --- |

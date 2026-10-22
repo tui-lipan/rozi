@@ -12,6 +12,7 @@ mod advice;
 mod authoring;
 mod contributions;
 mod diagnostics;
+mod discover;
 mod discovery;
 mod keybindings;
 mod manifest;
@@ -29,6 +30,8 @@ pub use diagnostics::{
 pub(crate) use diagnostics::{
     ReportKind, ReportRow, ReportSection, ReportTone, report_sections, report_text,
 };
+pub use discover::DiscoverReadiness;
+pub(crate) use discover::discover_readiness;
 pub(crate) use keybindings::resolve as resolve_suggested_keybindings;
 use manifest::ExtensionManifestFile;
 pub(crate) use manifest::UserExtensionConfig;

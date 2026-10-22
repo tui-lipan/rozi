@@ -461,8 +461,9 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
     let extension = crate::config::check_extension(path);
     let info = &extension.info;
     let hints = crate::config::authoring_hints(info);
+    let discover = crate::config::discover_readiness(info);
     if json {
-        let document = crate::config::ExtensionCheckDocument::new(info.clone(), hints);
+        let document = crate::config::ExtensionCheckDocument::new(info.clone(), hints, discover);
         super::output::print_or_stop(&format!(
             "{}\n",
             serde_json::to_string_pretty(&document).map_err(std::io::Error::other)?
@@ -485,8 +486,36 @@ pub(crate) fn run_check_extension_cli(path: &std::path::Path, json: bool) -> Res
                 .collect(),
         });
     }
+    sections.push(discover_section(discover));
     super::output::print_or_stop(&format_check_text(&sections, styles));
     Ok(info.status == crate::config::ExtensionStatus::Loaded)
+}
+
+fn discover_section(discover: crate::config::DiscoverReadiness) -> crate::config::ReportSection {
+    let row = |label: &str, value: String, tone| crate::config::ReportRow {
+        label: label.to_string(),
+        value,
+        tone,
+        kind: crate::config::ReportKind::Info,
+    };
+    let rows = if discover.ready {
+        vec![row(
+            "Ready",
+            "add the `rozi-extension` topic to the public GitHub repository; the index updates daily"
+                .to_string(),
+            crate::config::ReportTone::Success,
+        )]
+    } else {
+        discover
+            .problems
+            .into_iter()
+            .map(|problem| row("Not listed", problem, crate::config::ReportTone::Muted))
+            .collect()
+    };
+    crate::config::ReportSection {
+        title: "Discover",
+        rows,
+    }
 }
 
 /// The whole `extensions check` report as one string.

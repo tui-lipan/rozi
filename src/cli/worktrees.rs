@@ -9,7 +9,7 @@ use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 use crate::git::worktrees::BranchOutcome;
 use crate::session;
 use crate::session::remote::RemoteTarget;
-use crate::session::worktrees::{HostCall, HostReply, ListedWorktree};
+use crate::session::worktrees::{CheckoutSelector, HostCall, HostReply, ListedWorktree};
 
 /// Run a worktrees command. `Some` is a session launch the caller should continue into: `open`,
 /// and `create --open`, end by attaching a UI.
@@ -60,7 +60,8 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                 );
             }
             if open {
-                return open_checkout(target, cli.remote, cli.config_path, worktree.path, None)
+                let checkout = CheckoutSelector::Path(worktree.path);
+                return open_checkout(target, cli.remote, cli.config_path, None, checkout, None)
                     .map(Some);
             }
             match format {
@@ -74,9 +75,11 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
             }
             Ok(None)
         }
-        WorktreesCommand::Open { path, name } => {
-            open_checkout(target, cli.remote, cli.config_path, path, name).map(Some)
-        }
+        WorktreesCommand::Open {
+            checkout,
+            cwd,
+            name,
+        } => open_checkout(target, cli.remote, cli.config_path, cwd, checkout, name).map(Some),
         WorktreesCommand::Exclude { directory, cwd } => {
             match call(target.as_ref(), HostCall::Exclude { cwd, directory })? {
                 HostReply::Excluded { directory } => {
@@ -87,19 +90,22 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
             }
         }
         WorktreesCommand::Remove {
-            path,
+            checkout,
+            cwd,
             force,
             delete_branch,
         } => {
+            let typed = selector_args(&checkout, cwd.as_deref());
             let call_value = HostCall::Remove {
-                path: path.clone(),
+                cwd,
+                checkout,
                 force,
                 delete_branch,
             };
             match call(target.as_ref(), call_value).map_err(|message| {
                 if message.starts_with("worktree is locked") {
                     format!(
-                        "{message}\nhint: run `rozi{} worktrees unlock {path}` first",
+                        "{message}\nhint: run `rozi{} worktrees unlock {typed}` first",
                         remote_flag(cli.remote.as_deref())
                     )
                 } else {
@@ -122,8 +128,8 @@ pub(crate) fn run_worktrees_cli(cli: WorktreesCli) -> Result<Option<CliArgs>, St
                 other => Err(unexpected(other)),
             }
         }
-        WorktreesCommand::Unlock { path } => {
-            match call(target.as_ref(), HostCall::Unlock { path })? {
+        WorktreesCommand::Unlock { checkout, cwd } => {
+            match call(target.as_ref(), HostCall::Unlock { cwd, checkout })? {
                 HostReply::Unlocked { .. } => Ok(None),
                 other => Err(unexpected(other)),
             }
@@ -140,6 +146,18 @@ fn remote_flag(remote: Option<&str>) -> String {
     }
 }
 
+/// How the user named a checkout, as they would retype it in a hint.
+fn selector_args(checkout: &CheckoutSelector, cwd: Option<&str>) -> String {
+    let checkout = match checkout {
+        CheckoutSelector::Path(operand) | CheckoutSelector::Auto(operand) => operand.clone(),
+        CheckoutSelector::Branch(branch) => format!("--branch {branch}"),
+    };
+    match cwd {
+        Some(cwd) => format!("{checkout} --cwd {cwd}"),
+        None => checkout,
+    }
+}
+
 /// Decide which session a checkout opens in, and hand back the launch that opens it.
 ///
 /// One associated session is reopened; none gets a new session rooted at the checkout, recorded as
@@ -148,10 +166,12 @@ fn open_checkout(
     target: Option<RemoteTarget>,
     remote: Option<String>,
     config_path: Option<String>,
-    path: String,
+    cwd: Option<String>,
+    checkout: CheckoutSelector,
     name: Option<String>,
 ) -> Result<CliArgs, String> {
-    let (worktree, sessions, checkouts) = match call(target.as_ref(), HostCall::Resolve { path })? {
+    let resolve = HostCall::Resolve { cwd, checkout };
+    let (worktree, sessions, checkouts) = match call(target.as_ref(), resolve)? {
         HostReply::Resolved {
             worktree,
             sessions,
@@ -363,6 +383,21 @@ mod tests {
         assert_eq!(
             choose_session(None, &sessions, "/wt/feat"),
             Err("/wt/feat is used by sessions wt-feat, review; choose one with --name".into())
+        );
+    }
+
+    #[test]
+    fn hints_repeat_the_checkout_as_the_user_named_it() {
+        assert_eq!(
+            selector_args(&CheckoutSelector::Auto("feat/x".into()), None),
+            "feat/x"
+        );
+        assert_eq!(
+            selector_args(
+                &CheckoutSelector::Branch("feat/x".into()),
+                Some("~/src/rozi")
+            ),
+            "--branch feat/x --cwd ~/src/rozi"
         );
     }
 

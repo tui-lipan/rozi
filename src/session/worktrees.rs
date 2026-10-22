@@ -164,8 +164,9 @@ fn unlock(cwd: &Path, path: &Path) -> Result<(), String> {
 /// One `rozi worktrees` call, as the host that owns the repository receives it.
 ///
 /// Paths may be relative or start with `~`; they are resolved on that host, never by a client that
-/// may run a different operating system. `cwd` defaults to the host process's working directory,
-/// and for removal to the primary checkout of the worktree being removed.
+/// may run a different operating system. `cwd` defaults to the host process's working directory;
+/// it locates the repository and anchors relative paths. Removal itself runs from the primary
+/// checkout of the worktree being removed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum HostCall {
@@ -179,14 +180,16 @@ pub enum HostCall {
         path: Option<String>,
     },
     Remove {
-        path: String,
+        cwd: Option<String>,
+        checkout: CheckoutSelector,
         force: bool,
         /// `None` follows this host's `[worktrees] delete_branch`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delete_branch: Option<worktrees::BranchDeletion>,
     },
     Unlock {
-        path: String,
+        cwd: Option<String>,
+        checkout: CheckoutSelector,
     },
     /// Add a top-level directory of the repository to `.git/info/exclude`: `directory`, or the
     /// repository-relative `[worktrees] directory` of this host.
@@ -194,10 +197,24 @@ pub enum HostCall {
         cwd: Option<String>,
         directory: Option<String>,
     },
-    /// Find the checkout containing `path` and the sessions that record it as their origin.
+    /// Find the selected checkout and the sessions that record it as their origin.
     Resolve {
-        path: String,
+        cwd: Option<String>,
+        checkout: CheckoutSelector,
     },
+}
+
+/// How a call names one checkout. Each form resolves on the host, against the call's `cwd`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CheckoutSelector {
+    /// Any path inside the checkout.
+    Path(String),
+    /// The branch the checkout has checked out.
+    Branch(String),
+    /// An operand as the user typed it. One that reads as a path (`./`, `../`, `/`, `~`) is only a
+    /// path; any other is tried as both, and fails when the two name different checkouts.
+    Auto(String),
 }
 
 /// A listed checkout with the sessions that record it as their origin.
@@ -264,15 +281,13 @@ pub fn run_host_call(call: HostCall) -> HostReply {
             })
         })(),
         HostCall::Remove {
-            path,
+            cwd,
+            checkout,
             force,
             delete_branch,
         } => (|| {
-            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
-            let primary = trees
-                .first()
-                .map(|primary| PathBuf::from(&primary.path))
-                .ok_or("Git reported no primary worktree")?;
+            let (tree, trees) = resolve_checkout(cwd.as_deref(), &checkout)?;
+            let primary = primary_of(&trees)?;
             let delete_branch = delete_branch.unwrap_or_else(configured_delete_branch);
             let branches = remove(&primary, Path::new(&tree.path), force, false, delete_branch)?;
             Ok(HostReply::Removed {
@@ -280,13 +295,9 @@ pub fn run_host_call(call: HostCall) -> HostReply {
                 branches,
             })
         })(),
-        HostCall::Unlock { path } => (|| {
-            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
-            let primary = trees
-                .first()
-                .map(|primary| PathBuf::from(&primary.path))
-                .ok_or("Git reported no primary worktree")?;
-            unlock(&primary, Path::new(&tree.path))?;
+        HostCall::Unlock { cwd, checkout } => (|| {
+            let (tree, trees) = resolve_checkout(cwd.as_deref(), &checkout)?;
+            unlock(&primary_of(&trees)?, Path::new(&tree.path))?;
             Ok(HostReply::Unlocked { path: tree.path })
         })(),
         HostCall::Exclude { cwd, directory } => (|| {
@@ -299,8 +310,8 @@ pub fn run_host_call(call: HostCall) -> HostReply {
             worktrees::exclude_directory(&cwd, &directory)?;
             Ok(HostReply::Excluded { directory })
         })(),
-        HostCall::Resolve { path } => (|| {
-            let (tree, trees) = containing_worktree(&host_path(&path)?)?;
+        HostCall::Resolve { cwd, checkout } => (|| {
+            let (tree, trees) = resolve_checkout(cwd.as_deref(), &checkout)?;
             let sessions = super::discovery::worktree_session_origins()?
                 .sessions_at(&canonical(Path::new(&tree.path)));
             Ok(HostReply::Resolved {
@@ -352,9 +363,161 @@ fn list_with_sessions(cwd: &Path) -> Result<HostReply, String> {
     Ok(HostReply::Listed { worktrees })
 }
 
+/// A selected checkout, with every checkout of its repository (primary first).
+type ResolvedCheckout = (WorktreeInfo, Vec<WorktreeInfo>);
+
+/// The checkout `selector` names. `cwd` locates the repository for a branch and anchors a relative
+/// path; an absolute path may name a checkout of any repository.
+fn resolve_checkout(
+    cwd: Option<&str>,
+    selector: &CheckoutSelector,
+) -> Result<ResolvedCheckout, String> {
+    let base = host_path(cwd.unwrap_or("."))?;
+    match selector {
+        CheckoutSelector::Path(path) => containing_worktree(&host_path_in(path, &base)?),
+        CheckoutSelector::Auto(operand) if explicit_path(operand) => {
+            containing_worktree(&host_path_in(operand, &base)?)
+        }
+        CheckoutSelector::Branch(branch) => {
+            let (found, trees) = branch_checkouts(&base, branch)?;
+            single_branch_checkout(branch, found, trees)?.ok_or_else(|| {
+                format!(
+                    "no checkout of {} has branch `{branch}` checked out",
+                    trees_label(&base)
+                )
+            })
+        }
+        CheckoutSelector::Auto(operand) => resolve_operand(&base, operand),
+    }
+}
+
+/// An operand that only a path can be: Git refuses `~`, `\`, a leading `/`, and `.` or `..` as a
+/// path component in branch names, and a drive prefix is absolute only on Windows.
+fn explicit_path(operand: &str) -> bool {
+    ["/", "\\", "~", "./", "../", ".\\", "..\\"]
+        .iter()
+        .any(|prefix| operand.starts_with(prefix))
+        || matches!(operand, "." | "..")
+        || Path::new(operand).is_absolute()
+}
+
+/// An operand tried both as a path and as a branch. Agreement or a single match selects a
+/// checkout; two different checkouts are an error rather than a choice by precedence.
+fn resolve_operand(base: &Path, operand: &str) -> Result<ResolvedCheckout, String> {
+    let path = host_path_in(operand, base)?;
+    let by_path = path.exists().then(|| containing_worktree(&path));
+    let by_branch = match branch_checkouts(base, operand) {
+        Ok((found, trees)) => Ok(single_branch_checkout(operand, found, trees)?),
+        Err(err) => Err(err),
+    };
+    match (by_path, by_branch) {
+        (Some(Ok(by_path)), Ok(Some(by_branch))) => {
+            if worktrees::same_path(Path::new(&by_path.0.path), Path::new(&by_branch.0.path)) {
+                Ok(by_path)
+            } else {
+                Err(ambiguous_operand(operand, &by_path.0, &by_branch.0))
+            }
+        }
+        (Some(Ok(by_path)), _) => Ok(by_path),
+        (_, Ok(Some(by_branch))) => Ok(by_branch),
+        (by_path, by_branch) => {
+            let path_reason = match by_path {
+                Some(Err(err)) => err,
+                _ => format!("{} does not exist", path.display()),
+            };
+            let branch_reason = match by_branch {
+                Err(err) => err,
+                Ok(_) => format!(
+                    "no checkout of {} has branch `{operand}` checked out",
+                    trees_label(base)
+                ),
+            };
+            Err(format!(
+                "no checkout matches `{operand}`: {path_reason}, and {branch_reason}"
+            ))
+        }
+    }
+}
+
+fn ambiguous_operand(operand: &str, by_path: &WorktreeInfo, by_branch: &WorktreeInfo) -> String {
+    format!(
+        "`{operand}` names two checkouts:\n  \
+         as a path:   {}\n  \
+         as a branch: {}\n\
+         use `./{operand}` for the path or `--branch {operand}` for the branch",
+        describe_checkout(by_path),
+        describe_checkout(by_branch),
+    )
+}
+
+/// A checkout as an error message names it: its path, then its branch and whether it is primary.
+fn describe_checkout(tree: &WorktreeInfo) -> String {
+    let branch = match &tree.branch {
+        Some(branch) => format!("branch {branch}"),
+        None => "detached".to_string(),
+    };
+    if tree.linked {
+        format!("{} ({branch})", tree.path)
+    } else {
+        format!("{} ({branch}, primary checkout)", tree.path)
+    }
+}
+
+/// The checkouts of the repository around `cwd` that have `branch` checked out, and all of them.
+fn branch_checkouts(
+    cwd: &Path,
+    branch: &str,
+) -> Result<(Vec<WorktreeInfo>, Vec<WorktreeInfo>), String> {
+    if branch.is_empty() {
+        return Err("branch name cannot be empty".to_string());
+    }
+    let trees = worktrees::list(cwd)?;
+    let found = trees
+        .iter()
+        .filter(|tree| tree.branch.as_deref() == Some(branch))
+        .cloned()
+        .collect();
+    Ok((found, trees))
+}
+
+/// Git checks a branch out once unless forced; a forced second checkout is named by path instead.
+fn single_branch_checkout(
+    branch: &str,
+    found: Vec<WorktreeInfo>,
+    trees: Vec<WorktreeInfo>,
+) -> Result<Option<ResolvedCheckout>, String> {
+    match <[WorktreeInfo; 1]>::try_from(found) {
+        Ok([tree]) => Ok(Some((tree, trees))),
+        Err(found) if found.is_empty() => Ok(None),
+        Err(found) => Err(format!(
+            "branch `{branch}` is checked out in several checkouts ({}); name one by path",
+            found
+                .iter()
+                .map(|tree| tree.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// The repository around `cwd` as a message names it: its primary checkout when Git finds one.
+fn trees_label(cwd: &Path) -> String {
+    worktrees::primary_checkout(cwd)
+        .unwrap_or_else(|_| cwd.to_path_buf())
+        .display()
+        .to_string()
+}
+
+fn primary_of(trees: &[WorktreeInfo]) -> Result<PathBuf, String> {
+    trees
+        .first()
+        .map(|primary| PathBuf::from(&primary.path))
+        .ok_or_else(|| "Git reported no primary worktree".to_string())
+}
+
 /// The registered checkout that contains `path`, preferring the innermost when checkouts nest,
 /// with every checkout of its repository (primary first).
-fn containing_worktree(path: &Path) -> Result<(WorktreeInfo, Vec<WorktreeInfo>), String> {
+fn containing_worktree(path: &Path) -> Result<ResolvedCheckout, String> {
     let path = canonical(path);
     let trees = worktrees::list(&path)?;
     let tree = trees
@@ -404,26 +567,35 @@ pub(crate) fn unused_session_name(base: &str, taken: impl Fn(&str) -> bool) -> O
 /// Resolve a path the way a shell on this host would have: `~` is this host's home directory, and
 /// a relative path is relative to this process's working directory.
 pub fn host_path(path: &str) -> Result<PathBuf, String> {
-    if path.is_empty() {
-        return Err("path cannot be empty".to_string());
-    }
-    let rest = path
-        .strip_prefix('~')
-        .filter(|rest| rest.is_empty() || rest.starts_with(['/', std::path::MAIN_SEPARATOR]));
-    let path = match rest {
-        Some(rest) => {
-            let home = crate::platform::paths::home_directory()
-                .ok_or_else(|| "cannot expand `~`: no home directory".to_string())?;
-            PathBuf::from(format!("{home}{rest}"))
-        }
-        None => PathBuf::from(path),
-    };
+    let path = expand_home(path)?;
     if path.is_absolute() {
         return Ok(path);
     }
     std::env::current_dir()
         .map(|cwd| cwd.join(path))
         .map_err(|err| format!("cannot resolve a relative path: {err}"))
+}
+
+/// [`host_path`] with a relative path anchored at `base` instead of this process's directory.
+fn host_path_in(path: &str, base: &Path) -> Result<PathBuf, String> {
+    Ok(base.join(expand_home(path)?))
+}
+
+fn expand_home(path: &str) -> Result<PathBuf, String> {
+    if path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    let rest = path
+        .strip_prefix('~')
+        .filter(|rest| rest.is_empty() || rest.starts_with(['/', std::path::MAIN_SEPARATOR]));
+    match rest {
+        Some(rest) => {
+            let home = crate::platform::paths::home_directory()
+                .ok_or_else(|| "cannot expand `~`: no home directory".to_string())?;
+            Ok(PathBuf::from(format!("{home}{rest}")))
+        }
+        None => Ok(PathBuf::from(path)),
+    }
 }
 
 #[cfg(test)]
@@ -460,20 +632,12 @@ mod tests {
         );
     }
 
-    /// The CLI names a checkout by any path inside it and never needs the repository's own root:
-    /// removal runs from the primary checkout, and resolution finds the innermost containing tree.
-    #[test]
-    fn host_calls_resolve_checkouts_from_any_path_inside_them() {
-        if !crate::platform::command::program_exists("git") {
-            return;
-        }
-        crate::test_support::isolate_user_dirs();
-        let temp = tempfile::tempdir().unwrap();
-        let repo = temp.path().join("repo");
-        std::fs::create_dir(&repo).unwrap();
-        git(&repo, &["init", "-q"]);
+    /// A repository at `repo` with one commit and a linked checkout of a new `feat/cli` branch.
+    fn repo_with_feature_checkout(repo: &Path) -> WorktreeInfo {
+        std::fs::create_dir(repo).unwrap();
+        git(repo, &["init", "-q"]);
         git(
-            &repo,
+            repo,
             &[
                 "-c",
                 "user.name=Test",
@@ -486,16 +650,40 @@ mod tests {
                 "initial",
             ],
         );
-        let repo_str = repo.to_string_lossy().into_owned();
-
         let HostReply::Created { worktree, .. } = run_host_call(HostCall::Create {
-            cwd: Some(repo_str.clone()),
+            cwd: Some(repo.to_string_lossy().into_owned()),
             branch: "feat/cli".into(),
             base: "HEAD".into(),
             path: None,
         }) else {
             panic!("create failed");
         };
+        worktree
+    }
+
+    fn resolve(cwd: &Path, checkout: CheckoutSelector) -> Result<WorktreeInfo, String> {
+        match run_host_call(HostCall::Resolve {
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            checkout,
+        }) {
+            HostReply::Resolved { worktree, .. } => Ok(worktree),
+            HostReply::Failed { message } => Err(message),
+            other => panic!("unexpected reply {other:?}"),
+        }
+    }
+
+    /// The CLI names a checkout by any path inside it and never needs the repository's own root:
+    /// removal runs from the primary checkout, and resolution finds the innermost containing tree.
+    #[test]
+    fn host_calls_resolve_checkouts_from_any_path_inside_them() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        crate::test_support::isolate_user_dirs();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let worktree = repo_with_feature_checkout(&repo);
+        let repo_str = repo.to_string_lossy().into_owned();
         let checkout = canonical(&temp.path().join("repo-worktrees").join("feat-cli"));
         assert_eq!(canonical(Path::new(&worktree.path)), checkout);
 
@@ -514,7 +702,8 @@ mod tests {
             sessions,
             checkouts,
         } = run_host_call(HostCall::Resolve {
-            path: nested.to_string_lossy().into_owned(),
+            cwd: None,
+            checkout: CheckoutSelector::Path(nested.to_string_lossy().into_owned()),
         })
         else {
             panic!("resolve failed");
@@ -527,7 +716,8 @@ mod tests {
 
         assert!(matches!(
             run_host_call(HostCall::Remove {
-                path: repo_str.clone(),
+                cwd: None,
+                checkout: CheckoutSelector::Auto(repo_str.clone()),
                 force: true,
                 delete_branch: None,
             }),
@@ -535,7 +725,8 @@ mod tests {
         ));
         assert_eq!(
             run_host_call(HostCall::Remove {
-                path: nested.to_string_lossy().into_owned(),
+                cwd: None,
+                checkout: CheckoutSelector::Auto(nested.to_string_lossy().into_owned()),
                 force: true,
                 delete_branch: Some(worktrees::BranchDeletion::NONE),
             }),
@@ -546,6 +737,101 @@ mod tests {
         );
         assert!(!checkout.exists());
         git(&repo, &["show-ref", "--verify", "refs/heads/feat/cli"]);
+    }
+
+    /// A bare operand is tried as a path and as a branch from `cwd`. Either match alone selects
+    /// its checkout, both on the same checkout agree, and two different checkouts are refused.
+    #[test]
+    fn operands_resolve_by_branch_or_path_and_refuse_to_guess() {
+        if !crate::platform::command::program_exists("git") {
+            return;
+        }
+        crate::test_support::isolate_user_dirs();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let worktree = repo_with_feature_checkout(&repo);
+        let is_primary = |tree: &WorktreeInfo| worktrees::same_path(Path::new(&tree.path), &repo);
+        let auto = |operand: &str| CheckoutSelector::Auto(operand.into());
+        let branch = || CheckoutSelector::Branch("feat/cli".into());
+
+        assert_eq!(resolve(&repo, auto("feat/cli")), Ok(worktree.clone()));
+        assert_eq!(resolve(&repo, branch()), Ok(worktree.clone()));
+        let missing = resolve(&repo, auto("feat/none")).expect_err("matches nothing");
+        assert!(
+            missing.starts_with("no checkout matches `feat/none`:"),
+            "{missing}"
+        );
+        // An explicit path never falls back to the branch of the same name.
+        assert!(resolve(&repo, auto("./feat/cli")).is_err());
+
+        // A `feat/cli` directory in the primary checkout makes the bare operand name two checkouts.
+        std::fs::create_dir_all(repo.join("feat").join("cli")).unwrap();
+        let ambiguous = resolve(&repo, auto("feat/cli")).expect_err("ambiguous");
+        assert!(
+            ambiguous.starts_with("`feat/cli` names two checkouts:"),
+            "{ambiguous}"
+        );
+        for expected in [
+            "primary checkout)",
+            &format!("{} (branch feat/cli)", worktree.path),
+            "`./feat/cli` for the path or `--branch feat/cli` for the branch",
+        ] {
+            assert!(ambiguous.contains(expected), "{ambiguous}");
+        }
+        assert!(resolve(&repo, auto("./feat/cli")).is_ok_and(|tree| is_primary(&tree)));
+        assert_eq!(resolve(&repo, branch()), Ok(worktree.clone()));
+
+        // From inside the linked checkout, its own `feat/cli` directory and branch agree.
+        let checkout = PathBuf::from(&worktree.path);
+        std::fs::create_dir_all(checkout.join("feat").join("cli")).unwrap();
+        assert_eq!(resolve(&checkout, auto("feat/cli")), Ok(worktree.clone()));
+
+        // `cwd` anchors a relative path but never confines an absolute one.
+        assert!(resolve(&checkout, auto("../../repo")).is_ok_and(|tree| is_primary(&tree)));
+        assert!(
+            resolve(temp.path(), auto(&repo.to_string_lossy())).is_ok_and(|tree| is_primary(&tree))
+        );
+
+        assert_eq!(
+            run_host_call(HostCall::Remove {
+                cwd: Some(repo.to_string_lossy().into_owned()),
+                checkout: branch(),
+                force: true,
+                delete_branch: Some(worktrees::BranchDeletion::NONE),
+            }),
+            HostReply::Removed {
+                path: worktree.path.clone(),
+                branches: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn operands_that_read_as_paths_are_never_branches() {
+        for operand in ["./x", "../x", "/x", "~", "~/x", ".", "..", ".\\x"] {
+            assert!(explicit_path(operand), "{operand}");
+        }
+        for operand in ["main", "feat/login", "x/./y", "fix-~"] {
+            assert!(!explicit_path(operand), "{operand}");
+        }
+    }
+
+    #[test]
+    fn checkouts_are_described_by_path_branch_and_role() {
+        let tree = |branch: Option<&str>, linked| WorktreeInfo {
+            path: "/src/repo".into(),
+            branch: branch.map(Into::into),
+            detached: branch.is_none(),
+            bare: false,
+            prunable: false,
+            linked,
+            lock: None,
+        };
+        assert_eq!(
+            describe_checkout(&tree(Some("main"), false)),
+            "/src/repo (branch main, primary checkout)"
+        );
+        assert_eq!(describe_checkout(&tree(None, true)), "/src/repo (detached)");
     }
 
     /// A checkout created inside the repository reports that Git does not ignore its directory,
@@ -656,7 +942,8 @@ mod tests {
     #[test]
     fn host_calls_and_replies_have_a_stable_json_shape() {
         let call = HostCall::Remove {
-            path: "C:\\code\\repo-worktrees\\feat".into(),
+            cwd: None,
+            checkout: CheckoutSelector::Path("C:\\code\\repo-worktrees\\feat".into()),
             force: true,
             delete_branch: Some(worktrees::BranchDeletion {
                 local: true,
@@ -666,7 +953,20 @@ mod tests {
         let json = serde_json::to_value(&call).expect("encodes");
         assert_eq!(
             json,
-            serde_json::json!({"op": "remove", "path": "C:\\code\\repo-worktrees\\feat", "force": true, "delete_branch": {"local": true, "remote": false}})
+            serde_json::json!({"op": "remove", "cwd": null, "checkout": {"path": "C:\\code\\repo-worktrees\\feat"}, "force": true, "delete_branch": {"local": true, "remote": false}})
+        );
+        let call = HostCall::Unlock {
+            cwd: Some("~/src/repo".into()),
+            checkout: CheckoutSelector::Branch("feat/login".into()),
+        };
+        let json = serde_json::to_value(&call).expect("encodes");
+        assert_eq!(
+            json,
+            serde_json::json!({"op": "unlock", "cwd": "~/src/repo", "checkout": {"branch": "feat/login"}})
+        );
+        assert_eq!(
+            serde_json::from_value::<HostCall>(json).expect("decodes"),
+            call
         );
         let reply = HostReply::Listed {
             worktrees: vec![ListedWorktree {

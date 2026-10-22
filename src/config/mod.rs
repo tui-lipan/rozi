@@ -32,11 +32,12 @@ pub use extensions::{
 };
 pub(crate) use extensions::{
     ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig,
-    apply_suggested_keybinding_resolutions, check_extension, create_extension_scaffold,
-    extensions_dir_path, is_extension_scoped_id, merge_extension_settings, prepare_state_dir,
-    provenance_from_process, provenance_is_active, read_user_extension_config,
-    reconcile_generations, report_sections, report_text, scan_extensions, scan_extensions_for_cli,
-    scan_extensions_with_user_config, validate_extension_installation_id,
+    apply_suggested_keybinding_resolutions, authoring_hints, check_extension,
+    create_extension_scaffold, extensions_dir_path, is_extension_scoped_id,
+    merge_extension_settings, prepare_state_dir, provenance_from_process, provenance_is_active,
+    read_user_extension_config, reconcile_generations, report_sections, report_text,
+    scan_extensions, scan_extensions_for_cli, scan_extensions_with_user_config,
+    validate_extension_installation_id,
 };
 pub use file::*;
 pub use keymap::*;

@@ -1,0 +1,32 @@
+[extension]
+id = "agent-board"
+title = "Agent board"
+description = "Lists the active session's agents in a sidebar tab, and teaches Rozi a demo agent"
+version = "1.0.0"
+api = 1
+
+# Recognize a coding-agent CLI in a pane: here, the demo agent in bin/.
+[[agents]]
+id = "demo"
+label = "Demo agent"
+match = { paths = ["demo_agent.py"] }
+
+[[agents.states]]
+state = "working"
+scope = "footer"
+screen = { any_of = ["esc to interrupt"] }
+
+[[agents.states]]
+state = "blocked"
+screen = { any_of = ["Apply this change? (y/n)"] }
+
+[[sidebar_tabs]]
+name = "agents"
+label = "Agents"
+stream = true
+
+# Follow the session on screen, on that session's host, local or over SSH.
+[[services]]
+name = "board"
+exec = ["python3", "{extension_dir}/bin/board.py"]
+placement = "active-session"

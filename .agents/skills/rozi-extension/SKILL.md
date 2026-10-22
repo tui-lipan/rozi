@@ -18,7 +18,15 @@ reach into its state files.
 rozi extensions new my-extension
 cd my-extension
 rozi extensions check .
+rozi extensions install --link .
+rozi run-action reload-extensions
+rozi run-action my-extension.hello
 ```
+
+Treat every `Hint` row from `check` (`hints` in `--json`) as a bug even when the status is
+`loaded`. Model new work on `examples/extensions/hello` (command and picker),
+`project-status` (service, subscribe/publish, per-host state), and `agent-board` (agents, stream tab).
+Both services use `active-session` placement. Each example has Python tests that stub `rozi`.
 
 A normal extension is an independent directory:
 

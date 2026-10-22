@@ -1,0 +1,12 @@
+[extension]
+id = "project-status"
+title = "Project status"
+description = "Shows the focused project's Git branch and uncommitted changes in Activity"
+version = "1.0.0"
+api = 1
+
+[[services]]
+name = "watch"
+exec = ["python3", "{extension_dir}/bin/project_status.py"]
+placement = "active-session"
+restart = "on-failure"

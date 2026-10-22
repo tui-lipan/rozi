@@ -8,6 +8,7 @@ use super::schema::{
 };
 use tui_lipan::prelude::KeyBinding;
 
+mod advice;
 mod authoring;
 mod contributions;
 mod diagnostics;
@@ -20,6 +21,7 @@ mod runtime;
 mod settings;
 mod validation;
 
+pub(crate) use advice::authoring_hints;
 pub(crate) use authoring::create_extension_scaffold;
 pub use diagnostics::{
     EXTENSION_DIAGNOSTICS_SCHEMA_VERSION, ExtensionCheckDocument, ExtensionListDocument,
@@ -1976,6 +1978,9 @@ mod tests {
             "docker",
             "ssh-tools",
             "agent-activity",
+            "hello",
+            "project-status",
+            "agent-board",
         ] {
             let extension = check_extension(&root.join(directory));
             assert_eq!(

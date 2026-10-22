@@ -11,7 +11,7 @@ that scripts use.
 
 ## Create your first extension
 
-Generate a scaffold, validate it, and link it:
+Generate a scaffold, validate it, link it, and run its command:
 
 ```sh
 rozi extensions new my-extension
@@ -21,6 +21,11 @@ rozi extensions install --link .
 rozi run-action reload-extensions
 rozi run-action my-extension.hello
 ```
+
+`rozi extensions new` prints these steps after it creates the scaffold. `--link` makes this
+checkout the installed extension, so after an edit you only run `reload-extensions` again. The
+last command shows a "Hello from my-extension" notification in the running `rozi`; run the commands
+from a pane in it, or open the command palette and choose **Hello from my-extension**.
 
 `rozi extensions new` requires Python 3 and creates:
 
@@ -834,6 +839,11 @@ Validate after every manifest edit:
 rozi extensions check .
 ```
 
+Besides errors, `check` prints hints: the likely fix for a common mistake, such as a misspelled
+key, `exec` written as a string, or a script path that a command would look for in the focused
+pane's directory instead of the extension's. A hint does not make an extension invalid, so fix a
+hinted manifest even when it loads. `check --json` lists them in `hints`.
+
 Then test in the isolated environment described in [Extension testing](extension-testing.md).
 Do not test by copying unfinished code into your normal extension directory.
 
@@ -908,7 +918,15 @@ In practice:
 
 ## Examples
 
-The repository includes these example extensions:
+Three examples build on each other, each with its own tests:
+
+1. [Hello](../examples/extensions/hello/) — a command, and a picker when you want one
+2. [Project status](../examples/extensions/project-status/) — a service on the active session's
+   host that subscribes to events, publishes an Activity row, and keeps per-host state
+3. [Agent board](../examples/extensions/agent-board/) — an agent definition, a sidebar stream tab,
+   and a service that follows the active session, local or remote
+
+The repository also includes these example extensions:
 
 - [Git tools](../examples/extensions/git-tools/) — grouped branch and worktree pickers
 - [PR dashboard](../examples/extensions/pr-dashboard/) — a supervised pull request monitor

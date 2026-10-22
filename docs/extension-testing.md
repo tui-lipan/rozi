@@ -57,7 +57,10 @@ for extension in \
     agent-activity \
     activity-dashboard \
     snippets \
-    tasks
+    tasks \
+    hello \
+    project-status \
+    agent-board
 do
     "$ROZI_BIN" extensions check "examples/extensions/$extension"
     "$ROZI_BIN" extensions install --link "examples/extensions/$extension"

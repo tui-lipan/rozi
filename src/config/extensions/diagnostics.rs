@@ -31,13 +31,18 @@ impl ExtensionListDocument {
 pub struct ExtensionCheckDocument {
     pub schema_version: u32,
     pub extension: ExtensionInfo,
+    /// Suggested fixes for likely authoring mistakes, whether or not they stop the extension
+    /// loading.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
 }
 
 impl ExtensionCheckDocument {
-    pub(crate) fn new(extension: ExtensionInfo) -> Self {
+    pub(crate) fn new(extension: ExtensionInfo, hints: Vec<String>) -> Self {
         Self {
             schema_version: EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
             extension,
+            hints,
         }
     }
 }

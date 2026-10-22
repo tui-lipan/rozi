@@ -1,0 +1,16 @@
+[extension]
+id = "hello"
+title = "Hello"
+description = "The smallest useful extension: a command, and a picker when you want one"
+version = "1.0.0"
+api = 1
+
+[[commands]]
+id = "greet"
+label = "Say hello"
+exec = ["python", "{extension_dir}/bin/hello.py"]
+
+[[commands]]
+id = "pick"
+label = "Say hello to…"
+exec = ["python", "{extension_dir}/bin/hello.py", "--pick"]

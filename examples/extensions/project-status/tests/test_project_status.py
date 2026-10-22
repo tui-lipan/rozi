@@ -53,7 +53,7 @@ class SnapshotTest(unittest.TestCase):
 class FocusTest(unittest.TestCase):
     def test_unknown_focus_never_falls_back_to_the_first_pane(self) -> None:
         with patch.object(project_status.subprocess, "run") as command:
-            self.assertIsNone(project_status.focused_cwd(None))
+            self.assertIsNone(project_status.focused_pane(None))
         command.assert_not_called()
 
     def test_missing_focus_or_invalid_layout_has_no_initial_pane(self) -> None:
@@ -63,25 +63,48 @@ class FocusTest(unittest.TestCase):
             ):
                 self.assertIsNone(project_status.current_focus())
 
+    def test_pane_lookup_rejects_a_different_session_with_the_same_id(self) -> None:
+        payload = [{"session": "B", "id": 5, "cwd": "/repo/B"}]
+        with patch.object(project_status.subprocess, "run", return_value=SimpleNamespace(
+            stdout=json.dumps(payload)
+        )):
+            self.assertIsNone(project_status.focused_pane(("A", "5")))
+            self.assertEqual(project_status.focused_pane(("B", "5")), payload[0])
+
     def test_polling_recovers_a_missed_focus_change_and_ignores_stale_events(self) -> None:
         # An empty stream models a transition before subscription registration. A stale
         # pane-1 event must not override layout's authoritative pane-5 snapshot either.
-        for event_pane in (None, "1"):
-            with self.subTest(event_pane=event_pane), tempfile.TemporaryDirectory() as state_dir:
-                output = io.StringIO()
-                publisher = SimpleNamespace(stdin=output, poll=Mock(side_effect=[None, None, 0]))
+        cases = (
+            (None, (("A", 5), ("A", 7))),
+            ("1", (("A", 5), ("A", 7))),
+            (None, (("A", 5), ("B", 5))),
+        )
+        for event_pane, targets in cases:
+            with (
+                self.subTest(event_pane=event_pane, targets=targets),
+                tempfile.TemporaryDirectory() as state_dir,
+            ):
+                publishers = [Mock(), Mock()]
+                for child in publishers:
+                    child.poll.return_value = None
                 event = {"event": "focus-changed", "data": {"pane": event_pane}}
-                events = SimpleNamespace(
-                    stdout=io.StringIO(json.dumps(event) + "\n" if event_pane else ""),
-                    poll=lambda: None,
-                )
-                focus = iter((5, 7))
+                events = Mock(stdout=io.StringIO(json.dumps(event) + "\n" if event_pane else ""))
+                events.poll.side_effect = [None, None, 0]
+                focus = iter(targets)
+                visible_session = ["A"]
 
                 def query(arguments, **kwargs):
                     if arguments[1] == "layout":
-                        payload = {"client": {"focused_pane": next(focus)}}
+                        session, pane = next(focus)
+                        visible_session[0] = session
+                        payload = {"session": session, "client": {"focused_pane": pane}}
                     else:
-                        payload = [{"id": pane, "cwd": f"/repo/{pane}"} for pane in (1, 5, 7)]
+                        session = visible_session[0]
+                        payload = [
+                            {"id": pane, "session": session, "cwd": f"/repo/{session}/{pane}",
+                             "reference": {"session_instance": f"instance-{session}"}}
+                            for pane in (1, 5, 7)
+                        ]
                     return SimpleNamespace(stdout=json.dumps(payload))
 
                 # Drain any queued events before polling, without depending on thread timing.
@@ -96,16 +119,116 @@ class FocusTest(unittest.TestCase):
                         "ROZI_EXTENSION": "project-status",
                         "ROZI_EXTENSION_STATE_DIR": state_dir,
                     }),
-                    patch.object(project_status.subprocess, "Popen", side_effect=[publisher, events]),
+                    patch.object(
+                        project_status.subprocess, "Popen", side_effect=[events, *publishers]
+                    ) as commands,
                     patch.object(project_status.subprocess, "run", side_effect=query),
                     patch.object(project_status.threading, "Thread", side_effect=reader),
                     patch.object(project_status.threading, "Event"),
                     patch.object(project_status, "git_status", side_effect=git_status) as git,
                 ):
                     self.assertEqual(project_status.run(), 0)
-                self.assertEqual([call.args[0] for call in git.call_args_list], ["/repo/5", "/repo/7"])
-                titles = [json.loads(line)["rows"][0]["title"] for line in output.getvalue().splitlines()]
-                self.assertEqual(titles, ["5 · main", "7 · main"])
+                self.assertEqual(
+                    [call.args[0] for call in git.call_args_list],
+                    [f"/repo/{session}/{pane}" for session, pane in targets],
+                )
+                environments = [call.kwargs["env"] for call in commands.call_args_list[1:]]
+                self.assertEqual(
+                    [(env["ROZI_PANE"], env["ROZI_SESSION_INSTANCE"]) for env in environments],
+                    [(str(pane), f"instance-{session}") for session, pane in targets],
+                )
+                titles = [
+                    json.loads(child.stdin.write.call_args.args[0])["rows"][0]["title"]
+                    for child in publishers
+                ]
+                self.assertEqual(titles, [f"{pane} · main" for _, pane in targets])
+                for child in publishers:
+                    child.stdin.close.assert_called_once()
+                    child.wait.assert_called_once_with(timeout=2)
+                events.terminate.assert_called_once()
+
+    def test_publisher_failure_exits_for_supervised_retry_and_closes_children(self) -> None:
+        publisher = Mock()
+        publisher.publish.return_value = False
+        events = Mock(stdout=io.StringIO())
+        events.poll.return_value = None
+        with (
+            tempfile.TemporaryDirectory() as state_dir,
+            patch.dict(project_status.os.environ, {
+                "ROZI_EXTENSION": "project-status", "ROZI_EXTENSION_STATE_DIR": state_dir,
+            }),
+            patch.object(project_status, "Publisher", return_value=publisher),
+            patch.object(project_status.subprocess, "Popen", return_value=events),
+            patch.object(project_status, "current_focus", return_value=None),
+        ):
+            self.assertEqual(project_status.run(), 1)
+        publisher.close.assert_called_once()
+        events.terminate.assert_called_once()
+        events.wait.assert_called_once_with(timeout=2)
+
+
+class PublisherTest(unittest.TestCase):
+    def test_ownership_follows_panes_sessions_and_session_instances(self) -> None:
+        snapshots = []
+        children = []
+
+        def start(arguments, **kwargs):
+            if children:
+                # Old rows must be withdrawn before opening their replacement.
+                children[-1].stdin.close.assert_called_once()
+                children[-1].wait.assert_called_once_with(timeout=2)
+            child = Mock()
+            child.poll.return_value = None
+            children.append(child)
+            snapshots.append(kwargs["env"])
+            return child
+
+        publisher = project_status.Publisher()
+        targets = (("A", 5, "instance-a"), ("A", 7, "instance-a"),
+                   ("B", 7, "instance-b"), ("B", 7, "replacement-b"))
+        with (
+            patch.dict(project_status.os.environ, {
+                "ROZI_PANE": "99", "ROZI_SESSION_INSTANCE": "launch-session",
+                "ROZI_EXTENSION": "project-status",
+            }),
+            patch.object(project_status.subprocess, "Popen", side_effect=start) as command,
+        ):
+            for session, pane, instance in targets:
+                target = {"session": session, "id": pane,
+                          "reference": {"session_instance": instance}}
+                rows = {"rows": [{"id": "project", "title": f"{session}/{pane}"}]}
+                self.assertTrue(publisher.publish(target, rows))
+                # Refreshing content in the same pane keeps the stream.
+                self.assertTrue(publisher.publish(target, rows))
+                self.assertEqual(json.loads(children[-1].stdin.write.call_args.args[0]), rows)
+            self.assertTrue(publisher.publish(None, {"rows": []}))
+            publisher.close()
+        self.assertEqual(command.call_count, len(targets))
+        self.assertEqual(
+            [(env["ROZI_PANE"], env["ROZI_SESSION_INSTANCE"]) for env in snapshots],
+            [(str(pane), instance) for _, pane, instance in targets],
+        )
+        self.assertTrue(all(env["ROZI_EXTENSION"] == "project-status" for env in snapshots))
+        for child in children:
+            child.stdin.close.assert_called_once()
+            child.wait.assert_called_once_with(timeout=2)
+
+    def test_missing_focus_does_not_open_an_untargeted_publisher(self) -> None:
+        with patch.object(project_status.subprocess, "Popen") as command:
+            self.assertTrue(project_status.Publisher().publish(None, {"rows": []}))
+        command.assert_not_called()
+
+    def test_a_slow_publisher_is_killed_and_reaped(self) -> None:
+        child = Mock()
+        child.poll.return_value = None
+        child.wait.side_effect = [subprocess.TimeoutExpired("rozi publish", 2), 0]
+        with patch.object(project_status.subprocess, "Popen", return_value=child):
+            publisher = project_status.Publisher()
+            publisher.publish({"session": "A", "id": 5}, {"rows": []})
+            publisher.close()
+        child.stdin.close.assert_called_once()
+        child.kill.assert_called_once()
+        self.assertEqual(child.wait.call_count, 2)
 
 
 class DirtySinceTest(unittest.TestCase):

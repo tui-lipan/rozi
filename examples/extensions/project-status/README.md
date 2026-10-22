@@ -10,7 +10,8 @@ This extension uses the Python standard library, `git`, and the public `rozi` CL
 
 An Activity row for the project in the focused pane: its folder name and Git branch, and either
 `clean` or how many files are uncommitted and for how long, such as
-`3 uncommitted files for 2h`. Outside a Git repository the row disappears.
+`3 uncommitted files for 2h`. The row follows pane and session switches; activating it focuses
+the pane whose project it describes. Outside a Git repository the row disappears.
 
 ## Requirements
 
@@ -34,8 +35,10 @@ rozi run-action reload-extensions
   `rozi subscribe focus-changed pane-exited` requests an earlier refresh when focus changes or
   a pane exits; otherwise the service waits five seconds between polls.
   `rozi list-panes --format json` gives the focused pane's directory.
-- `rozi publish` takes a snapshot of rows on each line. Rozi attaches a service's rows to the pane
-  that was focused when the stream opened.
+- `rozi publish` takes a snapshot of rows on each line. The service targets the focused pane
+  with `ROZI_PANE` and its session instance with `ROZI_SESSION_INSTANCE` from the pane's reference.
+  When that identity changes, it closes and reaps the old publisher before opening its replacement.
+  Losing focus withdraws the row until a focused pane is available.
 - The time each project became dirty is kept in `$ROZI_EXTENSION_STATE_DIR/dirty-since.json`, so it
   survives reloads, updates, and reinstalling. The service writes a temporary file and renames
   it, because every process of the extension on this machine shares the directory. Delete the

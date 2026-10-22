@@ -106,8 +106,8 @@ def snapshot(status: Status | None, since: float | None, now: float) -> dict[str
     return {"rows": [row]}
 
 
-def current_focus() -> str | None:
-    """The UI's focused pane, which list-panes does not identify."""
+def current_focus() -> tuple[str, str] | None:
+    """The session and focused pane on screen; pane IDs alone are not unique."""
     result = subprocess.run(
         [ROZI, "layout", "get", "--format", "json"], capture_output=True, text=True, check=False
     )
@@ -117,11 +117,11 @@ def current_focus() -> str | None:
         return None
     client = layout.get("client") or {}
     pane = client.get("focused_pane")
-    return str(pane) if pane is not None else None
+    return (layout["session"], str(pane)) if pane is not None else None
 
 
-def focused_cwd(pane: str | None) -> str | None:
-    if pane is None:
+def focused_pane(focus: tuple[str, str] | None) -> dict[str, object] | None:
+    if focus is None:
         return None
     result = subprocess.run(
         [ROZI, "list-panes", "--format", "json"], capture_output=True, text=True, check=False
@@ -131,9 +131,65 @@ def focused_cwd(pane: str | None) -> str | None:
     except json.JSONDecodeError:
         return None
     for entry in panes if isinstance(panes, list) else []:
-        if str(entry.get("id")) == pane:
-            return entry.get("cwd")
+        if (entry.get("session"), str(entry.get("id"))) == focus:
+            return entry
     return None
+
+
+class Publisher:
+    """Keep one publisher bound to the focused pane, withdrawing it when ownership changes."""
+
+    def __init__(self) -> None:
+        self.owner: tuple[str, str, str] | None = None
+        self.process: subprocess.Popen[str] | None = None
+
+    def close(self) -> None:
+        process = self.process
+        self.process = None
+        self.owner = None
+        if process is None:
+            return
+        assert process.stdin is not None
+        try:
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    def follow(self, pane: dict[str, object] | None) -> None:
+        if pane is None:
+            self.close()
+            return
+        reference = pane.get("reference") or {}
+        instance = str(reference.get("session_instance", ""))
+        owner = (str(pane["session"]), str(pane["id"]), instance)
+        if owner != self.owner:
+            self.close()
+        if self.process is None:
+            # Pin both namespaces. In particular, do not inherit the service's launch session.
+            environment = dict(os.environ, ROZI_PANE=owner[1], ROZI_SESSION_INSTANCE=instance)
+            self.process = subprocess.Popen(
+                [ROZI, "publish"], stdin=subprocess.PIPE, text=True, env=environment
+            )
+            self.owner = owner
+
+    def publish(self, pane: dict[str, object] | None, rows: dict[str, object]) -> bool:
+        self.follow(pane)
+        if self.process is None:
+            return True
+        if self.process.poll() is not None:
+            return False
+        assert self.process.stdin is not None
+        try:
+            self.process.stdin.write(json.dumps(rows) + "\n")
+            self.process.stdin.flush()
+        except BrokenPipeError:
+            return False
+        return True
 
 
 def run() -> int:
@@ -141,11 +197,11 @@ def run() -> int:
         print("project-status must be started by Rozi", file=sys.stderr)
         return 2
     memory = DirtySince(Path(os.environ["ROZI_EXTENSION_STATE_DIR"]))
-    publisher = subprocess.Popen([ROZI, "publish"], stdin=subprocess.PIPE, text=True)
+    publisher = Publisher()
     events = subprocess.Popen(
         [ROZI, "subscribe", "focus-changed", "pane-exited"], stdout=subprocess.PIPE, text=True
     )
-    assert publisher.stdin is not None and events.stdout is not None
+    assert events.stdout is not None
     refresh = threading.Event()
 
     def follow_events() -> None:
@@ -155,20 +211,27 @@ def run() -> int:
                 refresh.set()
 
     threading.Thread(target=follow_events, daemon=True).start()
-    while publisher.poll() is None and events.poll() is None:
-        refresh.clear()
-        now = time.time()
-        # Popen cannot acknowledge subscription readiness. Poll authoritative focus even
-        # without an event, so a transition before registration cannot leave us stale.
-        directory = focused_cwd(current_focus())
-        status = git_status(directory) if directory else None
-        since = memory.update(status, now) if status else None
+    try:
+        while events.poll() is None:
+            refresh.clear()
+            now = time.time()
+            # Poll authoritative focus even when a transition predates subscription readiness.
+            pane = focused_pane(current_focus())
+            directory = pane.get("cwd") if pane else None
+            status = git_status(directory) if directory else None
+            since = memory.update(status, now) if status else None
+            if not publisher.publish(pane, snapshot(status, since, now)):
+                # A pane can exit while the stream opens; let on-failure supervision retry.
+                return 1
+            refresh.wait(5)
+    finally:
+        publisher.close()
+        events.terminate()
         try:
-            publisher.stdin.write(json.dumps(snapshot(status, since, now)) + "\n")
-            publisher.stdin.flush()
-        except BrokenPipeError:
-            break
-        refresh.wait(5)
+            events.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            events.kill()
+            events.wait()
     # Rozi closes the streams when it reloads or disables the extension; exit rather than retry.
     return 0
 

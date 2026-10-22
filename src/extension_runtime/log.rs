@@ -365,15 +365,20 @@ fn units_in(env: &PlatformEnv, extension: &str) -> io::Result<Vec<String>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
+    // Either generation names a unit. Between a rotation's rename and its new live file, and after
+    // a crash in that gap, only the rotated one exists, and the unit must not vanish for it.
     let mut units: Vec<String> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            let stem = name.strip_suffix(".log")?;
+            let stem = name
+                .strip_suffix(".log")
+                .or_else(|| name.strip_suffix(".log.1"))?;
             Some(stem.to_string())
         })
         .collect();
     units.sort();
+    units.dedup();
     Ok(units)
 }
 
@@ -757,6 +762,26 @@ mod tests {
         assert_eq!(
             fs::read_to_string(path.with_extension(ROTATED_SUFFIX)).unwrap(),
             "cut off mid-line\n"
+        );
+    }
+
+    /// Between a rotation's rename and its new live file only the rotated generation exists. The
+    /// unit is still there, and `logs` must neither miss it nor list it twice.
+    #[test]
+    fn a_unit_whose_live_file_does_not_exist_yet_is_still_listed_once() {
+        let (_scratch, env) = env();
+        let dir = paths::ensure_extension_log_dir(&env, "tool").unwrap();
+        fs::write(dir.join("commands.log.1"), "kept\n").unwrap();
+        assert_eq!(units_in(&env, "tool").unwrap(), ["commands"]);
+        assert_eq!(tail_in(&env, "tool", "commands", 5).unwrap(), ["kept"]);
+
+        // With both generations, and a lock file beside them, it is still one unit.
+        fs::write(dir.join("commands.log"), "live\n").unwrap();
+        fs::write(dir.join("commands.lock"), "").unwrap();
+        fs::write(dir.join("service.watch.log"), "other\n").unwrap();
+        assert_eq!(
+            units_in(&env, "tool").unwrap(),
+            ["commands", "service.watch"].map(String::from)
         );
     }
 

@@ -146,19 +146,21 @@ def run() -> int:
         [ROZI, "subscribe", "focus-changed", "pane-exited"], stdout=subprocess.PIPE, text=True
     )
     assert publisher.stdin is not None and events.stdout is not None
-    # Subscribe before taking the snapshot so focus changes during the read stay queued.
-    focused: list[str | None] = [current_focus()]
+    refresh = threading.Event()
 
-    def follow_focus() -> None:
+    def follow_events() -> None:
         for line in events.stdout:
             event = json.loads(line)
-            if event.get("event") == "focus-changed":
-                focused[0] = event["data"]["pane"]
+            if event.get("event") in {"focus-changed", "pane-exited"}:
+                refresh.set()
 
-    threading.Thread(target=follow_focus, daemon=True).start()
+    threading.Thread(target=follow_events, daemon=True).start()
     while publisher.poll() is None and events.poll() is None:
+        refresh.clear()
         now = time.time()
-        directory = focused_cwd(focused[0])
+        # Popen cannot acknowledge subscription readiness. Poll authoritative focus even
+        # without an event, so a transition before registration cannot leave us stale.
+        directory = focused_cwd(current_focus())
         status = git_status(directory) if directory else None
         since = memory.update(status, now) if status else None
         try:
@@ -166,7 +168,7 @@ def run() -> int:
             publisher.stdin.flush()
         except BrokenPipeError:
             break
-        time.sleep(5)
+        refresh.wait(5)
     # Rozi closes the streams when it reloads or disables the extension; exit rather than retry.
     return 0
 

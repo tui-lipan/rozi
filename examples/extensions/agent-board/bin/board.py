@@ -28,17 +28,8 @@ def agent_panes(panes: list[dict[str, object]]) -> list[dict[str, object]]:
 
 
 def state_of(pane: dict[str, object]) -> str:
-    """Rozi's effective state: a detected block overrides a quiescent report."""
-    reported = pane.get("reported_status")
-    detected = pane.get("agent_state")
-    if detected == "blocked" and str(reported).strip().lower() in {"idle", "done"}:
-        return "blocked"
-    status = reported if reported is not None else detected
-    if status is None:
-        return "idle"
-    normalized = str(status).strip().lower()
-    # Core treats custom status text as working.
-    return normalized if normalized in TONES else "working"
+    """list-panes already projects integration reports, pane reports, and detection."""
+    return str(pane.get("agent_state") or "idle")
 
 
 def tab_snapshot(agents: list[dict[str, object]]) -> dict[str, object]:
@@ -64,7 +55,8 @@ def activity_snapshot(agents: list[dict[str, object]]) -> dict[str, object]:
     states = [state_of(pane) for pane in agents]
     waiting = states.count("blocked")
     working = states.count("working")
-    status = "blocked" if waiting else "working" if working else "idle"
+    urgency = ("blocked", "error", "working", "done", "idle")
+    status = next((state for state in urgency if state in states), "idle")
     reason = f"{waiting} waiting for you, {working} working, {len(agents)} in all"
     return {"rows": [{"id": "agents", "title": "Agents", "status": status, "reason": reason}]}
 

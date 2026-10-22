@@ -21,7 +21,7 @@ PANES = [
     {"id": 1, "title": "shell", "agent": None, "agent_state": None, "reported_status": None},
     {"id": 2, "title": "fix tests", "agent": "claude", "agent_state": "working",
      "reported_status": None},
-    {"id": 3, "title": "", "agent": "agent-board.demo", "agent_state": "idle",
+    {"id": 3, "title": "", "agent": "agent-board.demo", "agent_state": "blocked",
      "reported_status": "blocked"},
 ]
 
@@ -40,34 +40,34 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(row["reason"], "1 waiting for you, 1 working, 2 in all")
         self.assertEqual(board.activity_snapshot([]), {"rows": []})
 
-    def test_effective_state_preserves_detected_blocks(self) -> None:
-        for reported in ("idle", "done", " DONE ", "Idle"):
-            with self.subTest(reported=reported):
-                pane = {**PANES[1], "reported_status": reported, "agent_state": "blocked"}
-                (tab_row,) = board.tab_snapshot([pane])["rows"]
-                (activity_row,) = board.activity_snapshot([pane])["rows"]
-                self.assertEqual((tab_row["meta"], tab_row["tone"]), ("blocked", "blocked"))
-                self.assertEqual(activity_row["status"], "blocked")
-                self.assertEqual(activity_row["reason"], "1 waiting for you, 0 working, 1 in all")
-
-    def test_other_reports_keep_precedence_and_custom_reports_mean_working(self) -> None:
-        for reported, expected in (
-            ("working", "working"), ("blocked", "blocked"), ("error", "error"),
-            (" ERROR ", "error"), ("compiling", "working"), ("", "working"),
-            (None, "blocked"),
-        ):
-            with self.subTest(reported=reported):
-                self.assertEqual(
-                    board.state_of({"reported_status": reported, "agent_state": "blocked"}),
-                    expected,
-                )
-        self.assertEqual(board.state_of({"agent_state": "working"}), "working")
+    def test_effective_state_is_not_overridden_by_generic_reports(self) -> None:
+        # list-panes already includes integration reports and detection in agent_state.
+        for state in ("blocked", "error", "working", "done", "idle"):
+            for reported in ("working", "blocked", "done", "idle", "error", "compiling", None):
+                with self.subTest(state=state, reported=reported):
+                    pane = {**PANES[1], "agent_state": state, "reported_status": reported}
+                    (row,) = board.tab_snapshot([pane])["rows"]
+                    self.assertEqual(board.state_of(pane), state)
+                    self.assertEqual((row["meta"], row["tone"]), (state, board.TONES[state]))
         self.assertEqual(board.state_of({}), "idle")
 
-    def test_a_done_report_wins_over_a_working_screen(self) -> None:
-        self.assertEqual(
-            board.state_of({"reported_status": "done", "agent_state": "working"}), "done"
+    def test_activity_preserves_failures_and_uses_core_urgency(self) -> None:
+        cases = (
+            (["error"], "error"),
+            (["working", "error"], "error"),
+            (["error", "blocked"], "blocked"),
+            (["idle", "done"], "done"),
+            (["done", "working"], "working"),
+            (["done"], "done"),
+            (["idle"], "idle"),
         )
+        for states, expected in cases:
+            with self.subTest(states=states):
+                agents = [{**PANES[1], "agent_state": state} for state in states]
+                (row,) = board.activity_snapshot(agents)["rows"]
+                self.assertEqual(row["status"], expected)
+                (reversed_row,) = board.activity_snapshot(list(reversed(agents)))["rows"]
+                self.assertEqual(reversed_row["status"], expected)
 
     def test_activating_a_row_focuses_its_pane(self) -> None:
         self.assertEqual(board.handle({"activate": "3"}), [board.ROZI, "focus", "3"])

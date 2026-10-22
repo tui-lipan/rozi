@@ -63,56 +63,49 @@ class FocusTest(unittest.TestCase):
             ):
                 self.assertIsNone(project_status.current_focus())
 
-    def test_first_publication_uses_initial_focus_and_queued_focus_changes(self) -> None:
-        # Pane 1 comes first, but the UI starts on pane 5. A queued event can move it to 7.
-        for event_pane, expected in ((None, "5"), ("7", "7")):
+    def test_polling_recovers_a_missed_focus_change_and_ignores_stale_events(self) -> None:
+        # An empty stream models a transition before subscription registration. A stale
+        # pane-1 event must not override layout's authoritative pane-5 snapshot either.
+        for event_pane in (None, "1"):
             with self.subTest(event_pane=event_pane), tempfile.TemporaryDirectory() as state_dir:
                 output = io.StringIO()
-                publisher = SimpleNamespace(stdin=output, poll=Mock(side_effect=[None, 0]))
+                publisher = SimpleNamespace(stdin=output, poll=Mock(side_effect=[None, None, 0]))
                 event = {"event": "focus-changed", "data": {"pane": event_pane}}
                 events = SimpleNamespace(
                     stdout=io.StringIO(json.dumps(event) + "\n" if event_pane else ""),
                     poll=lambda: None,
                 )
-                commands = []
-
-                def start(arguments, **kwargs):
-                    commands.append(arguments[1:])
-                    return publisher if arguments[1] == "publish" else events
+                focus = iter((5, 7))
 
                 def query(arguments, **kwargs):
-                    commands.append(arguments[1:])
                     if arguments[1] == "layout":
-                        payload = {"client": {"focused_pane": 5}}
+                        payload = {"client": {"focused_pane": next(focus)}}
                     else:
                         payload = [{"id": pane, "cwd": f"/repo/{pane}"} for pane in (1, 5, 7)]
                     return SimpleNamespace(stdout=json.dumps(payload))
 
-                # Drain the already queued events deterministically when the reader starts.
+                # Drain any queued events before polling, without depending on thread timing.
                 def reader(target, **kwargs):
                     return SimpleNamespace(start=target)
+
+                def git_status(directory):
+                    return Status(directory, "main", [])
 
                 with (
                     patch.dict(project_status.os.environ, {
                         "ROZI_EXTENSION": "project-status",
                         "ROZI_EXTENSION_STATE_DIR": state_dir,
                     }),
-                    patch.object(project_status.subprocess, "Popen", side_effect=start),
+                    patch.object(project_status.subprocess, "Popen", side_effect=[publisher, events]),
                     patch.object(project_status.subprocess, "run", side_effect=query),
                     patch.object(project_status.threading, "Thread", side_effect=reader),
-                    patch.object(project_status.time, "sleep"),
-                    patch.object(project_status, "git_status", return_value=Status(
-                        f"/repo/{expected}", "main", []
-                    )) as git,
+                    patch.object(project_status.threading, "Event"),
+                    patch.object(project_status, "git_status", side_effect=git_status) as git,
                 ):
                     self.assertEqual(project_status.run(), 0)
-                git.assert_called_once_with(f"/repo/{expected}")
-                (row,) = json.loads(output.getvalue())["rows"]
-                self.assertEqual(row["title"], f"{expected} · main")
-                self.assertLess(
-                    commands.index(["subscribe", "focus-changed", "pane-exited"]),
-                    commands.index(["layout", "get", "--format", "json"]),
-                )
+                self.assertEqual([call.args[0] for call in git.call_args_list], ["/repo/5", "/repo/7"])
+                titles = [json.loads(line)["rows"][0]["title"] for line in output.getvalue().splitlines()]
+                self.assertEqual(titles, ["5 · main", "7 · main"])
 
 
 class DirtySinceTest(unittest.TestCase):

@@ -30,9 +30,10 @@ rozi run-action reload-extensions
 
 - `[[services]]` starts `bin/project_status.py` when the extension loads and restarts it if it
   fails. Rozi stops it when the extension is reloaded, disabled, or removed.
-- The service opens `rozi subscribe focus-changed pane-exited`, then reads the initial focused
-  pane from `rozi layout get --format json`. Focus events keep it up to date, and
-  `rozi list-panes --format json` gives that pane's directory.
+- The service reads the focused pane from `rozi layout get --format json` on each poll.
+  `rozi subscribe focus-changed pane-exited` requests an earlier refresh when focus changes or
+  a pane exits; otherwise the service waits five seconds between polls.
+  `rozi list-panes --format json` gives the focused pane's directory.
 - `rozi publish` takes a snapshot of rows on each line. Rozi attaches a service's rows to the pane
   that was focused when the stream opened.
 - The time each project became dirty is kept in `$ROZI_EXTENSION_STATE_DIR/dirty-since.json`, so it

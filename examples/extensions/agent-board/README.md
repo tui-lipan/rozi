@@ -50,7 +50,9 @@ Open **Sidebar tabs…** and show **Agents**.
   agents`, and answers `{"activate": …}` with `rozi focus`. It also writes one row to
   `rozi publish` for Activity.
 - The board shows only the session on screen. It does not collect or retain background-session
-  rows. A detected blocked screen overrides an idle or done report, matching Rozi's agent state.
+  rows. `list-panes.agent_state` supplies Rozi's effective agent state, including integration
+  reports. The Activity summary uses the same urgency order as Rozi: blocked, error, working,
+  done, then idle.
 
 ## Test
 

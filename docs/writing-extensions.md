@@ -161,7 +161,8 @@ see [Show a command only when it applies](#show-a-command-only-when-it-applies).
   manifest loads.
 - `{extension_dir}` is replaced inside `exec` arguments. `$VAR`, `${VAR}`, and `%VAR%` are not
   expanded.
-- An `exec` or `shell` command gets no input, and its output is discarded.
+- An `exec` or `shell` command gets no input. Its output goes to the extension's
+  [log](#read-an-extensions-logs), not to a pane.
 - Started from the command palette, an `exec` or `shell` command keeps the palette open until it
   exits or opens a [picker](control.md#pickers), so a picker replaces the palette without the panes
   flashing in between. If the command is still running after a moment, the palette shows that it
@@ -243,6 +244,9 @@ checkout itself (as `rozi extensions update` replaces it) restarts the service; 
 Let `rozi` supervise the process rather than daemonizing it or writing your own restart loop. Use a
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
 [`rozi publish`](control.md#published-activity). Extensions cannot declare [hooks](hooks.md).
+
+A service's output, and the reason it stopped, are in its [log](#read-an-extensions-logs). When a
+service fails to start or keeps failing, the notification names that log.
 
 An extension's published rows are activities unless its stream opens with `--kind agent`, which
 it should do only when each row is an agent's run or conversation. Each extension has its own
@@ -868,9 +872,35 @@ rozi extensions list --verbose
 For [placed](#run-on-the-session-host) contributions, `rozi extensions status` shows where each one
 runs and why one is unavailable.
 
-If a command fails, run its resolved argv from the verbose output yourself, in an isolated test
-environment. Because command output is not shown anywhere, have the process write deliberate
-diagnostics to a test-owned file, or run it in a test pane.
+If a command fails, `rozi` shows a notification that names the extension's log. To reproduce it
+yourself, run the resolved argv from the verbose output in an isolated test environment.
+
+### Read an extension's logs
+
+What a command, a service, or a placed process writes to standard output or standard error is kept
+in a log, with a timestamped line when the process starts and when it exits:
+
+```sh
+rozi extensions logs my-extension
+rozi extensions logs my-extension --unit service.watch --lines 200
+```
+
+Without `--unit`, the command prints the last 50 lines of every log of the extension; `--lines`
+changes the count. Each kind of process has its own log, listed by its heading:
+
+| Log | Holds the output of |
+| --- | --- |
+| `commands` | `exec` and `shell` commands that run on the client |
+| `service.<name>` | A service |
+| `command.<id>` | A [placed](#run-on-the-session-host) command |
+| `tab.<id>` | A placed sidebar tab |
+
+A log keeps only the most recent output, about 100 KB per log. An extension that prints a lot
+should print less or write its own file in its [state directory](#keep-state).
+
+Logs belong to the machine the process ran on. A placed process logs on its host, so run
+`rozi extensions logs` there to read it. Removing an extension deletes its logs; `--purge` is only
+needed for [state](#keep-state).
 
 ## Publish to Discover
 

@@ -97,6 +97,16 @@ struct Running {
     started: Instant,
     digest: String,
     capture: Option<(Capture, std::thread::JoinHandle<Vec<u8>>)>,
+    log: Option<super::log::Log>,
+}
+
+impl Running {
+    /// Record in the process's log how it ended.
+    fn note(&self, outcome: &str) {
+        if let Some(log) = &self.log {
+            log.note(outcome);
+        }
+    }
 }
 
 pub fn serve_with(
@@ -265,6 +275,7 @@ impl Runtime {
                 credential,
                 platforms,
                 capture,
+                unit,
             } => {
                 // Claimed before it is verified: once the claim holds, no other runtime's pruning
                 // removes the bundle, so what is verified is what runs.
@@ -283,6 +294,7 @@ impl Runtime {
                     &credential,
                     &platforms,
                     capture,
+                    unit.as_deref(),
                 ) {
                     Ok(pid) => Message::Spawned { worker, pid },
                     Err(failure) => Message::SpawnFailed { worker, failure },
@@ -292,6 +304,7 @@ impl Runtime {
             Message::Kill { worker } => {
                 if let Some(mut running) = self.running.remove(&worker) {
                     running.group.terminate(&mut running.child);
+                    running.note("stopped by rozi");
                     let output = running.capture.take().map(|(_, reader)| collect(reader));
                     self.message(&Message::Exited {
                         worker,
@@ -331,6 +344,7 @@ impl Runtime {
         credential: &str,
         platforms: &[String],
         capture: Option<Capture>,
+        unit: Option<&str>,
     ) -> Result<u32, SpawnFailure> {
         let os = std::env::consts::OS;
         if !platforms.is_empty() && !platforms.iter().any(|platform| platform == os) {
@@ -347,13 +361,13 @@ impl Runtime {
         let extension = env
             .iter()
             .find(|(key, _)| key == "ROZI_EXTENSION")
-            .map(|(_, id)| id.as_str())
+            .map(|(_, id)| id.clone())
             .ok_or_else(|| SpawnFailure::SpawnFailed {
                 detail: "the launch names no extension".to_string(),
             })?;
         let state_dir = crate::platform::paths::ensure_extension_state_dir(
             &crate::platform::paths::PlatformEnv::from_process(),
-            extension,
+            &extension,
         )
         .map_err(|error| SpawnFailure::SpawnFailed {
             detail: format!("cannot prepare the extension's state directory: {error}"),
@@ -392,18 +406,28 @@ impl Runtime {
         command.env(crate::config::STATE_DIR_ENV, &state_dir);
         command.env(crate::state::CREDENTIAL_ENV, credential);
         command.stdin(std::process::Stdio::piped());
-        command.stdout(if capture.is_some() {
-            std::process::Stdio::piped()
+        // What the process prints is kept in this host's log for its unit. A collected process's
+        // standard output is its result, not a log, so only its standard error goes there.
+        let log = super::log::open(&extension, unit.unwrap_or("placed"));
+        if capture.is_some() {
+            command.stdout(std::process::Stdio::piped());
+            super::log::Log::route_stderr(&mut command, log.as_ref());
         } else {
-            std::process::Stdio::null()
-        });
-        command.stderr(std::process::Stdio::null());
+            super::log::Log::route(&mut command, log.as_ref());
+        }
         configure_command_group(&mut command);
         kill_on_supervisor_death(&mut command);
-        let mut child =
-            spawn_retrying_on_busy(&mut command).map_err(|error| SpawnFailure::SpawnFailed {
-                detail: error.to_string(),
-            })?;
+        let mut child = match spawn_retrying_on_busy(&mut command) {
+            Ok(child) => child,
+            Err(error) => {
+                if let Some(log) = &log {
+                    log.note(&format!("could not start: {error}"));
+                }
+                return Err(SpawnFailure::SpawnFailed {
+                    detail: error.to_string(),
+                });
+            }
+        };
         let group = match CommandGroup::new(&child) {
             Ok(group) => group,
             Err(error) => {
@@ -414,6 +438,14 @@ impl Runtime {
                 });
             }
         };
+        if let Some(log) = &log {
+            log.note(&format!("started pid {}", child.id()));
+            if capture.is_some() {
+                log.attach_stderr(&mut child);
+            } else {
+                log.attach(&mut child);
+            }
+        }
         let capture = capture.map(|capture| {
             let mut stdout = child.stdout.take().expect("piped stdout");
             let limit = capture.max_bytes;
@@ -443,6 +475,7 @@ impl Runtime {
                 started: Instant::now(),
                 digest: digest.to_string(),
                 capture,
+                log,
             },
         );
         Ok(pid)
@@ -486,6 +519,11 @@ impl Runtime {
             let Some(mut running) = self.running.remove(&worker) else {
                 continue;
             };
+            running.note(&match (code, timed_out) {
+                (_, true) => "stopped: timed out".to_string(),
+                (Some(code), false) => format!("exited with status {code}"),
+                (None, false) => "was terminated by a signal".to_string(),
+            });
             let output = running.capture.take().map(|(_, reader)| collect(reader));
             self.message(&Message::Exited {
                 worker,
@@ -501,6 +539,7 @@ impl Runtime {
     fn shutdown(&mut self) {
         for (_, mut running) in self.running.drain() {
             running.group.terminate(&mut running.child);
+            running.note("stopped: the runtime shut down");
         }
         for (_, writer) in self.bridges.drain() {
             let _ = writer.send(None);
@@ -818,6 +857,7 @@ mod tests {
                     max_bytes: 4096,
                     timeout_ms: 10_000,
                 }),
+                unit: None,
             });
         }
 
@@ -904,6 +944,50 @@ mod tests {
         client.close();
     }
 
+    /// A placed process's output stays on the host that ran it, under the unit the client named.
+    #[cfg(unix)]
+    #[test]
+    fn a_placed_process_keeps_its_output_and_exit_in_the_hosts_log() {
+        let mut client = Client::start();
+        let bundle = script("echo placed-out; echo placed-err >&2; exit 2");
+        client.stage(&bundle);
+        client.send(Message::Spawn {
+            worker: 1,
+            digest: bundle.digest().to_string(),
+            launch: probe(),
+            cwd: SpawnCwd::Inherit,
+            env: vec![("ROZI_EXTENSION".to_string(), "logprobe".to_string())],
+            credential: "c".repeat(64),
+            platforms: Vec::new(),
+            capture: None,
+            unit: Some("command.noisy".to_string()),
+        });
+        assert!(matches!(
+            client.next_message(),
+            Message::Spawned { worker: 1, .. }
+        ));
+        assert!(matches!(
+            client.next_message(),
+            Message::Exited {
+                worker: 1,
+                code: Some(2),
+                ..
+            }
+        ));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lines = super::super::log::tail("logprobe", "command.noisy", 20).unwrap();
+            let has = |needle: &str| lines.iter().any(|line| line.contains(needle));
+            if has("placed-out") && has("placed-err") && has("exited with status 2") {
+                assert!(has("started pid"), "{lines:?}");
+                break;
+            }
+            assert!(Instant::now() < deadline, "{lines:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        client.close();
+    }
+
     #[test]
     fn a_launch_for_no_valid_extension_gets_no_state_and_does_not_start() {
         let mut client = Client::start();
@@ -918,6 +1002,7 @@ mod tests {
             credential: "c".repeat(64),
             platforms: Vec::new(),
             capture: None,
+            unit: None,
         });
         let Message::SpawnFailed {
             worker: 1,
@@ -972,6 +1057,7 @@ mod tests {
             credential: "c".repeat(64),
             platforms: vec!["plan9".to_string()],
             capture: None,
+            unit: None,
         });
         assert_eq!(
             client.next_message(),
@@ -1199,6 +1285,7 @@ mod tamper_tests {
             "c",
             &[],
             None,
+            None,
         );
         assert!(
             matches!(tampered, Err(SpawnFailure::BundleCorrupt { .. })),
@@ -1246,6 +1333,7 @@ mod tamper_tests {
             credential: "c".to_string(),
             platforms: Vec::new(),
             capture: None,
+            unit: None,
         });
         assert!(ended.is_err(), "the runtime ends");
         let written = output.0.lock().unwrap().clone();

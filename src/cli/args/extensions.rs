@@ -37,6 +37,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "status [--json]",
                 "Show where placed extension processes run",
             ),
+            row(
+                "logs <ID> [--unit <U>] [-n <N>]",
+                "Show an extension's recent output",
+            ),
         ],
     },
     HelpSection {
@@ -182,6 +186,7 @@ pub(super) fn parse(
         Some("remove") => parse_remove(iter, config_path),
         Some("new") => parse_new(iter),
         Some("check") => parse_check(iter),
+        Some("logs") => parse_logs(iter),
         Some("status") => {
             let mut format = None;
             for flag in iter {
@@ -209,9 +214,61 @@ pub(super) fn parse(
             Ok(ParsedCli::Extensions(ExtensionsCommand::Runtime))
         }
         Some(other) => Err(format!(
-            "unknown extensions command `{other}` (expected list, install, update, remove, new, check, or status)"
+            "unknown extensions command `{other}` (expected list, install, update, remove, new, check, status, or logs)"
         )),
     }
+}
+
+/// Lines `extensions logs` prints per unit unless told otherwise.
+const DEFAULT_LOG_LINES: usize = 50;
+
+fn parse_logs(iter: &mut impl Iterator<Item = String>) -> std::result::Result<ParsedCli, String> {
+    let mut id = None;
+    let mut unit = None;
+    let mut lines = None;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--unit" if unit.is_none() => {
+                unit = Some(require_value(
+                    iter,
+                    "extensions logs --unit requires a unit name",
+                )?);
+            }
+            "--unit" => return Err("extensions logs --unit specified more than once".to_string()),
+            "--lines" | "-n" if lines.is_none() => {
+                let value = require_value(iter, "extensions logs --lines requires a number")?;
+                lines = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|count| *count > 0)
+                        .ok_or_else(|| {
+                            format!(
+                                "extensions logs --lines expects a positive number, got `{value}`"
+                            )
+                        })?,
+                );
+            }
+            "--lines" | "-n" => {
+                return Err("extensions logs --lines specified more than once".to_string());
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown extensions logs option `{other}`"));
+            }
+            _ if id.is_none() => id = Some(arg),
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after extensions logs"
+                ));
+            }
+        }
+    }
+    let id = id.ok_or_else(|| "extensions logs requires an extension id".to_string())?;
+    Ok(ParsedCli::Extensions(ExtensionsCommand::Logs {
+        id,
+        unit,
+        lines: lines.unwrap_or(DEFAULT_LOG_LINES),
+    }))
 }
 
 fn parse_list(
@@ -505,7 +562,7 @@ mod tests {
         );
         assert_eq!(
             parse_cli_args(vec!["extensions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown extensions command `lst` (expected list, install, update, remove, new, check, or status)"
+            "unknown extensions command `lst` (expected list, install, update, remove, new, check, status, or logs)"
         );
     }
 
@@ -522,5 +579,35 @@ mod tests {
             ParsedCli::Extensions(ExtensionsCommand::List { config_path, .. })
                 if config_path.as_deref() == Some("/tmp/alt.toml")
         ));
+    }
+
+    #[test]
+    fn logs_takes_an_id_with_an_optional_unit_and_a_positive_line_count() {
+        let parse = |args: &[&str]| {
+            let mut full = vec!["extensions".to_string(), "logs".to_string()];
+            full.extend(args.iter().map(|arg| arg.to_string()));
+            parse_cli_args(full)
+        };
+        assert!(matches!(
+            parse(&["tool"]),
+            Ok(ParsedCli::Extensions(ExtensionsCommand::Logs { id, unit: None, lines }))
+                if id == "tool" && lines == DEFAULT_LOG_LINES
+        ));
+        assert!(matches!(
+            parse(&["--unit", "service.watch", "tool", "-n", "5"]),
+            Ok(ParsedCli::Extensions(ExtensionsCommand::Logs { id, unit: Some(unit), lines: 5 }))
+                if id == "tool" && unit == "service.watch"
+        ));
+        for bad in [
+            &[][..],
+            &["tool", "--lines", "0"],
+            &["tool", "--lines", "many"],
+            &["tool", "--unit"],
+            &["tool", "--unit", "a", "--unit", "b"],
+            &["tool", "other"],
+            &["tool", "--follow"],
+        ] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
     }
 }

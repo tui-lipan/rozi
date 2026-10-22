@@ -238,7 +238,9 @@ placement = "each-host"   # client | active-session | each-host | each-session
   start a process on the client fails with `not-permitted`.
 - `platforms` is checked on each host; a missing program, an old host Rozi, or an unreachable host
   makes the contribution unavailable with a reason. Nothing falls back to the client.
-- Diagnose with `rozi extensions status` and `rozi extensions list --verbose`.
+- Diagnose with `rozi extensions status`, `rozi extensions list --verbose`, and
+  `rozi extensions logs <ID>`, which prints what the extension's commands, services, and placed
+  processes printed. A placed process logs on its own host, so run `logs` there.
 - Set `min_rozi` to a release with the `remote-extension-runtime` and `extension-state-dir`
   capabilities.
 

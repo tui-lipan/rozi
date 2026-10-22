@@ -204,7 +204,7 @@ Removal deletes a copied extension or a `rozi`-owned Git clone. For a linked ext
 only the symlink, never the checkout it points to. After a CLI removal, run
 `rozi run-action reload-extensions` in running clients.
 
-Removal keeps the files the extension saved in its
+Removal also deletes the extension's output logs. It keeps the files the extension saved in its
 [state directory](writing-extensions.md#keep-state), so reinstalling it picks up where it left
 off. To delete them too:
 
@@ -215,6 +215,20 @@ rozi extensions remove git-tools --purge
 `--purge` deletes the state on the machine where you run it. An extension that ran placed
 contributions on a remote host keeps its state there; run the command on that host to delete it.
 `--purge` also deletes the state of an extension that is no longer installed.
+
+## See why an extension failed
+
+When an extension's command or service fails, the notification ends with the command to run. It
+prints what the extension's processes wrote on this machine:
+
+```sh
+rozi extensions logs git-tools
+rozi extensions logs git-tools --unit service.watch --lines 200
+```
+
+Without `--unit`, it prints the last 50 lines of each of the extension's logs; `--lines` changes
+how many. A process placed on a remote host logs there, so run the command on that host. The
+[extension author guide](writing-extensions.md#read-an-extensions-logs) lists what each log holds.
 
 ## Bind a key to an extension command
 

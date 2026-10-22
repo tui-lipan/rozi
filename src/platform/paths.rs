@@ -275,7 +275,46 @@ pub fn remove_extension_state_dir(env: &PlatformEnv, id: &str) -> io::Result<boo
     }
 }
 
-fn valid_extension_id(id: &str) -> bool {
+/// Where the output of one extension's processes on this host is kept
+/// (`data_dir/extension-logs/<id>`). Diagnostics, not state: unlike [`extension_state_dir`] it goes
+/// with the extension when it is removed.
+pub fn extension_log_dir(env: &PlatformEnv, id: &str) -> PathBuf {
+    data_dir(env).join("extension-logs").join(id)
+}
+
+/// [`extension_log_dir`], created private to the current user if missing and validated as such.
+/// Refuses anything but a manifest id, as [`ensure_extension_state_dir`] does.
+pub fn ensure_extension_log_dir(env: &PlatformEnv, id: &str) -> io::Result<PathBuf> {
+    if !valid_extension_id(id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("`{id}` is not an extension id"),
+        ));
+    }
+    let dir = extension_log_dir(env, id);
+    fs_security::ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Delete one extension's logs on this host. Logs that do not exist are not an error.
+pub fn remove_extension_log_dir(env: &PlatformEnv, id: &str) -> io::Result<bool> {
+    if !valid_extension_id(id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("`{id}` is not an extension id"),
+        ));
+    }
+    let dir = extension_log_dir(env, id);
+    match fs::symlink_metadata(&dir) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+        Ok(metadata) if !metadata.is_dir() => fs::remove_file(&dir).map(|()| true),
+        Ok(_) => fs::remove_dir_all(&dir).map(|()| true),
+    }
+}
+
+/// Whether `id` could be a manifest id (`[a-z0-9_-]+`), and so may name a directory.
+pub fn valid_extension_id(id: &str) -> bool {
     !id.is_empty()
         && id.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
@@ -1198,6 +1237,32 @@ mod tests {
             data_dir(&env),
             PathBuf::from(r"C:\Users\user\AppData\Local\rozi")
         );
+    }
+
+    #[test]
+    fn extension_logs_are_private_per_extension_and_leave_with_it() {
+        let root = tempfile::tempdir().unwrap();
+        let env = PlatformEnv {
+            xdg_data_home: Some(root.path().to_path_buf()),
+            home: Some(root.path().to_path_buf()),
+            local_appdata: Some(root.path().to_path_buf()),
+            ..PlatformEnv::default()
+        };
+        let dir = ensure_extension_log_dir(&env, "git-tools").unwrap();
+        assert_eq!(dir, extension_log_dir(&env, "git-tools"));
+        assert!(!dir.starts_with(extension_state_dir(&env, "git-tools")));
+        assert!(!dir.starts_with(extensions_dir(&env)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        assert!(ensure_extension_log_dir(&env, "../escape").is_err());
+        assert!(remove_extension_log_dir(&env, "../escape").is_err());
+        assert!(remove_extension_log_dir(&env, "git-tools").unwrap());
+        assert!(!dir.exists());
+        assert!(!remove_extension_log_dir(&env, "git-tools").unwrap());
     }
 
     #[test]

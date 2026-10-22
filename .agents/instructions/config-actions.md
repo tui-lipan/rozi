@@ -67,6 +67,11 @@ instead of adding an unlinked snippet.
   host from `ROZI_EXTENSION` and overrides whatever the client sent; hosts without the
   `extension-state-dir` capability get no placed processes. Only `extensions remove --purge`
   deletes it.
+- An extension's process output is kept per host and per extension in `extension_runtime/log.rs`
+  (`platform::paths::extension_log_dir`), one capped file plus one rotated generation per unit, and
+  `extensions logs` reads only this machine's. A log is diagnostics: it never decides whether a
+  process starts, and `extensions remove` always deletes it. A placed `Spawn` names its unit; a
+  runtime that is not sent one logs under `placed`.
 - Hook commands receive `ROZI_EVENT`, event fields, `ROZI_SOCKET`, and `ROZI_BIN`, plus
   `ROZI_REMOTE_HOST` for remote attachments. Use `events::EventKind::ALL` as the current event list
   rather than copying a count into documentation.

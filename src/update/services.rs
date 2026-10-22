@@ -55,6 +55,8 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
             Ok(status) => (status.success(), status.to_string()),
             Err(err) => (false, format!("could not read exit status: {err}")),
         };
+        crate::ops::services::note_service_exit(&config, &format!("exited: {failure_detail}"));
+        let hint = crate::ops::services::log_hint(&config);
 
         match config.restart {
             ServiceRestart::Never => {
@@ -62,7 +64,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                     crate::pane::pty_events::notify_error(
                         ctx,
                         "Service failed",
-                        format!("`{name}` {failure_detail}\nRestart is disabled"),
+                        format!("`{name}` {failure_detail}\nRestart is disabled{hint}"),
                     );
                 }
                 ctx.state.services.dormant.insert(
@@ -90,7 +92,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                             "Service failed",
                             format!(
                                 "`{name}` failed {MAX_FAILURES} times\n\
-                                 Last result: {failure_detail}"
+                                 Last result: {failure_detail}{hint}"
                             ),
                         );
                         ctx.state.services.dormant.insert(
@@ -139,7 +141,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                             "Service failed",
                             format!(
                                 "`{name}` failed {MAX_FAILURES} times\n\
-                                 Last result: {failure_detail}"
+                                 Last result: {failure_detail}{hint}"
                             ),
                         );
                         ctx.state.services.dormant.insert(

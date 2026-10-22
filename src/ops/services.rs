@@ -42,8 +42,9 @@ pub(crate) fn record_spawn_failure(
     backoff_delay: Duration,
     detail: &str,
 ) -> Option<String> {
+    let hint = log_hint(&config);
     if config.restart == crate::config::ServiceRestart::Never {
-        let message = format!("`{name}` did not start\n{detail}\nRestart is disabled");
+        let message = format!("`{name}` did not start\n{detail}\nRestart is disabled{hint}");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -54,7 +55,8 @@ pub(crate) fn record_spawn_failure(
         return Some(message);
     }
     if failures >= MAX_FAILURES {
-        let message = format!("`{name}` did not start after {MAX_FAILURES} attempts\n{detail}");
+        let message =
+            format!("`{name}` did not start after {MAX_FAILURES} attempts\n{detail}{hint}");
         state.services.dormant.insert(
             name,
             DormantService {
@@ -123,12 +125,22 @@ pub(crate) fn spawn_service_child(
     // Rozi never writes to the pipe. It stays open while rozi runs, so a service sees end of file
     // on stdin once rozi is gone, however it went: the portable way to notice an orphaning.
     command.stdin(std::process::Stdio::piped());
-    command.stdout(std::process::Stdio::null());
-    command.stderr(std::process::Stdio::null());
+    // An extension's service keeps what it prints in the extension's log; any other service's
+    // output is discarded.
+    let log = service_log(config);
+    crate::extension_runtime::log::Log::route(&mut command, log.as_ref());
     configure_command_group(&mut command);
     kill_on_supervisor_death(&mut command);
 
-    let mut child = spawn_retrying_on_busy(&mut command)?;
+    let mut child = match spawn_retrying_on_busy(&mut command) {
+        Ok(child) => child,
+        Err(error) => {
+            if let Some(log) = &log {
+                log.note(&format!("could not start: {error}"));
+            }
+            return Err(error);
+        }
+    };
     let group = match CommandGroup::new(&child) {
         Ok(g) => g,
         Err(e) => {
@@ -137,7 +149,38 @@ pub(crate) fn spawn_service_child(
             return Err(e);
         }
     };
+    if let Some(log) = &log {
+        log.note(&format!("started pid {}", child.id()));
+        log.attach(&mut child);
+    }
     Ok((child, group))
+}
+
+/// The log of a service that belongs to an extension, as `(extension, unit)`.
+fn service_log_unit(config: &ServiceConfig) -> Option<(&str, String)> {
+    let extension = config.env.get("ROZI_EXTENSION")?;
+    Some((extension, format!("service.{}", config.name)))
+}
+
+fn service_log(config: &ServiceConfig) -> Option<crate::extension_runtime::log::Log> {
+    let (extension, unit) = service_log_unit(config)?;
+    crate::extension_runtime::log::open(extension, &unit)
+}
+
+/// Record how an extension's service ended in its log. Other services have none.
+pub(crate) fn note_service_exit(config: &ServiceConfig, outcome: &str) {
+    if let Some((extension, unit)) = service_log_unit(config) {
+        crate::extension_runtime::log::note_exit(extension, &unit, outcome);
+    }
+}
+
+/// The line a failure toast ends with to say where the service's output is, for an extension's
+/// service; empty for any other.
+pub(crate) fn log_hint(config: &ServiceConfig) -> String {
+    match config.env.get("ROZI_EXTENSION") {
+        Some(extension) => format!("\nSee `rozi extensions logs {extension}`"),
+        None => String::new(),
+    }
 }
 
 pub(crate) fn terminate_service(mut running: RunningService) {
@@ -852,6 +895,39 @@ mod tests {
         };
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(status.signal(), Some(libc::SIGKILL));
+    }
+
+    /// What a service that fails at startup printed is the only trace of why, so an extension's
+    /// service keeps it; a service from `config.toml` has no log to keep it in.
+    #[cfg(unix)]
+    #[test]
+    fn an_extension_service_keeps_its_output_in_the_extension_log() {
+        let mut config = sleeper("svc-log-probe");
+        config.launch = shell("echo from-out; echo from-err >&2");
+        config
+            .env
+            .insert("ROZI_EXTENSION".to_string(), "svclogtool".to_string());
+        let (mut child, _group) = spawn_service_child(&config, None, None).expect("spawn");
+        child.wait().expect("probe exits");
+        note_service_exit(&config, "exited: exit status: 0");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lines =
+                crate::extension_runtime::log::tail("svclogtool", "service.svc-log-probe", 20)
+                    .unwrap();
+            let has = |needle: &str| lines.iter().any(|line| line.contains(needle));
+            if has("from-out") && has("from-err") && has("started pid") && has("exited:") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{lines:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(log_hint(&config), "\nSee `rozi extensions logs svclogtool`");
+
+        let plain = sleeper("not-an-extension");
+        assert_eq!(log_hint(&plain), "");
+        assert!(service_log(&plain).is_none());
     }
 
     /// Stdin is the portable signal: it stays open while rozi runs and reaches end of file once

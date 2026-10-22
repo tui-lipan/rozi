@@ -137,9 +137,10 @@ pub(crate) fn execute_with_env_from_pane(
     }
 }
 
-/// Run an `exec` command detached: no pane, no popup, output discarded.
+/// Run an `exec` command detached: no pane, no popup. An extension's output goes to its log; any
+/// other command's is discarded.
 ///
-/// Spawned like a hook - one thread, `command_shell`, null stdio - but unlike a hook it is waited
+/// Spawned like a hook - one thread, `command_shell`, no input - but unlike a hook it is waited
 /// on, so a non-zero exit can raise a toast. A binding that quietly does nothing when its command
 /// is missing is indistinguishable from a binding that is not wired up at all.
 fn exec_shell(
@@ -255,29 +256,61 @@ fn exec_argv(
         .command_palette_handoff
         .as_ref()
         .map(|handoff| handoff.epoch);
+    // An extension's commands keep their output in its log; a `config.toml` command has none.
+    let extension = environment
+        .iter()
+        .find(|(key, _)| key == "ROZI_EXTENSION")
+        .map(|(_, id)| id.clone());
     if !crate::jobs::try_spawn(move || {
+        let log = extension
+            .as_deref()
+            .and_then(|id| crate::extension_runtime::log::open(id, "commands"));
         let mut process = std::process::Command::new(program);
         process
             .args(args)
             .envs(environment)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stdin(std::process::Stdio::null());
+        crate::extension_runtime::log::Log::route(&mut process, log.as_ref());
         if let Some(cwd) = cwd {
             process.current_dir(cwd);
         }
         let failure = match process.spawn() {
-            Ok(mut child) => match child.wait() {
-                Ok(status) if status.success() => None,
-                Ok(status) => Some(match status.code() {
-                    Some(code) => format!("`{label}` exited with status {code}"),
-                    None => format!("`{label}` was terminated by a signal"),
-                }),
-                Err(err) => Some(format!("`{label}` could not be waited on: {err}")),
-            },
-            Err(err) => Some(format!("`{label}` could not start: {err}")),
+            Ok(mut child) => {
+                if let Some(log) = &log {
+                    log.note(&format!("started pid {}: {label}", child.id()));
+                    log.attach(&mut child);
+                }
+                match child.wait() {
+                    Ok(status) if status.success() => {
+                        if let Some(log) = &log {
+                            log.note("exited with status 0");
+                        }
+                        None
+                    }
+                    Ok(status) => {
+                        let outcome = match status.code() {
+                            Some(code) => format!("exited with status {code}"),
+                            None => "was terminated by a signal".to_string(),
+                        };
+                        if let Some(log) = &log {
+                            log.note(&outcome);
+                        }
+                        Some(format!("`{label}` {outcome}"))
+                    }
+                    Err(err) => Some(format!("`{label}` could not be waited on: {err}")),
+                }
+            }
+            Err(err) => {
+                if let Some(log) = &log {
+                    log.note(&format!("could not start {label}: {err}"));
+                }
+                Some(format!("`{label}` could not start: {err}"))
+            }
         };
-        if let Some(message) = failure {
+        if let Some(mut message) = failure {
+            if let (Some(_), Some(id)) = (&log, &extension) {
+                message.push_str(&format!("; see `rozi extensions logs {id}`"));
+            }
             link.send(crate::Msg::UserCommandFailed { message });
         }
         if let Some(epoch) = command_palette_handoff {
@@ -474,6 +507,89 @@ mod tests {
             let cwd = exec_cwd(true, &same_path.path().display().to_string());
             assert_ne!(cwd, canonical(same_path.path()));
             assert_eq!(cwd, canonical(&std::env::current_dir().unwrap()));
+        });
+    }
+
+    #[test]
+    fn an_extension_command_leaves_its_output_and_exit_in_the_extension_log() {
+        on_test_thread(|| {
+            let mut backend = settled_backend();
+            backend
+                .state_mut()
+                .config
+                .commands
+                .push(crate::config::NamedCommand {
+                    id: "logtool.fail".to_string(),
+                    label: None,
+                    action: UserCommandAction::ExecDirect {
+                        argv: ["sh", "-c", "echo said-out; echo said-err >&2; exit 3"]
+                            .map(String::from)
+                            .to_vec(),
+                    },
+                    category: "Test".to_string(),
+                    env: vec![("ROZI_EXTENSION".to_string(), "logtool".to_string())],
+                    default_key: None,
+                    hidden: false,
+                });
+            let index = backend.state().config.commands.len() - 1;
+            backend
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::RunNamedCommand(index),
+                ))
+                .expect("run the command");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let _ = backend.pump();
+                let lines = crate::extension_runtime::log::tail("logtool", "commands", 20).unwrap();
+                let has = |needle: &str| lines.iter().any(|line| line.contains(needle));
+                if has("said-out") && has("said-err") && has("exited with status 3") {
+                    assert!(has("started pid"), "{lines:?}");
+                    return;
+                }
+                assert!(std::time::Instant::now() < deadline, "{lines:?}");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        });
+    }
+
+    #[test]
+    fn a_config_command_leaves_no_extension_log() {
+        on_test_thread(|| {
+            let scratch = tempfile::tempdir().unwrap();
+            let out = scratch.path().join("ran");
+            let mut backend = settled_backend();
+            backend
+                .state_mut()
+                .config
+                .commands
+                .push(crate::config::NamedCommand {
+                    id: "plain".to_string(),
+                    label: None,
+                    action: UserCommandAction::Exec {
+                        command: format!("echo noise; touch '{}'", out.display()),
+                    },
+                    category: "Test".to_string(),
+                    env: Vec::new(),
+                    default_key: None,
+                    hidden: false,
+                });
+            let index = backend.state().config.commands.len() - 1;
+            backend
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::RunNamedCommand(index),
+                ))
+                .expect("run the command");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !out.exists() {
+                let _ = backend.pump();
+                assert!(std::time::Instant::now() < deadline, "never ran");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let logs = crate::platform::paths::extension_log_dir(
+                &crate::platform::paths::PlatformEnv::from_process(),
+                "plain",
+            );
+            assert!(!logs.exists(), "{logs:?}");
         });
     }
 }

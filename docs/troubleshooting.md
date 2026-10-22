@@ -356,8 +356,9 @@ rozi extensions list --verbose
 ```
 
 The verbose list shows validation errors, disabled extensions, and the resolved argv of each
-command. Extension command output is not shown anywhere, so write diagnostics to a file while
-testing. See [Test and debug](writing-extensions.md#test-and-debug).
+command. What the extension's commands and services printed is in its log: run
+`rozi extensions logs <ID>`. See
+[Read an extension's logs](writing-extensions.md#read-an-extensions-logs).
 
 ### My hook runs but I see nothing
 

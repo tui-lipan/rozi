@@ -402,6 +402,11 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "    --profile <NAME>",
                 "Seed a `sessions new` session from this profile",
             ),
+            row("    --follow", "Follow on shared attach"),
+            row(
+                "    --take-control",
+                "Take or request control on shared attach",
+            ),
             row("    --read-only", "Attach as a viewer; cannot type or tile"),
             row("    --pick", "Force the startup session picker, whatever"),
             row("", "`[session] startup` selects"),

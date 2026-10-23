@@ -1157,7 +1157,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
-            (SettingsTab::Sessions, 6, "Open Sessions on"),
+            (SettingsTab::Sessions, 7, "On shared attach"),
         ] {
             backend
                 .dispatch(rozi::Msg::SettingsTabSelected(tab))

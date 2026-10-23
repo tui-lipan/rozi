@@ -323,6 +323,7 @@ pub(super) fn settings_palette_aliases(group: &str, action: SettingsAction) -> V
         ToggleKeepAwakeWhileAgentsWork => alias_list(&["sleep", "power", "inhibit"]),
         ToggleSessionAutosave => alias_list(&["restore"]),
         ToggleSessionResurrect => alias_list(&["restore", "restart"]),
+        CycleSessionOnAttach => alias_list(&["follow", "take", "control", "attach"]),
         CycleResurrectForeground => alias_list(&["rerun", "agents", "foreground"]),
     };
     aliases.push(Arc::from(group));

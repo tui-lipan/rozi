@@ -160,6 +160,8 @@ mod tests {
             "A session endpoint ignores `ROZI_PANE`",
             "`--socket` and `--session` cannot be combined",
             "read-only",
+            "--follow",
+            "--take-control",
             "Input lock",
         ] {
             assert!(

@@ -32,6 +32,7 @@ pub struct AppRoot {
     startup_autostart: bool,
     startup_create_only: bool,
     read_only: bool,
+    on_attach: Option<crate::config::SessionOnAttach>,
     /// When set, attach through SSH to this remote target instead of a local endpoint.
     remote: Option<crate::session::remote::RemoteTarget>,
     /// Whether a bare launch should open the session picker instead of attaching (`--pick`, the
@@ -83,6 +84,7 @@ impl Default for AppRoot {
             startup_autostart: true,
             startup_create_only: false,
             read_only: false,
+            on_attach: None,
             remote: None,
             want_startup_picker: false,
             startup_last_session: None,
@@ -131,6 +133,7 @@ impl AppRoot {
             startup_autostart,
             startup_create_only,
             read_only,
+            on_attach: None,
             remote,
             want_startup_picker,
             startup_last_session,
@@ -141,6 +144,11 @@ impl AppRoot {
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
+    }
+
+    fn with_on_attach(mut self, mode: Option<crate::config::SessionOnAttach>) -> Self {
+        self.on_attach = mode;
+        self
     }
 
     fn with_startup_cwd(mut self, cwd: Option<StartupCwd>) -> Self {
@@ -314,6 +322,7 @@ impl Component for AppRoot {
                 }
             }
         }
+        state.attach_mode_override = self.on_attach;
         state.system_theme = self.initial_system_theme.clone();
         state.control_socket_path = self
             .control_guard

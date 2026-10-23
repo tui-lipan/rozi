@@ -26,7 +26,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row("watch", "Serve the host metadata protocol over stdio"),
             row(
-                "attach <NAME> [--read-only]",
+                "attach <NAME> [OPTIONS]",
                 "Attach to a running session, never create",
             ),
             row(
@@ -47,7 +47,15 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
         heading: "OPTIONS",
         advanced_only: false,
         note: "",
-        rows: &[row("-h, --help", "Print help")],
+        rows: &[
+            row("--read-only", "Attach as a viewer; cannot type or tile"),
+            row("--follow", "Follow, overriding session.on_attach"),
+            row(
+                "--take-control",
+                "Request control, overriding session.on_attach",
+            ),
+            row("-h, --help", "Print help"),
+        ],
     },
 ];
 
@@ -162,6 +170,32 @@ fn parse_kill(
     }))
 }
 
+pub(super) fn parse_attach_mode(cli: &mut CliArgs, flag: &str) -> Result<(), String> {
+    let mode = if flag == "--follow" {
+        crate::config::SessionOnAttach::Follow
+    } else {
+        crate::config::SessionOnAttach::Take
+    };
+    if cli.on_attach.is_some_and(|previous| previous != mode) {
+        return Err("--take-control cannot be combined with --follow".into());
+    }
+    cli.on_attach = Some(mode);
+    Ok(())
+}
+
+pub(super) fn validate_attach_mode(cli: &CliArgs) -> Result<(), String> {
+    if cli.on_attach.is_none() {
+        return Ok(());
+    }
+    if cli.read_only {
+        return Err("--take-control and --follow cannot be combined with --read-only".into());
+    }
+    if cli.session_command != SessionCommand::Attach {
+        return Err("--take-control and --follow can only be used with sessions attach".into());
+    }
+    Ok(())
+}
+
 fn set_launch_target(
     iter: &mut impl Iterator<Item = String>,
     cli: &mut CliArgs,
@@ -260,6 +294,122 @@ mod tests {
         assert_eq!(created.session_command, SessionCommand::New);
         assert_eq!(created.profile.as_deref(), Some("p"));
         assert!(created.pick);
+    }
+
+    #[test]
+    fn attach_mode_flags_parse_and_reject_conflicts() {
+        for (flag, expected) in [
+            ("--follow", crate::config::SessionOnAttach::Follow),
+            ("--take-control", crate::config::SessionOnAttach::Take),
+        ] {
+            let ParsedCli::Run(cli) = parse_cli_args(
+                ["sessions", "attach", "dev", flag]
+                    .map(String::from)
+                    .to_vec(),
+            )
+            .expect("attach mode parses") else {
+                panic!("expected attach")
+            };
+            assert_eq!(cli.on_attach, Some(expected));
+            for args in [
+                vec!["sessions", "attach", "dev", flag, "--read-only"],
+                vec!["--read-only", "sessions", "attach", "dev", flag],
+            ] {
+                let error =
+                    parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err();
+                assert!(
+                    error.contains("cannot be combined with --read-only"),
+                    "{error}"
+                );
+            }
+            for args in [vec![flag], vec!["sessions", "new", "dev", flag]] {
+                let error =
+                    parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err();
+                assert!(
+                    error.contains("can only be used with sessions attach"),
+                    "{error}"
+                );
+            }
+        }
+        for flags in [
+            ["--follow", "--take-control"],
+            ["--take-control", "--follow"],
+        ] {
+            let mut args = vec!["sessions", "attach", "dev"];
+            args.extend(flags);
+            assert_eq!(
+                parse_cli_args(args.into_iter().map(String::from).collect()).unwrap_err(),
+                "--take-control cannot be combined with --follow"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_mode_flags_cannot_be_ignored_by_early_return_commands() {
+        for flag in ["--follow", "--take-control"] {
+            for command in [
+                vec!["sessions", "list"],
+                vec!["sessions", "watch"],
+                vec!["sessions", "kill", "dev"],
+                vec!["update", "--check"],
+                vec!["install"],
+                vec!["api", "describe"],
+                vec!["--version"],
+                vec!["--server", "dev"],
+                vec!["extensions", "list"],
+            ] {
+                let prefix = [flag];
+                let args: Vec<String> = prefix
+                    .iter()
+                    .chain(&command)
+                    .map(|arg| arg.to_string())
+                    .collect();
+                let error =
+                    parse_cli_args(args.clone()).expect_err("must reject ignored attach flag");
+                assert!(
+                    error.contains("can only be used with sessions attach"),
+                    "{args:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn attach_mode_flags_are_rejected_if_an_attach_is_replaced_by_a_subcommand() {
+        for flag in ["--follow", "--take-control"] {
+            let error = parse_cli_args(
+                ["sessions", "attach", "dev", flag, "update", "--check"]
+                    .map(String::from)
+                    .to_vec(),
+            )
+            .expect_err("update must not ignore an attach flag");
+            assert!(
+                error.contains("can only be used with sessions attach"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_mode_flags_accept_global_and_trailing_positions_on_attach() {
+        for (flag, mode) in [
+            ("--follow", crate::config::SessionOnAttach::Follow),
+            ("--take-control", crate::config::SessionOnAttach::Take),
+        ] {
+            for args in [
+                vec![flag, "sessions", "attach", "dev"],
+                vec!["sessions", "attach", "dev", flag],
+            ] {
+                let ParsedCli::Run(cli) =
+                    parse_cli_args(args.into_iter().map(String::from).collect())
+                        .expect("attach mode parses")
+                else {
+                    panic!("expected attach");
+                };
+                assert_eq!(cli.session_command, SessionCommand::Attach);
+                assert_eq!(cli.on_attach, Some(mode));
+            }
+        }
     }
 
     #[test]

@@ -15,8 +15,15 @@ rozi --remote workbox sessions attach dev
 rozi sessions attach dev --read-only
 ```
 
-When another client is already using the session, rozi asks whether to follow, ask for layout
-control, or cancel. With immediate takeover enabled, choosing control takes it at once.
+When another client controls the session, `[session] on_attach = "ask"`, the default, offers
+Follow, control, or Cancel. Set it to `"follow"` to follow without prompting, or `"take"` to
+request control without prompting. **Settings**, **Sessions**, **On shared attach** offers the
+same choices as Ask, Follow, and Take control.
+
+Use `rozi sessions attach dev --follow` or `--take-control` to override the setting for that
+attach. These flags conflict with each other and with `--read-only`. Read-only attaches and
+reconnects never open this prompt. Attaching when no client controls the session gets control
+without prompting.
 
 The session picker shows when other clients are attached. The workbar shows `CTRL` while this client
 controls the layout and `FOLLOW` while it follows.
@@ -45,6 +52,8 @@ Followers can still:
 Press `Ctrl+A`, then `g` to take or request control. With `[session] allow_takeover = true`, the
 default, control moves immediately. When it is `false`, the controller receives a request and can
 grant it with `Ctrl+A`, then `e`, or through [Collaborators](#collaborators).
+The same policy applies to `on_attach = "take"` and `sessions attach --take-control`. With
+immediate takeover disabled, the joining client follows while its request waits for approval.
 
 The controller can change the running session's policy with **Toggle immediate control takeover**.
 `allow_takeover` only sets the policy for newly started session servers; it does not change one

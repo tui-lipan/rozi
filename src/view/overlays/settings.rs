@@ -401,7 +401,7 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                 ),
             ],
         ),
-        // Session startup and server-owned policies.
+        // Session startup, attach behavior, and server policies.
         settings_group(
             "Sessions",
             vec![
@@ -414,6 +414,11 @@ fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
                     "Open Sessions on",
                     ctx.state.config.session.picker_open_on.label().to_string(),
                     CycleSessionPickerOpenOn,
+                ),
+                (
+                    "On shared attach",
+                    ctx.state.config.session.on_attach.label().to_string(),
+                    CycleSessionOnAttach,
                 ),
                 (
                     "Keep awake while agents work",

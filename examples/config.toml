@@ -338,6 +338,9 @@
 # "hold" types it back and waits, so running it again is a keystroke you chose. "never" restores
 # the shell and its scrollback alone, and writes no command to the snapshot at all.
 #resurrect_foreground = "hold"
+
+# When another client controls a writable attach: "ask", "follow", or "take".
+#on_attach = "ask"
 # "picker" always opens the session picker, "ephemeral" starts a
 # scratch session immediately, "last" reopens the last named session, "profile" opens the
 # session named after the [profile] default.

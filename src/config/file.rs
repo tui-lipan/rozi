@@ -463,6 +463,7 @@ struct SessionFileConfig {
     resurrect_foreground: Option<String>,
     resurrect_agents: Option<bool>,
     allow_takeover: Option<bool>,
+    on_attach: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -995,6 +996,14 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(allow_takeover) = parsed.session.allow_takeover {
         config.session.allow_takeover = allow_takeover;
+    }
+    if let Some(value) = non_empty(parsed.session.on_attach) {
+        match crate::config::SessionOnAttach::parse(&value) {
+            Some(mode) => config.session.on_attach = mode,
+            None => warnings.push(format!(
+                "Ignored unknown session.on_attach \"{value}\" (expected `ask`, `follow`, or `take`)"
+            )),
+        }
     }
     if let Some(value) = non_empty(parsed.session.resurrect_foreground) {
         match crate::config::ForegroundRestore::parse(&value) {
@@ -1869,6 +1878,31 @@ mod file_tests {
                 .any(|warning| warning.contains("resurrect_foreground")),
             "{:?}",
             loaded.warnings
+        );
+    }
+
+    #[test]
+    fn session_on_attach_parses_modes_and_warns_on_unknown_values() {
+        use crate::config::SessionOnAttach;
+        for mode in SessionOnAttach::all() {
+            let loaded = load_config_from_text(
+                &format!("[session]\non_attach = \"{}\"", mode.as_str()),
+                Path::new("config.toml"),
+            );
+            assert_eq!(loaded.config.session.on_attach, *mode);
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        }
+        assert_eq!(Config::default().session.on_attach, SessionOnAttach::Ask);
+        let loaded = load_config_from_text(
+            "[session]\non_attach = \"invalid\"",
+            Path::new("config.toml"),
+        );
+        assert_eq!(loaded.config.session.on_attach, SessionOnAttach::Ask);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("session.on_attach"))
         );
     }
 

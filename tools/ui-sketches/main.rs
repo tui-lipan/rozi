@@ -1127,6 +1127,29 @@ fn session_picker_settings() {
             &format!("session-picker-opening-choice-{width}x{height}"),
         );
     }
+    backend.update_level(Msg::SettingsChoiceCancel).unwrap();
+    backend.state_mut().settings_selected = Some(rozi::state::SettingsAction::CycleSessionOnAttach);
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("shared-attach-settings-{width}x{height}"),
+        );
+    }
+    backend
+        .update_level(Msg::SettingsActivate(
+            rozi::state::SettingsAction::CycleSessionOnAttach,
+        ))
+        .unwrap();
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("shared-attach-choice-{width}x{height}"),
+        );
+    }
 }
 
 fn session_picker_no_results() {

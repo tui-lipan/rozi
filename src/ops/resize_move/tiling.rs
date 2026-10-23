@@ -8,9 +8,8 @@ use crate::layout::geometry::{
 };
 use crate::layout::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
-    move_tiled_window_around_target, ratio_at, redock_split_ratio, remove_tiled_window,
-    resize_tiled_split, sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves,
-    usable_axis_extent,
+    move_tiled_window_around_target, ratio_at, redock_split_ratio, resize_tiled_split,
+    sanitize_scrollable_width, scrollable_column_width, usable_axis_extent,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, workspace_target_rects,
@@ -104,16 +103,20 @@ pub(crate) struct TileAt {
 /// The explicit-pane half of floating: the interactive toggle decides the rect from focus and the
 /// pointer, `pane set` from its request, and both land here.
 pub(crate) fn float_pane(workspace: &mut Workspace, id: PaneId, rect: FloatRect) -> bool {
-    let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
-        return false;
-    };
-    let changed = !pane.floating || pane.floating_rect != rect;
-    pane.opening = false;
-    pane.floating_rect = rect;
-    pane.floating_rect_initialized = true;
-    if !pane.floating {
-        pane.floating = true;
-        remove_tiled_window(workspace, id);
+    let retiled = workspace
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.floating);
+    let changed = crate::layout::shared::edit_live_workspace(workspace, |layout| {
+        layout.set_float_placement(id, Some(rect))
+    });
+    if let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) {
+        pane.opening = false;
+        pane.floating_rect_initialized = true;
+    }
+    if retiled {
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
     }
     changed
 }
@@ -131,8 +134,10 @@ pub(crate) fn tile_pane(workspace: &mut Workspace, id: PaneId, at: Option<TileAt
         return false;
     }
     pane.opening = false;
-    pane.floating = false;
     pane.floating_rect_initialized = true;
+    crate::layout::shared::edit_live_workspace(workspace, |layout| {
+        layout.set_float_placement(id, None)
+    });
     let placed = at.is_some_and(|at| {
         insert_tiled_pane_at_point(workspace, id, at.point, at.bounds, at.top_gap, at.tile_gap)
             .is_some()
@@ -143,6 +148,8 @@ pub(crate) fn tile_pane(workspace: &mut Workspace, id: PaneId, at: Option<TileAt
         workspace.tile_tree = crate::layout::effective_tile_tree(workspace, Some(id));
         append_tiled_window(workspace, id);
     }
+    workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
     true
 }
 
@@ -152,56 +159,17 @@ pub(crate) fn tile_pane(workspace: &mut Workspace, id: PaneId, at: Option<TileAt
 /// down to render order - so making `id` fullscreen restores any other, the rule spawning a
 /// fullscreen pane already keeps. `changed` counts those too.
 pub(crate) fn set_pane_fullscreen(workspace: &mut Workspace, id: PaneId, fullscreen: bool) -> bool {
-    let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) else {
-        return false;
-    };
-    pane.opening = false;
-    let mut changed = pane.fullscreen != fullscreen;
-    pane.fullscreen = fullscreen;
-    if fullscreen {
-        changed |= clear_other_fullscreen(workspace, id);
+    let changed = crate::layout::shared::edit_live_pane(
+        workspace,
+        id,
+        crate::control::PaneEdit {
+            fullscreen: Some(fullscreen),
+            ..Default::default()
+        },
+    );
+    if let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == id) {
+        pane.opening = false;
     }
-    changed
-}
-
-/// Restore every pane of `workspace` but `keep` from fullscreen. Returns whether any was.
-pub(crate) fn clear_other_fullscreen(workspace: &mut Workspace, keep: PaneId) -> bool {
-    let mut changed = false;
-    for other in workspace.panes.iter_mut().filter(|pane| pane.id != keep) {
-        changed |= other.fullscreen;
-        other.fullscreen = false;
-    }
-    changed
-}
-
-/// Exchange the places of tiled panes `a` and `b` in `workspace`, in its settled tree. Returns
-/// whether both were there to swap.
-pub(crate) fn swap_tiled_panes(workspace: &mut Workspace, a: PaneId, b: PaneId) -> bool {
-    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
-        return false;
-    };
-    if !swap_tree_leaves(&mut tree, a, b) {
-        return false;
-    }
-    workspace.tile_tree = Some(tree);
-    workspace.last_move_swap = None;
-    workspace.last_directional_focus = None;
-    true
-}
-
-/// Set the master pane's share of `workspace`. Returns whether it changed.
-pub(crate) fn set_master_ratio(workspace: &mut Workspace, ratio: f32) -> bool {
-    crate::layout::shared::set_master_share(&mut workspace.split_ratios, ratio)
-}
-
-/// Set pane `id`'s share of the Dwindle split directly holding it, in the settled tree. Returns
-/// whether it changed.
-pub(crate) fn set_pane_split_share(workspace: &mut Workspace, id: PaneId, share: f32) -> bool {
-    let Some(mut tree) = crate::layout::effective_tile_tree(workspace, None) else {
-        return false;
-    };
-    let changed = crate::layout::tiling::set_leaf_share(&mut tree, id, share);
-    workspace.tile_tree = Some(tree);
     changed
 }
 
@@ -211,7 +179,7 @@ pub(crate) fn set_workspace_layout(workspace: &mut Workspace, kind: LayoutKind) 
     if workspace.layout_kind == kind {
         return false;
     }
-    workspace.layout_kind = kind;
+    crate::layout::shared::edit_live_workspace(workspace, |layout| layout.set_layout_kind(0, kind));
     workspace.last_move_swap = None;
     workspace.last_directional_focus = None;
     true
@@ -421,7 +389,10 @@ pub(super) fn resize_master_split_by_pixels(
         workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
     }
     let master_cells = (available * ratio_at(&workspace.split_ratios, 0)).round();
-    workspace.split_ratios[0] = cell_split_ratio(master_cells + toward_master, available);
+    let ratio = cell_split_ratio(master_cells + toward_master, available);
+    crate::layout::shared::edit_live_workspace(workspace, |layout| {
+        layout.set_master_ratio(0, ratio)
+    });
     true
 }
 
@@ -449,9 +420,15 @@ pub(crate) fn resize_scrollable_width_by_pixels(
         return false;
     };
     let current = scrollable_column_width(viewport_w, pane.scrollable_width);
-    pane.scrollable_width = cell_split_ratio(current + pixels, viewport_w);
-    // cell_split_ratio clamps via DEFAULT_RATIO for non-finite; keep Scrollable's own default.
-    pane.scrollable_width = sanitize_scrollable_width(pane.scrollable_width);
+    let width = sanitize_scrollable_width(cell_split_ratio(current + pixels, viewport_w));
+    crate::layout::shared::edit_live_pane(
+        workspace,
+        pane_id,
+        crate::control::PaneEdit {
+            width_ratio: Some(width),
+            ..Default::default()
+        },
+    );
     true
 }
 
@@ -580,13 +557,7 @@ fn swap_tiled_neighbor_in_direction(
     let Some(target_id) = target_id else {
         return false;
     };
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
-    }
-    let Some(tree) = workspace.tile_tree.as_mut() else {
-        return false;
-    };
-    let swapped = swap_tree_leaves(tree, focused, target_id);
+    let swapped = crate::layout::shared::swap_live_panes(workspace, focused, target_id);
     if swapped {
         workspace.last_move_swap = Some(MoveSwapHint {
             pane: focused,

@@ -214,6 +214,7 @@ pub struct ClientRuntimeStats {
 /// A structured request to spawn a pane on the session server.
 #[derive(Clone, Debug)]
 pub struct SpawnPaneRequest {
+    pub placement: Option<protocol::SpawnPlacementCommit>,
     pub pane_id: PaneId,
     pub local: bool,
     pub generation: u64,
@@ -633,6 +634,7 @@ impl SessionClient {
 
     pub fn spawn_pane(&self, request: SpawnPaneRequest) {
         self.send_control(ClientMessage::SpawnPane {
+            placement: request.placement,
             pane_id: request.pane_id,
             local: request.local,
             generation: request.generation,
@@ -803,6 +805,10 @@ impl SessionClient {
     /// Detection is server-side, so a reload that changed `[[agents]]` or an extension's agents
     /// has no effect on live panes until the server hears about it. Ignored by the server unless
     /// this client holds the layout-control lease.
+    pub fn reload_spawn_policy(&self) {
+        self.send_control(ClientMessage::ReloadSpawnPolicy);
+    }
+
     pub fn reload_agents(&self) {
         self.send_control(ClientMessage::ReloadAgents);
     }

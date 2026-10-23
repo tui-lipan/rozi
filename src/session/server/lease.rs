@@ -41,6 +41,87 @@ impl SessionServer {
             .all(|(id, pane)| pane.exited.is_some() || layout_ids.contains(id))
     }
 
+    /// Validate the prospective pane set before starting a process. The event loop cannot expose
+    /// the inserted pane until this call has also published its placement at one revision.
+    pub(super) fn spawn_shared_pane(
+        &mut self,
+        request: SpawnRequest,
+        placement: Option<protocol::SpawnPlacementCommit>,
+        author: ClientId,
+        messages: &mut Vec<(Target, ServerMessage)>,
+    ) -> ServerMessage {
+        let refused = |error: &str| ServerMessage::SpawnResult {
+            pane_id: request.pane_id,
+            local: false,
+            generation: request.generation,
+            pid: None,
+            ok: false,
+            error: Some(error.to_string()),
+        };
+        if !self.may_spawn_shared(author) || request.owner.is_some() {
+            return refused("not controller or read-only");
+        }
+        let Some(placement) = placement else {
+            return refused("shared spawn requires an atomic layout placement");
+        };
+        if placement.base_rev != self.layout_rev
+            || placement.layout.validate().is_err()
+            || !self.validate_spawn_placement(&placement.layout, &request)
+        {
+            messages.push((
+                Target::Sender,
+                ServerMessage::LayoutRejected {
+                    current_rev: self.layout_rev,
+                    layout: self.layout.clone(),
+                },
+            ));
+            return refused("stale or invalid shared spawn placement");
+        }
+        let id = request.pane_id;
+        let result = self.spawn_pane(request);
+        if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
+            let metadata = self
+                .pane_metadata_message(None, id)
+                .expect("successful spawn installs its pane");
+            messages.push((Target::Broadcast, metadata));
+            messages.extend(self.publish_shared_layout(placement.layout, author, false));
+        }
+        result
+    }
+
+    fn may_spawn_shared(&self, author: ClientId) -> bool {
+        if author == 0 {
+            self.controller.is_none()
+        } else {
+            self.is_controller(author) && !self.client_read_only(author)
+        }
+    }
+
+    fn validate_spawn_placement(&self, layout: &SharedLayout, request: &SpawnRequest) -> bool {
+        let placements: std::collections::HashMap<_, _> = layout
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.panes)
+            .map(|pane| (pane.pane_id, pane.generation))
+            .collect();
+        if placements.get(&request.pane_id) != Some(&request.generation) {
+            return false;
+        }
+        let existing_match = placements.iter().all(|(id, generation)| {
+            *id == request.pane_id
+                || self
+                    .panes
+                    .get(id)
+                    .is_some_and(|pane| pane.exited.is_none() && pane.generation == *generation)
+        });
+        existing_match
+            && self.panes.iter().all(|(id, pane)| {
+                *id == request.pane_id
+                    || pane.exited.is_some()
+                    || placements.get(id) == Some(&pane.generation)
+            })
+    }
+
     pub(super) fn handle_commit_layout(
         &mut self,
         client_id: ClientId,
@@ -65,6 +146,15 @@ impl SessionServer {
                 },
             )];
         }
+        self.publish_shared_layout(layout, client_id, live)
+    }
+
+    pub(super) fn publish_shared_layout(
+        &mut self,
+        layout: SharedLayout,
+        author: ClientId,
+        live: bool,
+    ) -> Vec<(Target, ServerMessage)> {
         let status = self.program_status_for_new_layout_panes(&layout);
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
@@ -73,7 +163,7 @@ impl SessionServer {
             Target::Broadcast,
             ServerMessage::LayoutCommitted {
                 rev: self.layout_rev,
-                author: client_id,
+                author,
                 layout,
                 live,
             },

@@ -20,6 +20,10 @@ fn pane_status_broadcasts_and_survives_detach_reattach() {
     let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,

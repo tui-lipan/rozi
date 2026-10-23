@@ -300,6 +300,7 @@ fn worktree_rpc_lists_creates_and_removes_on_the_session_host() {
     // remains blocked even when `force` is requested.
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     writable.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(0, &[(41, 1)])),
         pane_id: 41,
         local: false,
         generation: 1,

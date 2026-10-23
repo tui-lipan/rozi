@@ -398,6 +398,7 @@ pub struct SharedSessionState {
     orphan_geometry: HashMap<PaneId, (u64, PaneGeometry)>,
     /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
     pub layout_commit_scheduled: bool,
+    pub pane_scrollback: HashMap<(PaneId, u64), usize>,
 }
 
 impl SharedSessionState {
@@ -416,6 +417,7 @@ impl SharedSessionState {
             orphan_output: OrphanOutputStore::default(),
             orphan_geometry: HashMap::new(),
             layout_commit_scheduled: false,
+            pane_scrollback: HashMap::new(),
         }
     }
 

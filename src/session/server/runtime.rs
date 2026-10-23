@@ -1035,6 +1035,7 @@ impl SessionServer {
             loaded.config.command_shell.as_deref(),
             &crate::platform::command::ShellEnv::from_process(),
         );
+        self.settings.scrollback = loaded.config.scrollback;
         self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
     }
 
@@ -2595,6 +2596,7 @@ mod tests {
 
     fn make_pane() -> ServerPane {
         ServerPane {
+            scrollback: 100,
             generation: 1,
             title: None,
             cwd: Some("/launch/dir".to_string()),

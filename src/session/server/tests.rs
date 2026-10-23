@@ -17,6 +17,7 @@ fn test_palette() -> WirePalette {
 /// A 20x5 pane with no PTY behind it, for tests that only exercise server-side pane bookkeeping.
 pub(super) fn test_pane(generation: u64) -> ServerPane {
     ServerPane {
+        scrollback: 100,
         generation,
         title: None,
         cwd: None,
@@ -2311,6 +2312,10 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     server.handle_message(
         first,
         ClientMessage::SpawnPane {
+            placement: Some(protocol::SpawnPlacementCommit {
+                base_rev: 0,
+                layout: shared_layout_for_panes(&[(1, 1)]),
+            }),
             pane_id: 1,
             local: false,
             generation: 1,
@@ -3088,6 +3093,7 @@ fn spawn_from_follower_is_rejected() {
     let responses = server.handle_message(
         follower,
         ClientMessage::SpawnPane {
+            placement: None,
             pane_id: 1,
             local: false,
             generation: 1,
@@ -3115,6 +3121,7 @@ fn spawn_from_follower_is_rejected() {
 
 fn local_spawn(pane_id: PaneId, generation: u64) -> ClientMessage {
     ClientMessage::SpawnPane {
+        placement: None,
         pane_id,
         local: true,
         generation,
@@ -3143,7 +3150,10 @@ fn client_local_panes_are_owner_scoped_and_survive_control_transfer() {
         let response = server.handle_message(owner, local_spawn(7, owner));
         assert!(matches!(
             response.as_slice(),
-            [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+            [
+                (Target::Sender, ServerMessage::SpawnResult { ok: true, .. }),
+                ..
+            ]
         ));
     }
     assert!(server.panes.is_empty());
@@ -3195,6 +3205,10 @@ fn client_local_panes_are_not_seeded_and_disconnect_kills_the_ownership_entry() 
 
 fn colliding_spawn(pane_id: PaneId, local: bool, generation: u64, command: &str) -> ClientMessage {
     ClientMessage::SpawnPane {
+        placement: (!local).then(|| protocol::SpawnPlacementCommit {
+            base_rev: 0,
+            layout: shared_layout_for_panes(&[(pane_id, generation)]),
+        }),
         pane_id,
         local,
         generation,
@@ -3460,7 +3474,10 @@ fn colliding_local_and_shared_pane_input_is_namespaced() {
         assert!(
             matches!(
                 spawned.as_slice(),
-                [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+                [
+                    (Target::Sender, ServerMessage::SpawnResult { ok: true, .. }),
+                    ..
+                ]
             ),
             "spawn local={local} failed: {spawned:?}"
         );
@@ -3530,7 +3547,10 @@ fn marked_input_is_answered_ahead_of_the_output_it_causes() {
     assert!(
         matches!(
             spawned.as_slice(),
-            [(Target::Sender, ServerMessage::SpawnResult { ok: true, .. })]
+            [
+                (Target::Sender, ServerMessage::SpawnResult { ok: true, .. }),
+                ..
+            ]
         ),
         "spawn failed: {spawned:?}"
     );
@@ -4132,6 +4152,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
     server.panes.insert(
         1,
         ServerPane {
+            scrollback: 100,
             generation: 2,
             title: None,
             cwd: None,
@@ -4302,6 +4323,7 @@ fn duplicate_spawn_is_rejected() {
     server.panes.insert(
         1,
         ServerPane {
+            scrollback: 100,
             generation: 2,
             title: None,
             cwd: None,
@@ -4364,6 +4386,7 @@ fn exited_pane_can_be_respawned() {
     server.panes.insert(
         1,
         ServerPane {
+            scrollback: 100,
             generation: 2,
             title: None,
             cwd: None,
@@ -4553,6 +4576,7 @@ fn attach_streams_full_osc_stores_under_frame_and_backlog_limits() {
 fn attach_reports_layout_and_panes() {
     let mut server = SessionServer::new_named("dev");
     let mut pane = ServerPane {
+        scrollback: 100,
         generation: 8,
         title: Some("editor".into()),
         cwd: Some("/repo".into()),
@@ -4755,6 +4779,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
     server.panes.insert(
         1,
         ServerPane {
+            scrollback: 100,
             generation: 2,
             title: None,
             cwd: None,
@@ -4836,6 +4861,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         server.panes.insert(
             id,
             ServerPane {
+                scrollback: 100,
                 generation: id as u64,
                 title: Some(format!("pane-{id}")),
                 cwd: None,
@@ -6817,3 +6843,5 @@ fn the_server_names_itself_as_every_panes_terminal() {
         "custom|9"
     );
 }
+
+mod transactions;

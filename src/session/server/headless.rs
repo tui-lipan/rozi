@@ -732,23 +732,7 @@ impl SessionServer {
         layout: SharedLayout,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) {
-        let status = self.program_status_for_new_layout_panes(&layout);
-        self.layout_rev += 1;
-        self.layout = Some(layout.clone());
-        self.mark_dirty();
-        broadcasts.push((
-            Target::Broadcast,
-            ServerMessage::LayoutCommitted {
-                rev: self.layout_rev,
-                // Client ids start at 1, so `0` is a document no client authored. Every client
-                // therefore reconciles this revision instead of recognising it as the echo of its
-                // own commit - which is right: none of them wrote it.
-                author: SERVER_LAYOUT_AUTHOR,
-                layout,
-                live: false,
-            },
-        ));
-        broadcasts.extend(status);
+        broadcasts.extend(self.publish_shared_layout(layout, SERVER_LAYOUT_AUTHOR, false));
     }
 
     /// The document a headless layout write starts from, once the write is allowed at all.
@@ -1800,27 +1784,35 @@ impl SessionServer {
             .unwrap_or_else(|| WirePalette::from(TerminalColorPalette::default()));
         let shell = self.settings.shell.clone();
         let command_shell = self.settings.command_shell.clone();
-        let result = self.spawn_pane(SpawnRequest {
-            pane_id,
-            owner: None,
-            generation,
-            launch,
-            agent_resume: None,
-            cwd: spawn.cwd,
-            title: spawn.title,
-            cols,
-            rows,
-            keep_open: spawn.keep_open,
-            env: crate::pane::spawn_policy::spawn_environment(
-                crate::pane::spawn_policy::SpawnOrigin::Headless,
+        let result = self.spawn_shared_pane(
+            SpawnRequest {
                 pane_id,
-                &[],
-            ),
-            palette,
-            shell,
-            command_shell,
-            cell: None,
-        });
+                owner: None,
+                generation,
+                launch,
+                agent_resume: None,
+                cwd: spawn.cwd,
+                title: spawn.title,
+                cols,
+                rows,
+                keep_open: spawn.keep_open,
+                env: crate::pane::spawn_policy::spawn_environment(
+                    crate::pane::spawn_policy::SpawnOrigin::Headless,
+                    pane_id,
+                    &[],
+                ),
+                palette,
+                shell,
+                command_shell,
+                cell: None,
+            },
+            Some(protocol::SpawnPlacementCommit {
+                base_rev: self.layout_rev,
+                layout,
+            }),
+            0,
+            broadcasts,
+        );
         // `SpawnResult` answers the client that asked; a follower learns about a new pane from
         // the layout revision below, exactly as it does for a controller's split. Broadcasting it
         // would hand every client a reply to a request it never made.
@@ -1831,8 +1823,6 @@ impl SessionServer {
             }
             _ => false,
         };
-
-        self.commit_server_layout(layout, broadcasts);
 
         ControlResponse::ok(NewPaneAccepted {
             id: pane_id,
@@ -3721,6 +3711,7 @@ mod tests {
 
         let layout = match broadcasts.as_slice() {
             [
+                (_, ServerMessage::PaneMetadata { .. }),
                 (
                     Target::Broadcast,
                     ServerMessage::LayoutCommitted {
@@ -4122,7 +4113,11 @@ mod tests {
             },
         );
         assert!(response.ok, "{:?}", response.error);
-        let [(_, ServerMessage::LayoutCommitted { layout, .. })] = broadcasts.as_slice() else {
+        let [
+            (_, ServerMessage::PaneMetadata { .. }),
+            (_, ServerMessage::LayoutCommitted { layout, .. }),
+        ] = broadcasts.as_slice()
+        else {
             panic!("expected a layout commit, got {broadcasts:?}");
         };
         let workspace = layout

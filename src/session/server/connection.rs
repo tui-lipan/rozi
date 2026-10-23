@@ -328,7 +328,6 @@ impl SessionServer {
         if owner.is_none() && !self.is_controller(client_id) {
             return Vec::new();
         }
-        let scrollback = self.settings.scrollback;
         let image_media = self.image_media();
         let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
             pane.generation == generation
@@ -389,7 +388,7 @@ impl SessionServer {
                 // The spawn request uses a fallback geometry before the client's layout is
                 // available. Rebuild the still-empty parser at its authoritative size so a
                 // width reflow cannot discard the spare history-allocation slot.
-                let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
+                let mut screen = crate::pane::new_terminal_screen(rows, cols, pane.scrollback);
                 screen.set_cell_size(pane.cell);
                 screen.set_image_storage_enabled(true);
                 screen.set_image_budget(crate::pane::PANE_IMAGE_BUDGET_BYTES);
@@ -643,6 +642,12 @@ impl SessionServer {
                 }
                 Vec::new()
             }
+            ClientMessage::ReloadSpawnPolicy => {
+                if self.is_controller(client_id) && !self.client_read_only(client_id) {
+                    self.reload_spawn_policy();
+                }
+                Vec::new()
+            }
             ClientMessage::ReloadAgents => {
                 if self.is_controller(client_id) && !self.client_read_only(client_id) {
                     self.reload_agent_definitions();
@@ -691,6 +696,7 @@ impl SessionServer {
                 )],
             },
             ClientMessage::SpawnPane {
+                placement,
                 pane_id,
                 local,
                 generation,
@@ -720,7 +726,7 @@ impl SessionServer {
                         },
                     )];
                 }
-                if !local && !self.is_controller(client_id) {
+                if !local && (!self.is_controller(client_id) || self.client_read_only(client_id)) {
                     return vec![(
                         Target::Sender,
                         ServerMessage::SpawnResult {
@@ -738,7 +744,7 @@ impl SessionServer {
                     && self.origin_seed_client.is_none()
                     && self.panes.is_empty()
                     && self.layout.is_none();
-                let message = self.spawn_pane(SpawnRequest {
+                let request = SpawnRequest {
                     pane_id,
                     owner: local.then_some(client_id),
                     generation,
@@ -754,11 +760,27 @@ impl SessionServer {
                     shell,
                     command_shell,
                     cell: protocol::wire_cell(cell_width, cell_height),
-                });
+                };
+                let mut messages = Vec::new();
+                let message = if local {
+                    if placement.is_some() {
+                        return Vec::new();
+                    }
+                    self.spawn_pane(request)
+                } else {
+                    self.spawn_shared_pane(request, placement, client_id, &mut messages)
+                };
                 if initial_seed && matches!(message, ServerMessage::SpawnResult { ok: true, .. }) {
                     self.origin_seed_client = Some(client_id);
                 }
-                vec![(Target::Sender, message)]
+                if local
+                    && matches!(message, ServerMessage::SpawnResult { ok: true, .. })
+                    && let Some(metadata) = self.pane_metadata_message(Some(client_id), pane_id)
+                {
+                    messages.push((Target::Sender, metadata));
+                }
+                messages.insert(0, (Target::Sender, message));
+                messages
             }
             ClientMessage::Resize {
                 pane_id,

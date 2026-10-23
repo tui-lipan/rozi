@@ -70,7 +70,7 @@ impl SessionServer {
     }
 
     pub(super) fn spawn_pane(&mut self, request: SpawnRequest) -> ServerMessage {
-        self.spawn_pane_inner(request, None, false)
+        self.spawn_pane_inner(request, None, false, None)
     }
 
     pub(super) fn spawn_pane_inner(
@@ -78,6 +78,7 @@ impl SessionServer {
         mut request: SpawnRequest,
         seed: Option<&[u8]>,
         retain_on_failure: bool,
+        restored_scrollback: Option<usize>,
     ) -> ServerMessage {
         let id = request.pane_id;
         let owner = request.owner;
@@ -139,7 +140,8 @@ impl SessionServer {
         self.next_generation = self.next_generation.max(generation.saturating_add(1));
         // Pre-17 clients report no cell size; the PTY's own default stands in until one resizes.
         let cell = request.cell.unwrap_or_default();
-        let mut screen = crate::pane::new_terminal_screen(rows, cols, self.settings.scrollback);
+        let scrollback = restored_scrollback.unwrap_or(self.settings.scrollback);
+        let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
         screen.set_program_status_enabled(true);
         screen.set_cell_size(cell);
         // The server exports this screen to seed later attachments, so it retains the same bounded
@@ -228,6 +230,7 @@ impl SessionServer {
                     owner,
                     id,
                     ServerPane {
+                        scrollback,
                         generation,
                         title: request.title,
                         cwd: effective_cwd,
@@ -280,6 +283,7 @@ impl SessionServer {
                         owner,
                         id,
                         ServerPane {
+                            scrollback,
                             generation,
                             title: request.title,
                             cwd: request.cwd,
@@ -922,27 +926,47 @@ impl SessionServer {
         }
     }
 
+    pub(super) fn pane_metadata_message(
+        &self,
+        owner: Option<ClientId>,
+        id: PaneId,
+    ) -> Option<ServerMessage> {
+        let pane = self.pane(owner, id)?;
+        Some(ServerMessage::PaneMetadata {
+            local: wire_local(owner),
+            meta: self.pane_metadata(owner, id)?,
+            cell_width: pane.cell.width,
+            cell_height: pane.cell.height,
+        })
+    }
+
     pub(super) fn pane_meta(&self) -> Vec<PaneMeta> {
         self.panes
-            .iter()
-            .map(|(pane_id, pane)| PaneMeta {
-                pane_id: *pane_id,
-                generation: pane.generation,
-                agents: pane.agent.records(protocol::PaneRef {
-                    session_instance: self.instance_id.clone(),
-                    pane_id: *pane_id,
-                    generation: pane.generation,
-                }),
-                cols: pane.cols,
-                rows: pane.rows,
-                pid: pane.pty.as_ref().and_then(TerminalPty::pid),
-                title: pane.effective_title(),
-                original_user: Some(crate::platform::user::current_user_label()),
-                exited: pane.exited,
-                logging: pane.log.is_some(),
-                runtime: pane.runtime.clone(),
-            })
+            .keys()
+            .filter_map(|id| self.pane_metadata(None, *id))
             .collect()
+    }
+
+    pub(super) fn pane_metadata(&self, owner: Option<ClientId>, id: PaneId) -> Option<PaneMeta> {
+        let pane = self.pane(owner, id)?;
+        Some(PaneMeta {
+            pane_id: id,
+            generation: pane.generation,
+            scrollback: pane.scrollback,
+            agents: pane.agent.records(protocol::PaneRef {
+                session_instance: self.instance_id.clone(),
+                pane_id: id,
+                generation: pane.generation,
+            }),
+            cols: pane.cols,
+            rows: pane.rows,
+            pid: pane.pty.as_ref().and_then(TerminalPty::pid),
+            title: pane.effective_title(),
+            original_user: Some(crate::platform::user::current_user_label()),
+            exited: pane.exited,
+            logging: pane.log.is_some(),
+            runtime: pane.runtime.clone(),
+        })
     }
 
     pub(super) fn set_pane_logging(

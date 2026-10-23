@@ -1306,7 +1306,7 @@ impl RequestedRect {
 
 /// A validated `pane set`: every check that does not depend on the pane's current state has
 /// already passed, so applying it can only fail on the pane itself.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub(crate) struct PaneEdit {
     pub floating: Option<bool>,
     pub fullscreen: Option<bool>,

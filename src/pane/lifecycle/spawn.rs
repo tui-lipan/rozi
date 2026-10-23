@@ -768,6 +768,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
     let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
     let request = crate::session::client::SpawnPaneRequest {
+        placement: None,
         pane_id,
         local,
         generation,
@@ -794,11 +795,51 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
             pane.terminal.status =
                 ManagedTerminalStatus::Error("scratch runtime disconnected".into());
         }
-    } else if let Some(client) = state.current().session_client.clone() {
-        client.spawn_pane(request);
+    } else if state.current().session_client.is_some() {
+        send_pane_spawn(state, request);
     } else {
         state.current_mut().pending_spawns.push(request);
     }
+}
+
+/// Publish each shared spawn with exactly the panes already submitted plus this pane. Startup
+/// and profile loading may have several local placeholders whose PTYs do not exist yet.
+pub(crate) fn send_pane_spawn(
+    state: &mut State,
+    mut request: crate::session::client::SpawnPaneRequest,
+) {
+    let Some(client) = state.current().session_client.clone() else {
+        return;
+    };
+    if !request.local {
+        let Some(shared) = state.current().shared.as_ref() else {
+            return;
+        };
+        let canvas = shared
+            .canonical_canvas
+            .unwrap_or((request.cols.max(1), request.rows.max(1)));
+        let mut known: std::collections::HashSet<_> = shared
+            .last_committed_layout
+            .iter()
+            .flat_map(|layout| &layout.workspaces)
+            .flat_map(|ws| &ws.panes)
+            .map(|pane| pane.pane_id)
+            .collect();
+        known.extend(shared.pane_scrollback.keys().map(|(id, _)| *id));
+        known.insert(request.pane_id);
+        let base_rev = shared.assumed_rev;
+        let mut layout = crate::layout::shared::shared_layout_from_state(state, canvas);
+        layout.retain_panes(&known);
+        request.placement = Some(crate::session::protocol::SpawnPlacementCommit {
+            base_rev,
+            layout: layout.clone(),
+        });
+        let shared = state.current_mut().shared.as_mut().expect("checked above");
+        shared.assumed_rev = base_rev.saturating_add(1);
+        shared.last_committed_layout = Some(layout);
+        shared.canonical_canvas = Some(canvas);
+    }
+    client.spawn_pane(request);
 }
 
 /// Resolve this session's interactive-shell and command-runner launch policies from the live

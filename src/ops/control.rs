@@ -753,13 +753,18 @@ fn layout_change_reply(
     ctx: &mut Context<AppRoot>,
     changed: bool,
     workspace: usize,
+    layout: crate::layout::shared::SharedLayout,
 ) -> ControlResponse {
     if changed {
         // Arranging a session is using it: from here on it is not a disposable one.
         ctx.state.current_mut().engaged = true;
     }
+    crate::ops::session::control_lease::commit_layout_document(
+        &mut ctx.state,
+        layout.clone(),
+        false,
+    );
     let (revision, committed) = flushed_revision(ctx);
-    let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
     let Some(workspace) = workspace_reports(ctx, &layout, Some(workspace + 1)).pop() else {
         return ControlResponse::error(format!("workspace {} is missing", workspace + 1));
     };
@@ -785,25 +790,30 @@ fn layout_set(
     {
         return response;
     }
-    let target = &mut ctx.state.current_mut().workspaces[index];
+    let mut layout =
+        crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
     let mut changed = edit
         .kind
-        .is_some_and(|kind| crate::ops::resize_move::set_workspace_layout(target, kind));
+        .is_some_and(|kind| layout.set_layout_kind(index, kind));
     if let Some(ratio) = edit.master_ratio {
-        changed |= crate::ops::resize_move::set_master_ratio(target, ratio);
+        changed |= layout.set_master_ratio(index, ratio);
+    }
+    crate::layout::shared::reconcile_controller_layout(&mut ctx.state, &layout);
+    if changed && edit.kind.is_some() {
+        let workspace = &mut ctx.state.current_mut().workspaces[index];
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
     }
     if changed && index == ctx.state.current().active_workspace {
         ctx.state.animation = crate::layout::anim::GeometryAnimation::AxisChange;
     }
-    layout_change_reply(ctx, changed, index)
+    layout_change_reply(ctx, changed, index, layout)
 }
 
 /// `pane set` from this UI.
 ///
-/// Rects are resolved from the shared document through the same function a session server uses,
-/// then applied to the live workspace through the primitives the interactive toggles use - so the
-/// request lands where it would have landed headlessly, and the pane gets there the way a pane a
-/// person floats does.
+/// The shared document resolves the edit. Reconciliation preserves existing terminals and local
+/// view state; presentation consequences apply after the document is settled.
 fn pane_set(
     ctx: &mut Context<AppRoot>,
     target: PaneId,
@@ -833,56 +843,56 @@ fn pane_set(
 
     let canvas = layout_canvas(ctx);
     let before = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
-    let floats = edit.floats(floating_now);
-    let float_rect = floats.then(|| {
-        before
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.index == index)
-            .and_then(|workspace| {
-                crate::layout::shared::automation_float_rect(
-                    workspace,
-                    canvas,
-                    target,
-                    edit.rect.map(|rect| rect.to_cells(canvas)),
-                )
-            })
-            .unwrap_or_else(|| {
-                crate::layout::geometry::default_floating_rect(
-                    crate::layout::shared::canvas_bounds(canvas),
-                    0,
-                )
-            })
-    });
+    let mut layout = before.clone();
+    let changed = match layout.edit_pane(target, edit) {
+        Ok(changed) => changed,
+        Err(error) => return ControlResponse::error(error.to_string()),
+    };
+    let old = &before.workspaces[index].panes;
+    let new = &layout.workspaces[index].panes;
+    let moved = old
+        .iter()
+        .zip(new)
+        .any(|(a, b)| a.floating != b.floating || a.rect != b.rect);
+    let fullscreen_changed = old
+        .iter()
+        .zip(new)
+        .any(|(a, b)| a.fullscreen != b.fullscreen);
+    crate::layout::shared::reconcile_controller_layout(&mut ctx.state, &layout);
+    apply_pane_edit_presentation(
+        ctx,
+        target,
+        index,
+        changed,
+        moved,
+        fullscreen_changed,
+        edit.floats(floating_now) != floating_now,
+    );
+    layout_change_reply(ctx, changed, index, layout)
+}
 
-    let workspace = &mut ctx.state.current_mut().workspaces[index];
-    let mut moved = false;
-    match float_rect {
-        // A float that stays put keeps its rect exactly, rather than a round trip through cells.
-        Some(rect) if !floating_now || edit.rect.is_some() => {
-            moved = crate::ops::resize_move::float_pane(workspace, target, rect);
-        }
-        Some(_) => {}
-        None => moved = crate::ops::resize_move::tile_pane(workspace, target, None),
+fn apply_pane_edit_presentation(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    index: usize,
+    changed: bool,
+    moved: bool,
+    fullscreen_changed: bool,
+    retiled: bool,
+) {
+    if retiled {
+        let workspace = &mut ctx.state.current_mut().workspaces[index];
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
     }
-    let mut fullscreen_changed = false;
-    if let Some(fullscreen) = edit.fullscreen {
-        fullscreen_changed =
-            crate::ops::resize_move::set_pane_fullscreen(workspace, target, fullscreen);
-    }
-    // Sizes snap rather than animate: a terminal resized over several frames reflows its program
-    // once per frame.
-    if let Some(width) = edit.width_ratio
-        && let Some(pane) = workspace.panes.iter_mut().find(|pane| pane.id == target)
+    if (moved || fullscreen_changed)
+        && let Some(pane) = ctx.state.current_mut().workspaces[index]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == target)
     {
-        pane.scrollable_width = width;
+        pane.opening = false;
     }
-    if let Some(share) = edit.split_ratio {
-        crate::ops::resize_move::set_pane_split_share(workspace, target, share);
-    }
-
-    // Judged on the document, so `changed` means exactly "this commits a new revision".
-    let changed = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas) != before;
     if changed && index == ctx.state.current().active_workspace {
         ctx.state.animation = if moved {
             crate::layout::anim::GeometryAnimation::TileFloat
@@ -892,7 +902,6 @@ fn pane_set(
             ctx.state.animation
         };
     }
-    layout_change_reply(ctx, changed, index)
 }
 
 /// `pane move` from this UI. `workspace` is one-based.
@@ -913,22 +922,49 @@ fn pane_move(
         Err(response) => return response,
     };
     let destination = workspace - 1;
-    let changed = crate::ops::focus::transfer_pane(&mut ctx.state, target, source, destination);
+    let mut layout =
+        crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
+    let changed = match layout.move_pane(target, destination) {
+        Ok(changed) => changed,
+        Err(error) => return ControlResponse::error(error.to_string()),
+    };
+    crate::layout::shared::reconcile_controller_layout(&mut ctx.state, &layout);
     if changed {
-        let active = ctx.state.current().active_workspace;
-        if source == active && !ctx.state.scratch_visible {
-            crate::ops::focus::choose_fallback_focus(&mut ctx.state);
-        } else {
-            let left = &mut ctx.state.current_mut().workspaces[source];
-            if left.focused_pane == Some(target) {
-                left.focused_pane = crate::ops::focus::first_visible_pane(left);
-            }
-        }
-        if source == active || destination == active {
-            ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+        apply_pane_move_presentation(ctx, target, source, destination);
+    }
+    layout_change_reply(ctx, changed, destination, layout)
+}
+
+fn apply_pane_move_presentation(
+    ctx: &mut Context<AppRoot>,
+    target: PaneId,
+    source: usize,
+    destination: usize,
+) {
+    for index in [source, destination] {
+        let workspace = &mut ctx.state.current_mut().workspaces[index];
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
+    }
+    if let Some(pane) = ctx.state.current_mut().workspaces[destination]
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == target)
+    {
+        pane.opening = false;
+    }
+    let active = ctx.state.current().active_workspace;
+    if source == active && !ctx.state.scratch_visible {
+        crate::ops::focus::choose_fallback_focus(&mut ctx.state);
+    } else {
+        let left = &mut ctx.state.current_mut().workspaces[source];
+        if left.focused_pane == Some(target) {
+            left.focused_pane = crate::ops::focus::first_visible_pane(left);
         }
     }
-    layout_change_reply(ctx, changed, destination)
+    if source == active || destination == active {
+        ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
+    }
 }
 
 /// `pane reveal` from this UI: a view change, not a layout write, so it needs no layout control
@@ -969,15 +1005,22 @@ fn pane_swap(
         }
         Err(response) => return response,
     };
-    let changed = crate::ops::resize_move::swap_tiled_panes(
-        &mut ctx.state.current_mut().workspaces[index],
-        target,
-        with,
-    );
+    let mut layout =
+        crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
+    let changed = match layout.swap_panes(target, with) {
+        Ok(changed) => changed,
+        Err(error) => return ControlResponse::error(error.to_string()),
+    };
+    crate::layout::shared::reconcile_controller_layout(&mut ctx.state, &layout);
+    if changed {
+        let workspace = &mut ctx.state.current_mut().workspaces[index];
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
+    }
     if changed && index == ctx.state.current().active_workspace {
         ctx.state.animation = crate::layout::anim::GeometryAnimation::TileFloat;
     }
-    layout_change_reply(ctx, changed, index)
+    layout_change_reply(ctx, changed, index, layout)
 }
 
 /// `pane close` from this UI: the request is the confirmation, so `[confirm]` is not consulted.
@@ -993,7 +1036,11 @@ fn pane_close(
         Err(response) => return (response, Update::none()),
     };
     ctx.state.current_mut().engaged = true;
+    let mut layout =
+        crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
+    layout.remove_pane(target);
     let update = crate::pane::lifecycle::close_pane(ctx, target);
+    crate::ops::session::control_lease::commit_layout_document(&mut ctx.state, layout, false);
     let (revision, committed) = flushed_revision(ctx);
     let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, layout_canvas(ctx));
     let workspace = workspace_reports(ctx, &layout, Some(index + 1)).pop();
@@ -2632,6 +2679,9 @@ mod tests {
         let state = backend.state_mut();
         state.current_mut().session_attached = true;
         state.current_mut().session_client = Some(client);
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(1);
+        state.current_mut().shared = Some(shared);
         outbound
     }
 
@@ -3349,8 +3399,8 @@ mod tests {
                     .expect("publish the spawn");
                 assert_eq!(
                     commit_liveness(&rx),
-                    vec![false],
-                    "the spawn is an ordinary revision"
+                    Vec::<bool>::new(),
+                    "the spawn already published its placement atomically"
                 );
             })
             .expect("spawn new pane test thread")

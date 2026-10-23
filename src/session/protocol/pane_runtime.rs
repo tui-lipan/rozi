@@ -40,6 +40,8 @@ impl From<WirePalette> for TerminalColorPalette {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PaneMeta {
+    /// Retained history capacity selected when the server created this pane.
+    pub scrollback: usize,
     pub pane_id: PaneId,
     pub generation: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -60,6 +62,26 @@ pub struct PaneMeta {
     /// pane listing so a freshly attached client starts with current state rather than waiting for
     /// the next [`super::ServerMessage::PaneRuntimeChanged`].
     pub runtime: PaneRuntimeState,
+}
+
+#[cfg(test)]
+impl PaneMeta {
+    pub(crate) fn for_test(pane_id: PaneId, generation: u64, scrollback: usize) -> Self {
+        Self {
+            pane_id,
+            generation,
+            scrollback,
+            agents: Vec::new(),
+            cols: 80,
+            rows: 24,
+            pid: None,
+            title: None,
+            original_user: None,
+            exited: None,
+            logging: false,
+            runtime: PaneRuntimeState::default(),
+        }
+    }
 }
 
 /// Which precedence tier produced [`PaneRuntimeState::cwd`].

@@ -28,6 +28,64 @@ pub(crate) fn agent_report_result(
     Update::none()
 }
 
+/// Metadata precedes placement and replay so a parser never interprets server history using
+/// client configuration. A reconnect advertises the capacity again before its replay seed.
+pub(crate) fn pane_metadata(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    local: bool,
+    meta: crate::session::protocol::PaneMeta,
+    cell_width: u16,
+    cell_height: u16,
+) -> Update {
+    let geometry = crate::state::PaneGeometry {
+        cols: meta.cols,
+        rows: meta.rows,
+        cell: crate::session::protocol::wire_cell(cell_width, cell_height),
+    };
+    if local {
+        if epoch == ctx.state.runtime_epoch
+            && let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, meta.pane_id, true)
+            && pane.pty_generation == meta.generation
+        {
+            pane.terminal.use_server_scrollback(meta.scrollback);
+            pane.terminal
+                .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell);
+        }
+        return Update::none();
+    }
+    if let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) {
+        store_pane_metadata(attachment, &meta);
+        super::pane_events::apply_or_hold_geometry(
+            attachment,
+            meta.pane_id,
+            meta.generation,
+            geometry,
+        );
+    }
+    Update::none()
+}
+
+fn store_pane_metadata(
+    attachment: &mut crate::state::Attachment,
+    meta: &crate::session::protocol::PaneMeta,
+) {
+    if let Some(shared) = attachment.shared.as_mut() {
+        shared
+            .pane_scrollback
+            .insert((meta.pane_id, meta.generation), meta.scrollback);
+    }
+    for pane in attachment
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.panes)
+    {
+        if pane.id == meta.pane_id && pane.pty_generation == meta.generation {
+            pane.terminal.use_server_scrollback(meta.scrollback);
+        }
+    }
+}
+
 pub(crate) fn layout_committed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,

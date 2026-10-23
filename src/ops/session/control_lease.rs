@@ -495,9 +495,6 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }
-    let Some(client) = ctx.state.current().session_client.clone() else {
-        return;
-    };
     let bounds = ctx
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
@@ -507,7 +504,23 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
     );
     let layout = crate::layout::shared::shared_layout_from_state(&ctx.state, canvas);
     let live = layout_gesture_active(&ctx.state);
-    let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
+    commit_layout_document(&mut ctx.state, layout, live);
+}
+
+/// Publish the exact document an edit produced, after its local reconciliation.
+pub(crate) fn commit_layout_document(
+    state: &mut crate::state::State,
+    layout: crate::layout::shared::SharedLayout,
+    live: bool,
+) {
+    if !state.current().session_attached || !state.is_controller() {
+        return;
+    }
+    let Some(client) = state.current().session_client.clone() else {
+        return;
+    };
+    let canvas = (layout.canvas_cols, layout.canvas_rows);
+    let Some(shared) = state.current_mut().shared.as_mut() else {
         return;
     };
     if shared.last_committed_layout.as_ref() == Some(&layout) {

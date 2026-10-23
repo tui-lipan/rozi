@@ -54,7 +54,12 @@ claiming a new domain, so say why in the change that introduces it.
   containing work require a keep decision.
 - The server owns shared layout state. One client controls layout; followers reconcile through
   `apply_shared_layout` without replacing live screens.
-- Focus, active workspace, overlays, copy/search state, scrollback, and theme remain client-local.
+- Shared layout mutations use `SharedLayout` semantics. Controllers reconcile placement into live
+  workspaces independently of follower lifecycle reconciliation.
+- Every successful shared spawn commits its resulting layout in the same server transaction.
+- Each server pane owns its history capacity. Metadata precedes layout and replay; reload changes
+  future panes only, and snapshots preserve each pane's capacity.
+- Focus, active workspace, overlays, copy/search state, scrollback position, and theme remain client-local.
 - Terminal size changes snap. Position and opacity may animate, but animated resizing would cause
   repeated PTY resize and SIGWINCH reflow.
 - Split direction follows the focused tile's aspect ratio and
@@ -82,3 +87,5 @@ Start with these paths rather than a static module inventory:
 - Platform boundary: `src/platform/mod.rs`
 
 Read `docs/sessions.md`, `docs/terminal.md`, and `docs/layouts-and-panes.md` for product behavior.
+
+See `dev/shared-layout-authority.md` for transaction and reconciliation boundaries.

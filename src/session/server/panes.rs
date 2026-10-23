@@ -8,9 +8,6 @@ use super::*;
 /// that ran for a while and then exited non-zero is not retried as an attach.
 const ATTACH_FALLBACK_WINDOW: Duration = Duration::from_secs(10);
 const SHELL_MODE_RECOVERY: &[u8] = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[?25h\x1b[=0u\x1b>\x1b[0 q\x1b[0m";
-use std::fs::OpenOptions;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 impl SessionServer {
@@ -994,11 +991,6 @@ impl SessionServer {
                 crate::platform::fs_security::ensure_private_dir(&root)?;
                 crate::platform::fs_security::ensure_private_dir(&dir)?;
                 let path = dir.join(format!("{id}-{generation}.log"));
-                // Created and locked down before anything is written, so the header never lands in
-                // a file that is briefly readable by anyone else.
-                OpenOptions::new().create(true).append(true).open(&path)?;
-                #[cfg(unix)]
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
                 PaneLog::open(&path, limit, &header)
             });
         match result {

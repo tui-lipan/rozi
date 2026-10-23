@@ -2,8 +2,7 @@ use super::*;
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::fs::File;
-use std::fs::OpenOptions;
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::mpsc;
@@ -1054,9 +1053,7 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 }
 
 fn write_secure(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    let mut file = crate::platform::persist::create_private_file(path, false)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -1174,6 +1171,22 @@ pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_writes_are_private_and_do_not_follow_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("replay");
+        write_secure(&path, b"private replay").unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(write_secure(&link, b"overwrite").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"private replay");
+    }
 
     #[test]
     fn snapshot_without_profile_origin_remains_readable() {
@@ -2439,7 +2452,7 @@ mod tests {
             &bash,
             format!(
                 "#!/bin/sh\nexport HOME={}\nexec bash \"$@\"\n",
-                crate::pane::launch::shell_quote(&root.path().to_string_lossy())
+                crate::platform::command::quote_posix_arg(&root.path().to_string_lossy())
             ),
         )
         .unwrap();

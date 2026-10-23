@@ -1,5 +1,7 @@
 //! Probe and optionally install rozi on a remote host before attach.
 
+use crate::platform::command::quote_posix_arg;
+use base64::Engine as _;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -894,10 +896,7 @@ printf 'installed=%s\n' "$final"
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
     // OpenSSH joins argv with spaces before the remote shell parses it.
-    command
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("'{}'", script.replace('\'', "'\"'\"'")));
+    command.arg("sh").arg("-c").arg(quote_posix_arg(&script));
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1092,33 +1091,7 @@ fn encode_powershell_command(script: &str) -> String {
     for unit in script.encode_utf16() {
         utf16.extend_from_slice(&unit.to_le_bytes());
     }
-    base64_standard(&utf16)
-}
-
-/// Minimal standard-alphabet base64 (with `=` padding). Kept in-crate rather than adding a direct
-/// dependency for one fixed PowerShell command.
-fn base64_standard(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(n & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
+    base64::engine::general_purpose::STANDARD.encode(&utf16)
 }
 
 fn download_release_binary(
@@ -1360,9 +1333,9 @@ pub(crate) fn append_remote_rozi_command(
 ) {
     match family {
         RemoteFamily::Posix => {
-            command.arg(shell_quote_posix(binary));
+            command.arg(quote_posix_arg(binary));
             for arg in args {
-                command.arg(shell_quote_posix(arg));
+                command.arg(quote_posix_arg(arg));
             }
         }
         RemoteFamily::Windows => {
@@ -1384,10 +1357,6 @@ pub(crate) fn append_remote_rozi_command(
                 .arg(encode_powershell_command(&script));
         }
     }
-}
-
-fn shell_quote_posix(word: &str) -> String {
-    format!("'{}'", word.replace('\'', "'\"'\"'"))
 }
 
 fn powershell_literal(word: &str) -> String {
@@ -1791,10 +1760,6 @@ mod tests {
         );
         let args: Vec<_> = posix.get_args().map(|arg| arg.to_string_lossy()).collect();
         assert_eq!(args, ["'/some path/rozi'", "'--remote-serve'", "'dev'"]);
-        assert_eq!(
-            shell_quote_posix("rozi'; touch $HOME"),
-            "'rozi'\"'\"'; touch $HOME'"
-        );
     }
 
     /// The confirmation names the directory the remote shell resolved, not the expression that
@@ -2143,15 +2108,25 @@ protocol_max={beyond}
     }
 
     #[test]
-    fn base64_matches_known_vectors() {
-        // RFC 4648 test vectors — the padding boundaries are what a hand-rolled encoder gets wrong.
-        assert_eq!(base64_standard(b""), "");
-        assert_eq!(base64_standard(b"f"), "Zg==");
-        assert_eq!(base64_standard(b"fo"), "Zm8=");
-        assert_eq!(base64_standard(b"foo"), "Zm9v");
-        assert_eq!(base64_standard(b"foob"), "Zm9vYg==");
-        assert_eq!(base64_standard(b"fooba"), "Zm9vYmE=");
-        assert_eq!(base64_standard(b"foobar"), "Zm9vYmFy");
+    fn encoded_powershell_padding_and_unicode() {
+        for (script, encoded) in [
+            ("", ""),
+            ("a", "YQA="),
+            ("ab", "YQBiAA=="),
+            ("abc", "YQBiAGMA"),
+        ] {
+            assert_eq!(encode_powershell_command(script), encoded);
+        }
+        for script in [
+            "Write-Output 'zażółć 🦀'",
+            WINDOWS_PROBE_SCRIPT,
+            WINDOWS_FAMILY_PROBE_SCRIPT,
+        ] {
+            assert_eq!(
+                decode_powershell_command(&encode_powershell_command(script)),
+                script
+            );
+        }
     }
 
     #[test]
@@ -2171,32 +2146,9 @@ protocol_max={beyond}
     }
 
     fn decode_powershell_command(encoded: &str) -> String {
-        // Manually decode base64 -> UTF-16LE -> String.
-        let decoded_bytes = {
-            let table = |c: u8| -> Option<u32> {
-                match c {
-                    b'A'..=b'Z' => Some((c - b'A') as u32),
-                    b'a'..=b'z' => Some((c - b'a' + 26) as u32),
-                    b'0'..=b'9' => Some((c - b'0' + 52) as u32),
-                    b'+' => Some(62),
-                    b'/' => Some(63),
-                    _ => None,
-                }
-            };
-            let mut out = Vec::new();
-            let clean: Vec<u8> = encoded.bytes().filter(|&c| c != b'=').collect();
-            let mut buf = 0u32;
-            let mut bits = 0u32;
-            for c in clean {
-                buf = (buf << 6) | table(c).unwrap();
-                bits += 6;
-                if bits >= 8 {
-                    bits -= 8;
-                    out.push(((buf >> bits) & 0xff) as u8);
-                }
-            }
-            out
-        };
+        let decoded_bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
         let units: Vec<u16> = decoded_bytes
             .chunks(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))

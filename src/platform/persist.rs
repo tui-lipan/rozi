@@ -60,6 +60,53 @@ pub fn create_private_file(path: &Path, overwrite: bool) -> io::Result<fs::File>
     options.open(path)
 }
 
+/// Open a regular file for append, creating it with private permissions from its first instant.
+/// Rejects leaf symlinks/reparse points. Existing Unix files are restricted through the open handle.
+/// On Windows, files inherit the parent directory's access control.
+pub fn open_private_append(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || is_reparse_point(&metadata) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(unix)]
+fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
 /// Whether two paths name the same existing file, however each is spelled: through `..`, a
 /// symlinked directory, or another letter case on a case-insensitive filesystem. `false` when
 /// either does not exist.
@@ -137,11 +184,7 @@ fn write_temporary_sibling(parent: &Path, dest: &Path, contents: &[u8]) -> io::R
             std::process::id(),
             unique
         ));
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
+        let mut file = match create_private_file(&temporary, false) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -212,6 +255,35 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_and_append_handles_are_restricted_and_refuse_links() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("private");
+        let file = create_private_file(&path, false).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(create_private_file(&path, false).is_err());
+        drop(file);
+        let mut file = open_private_append(&path).unwrap();
+        file.write_all(b"one").unwrap();
+        drop(file);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let mut file = open_private_append(&path).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        file.write_all(b"two").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"onetwo");
+        let fresh = dir.path().join("append");
+        let file = open_private_append(&fresh).unwrap();
+        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        let link = dir.path().join("link");
+        symlink(&path, &link).unwrap();
+        assert!(open_private_append(&link).is_err());
+        assert!(create_private_file(&link, true).is_err());
+        assert!(open_private_append(dir.path()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"onetwo");
     }
 
     #[test]

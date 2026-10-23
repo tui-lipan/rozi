@@ -98,8 +98,7 @@ pub fn default_paths(global: bool) -> Result<SkillPaths, String> {
 /// The project a project installation belongs to: the Git checkout containing `cwd`, so running
 /// from a subdirectory does not scatter a second copy there, or `cwd` itself outside any checkout.
 fn project_root(cwd: &Path) -> PathBuf {
-    cwd.ancestors()
-        .find(|dir| dir.join(".git").exists())
+    crate::platform::paths::project_root_path(cwd)
         .unwrap_or(cwd)
         .to_path_buf()
 }

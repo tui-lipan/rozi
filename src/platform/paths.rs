@@ -744,19 +744,16 @@ pub(crate) fn home_directory() -> Option<String> {
         .filter(|home| !home.is_empty())
 }
 
-/// Replace a leading home-directory prefix with `~`, for paths shown to the user. Returned
-/// unchanged when the path lies outside the home directory or there is no home directory to
-/// compare against.
-///
-/// Only ever apply this to a *local* path: a remote shell's home is not this machine's, so
-/// compressing a reported remote directory would claim a relationship that does not exist.
 /// Find the nearest Git project containing `cwd`. A `.git` file counts as well as a directory so
 /// worktrees and submodules are detected.
 pub fn discover_project_root(cwd: &str) -> Option<String> {
-    std::path::Path::new(cwd)
-        .ancestors()
-        .find(|dir| dir.join(".git").exists())
-        .map(|dir| dir.to_string_lossy().into_owned())
+    project_root_path(std::path::Path::new(cwd)).map(|dir| dir.to_string_lossy().into_owned())
+}
+
+/// Find the nearest checkout ancestor, including worktrees and submodules with a `.git` file.
+/// Returns `None` outside a checkout; the caller chooses its fallback.
+pub fn project_root_path(cwd: &std::path::Path) -> Option<&std::path::Path> {
+    cwd.ancestors().find(|dir| dir.join(".git").exists())
 }
 
 /// The path `cwd` occupies inside its project, relative to `root` — `src/view` for a pane in
@@ -886,6 +883,8 @@ pub fn display_cwd(cwd: &str) -> String {
     }
 }
 
+/// Replace a leading local home-directory prefix with `~` for display. Leaves other paths alone.
+/// Remote paths must not be compared against this machine's home directory.
 pub fn compress_home(path: &str) -> String {
     let Some(home) = display_home() else {
         return path.to_string();
@@ -913,6 +912,25 @@ pub fn compress_home(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_root_paths_cover_checkouts_worktrees_and_absence() {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("checkout");
+        let nested = root.join("src/deep");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(project_root_path(&nested), None);
+        fs::create_dir(root.join(".git")).unwrap();
+        assert_eq!(project_root_path(&root), Some(root.as_path()));
+        assert_eq!(project_root_path(&nested), Some(root.as_path()));
+        fs::remove_dir(root.join(".git")).unwrap();
+        fs::write(root.join(".git"), "gitdir: /somewhere/else").unwrap();
+        assert_eq!(project_root_path(&nested), Some(root.as_path()));
+        assert_eq!(
+            discover_project_root(nested.to_str().unwrap()),
+            Some(root.to_string_lossy().into_owned())
+        );
+    }
 
     #[test]
     fn path_family_comparison_is_independent_of_the_client_os() {

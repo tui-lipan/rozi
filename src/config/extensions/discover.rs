@@ -165,9 +165,7 @@ fn listable_hostname(host: &str) -> bool {
 
 /// The index reads `extension.toml` only at the root of the repository.
 fn repository_root_problem(directory: &Path) -> Option<String> {
-    let root = directory
-        .ancestors()
-        .find(|ancestor| ancestor.join(".git").exists());
+    let root = crate::platform::paths::project_root_path(directory);
     match root {
         None => Some(
             "This directory is not a Git repository. Discover lists public GitHub repositories \

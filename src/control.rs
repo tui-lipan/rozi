@@ -944,6 +944,11 @@ pub struct PaneInfo {
     /// to see what the rules currently say about the screen it just took.
     pub agent: Option<String>,
     pub agent_state: Option<String>,
+    /// The conversation the pane's own agent integration last reported through `agents report
+    /// --native-session`, while one owns the pane. A client that runs several conversations shows
+    /// this one; a publisher listing the others places each in the pane that shows it from this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
     /// The session server is recording this pane; `record list` says where.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recording: bool,
@@ -3380,6 +3385,7 @@ mod tests {
             status_reason: None,
             agent: None,
             agent_state: None,
+            agent_session: None,
             recording: false,
         };
 

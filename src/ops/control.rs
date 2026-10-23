@@ -539,6 +539,11 @@ impl PaneInfo {
             agent_state: runtime
                 .as_ref()
                 .map(|runtime| runtime.state.as_str().to_string()),
+            agent_session: pane
+                .terminal
+                .agent_integration
+                .as_ref()
+                .and_then(|report| report.native_session.clone()),
             recording: pane.terminal.recording,
         }
     }

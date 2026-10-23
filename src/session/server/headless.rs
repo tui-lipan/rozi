@@ -1133,6 +1133,11 @@ impl SessionServer {
                     agent_state: runtime
                         .as_ref()
                         .map(|runtime| runtime.state.as_str().to_string()),
+                    agent_session: pane
+                        .runtime
+                        .integration
+                        .as_ref()
+                        .and_then(|report| report.native_session.clone()),
                     recording: pane.runtime.recording,
                 }
             })
@@ -3382,6 +3387,8 @@ mod tests {
             .find(|pane| pane.id == 7)
             .unwrap();
         assert_eq!(pane.agent_state.as_deref(), Some("blocked"));
+        // The pane names the conversation its own client reported, not a background one's.
+        assert_eq!(pane.agent_session.as_deref(), Some("origin"));
 
         // With no row on screen, a pane id is ambiguous.
         publish(

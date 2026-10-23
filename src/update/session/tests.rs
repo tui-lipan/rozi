@@ -1867,29 +1867,22 @@ fn local_attach_failure_does_not_retry_into_an_ephemeral_loop() {
         .spawn(|| {
             let mut backend = TestBackend::new(crate::AppRoot::default());
             backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch: 42,
-                    name: "eph-local".into(),
-                    client: None,
-                    autostart: true,
-                    read_only: false,
-                    reconnect: false,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
-                    left: None,
-                    parked_epoch: None,
-                });
-            backend.state_mut().attach_mode_override = Some(crate::config::SessionOnAttach::Take);
+                Some(crate::state::PendingSessionAttach::new(
+                    42,
+                    crate::state::AttachRequest::new(
+                        "eph-local",
+                        crate::state::AttachMode::JoinOrStart,
+                    )
+                    .with_access(crate::state::AttachAccess::Writable {
+                        on_attach: Some(crate::config::SessionOnAttach::Take),
+                    }),
+                ));
             backend
                 .dispatch(Msg::SessionAttachFailed {
                     epoch: 42,
                     message: "no local server".into(),
                 })
                 .expect("dispatch local attach failure");
-            assert!(
-                backend.state().attach_mode_override.is_none(),
-                "a failed startup attach must not override the next attach"
-            );
             assert!(
                 backend.state().current().pending_session_attach.is_none(),
                 "a local ephemeral failure must clear the pending attach and not re-arm one"
@@ -1915,13 +1908,14 @@ fn retained_remote_reconnect_failure_stays_offline_and_remote() {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 42,
-                        name: "dev".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                        )),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: Some("workbox".to_string()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -1970,13 +1964,14 @@ fn lost_remote_session_requires_explicit_recreation() {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch,
-                        name: "dev".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                        )),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: Some("workbox".to_string()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -2027,7 +2022,7 @@ fn lost_remote_session_requires_explicit_recreation() {
                     .current()
                     .pending_session_attach
                     .as_ref()
-                    .is_some_and(|pending| pending.reconnect)
+                    .is_some_and(|pending| pending.request.is_reconnect())
             );
             assert_eq!(
                 backend.state().current().connection,
@@ -2086,13 +2081,14 @@ fn abandoning_a_remote_reconnect_stays_offline_and_opens_sessions() {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: epoch_before,
-                        name: "dev".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                        )),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: Some("workbox".to_string()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -2137,13 +2133,11 @@ fn local_reconnect_failure_leaves_the_session() {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 42,
-                        name: "dev".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        ),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: None,
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -2205,13 +2199,14 @@ fn failed_remote_connect_restores_the_parked_session_not_a_follower_ephemeral() 
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 2,
-                        name: "eph-windev".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "eph-windev",
+                            crate::state::AttachMode::JoinOrStart,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("windev".into()),
+                        )),
                         client: None,
-                        autostart: true,
-                        read_only: false,
-                        reconnect: false,
-                        remote_host: Some("windev".to_string()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: Some(1),
                     });
@@ -2265,17 +2260,14 @@ fn failed_local_create_restores_the_parked_session() {
                 state.current_mut().epoch = 2;
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
-                        epoch: 2,
-                        name: "work".to_string(),
-                        client: None,
-                        autostart: true,
-                        read_only: false,
-                        reconnect: false,
-                        // Local create: no remote host.
-                        remote_host: None,
-                        intent: crate::state::AttachIntent::Plain,
-                        left: None,
                         parked_epoch: Some(1),
+                        ..crate::state::PendingSessionAttach::new(
+                            2,
+                            crate::state::AttachRequest::new(
+                                "work",
+                                crate::state::AttachMode::Create,
+                            ),
+                        )
                     });
             }
 
@@ -2329,20 +2321,24 @@ fn attach_policy_result(
             let mut backend = TestBackend::new(crate::AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             backend.state_mut().config.session.on_attach = mode;
-            backend.state_mut().attach_mode_override = mode_override;
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch: 1,
-                    name: "dev".into(),
-                    client: Some(client),
-                    autostart: false,
-                    read_only,
-                    reconnect,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
-                    left: None,
-                    parked_epoch: None,
-                });
+            let access = if read_only {
+                crate::state::AttachAccess::ReadOnly
+            } else {
+                crate::state::AttachAccess::Writable {
+                    on_attach: mode_override,
+                }
+            };
+            let attach_mode = if reconnect {
+                crate::state::AttachMode::Reconnect
+            } else {
+                crate::state::AttachMode::Join
+            };
+            let mut pending = crate::state::PendingSessionAttach::new(
+                1,
+                crate::state::AttachRequest::new("dev", attach_mode).with_access(access),
+            );
+            pending.client = Some(client);
+            backend.state_mut().current_mut().pending_session_attach = Some(pending);
             backend
                 .dispatch(Msg::SessionAttached {
                     epoch: 1,
@@ -2379,12 +2375,10 @@ fn attach_policy_result(
                 controller,
                 "only the server can transfer control"
             );
-            if !reconnect {
-                assert!(
-                    backend.state().attach_mode_override.is_none(),
-                    "override is consumed even when policy is skipped"
-                );
-            }
+            assert!(
+                backend.state().current().pending_session_attach.is_none(),
+                "the attempt and its override end with the landing"
+            );
             tx.send((backend.state().follow_prompt.is_some(), requested))
                 .expect("report result");
         })
@@ -2392,6 +2386,125 @@ fn attach_policy_result(
         .join()
         .expect("follow-prompt test completes");
     rx.recv().expect("test result")
+}
+
+/// Lands attempt `epoch` on a session another client controls, and reports whether the follow
+/// prompt opened and whether control was requested.
+fn land_on_occupied_session(
+    backend: &mut TestBackend<crate::AppRoot>,
+    epoch: u64,
+    outbound: &std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+) -> (bool, bool) {
+    backend
+        .dispatch(Msg::SessionAttached {
+            epoch,
+            session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+            session: "dev".into(),
+            client_id: 2,
+            panes: Vec::new(),
+            layout_rev: 0,
+            layout: None,
+            controller: Some(1),
+            clients: Vec::new(),
+            input_locked: false,
+            allow_takeover: true,
+            read_only: false,
+            origin: crate::session::origin::SessionOrigin::default(),
+        })
+        .expect("dispatch attach");
+    let requested = outbound.try_iter().any(|message| {
+        matches!(
+            message,
+            crate::session::client::ClientOutbound::Control(
+                crate::session::protocol::ClientMessage::RequestControl
+            )
+        )
+    });
+    (backend.state().follow_prompt.is_some(), requested)
+}
+
+fn pending_attach(
+    epoch: u64,
+    on_attach: Option<crate::config::SessionOnAttach>,
+    client: Option<SessionClient>,
+) -> crate::state::PendingSessionAttach {
+    let mut pending = crate::state::PendingSessionAttach::new(
+        epoch,
+        crate::state::AttachRequest::new("dev", crate::state::AttachMode::Join)
+            .with_access(crate::state::AttachAccess::Writable { on_attach }),
+    );
+    pending.client = client;
+    pending
+}
+
+/// `--take-control` belongs to the attempt it was given with. An attempt that fails, or that a
+/// newer attach replaces, takes its override with it, so the next landing follows the config.
+#[test]
+fn an_attach_override_ends_with_its_attempt() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::config::SessionOnAttach::{Ask, Take};
+
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().config.session.on_attach = Ask;
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(pending_attach(1, Some(Take), None));
+            backend
+                .dispatch(Msg::SessionAttachFailed {
+                    epoch: 1,
+                    message: "no such session".into(),
+                })
+                .expect("dispatch failure");
+            assert!(backend.state().current().pending_session_attach.is_none());
+
+            let (stale, _stale_rx) = SessionClient::test_channel();
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(pending_attach(2, Some(Take), Some(stale)));
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().runtime_epoch = 3;
+            backend.state_mut().current_mut().epoch = 3;
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(pending_attach(3, None, Some(client)));
+
+            assert_eq!(
+                land_on_occupied_session(&mut backend, 3, &outbound),
+                (true, false),
+                "the replaced attempt's --take-control must not reach this landing"
+            );
+        })
+        .expect("spawn override lifetime test")
+        .join()
+        .expect("override lifetime test completes");
+}
+
+/// The configured policy is read when the attach lands, so a config reload during the connect
+/// applies to it, while an override given with the attach still wins.
+#[test]
+fn attach_policy_reads_the_config_at_landing_and_the_override_wins() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::config::SessionOnAttach::{Ask, Follow, Take};
+
+            for (override_mode, expected) in [(None, (false, true)), (Some(Follow), (false, false))]
+            {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                backend.state_mut().config.session.on_attach = Ask;
+                let (client, outbound) = SessionClient::test_channel();
+                backend.state_mut().current_mut().pending_session_attach =
+                    Some(pending_attach(1, override_mode, Some(client)));
+                backend.state_mut().config.session.on_attach = Take;
+                assert_eq!(
+                    land_on_occupied_session(&mut backend, 1, &outbound),
+                    expected,
+                    "override {override_mode:?}"
+                );
+            }
+        })
+        .expect("spawn config-at-landing test")
+        .join()
+        .expect("config-at-landing test completes");
 }
 
 /// How far an attach landing moves the session view revision that drives the switch reveal.
@@ -2404,13 +2517,15 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch: 1,
-                    name: "dev".into(),
+                    request: crate::state::AttachRequest::new(
+                        "dev",
+                        if reconnect {
+                            crate::state::AttachMode::Reconnect
+                        } else {
+                            crate::state::AttachMode::Join
+                        },
+                    ),
                     client: Some(client),
-                    autostart: false,
-                    read_only: false,
-                    reconnect,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
                     left: None,
                     parked_epoch: None,
                 });
@@ -2459,13 +2574,15 @@ fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
-                        name: "dev".into(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            if reconnect {
+                                crate::state::AttachMode::Reconnect
+                            } else {
+                                crate::state::AttachMode::JoinOrStart
+                            },
+                        ),
                         client: Some(client),
-                        autostart: true,
-                        read_only: false,
-                        reconnect,
-                        remote_host: None,
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -2597,16 +2714,15 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch: 1,
-                    name: "eph-test".into(),
-                    client: Some(client),
-                    autostart: true,
-                    read_only: false,
-                    reconnect: false,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::ProfileSeed {
+                    request: crate::state::AttachRequest::new(
+                        "eph-test",
+                        crate::state::AttachMode::JoinOrStart,
+                    )
+                    .with_intent(crate::state::AttachIntent::ProfileSeed {
                         profile: "legacy-profile".into(),
                         path: path.clone(),
-                    },
+                    }),
+                    client: Some(client),
                     left: None,
                     parked_epoch: None,
                 });
@@ -2849,13 +2965,11 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch: 2,
-                    name: "dev".into(),
+                    request: crate::state::AttachRequest::new(
+                        "dev",
+                        crate::state::AttachMode::Join,
+                    ),
                     client: Some(client),
-                    autostart: false,
-                    read_only: false,
-                    reconnect: false,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
                     left: None,
                     parked_epoch: None,
                 });
@@ -3185,13 +3299,11 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch,
-                    name: "dev".to_string(),
+                    request: crate::state::AttachRequest::new(
+                        "dev",
+                        crate::state::AttachMode::Join,
+                    ),
                     client: Some(client),
-                    autostart: false,
-                    read_only: false,
-                    reconnect: false,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
                     left: None,
                     parked_epoch: None,
                 });
@@ -3473,13 +3585,14 @@ fn attachment_keeps_the_remote_path_family_across_disconnect() {
                 backend.state_mut().current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
-                        name: "remote-path-family".into(),
+                        request: crate::state::AttachRequest::new(
+                            "remote-path-family",
+                            crate::state::AttachMode::Join,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("session-host".into()),
+                        )),
                         client: Some(client),
-                        autostart: false,
-                        read_only: false,
-                        reconnect: false,
-                        remote_host: Some("session-host".into()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });

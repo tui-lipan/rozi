@@ -324,7 +324,7 @@ fn attach_attempt_is_current(state: &crate::state::State, attach_epoch: Option<u
                 .current()
                 .pending_session_attach
                 .as_ref()
-                .is_some_and(|pending| pending.epoch == epoch && pending.reconnect)
+                .is_some_and(|pending| pending.epoch == epoch && pending.request.is_reconnect())
             && !crate::session::bootstrap::remote_attach_cancelled(epoch)
     })
 }
@@ -558,13 +558,11 @@ mod askpass_scope_tests {
 
         state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
             epoch,
-            name: "dev".into(),
+            request: crate::state::AttachRequest::new("dev", crate::state::AttachMode::Reconnect)
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ))),
             client: None,
-            autostart: false,
-            read_only: false,
-            reconnect: true,
-            remote_host: Some("workbox".into()),
-            intent: crate::state::AttachIntent::Plain,
             left: None,
             parked_epoch: None,
         });

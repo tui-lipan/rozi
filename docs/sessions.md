@@ -40,6 +40,9 @@ rozi sessions list
 rozi sessions kill dev
 ```
 
+`rozi sessions attach <NAME>` requires a running session and reports an error if it is missing,
+including with `--remote`. It never creates a session.
+
 For a session another client controls, `[session] on_attach` chooses whether to ask, follow,
 or request control. Set it in **Settings**, **Sessions**, **On shared attach**. `--follow` and
 `--take-control` override it for one `sessions attach`; they conflict with each other and with
@@ -52,6 +55,11 @@ has that name.
 
 `--cwd` applies only to `sessions new` and cannot be combined with `--profile`. With `--remote`, it
 names a directory on the remote host and is passed through unchanged, so use an absolute path.
+
+Write each option after the command it belongs to. `--follow` and `--take-control` work only with
+`sessions attach`, and `--profile` and `--cwd` only with `sessions new`; anywhere else they are
+reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
+session command.
 
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
 named `attach`, use `rozi --session attach`.

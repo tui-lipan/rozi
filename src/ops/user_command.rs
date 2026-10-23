@@ -415,13 +415,14 @@ mod tests {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
-                        name: "remote".to_string(),
+                        request: crate::state::AttachRequest::new(
+                            "remote",
+                            crate::state::AttachMode::Reconnect,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("pc".into()),
+                        )),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: Some("pc".to_string()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });

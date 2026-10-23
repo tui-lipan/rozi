@@ -61,13 +61,11 @@ fn automatic_take_attach(allow_takeover: bool) {
     backend.state_mut().current_mut().pending_session_attach =
         Some(rozi::state::PendingSessionAttach {
             epoch: 1,
-            name: session.clone(),
+            request: rozi::state::AttachRequest::new(
+                session.clone(),
+                rozi::state::AttachMode::Join,
+            ),
             client: Some(client),
-            autostart: false,
-            read_only: false,
-            reconnect: false,
-            remote_host: None,
-            intent: rozi::state::AttachIntent::Plain,
             left: None,
             parked_epoch: None,
         });

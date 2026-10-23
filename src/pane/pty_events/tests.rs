@@ -712,13 +712,11 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
-                        name: "dev".into(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        ),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: None,
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });

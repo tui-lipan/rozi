@@ -173,13 +173,11 @@ pub(crate) fn can_evict(state: &crate::state::State) -> bool {
     })
 }
 
-/// Apply the client policy when another client actively controls a fresh writable attach.
-pub(crate) fn apply_attach_policy_if_occupied(ctx: &mut Context<AppRoot>) {
-    let mode = ctx
-        .state
-        .attach_mode_override
-        .take()
-        .unwrap_or(ctx.state.config.session.on_attach);
+/// Apply `mode` when another client actively controls the writable attach that just landed.
+pub(crate) fn apply_attach_policy_if_occupied(
+    ctx: &mut Context<AppRoot>,
+    mode: crate::config::SessionOnAttach,
+) {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return;
     };

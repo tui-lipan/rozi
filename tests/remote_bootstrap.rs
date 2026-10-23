@@ -29,10 +29,11 @@ shift
 shift
 unset ROZI_ASKPASS_ENDPOINT ROZI_ASKPASS_TOKEN ROZI_ASKPASS_SESSION SSH_ASKPASS SSH_ASKPASS_REQUIRE
 cd "$HOME"
+printf '%s\n' "$*" >> "$ROZI_TEST_SSH_LOG"
 exec /bin/sh -c "$*"
 "##,
     );
-    if case == "discovery" {
+    if matches!(case, "discovery" | "tui_attach_missing") {
         let cargo = home.join(".cargo/bin");
         std::fs::create_dir_all(&cargo).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_rozi"), cargo.join("rozi")).unwrap();
@@ -70,6 +71,7 @@ exec /bin/sh -c "$*"
         command
     };
     child
+        .env("ROZI_TEST_SSH_LOG", root.path().join("ssh.log"))
         .env("ROZI_BOOTSTRAP_CASE", case)
         .env("HOME", &home)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
@@ -88,13 +90,44 @@ exec /bin/sh -c "$*"
         child.env("ROZI_REMOTE_BINARY", root.path().join("invalid-rozi"));
     }
     let output = child.output().unwrap();
+    if case == "tui_attach_missing" {
+        // Clean up even when testing a broken dispatcher that did start the missing server.
+        let mut cleanup = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        for (key, value) in child.get_envs() {
+            if let Some(value) = value {
+                cleanup.env(key, value);
+            } else {
+                cleanup.env_remove(key);
+            }
+        }
+        let spawned = root.path().join("run/rozi/session-missing.sock").exists();
+        cleanup
+            .args(["sessions", "kill", "missing"])
+            .output()
+            .unwrap();
+        let commands = std::fs::read_to_string(root.path().join("ssh.log")).unwrap();
+        assert!(
+            !spawned,
+            "existing-only attach started a server: {commands}"
+        );
+        assert!(commands.contains("--remote-serve-existing"), "{commands}");
+        let frame = std::fs::read_to_string(root.path().join("frame.md")).unwrap();
+        assert!(
+            frame.contains("Session `missing` is not running on the remote host"),
+            "{frame}"
+        );
+        assert!(
+            !frame.contains("original remote session"),
+            "initial attach must not report session loss: {frame}"
+        );
+    }
     assert!(
         output.status.success(),
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    if tui {
+    if tui && case != "tui_attach_missing" {
         let frame = std::fs::read_to_string(root.path().join("frame.md")).unwrap();
         let installed = managed.is_file();
         assert_eq!(
@@ -120,6 +153,24 @@ exec /bin/sh -c "$*"
 
 fn tui_command(root: &Path, case: &str) -> Command {
     let config = root.join("rozi.toml");
+    if case == "tui_attach_missing" {
+        std::fs::write(
+            &config,
+            format!(
+                "[remote]\ninstall = \"never\"\n[remote.hosts.fixture]\nhost = \"fixture\"\nbinary_path = {:?}\n",
+                root.join("remote/.cargo/bin/rozi").to_str().unwrap()
+            ),
+        ).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        command
+            .arg("--config")
+            .arg(config)
+            .args(["--remote", "fixture", "sessions", "attach", "missing"])
+            .env("TUI_LIPAN_SNAPSHOT", root.join("frame.md"))
+            .env("TUI_LIPAN_SNAPSHOT_DIAGNOSTIC", "1")
+            .env("TUI_LIPAN_SNAPSHOT_SETTLE_MS", "2000");
+        return command;
+    }
     std::fs::write(
         &config,
         format!(
@@ -147,6 +198,11 @@ fn tui_command(root: &Path, case: &str) -> Command {
             format!("key:ctrl+r; sleep:200; key:enter; sleep:1000; {answer}; sleep:2000; wait:500"),
         );
     command
+}
+
+#[test]
+fn remote_sessions_attach_missing_never_starts_a_server() {
+    run_case("tui_attach_missing");
 }
 
 #[test]

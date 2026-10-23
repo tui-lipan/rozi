@@ -325,7 +325,7 @@ fn a_remembered_row_can_still_be_activated() {
                 .current()
                 .pending_session_attach
                 .as_ref()
-                .map(|pending| pending.name.as_str()),
+                .map(|pending| pending.request.name.as_str()),
             Some("test"),
             "the row is a way back to the session, not just a label"
         );

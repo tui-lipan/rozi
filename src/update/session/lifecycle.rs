@@ -19,7 +19,7 @@ pub(crate) fn connected(
     let Some(pending) = ctx.state.current_mut().pending_session_attach.as_mut() else {
         return Update::none();
     };
-    if pending.epoch != epoch || pending.name != name {
+    if pending.epoch != epoch || pending.request.name != name {
         return Update::none();
     }
     pending.client = Some(client);
@@ -106,10 +106,9 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
     if pending.epoch != epoch {
         return Update::none();
     }
-    let was_remote = pending.remote_host.is_some();
-    let was_reconnect = pending.reconnect;
+    let was_remote = pending.request.remote.is_some();
+    let was_reconnect = pending.request.is_reconnect();
     let parked_epoch = pending.parked_epoch;
-    ctx.state.attach_mode_override = None;
     crate::update::cancel_attach_askpass(ctx, epoch);
     ctx.state.current_mut().pending_session_attach = None;
     crate::ops::session::clear_pending_session_action(ctx, Some(&message));
@@ -177,7 +176,9 @@ pub(crate) fn lost(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> U
         .pending_session_attach
         .as_ref()
         .is_some_and(|pending| {
-            pending.epoch == epoch && pending.reconnect && pending.remote_host.is_some()
+            pending.epoch == epoch
+                && pending.request.is_reconnect()
+                && pending.request.remote.is_some()
         });
     if !current_lost {
         return Update::none();
@@ -218,7 +219,7 @@ pub(crate) fn attached(
     let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();
     };
-    if pending.epoch != epoch || pending.name != session {
+    if pending.epoch != epoch || pending.request.name != session {
         return Update::none();
     }
     let pending = ctx
@@ -227,7 +228,7 @@ pub(crate) fn attached(
         .pending_session_attach
         .take()
         .expect("pending attach checked above");
-    let reconnect = pending.reconnect;
+    let reconnect = pending.request.is_reconnect();
     let Some(client) = pending.client else {
         return Update::none();
     };
@@ -244,9 +245,6 @@ pub(crate) fn attached(
     ctx.state.current_mut().session_client = Some(client);
     ctx.state.current_mut().session_name = Some(session.clone());
     ctx.state.current_mut().session_instance = Some(session_instance);
-    if let Some(host) = pending.remote_host {
-        ctx.state.current_mut().remote_host = Some(host);
-    }
     ctx.state.current_mut().origin = origin;
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
     ctx.state.current_mut().remote_session_lost = false;
@@ -371,7 +369,7 @@ pub(crate) fn attached(
 
     let named = !crate::state::is_ephemeral_session_name(&session);
     if !populated {
-        match &pending.intent {
+        match &pending.request.intent {
             crate::state::AttachIntent::ProfileSeed { profile, path } => {
                 if let Some(client) = ctx.state.current().session_client.as_ref() {
                     client.set_session_origin(crate::session::origin::SessionOrigin {
@@ -402,7 +400,7 @@ pub(crate) fn attached(
     if named
         && !populated
         && !matches!(
-            pending.intent,
+            pending.request.intent,
             crate::state::AttachIntent::ProfileSeed { .. }
                 | crate::state::AttachIntent::WorktreeSeed {
                     profile: Some(_),
@@ -437,10 +435,14 @@ pub(crate) fn attached(
     // the one it was aiming at. Before the follow prompt, which takes the keyboard for itself:
     // choosing to follow or not is the last word on where focus sits.
     crate::ops::agents::land_on_pending_agent(ctx);
-    // Apply the occupied-session policy after the attach is fully installed. Cancelling from
-    // the prompt leaves the session the same way switching away from it would.
-    if !reconnect {
-        crate::ops::session::apply_attach_policy_if_occupied(ctx);
+    // Apply the occupied-session policy after the attach is fully installed, reading the setting
+    // in effect now. Cancelling from the prompt leaves the session the same way switching away
+    // from it would.
+    if let Some(policy) = pending
+        .request
+        .occupied_policy(ctx.state.config.session.on_attach)
+    {
+        crate::ops::session::apply_attach_policy_if_occupied(ctx, policy);
     }
     if ctx.state.pending_session_action.is_some() {
         let deferred = crate::ops::session::run_pending_session_action(ctx);

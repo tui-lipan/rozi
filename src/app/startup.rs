@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 
 use crate::Msg;
 use crate::config::Config;
-use crate::session::bootstrap::{SessionStart, attach_session_client};
+use crate::session::bootstrap::SessionStart;
 use crate::{cli, config, events, ops, platform, profiles};
 
 #[derive(Clone)]
@@ -57,8 +57,6 @@ pub(super) struct StartupTasks {
     pub(super) control_listener: Option<crate::platform::ipc::IpcListener>,
     pub(super) event_hub: events::EventHub,
     pub(super) start: SessionStart,
-    pub(super) read_only: bool,
-    pub(super) remote: Option<crate::session::remote::RemoteTarget>,
     pub(super) remote_config: config::RemoteConfig,
     pub(super) theme_tick: bool,
     pub(super) workbar_tick: bool,
@@ -135,34 +133,10 @@ impl StartupTasks {
 
     fn start_session(self, link: CommandLink<Msg>) {
         match self.start {
-            SessionStart::Attach {
-                epoch,
-                name,
-                autostart,
-                create_only,
-            } => {
+            SessionStart::Attach { epoch, request } => {
+                let remote_config = self.remote_config;
                 std::thread::spawn(move || {
-                    if let Some(remote) = self.remote {
-                        crate::session::bootstrap::attach_remote_session_client(
-                            epoch,
-                            name,
-                            self.read_only,
-                            create_only,
-                            remote,
-                            self.remote_config,
-                            crate::session::bootstrap::RemoteAttachMode::Initial,
-                            link,
-                        );
-                    } else if create_only {
-                        crate::session::bootstrap::create_session_client(
-                            epoch,
-                            name,
-                            self.read_only,
-                            link,
-                        )
-                    } else {
-                        attach_session_client(epoch, name, autostart, self.read_only, link)
-                    }
+                    crate::session::bootstrap::run_attach(epoch, request, &remote_config, link)
                 });
             }
             SessionStart::Picker { epoch } => {
@@ -186,21 +160,69 @@ impl StartupTasks {
     }
 }
 
+/// What the client does first: attach, or open the picker and let the user choose.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum StartupSession {
+    Attach {
+        request: crate::state::AttachRequest,
+        /// No session was named, so this is the client's own temporary session.
+        auto_created: bool,
+    },
+    Picker {
+        /// The host whose picker opens, `None` for this machine.
+        remote: Option<crate::session::remote::RemoteTarget>,
+        /// The row to land on, from a `last` session that could not reopen.
+        last_session: Option<String>,
+    },
+}
+
+/// A launch resolved from its command line and configuration, before the UI starts.
 pub(super) struct StartupPlan {
     pub(super) config: Config,
     pub(super) messages: Vec<String>,
-    pub(super) attach_session: Option<String>,
-    pub(super) autostart: bool,
-    pub(super) create_only: bool,
     pub(super) profile: Option<StartupProfile>,
     pub(super) cwd: Option<StartupCwd>,
-    pub(super) remote: Option<crate::session::remote::RemoteTarget>,
-    pub(super) last_session: Option<String>,
-    pub(super) want_picker: bool,
+    pub(super) session: StartupSession,
 }
 
 impl StartupPlan {
     pub(super) fn resolve(cli: &cli::CliArgs, loaded: config::LoadedConfig) -> Self {
+        let mut target = TargetResolution::resolve(cli, loaded);
+        let session = target.session(cli);
+        Self {
+            config: target.config,
+            messages: target.messages,
+            profile: target.profile,
+            cwd: target.cwd,
+            session,
+        }
+    }
+
+    /// The host the launch reaches through SSH, `None` for this machine.
+    pub(super) fn remote(&self) -> Option<&crate::session::remote::RemoteTarget> {
+        match &self.session {
+            StartupSession::Attach { request, .. } => request.remote.as_ref(),
+            StartupSession::Picker { remote, .. } => remote.as_ref(),
+        }
+    }
+}
+
+/// The working state of [`StartupPlan::resolve`]: which session the launch names, and how it is
+/// reached.
+struct TargetResolution {
+    config: Config,
+    messages: Vec<String>,
+    attach_session: Option<String>,
+    autostart: bool,
+    create_only: bool,
+    profile: Option<StartupProfile>,
+    cwd: Option<StartupCwd>,
+    remote: Option<crate::session::remote::RemoteTarget>,
+    last_session: Option<String>,
+}
+
+impl TargetResolution {
+    fn resolve(cli: &cli::CliArgs, loaded: config::LoadedConfig) -> Self {
         let explicit_target = cli.attach_session.is_some();
         let remote = resolve_startup_remote(cli.remote.as_deref(), &loaded.config);
         let mut plan = Self {
@@ -212,7 +234,6 @@ impl StartupPlan {
             cwd: None,
             remote,
             last_session: None,
-            want_picker: false,
             config: loaded.config,
         };
         plan.cwd =
@@ -220,17 +241,61 @@ impl StartupPlan {
         plan.apply_session_policy(cli);
         plan.resolve_session_target(cli, explicit_target);
         plan.load_fallback_profile();
+        plan
+    }
+
+    fn session(&mut self, cli: &cli::CliArgs) -> StartupSession {
         // Picker at startup only for a bare launch. `last` and `profile` reach here when the
         // named session could not be opened. Under `--remote` this opens that host's picker.
-        plan.want_picker = plan.attach_session.is_none()
+        let want_picker = self.attach_session.is_none()
             && (cli.pick
                 || matches!(
-                    plan.config.session.startup,
+                    self.config.session.startup,
                     config::SessionStartup::Picker
                         | config::SessionStartup::Last
                         | config::SessionStartup::Profile
                 ));
-        plan
+        if want_picker {
+            return StartupSession::Picker {
+                remote: self.remote.clone(),
+                last_session: self.last_session.take(),
+            };
+        }
+        let access = cli.session_command.access();
+        let mode = if self.create_only {
+            crate::state::AttachMode::Create
+        } else if self.autostart && !access.is_read_only() {
+            crate::state::AttachMode::JoinOrStart
+        } else {
+            crate::state::AttachMode::Join
+        };
+        let auto_created = self.attach_session.is_none();
+        let name = self.attach_session.clone().unwrap_or_else(|| {
+            if self.remote.is_some() {
+                crate::state::remote_ephemeral_session_name()
+            } else {
+                crate::state::ephemeral_session_name()
+            }
+        });
+        let intent = match (&self.profile, &self.cwd) {
+            (Some(profile), _) if profile.records_origin => {
+                crate::state::AttachIntent::ProfileSeed {
+                    profile: profile.name.clone(),
+                    path: profile.path.clone(),
+                }
+            }
+            (_, Some(cwd)) => cwd
+                .seed(&self.config)
+                .map_or(crate::state::AttachIntent::Plain, |(_, intent)| intent),
+            _ => crate::state::AttachIntent::Plain,
+        };
+        StartupSession::Attach {
+            request: crate::state::AttachRequest::new(name, mode)
+                .on_host(self.remote.clone())
+                .with_access(access)
+                .with_intent(intent),
+            auto_created,
+        }
     }
 
     fn apply_session_policy(&mut self, cli: &cli::CliArgs) {
@@ -284,14 +349,14 @@ impl StartupPlan {
     fn resolve_remote_session(&mut self, cli: &cli::CliArgs, name: &str, explicit_target: bool) {
         // Under `--remote` the session lives on the far host. Local discovery and local profiles
         // do not describe it. `New` is still create-only, enforced remotely via `server_started`.
-        match cli.session_command {
-            cli::SessionCommand::New => {
+        match &cli.session_command {
+            cli::SessionCommand::New(new) => {
                 self.autostart = true;
                 self.create_only = true;
-                self.profile = requested_new_profile(cli);
+                self.profile = requested_new_profile(new);
             }
-            cli::SessionCommand::Attach => self.autostart = false,
-            cli::SessionCommand::Dwim => {
+            cli::SessionCommand::Attach(_) => self.autostart = false,
+            cli::SessionCommand::Dwim { .. } => {
                 self.autostart = true;
                 // A name startup policy chose (`last`, `profile`), not one the user typed. If the
                 // host has no session under it, this is a launch rather than an attach, and it gets
@@ -319,8 +384,8 @@ impl StartupPlan {
             .flatten()
             .is_some();
         let path = config::profile_path_for_name(name);
-        match cli.session_command {
-            cli::SessionCommand::Attach => {
+        match &cli.session_command {
+            cli::SessionCommand::Attach(_) => {
                 if !running {
                     let hint = path
                         .exists()
@@ -332,7 +397,7 @@ impl StartupPlan {
                 }
                 self.autostart = false;
             }
-            cli::SessionCommand::New => {
+            cli::SessionCommand::New(new) => {
                 if running {
                     startup_fatal(format!(
                         "Session `{name}` is already running.\nAttach with: rozi sessions attach {name}"
@@ -340,12 +405,12 @@ impl StartupPlan {
                 }
                 self.autostart = true;
                 self.create_only = true;
-                self.profile = requested_new_profile(cli);
+                self.profile = requested_new_profile(new);
             }
-            cli::SessionCommand::Dwim if explicit_target => {
+            cli::SessionCommand::Dwim { read_only } if explicit_target => {
                 if running {
                     self.autostart = false;
-                } else if cli.read_only {
+                } else if *read_only {
                     startup_fatal(format!("Session `{name}` is not running."));
                 } else if path.exists() {
                     self.profile = Some(load_startup_profile(name, path));
@@ -359,7 +424,7 @@ impl StartupPlan {
             // Reached only for a target startup policy chose (`last`, `profile`), never one the
             // user typed: a profile that will not load reports the failure and opens the session
             // blank, rather than refusing to launch rozi at all until the file is fixed.
-            cli::SessionCommand::Dwim => {
+            cli::SessionCommand::Dwim { .. } => {
                 self.autostart = true;
                 if !running && path.exists() {
                     match try_load_startup_profile(name, path) {
@@ -424,8 +489,11 @@ fn resolve_startup_cwd(
     config: &Config,
     messages: &mut Vec<String>,
 ) -> Option<StartupCwd> {
-    let raw = cli.cwd.as_deref()?;
-    let path = if remote || cli.worktree_checkouts.is_some() {
+    let cli::SessionCommand::New(new) = &cli.session_command else {
+        return None;
+    };
+    let raw = new.cwd.as_deref()?;
+    let path = if remote || new.worktree_checkouts.is_some() {
         raw.to_string()
     } else {
         let path = crate::session::worktrees::host_path(raw).unwrap_or_else(|err| {
@@ -436,7 +504,7 @@ fn resolve_startup_cwd(
         }
         path.to_string_lossy().into_owned()
     };
-    let worktree = cli.worktree_checkouts.clone().map(|checkouts| {
+    let worktree = new.worktree_checkouts.clone().map(|checkouts| {
         // A broken or unusable worktree profile still opens the checkout, with a plain shell.
         let profile =
             profiles::load_worktree_profile(config, &checkouts, remote).unwrap_or_else(|message| {
@@ -448,8 +516,8 @@ fn resolve_startup_cwd(
     Some(StartupCwd { path, worktree })
 }
 
-fn requested_new_profile(cli: &cli::CliArgs) -> Option<StartupProfile> {
-    let profile_name = cli.profile.as_ref()?;
+fn requested_new_profile(new: &cli::NewSession) -> Option<StartupProfile> {
+    let profile_name = new.profile.as_ref()?;
     if !crate::session::discovery::valid_session_name(profile_name) {
         startup_fatal(format!("Invalid profile name `{profile_name}`."));
     }
@@ -631,6 +699,128 @@ fn select_last_session_target(last: String, reopenable: bool) -> LastSessionTarg
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plan_for(args: &[&str]) -> StartupPlan {
+        let cli::ParsedCli::Run(cli) =
+            cli::parse_cli_args(args.iter().map(|arg| arg.to_string()).collect())
+                .expect("launch parses")
+        else {
+            panic!("{args:?} should launch");
+        };
+        let mut config = Config::default();
+        config.session.startup = config::SessionStartup::Ephemeral;
+        config.session.autosave = false;
+        StartupPlan::resolve(
+            &cli,
+            config::LoadedConfig {
+                config,
+                warnings: Vec::new(),
+                rejected: false,
+            },
+        )
+    }
+
+    fn startup_request(plan: &StartupPlan) -> &crate::state::AttachRequest {
+        match &plan.session {
+            StartupSession::Attach { request, .. } => request,
+            other => panic!("expected an attach, got {other:?}"),
+        }
+    }
+
+    /// The attach options on the command line become the request the first attach carries, so
+    /// nothing about them has to be remembered anywhere else.
+    #[test]
+    fn launch_options_resolve_into_the_startup_attach_request() {
+        use crate::config::SessionOnAttach::Take;
+        use crate::state::{AttachAccess, AttachMode};
+
+        crate::test_support::isolate_user_dirs();
+        let workbox = crate::session::remote::RemoteTarget::Alias("box".into());
+        for (args, mode, access) in [
+            (
+                &[
+                    "--remote",
+                    "box",
+                    "sessions",
+                    "attach",
+                    "dev",
+                    "--take-control",
+                ][..],
+                AttachMode::Join,
+                AttachAccess::Writable {
+                    on_attach: Some(Take),
+                },
+            ),
+            (
+                &[
+                    "sessions",
+                    "attach",
+                    "dev",
+                    "--read-only",
+                    "--remote",
+                    "box",
+                ][..],
+                AttachMode::Join,
+                AttachAccess::ReadOnly,
+            ),
+            (
+                &["--remote", "box", "--read-only", "dev"][..],
+                AttachMode::Join,
+                AttachAccess::ReadOnly,
+            ),
+            (
+                &["--remote", "box", "dev"][..],
+                AttachMode::JoinOrStart,
+                AttachAccess::WRITABLE,
+            ),
+            (
+                &["--remote", "box", "sessions", "new", "dev"][..],
+                AttachMode::Create,
+                AttachAccess::WRITABLE,
+            ),
+        ] {
+            let plan = plan_for(args);
+            let request = startup_request(&plan);
+            assert_eq!(request.name, "dev", "{args:?}");
+            assert_eq!(request.remote.as_ref(), Some(&workbox), "{args:?}");
+            assert_eq!(request.mode, mode, "{args:?}");
+            assert_eq!(request.access, access, "{args:?}");
+            assert!(
+                matches!(
+                    plan.session,
+                    StartupSession::Attach {
+                        auto_created: false,
+                        ..
+                    }
+                ),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_launch_starts_its_own_temporary_session_or_the_picker() {
+        crate::test_support::isolate_user_dirs();
+        let plan = plan_for(&[]);
+        let request = startup_request(&plan);
+        assert_eq!(request.name, crate::state::ephemeral_session_name());
+        assert_eq!(request.mode, crate::state::AttachMode::JoinOrStart);
+        assert!(matches!(
+            plan.session,
+            StartupSession::Attach {
+                auto_created: true,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            plan_for(&["--pick", "--remote", "box"]).session,
+            StartupSession::Picker {
+                remote: Some(crate::session::remote::RemoteTarget::Alias("box".into())),
+                last_session: None,
+            }
+        );
+    }
 
     #[test]
     fn startup_last_reopens_a_reopenable_session() {

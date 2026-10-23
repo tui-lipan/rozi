@@ -1538,8 +1538,8 @@ mod tests {
                 .pending_session_attach
                 .as_ref()
                 .expect("the remembered session is attached");
-            assert_eq!(pending.name, "backend");
-            assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
+            assert_eq!(pending.request.name, "backend");
+            assert_eq!(pending.request.remote_label().as_deref(), Some("workbox"));
         });
     }
 

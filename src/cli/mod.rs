@@ -21,8 +21,8 @@ pub(crate) mod worktrees;
 
 pub(crate) use api::run_api_describe_cli;
 pub(crate) use args::{
-    CliArgs, ExtensionsCommand, ParsedCli, SessionCommand, SessionsCommand, parse_cli_args,
-    print_agents_help, print_extensions_check_help, print_extensions_help,
+    CliArgs, ExtensionsCommand, NewSession, ParsedCli, SessionCommand, SessionsCommand,
+    parse_cli_args, print_agents_help, print_extensions_check_help, print_extensions_help,
     print_extensions_install_help, print_extensions_remove_help, print_extensions_update_help,
     print_record_help, print_sessions_help, print_worktrees_help, usage_hint,
 };

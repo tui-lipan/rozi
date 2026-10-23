@@ -73,7 +73,7 @@ pub(crate) fn connect_remote_within(
     config: &RemoteConfig,
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
-    recover_existing: bool,
+    existing_only: bool,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err(RemoteConnectError::Message(
@@ -98,7 +98,7 @@ pub(crate) fn connect_remote_within(
         config,
         budget,
         cancel_epoch,
-        recover_existing,
+        existing_only,
     )?;
     let (conn, preamble) =
         read_remote_preamble(proxy, target, &resolved, config, budget, cancel_epoch)?;
@@ -119,7 +119,7 @@ fn spawn_remote_proxy(
     config: &RemoteConfig,
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
-    recover_existing: bool,
+    existing_only: bool,
 ) -> Result<SpawnedRemoteProxy, RemoteConnectError> {
     if budget.is_some_and(|remaining| remaining.is_zero()) {
         return Err(RemoteConnectError::Message(
@@ -142,7 +142,7 @@ fn spawn_remote_proxy(
         super::askpass::scope_attach(&mut command, epoch);
     }
     append_ssh_destination(&mut command, resolved);
-    let serve_flag = if recover_existing {
+    let serve_flag = if existing_only {
         "--remote-serve-existing"
     } else {
         "--remote-serve"

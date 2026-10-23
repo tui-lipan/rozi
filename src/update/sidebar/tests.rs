@@ -315,13 +315,8 @@ fn hold_attach_open(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().pending_session_attach =
         Some(crate::state::PendingSessionAttach {
             epoch: backend.state().runtime_epoch,
-            name: "test".to_string(),
+            request: crate::state::AttachRequest::new("test", crate::state::AttachMode::Join),
             client: None,
-            autostart: false,
-            read_only: false,
-            reconnect: false,
-            remote_host: None,
-            intent: crate::state::AttachIntent::Plain,
             left: None,
             parked_epoch: None,
         });

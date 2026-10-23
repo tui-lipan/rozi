@@ -55,19 +55,155 @@ pub struct PendingAgentJump {
     pub row: Option<crate::session::protocol::RowKey>,
 }
 
+/// One attempt to bring a session onto this client: everything that decides how it is reached and
+/// what happens when it lands.
+///
+/// A request is built once, where the attach is asked for, and travels with the attempt in
+/// [`PendingSessionAttach`] until the session lands, the attempt fails, or another attach replaces
+/// it. Nothing about an attempt is kept anywhere else, so ending the attempt forgets all of it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttachRequest {
+    pub name: String,
+    /// The host the session lives on, `None` for this machine.
+    pub remote: Option<crate::session::remote::RemoteTarget>,
+    pub mode: AttachMode,
+    pub access: AttachAccess,
+    /// What an empty server is seeded with, and what origin it records.
+    pub intent: AttachIntent,
+    pub prompting: AttachPrompting,
+}
+
+impl AttachRequest {
+    /// A writable, unseeded attach to `name` on this machine.
+    pub fn new(name: impl Into<String>, mode: AttachMode) -> Self {
+        Self {
+            name: name.into(),
+            remote: None,
+            mode,
+            access: AttachAccess::WRITABLE,
+            intent: AttachIntent::Plain,
+            prompting: AttachPrompting::Allowed,
+        }
+    }
+
+    pub fn on_host(mut self, remote: Option<crate::session::remote::RemoteTarget>) -> Self {
+        self.remote = remote;
+        self
+    }
+
+    pub fn with_access(mut self, access: AttachAccess) -> Self {
+        self.access = access;
+        self
+    }
+
+    pub fn with_intent(mut self, intent: AttachIntent) -> Self {
+        self.intent = intent;
+        self
+    }
+
+    pub fn with_prompting(mut self, prompting: AttachPrompting) -> Self {
+        self.prompting = prompting;
+        self
+    }
+
+    /// Whether this attempt restores the retained attachment rather than bringing a new one.
+    pub fn is_reconnect(&self) -> bool {
+        matches!(self.mode, AttachMode::Reconnect | AttachMode::Recreate)
+    }
+
+    /// The host label the workbar and toasts show for this attach.
+    pub fn remote_label(&self) -> Option<String> {
+        self.remote
+            .as_ref()
+            .map(crate::session::remote::RemoteTarget::display_label)
+    }
+
+    /// How this attach joins a session another client controls, with `configured` as the
+    /// `[session] on_attach` in effect when it lands. `None` when the question does not arise: a
+    /// reconnect returns to the role it had, and a viewer never takes part in layout control.
+    pub fn occupied_policy(
+        &self,
+        configured: crate::config::SessionOnAttach,
+    ) -> Option<crate::config::SessionOnAttach> {
+        if self.is_reconnect() {
+            return None;
+        }
+        match self.access {
+            AttachAccess::Writable { on_attach } => Some(on_attach.unwrap_or(configured)),
+            AttachAccess::ReadOnly => None,
+        }
+    }
+}
+
+/// How an attach finds or starts its session server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttachMode {
+    /// Join a running server; a missing one fails the attach.
+    Join,
+    /// Join the server, starting it when none is running.
+    JoinOrStart,
+    /// Start the server; one already running fails the attach.
+    Create,
+    /// Restore the retained attachment's transport without replacing its server.
+    Reconnect,
+    /// Seed a replacement remote server from the retained attachment after the original is gone.
+    Recreate,
+}
+
+/// What an attach may do in the session, and how a writable one joins a session another client
+/// controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttachAccess {
+    /// Types and may hold layout control. `on_attach` overrides `[session] on_attach` for this
+    /// attach alone.
+    Writable {
+        on_attach: Option<crate::config::SessionOnAttach>,
+    },
+    /// Watches without input or layout authority.
+    ReadOnly,
+}
+
+impl AttachAccess {
+    pub const WRITABLE: Self = Self::Writable { on_attach: None };
+
+    pub fn is_read_only(self) -> bool {
+        self == Self::ReadOnly
+    }
+}
+
+impl Default for AttachAccess {
+    fn default() -> Self {
+        Self::WRITABLE
+    }
+}
+
+/// Whether ssh may raise a password or host-key dialog for this attempt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AttachPrompting {
+    /// Someone is waiting on this attempt and can answer.
+    #[default]
+    Allowed,
+    /// Nobody asked for this attempt: one that would need a dialog fails instead.
+    Forbidden,
+}
+
+impl AttachPrompting {
+    pub fn remote_config(
+        self,
+        config: &crate::config::RemoteConfig,
+    ) -> crate::config::RemoteConfig {
+        match self {
+            Self::Allowed => config.clone(),
+            Self::Forbidden => config.unattended(),
+        }
+    }
+}
+
+/// An [`AttachRequest`] in flight on an attachment.
 pub struct PendingSessionAttach {
     pub epoch: u64,
-    pub name: String,
+    pub request: AttachRequest,
     pub client: Option<crate::session::client::SessionClient>,
-    /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
-    /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
-    pub autostart: bool,
-    pub read_only: bool,
-    /// This attach repairs an existing retained attachment rather than seeding a replacement.
-    pub reconnect: bool,
-    /// Remote host label when attaching via `--remote`.
-    pub remote_host: Option<String>,
-    pub intent: AttachIntent,
     pub left: Option<LeftSession>,
     /// The id of a session parked in the background to start this attach, restored if the attach
     /// fails. Without this, a failed remote connect would fall back to a fresh local ephemeral that
@@ -75,6 +211,29 @@ pub struct PendingSessionAttach {
     /// controls — and join as a follower of itself. `None` when nothing was parked (a reconnect, or
     /// an attach that released rather than parked the previous session).
     pub parked_epoch: Option<super::AttachmentId>,
+}
+
+impl PendingSessionAttach {
+    pub fn new(epoch: u64, request: AttachRequest) -> Self {
+        Self {
+            epoch,
+            request,
+            client: None,
+            left: None,
+            parked_epoch: None,
+        }
+    }
+
+    /// Record what this attach moved away from: the session it released (`left`) or parked.
+    pub fn leaving(
+        mut self,
+        left: Option<LeftSession>,
+        parked_epoch: Option<super::AttachmentId>,
+    ) -> Self {
+        self.left = left;
+        self.parked_epoch = parked_epoch;
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -388,6 +547,45 @@ pub fn remote_ephemeral_session_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_attach_request_resolves_its_occupied_session_policy() {
+        use crate::config::SessionOnAttach::{Ask, Follow, Take};
+
+        let join = AttachRequest::new("dev", AttachMode::Join);
+        assert_eq!(join.occupied_policy(Ask), Some(Ask));
+        assert_eq!(join.occupied_policy(Take), Some(Take));
+        let take = join.clone().with_access(AttachAccess::Writable {
+            on_attach: Some(Take),
+        });
+        assert_eq!(take.occupied_policy(Follow), Some(Take));
+        assert_eq!(
+            join.clone()
+                .with_access(AttachAccess::ReadOnly)
+                .occupied_policy(Take),
+            None,
+            "a viewer never asks for control"
+        );
+        for mode in [AttachMode::Reconnect, AttachMode::Recreate] {
+            let reconnect = AttachRequest {
+                mode,
+                ..take.clone()
+            };
+            assert!(reconnect.is_reconnect());
+            assert_eq!(
+                reconnect.occupied_policy(Ask),
+                None,
+                "a reconnect resumes the session it lost without asking again"
+            );
+        }
+        for mode in [
+            AttachMode::Join,
+            AttachMode::JoinOrStart,
+            AttachMode::Create,
+        ] {
+            assert!(!AttachRequest::new("dev", mode).is_reconnect());
+        }
+    }
 
     #[test]
     fn orphan_store_keeps_the_newest_per_key_tail_and_ignores_empty_input() {

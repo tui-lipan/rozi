@@ -356,8 +356,6 @@ pub struct State {
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
     pub follow_prompt: Option<FollowPromptState>,
-    /// CLI policy for the startup attach, cleared when it lands or fails.
-    pub(crate) attach_mode_override: Option<crate::config::SessionOnAttach>,
     /// An OpenSSH password, passphrase, or host-key question, answered in the UI rather than on
     /// the terminal it would otherwise write over. See [`crate::session::remote::askpass`].
     pub askpass: Option<AskpassState>,
@@ -714,7 +712,6 @@ impl State {
             remote: RemoteRuntimeState::default(),
             collaboration: None,
             follow_prompt: None,
-            attach_mode_override: None,
             askpass: None,
             askpass_history: AskpassHistory::default(),
             overlay_return: None,
@@ -1702,18 +1699,10 @@ mod retention_tests {
             .background
             .get_mut(&12)
             .unwrap()
-            .pending_session_attach = Some(crate::state::PendingSessionAttach {
-            epoch: 12,
-            name: "gamma".to_string(),
-            client: None,
-            autostart: false,
-            read_only: false,
-            reconnect: false,
-            remote_host: None,
-            intent: crate::state::AttachIntent::Plain,
-            left: None,
-            parked_epoch: None,
-        });
+            .pending_session_attach = Some(crate::state::PendingSessionAttach::new(
+            12,
+            crate::state::AttachRequest::new("gamma", crate::state::AttachMode::Join),
+        ));
         assert!(!state.parked_by_recency().contains(&12));
     }
 

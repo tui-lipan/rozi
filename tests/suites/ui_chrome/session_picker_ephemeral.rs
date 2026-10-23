@@ -108,7 +108,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
                 .current()
                 .pending_session_attach
                 .as_ref()
-                .map(|pending| pending.name.as_str()),
+                .map(|pending| pending.request.name.as_str()),
             Some(rozi::state::ephemeral_session_name().as_str())
         );
     });
@@ -448,7 +448,7 @@ fn the_scratch_key_starts_its_shell_on_the_active_tabs_host() {
             .pending_session_attach
             .as_ref()
             .expect("an attach is in flight");
-        assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
+        assert_eq!(pending.request.remote_label().as_deref(), Some("workbox"));
         assert_eq!(state.current().remote_target.as_ref(), Some(&workbox));
     });
 }

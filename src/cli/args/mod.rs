@@ -41,7 +41,6 @@ pub(crate) use worktrees::{WorktreesCli, WorktreesCommand};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
     pub(crate) session_command: SessionCommand,
-    pub(crate) profile: Option<String>,
     pub(crate) config_path: Option<String>,
     pub(crate) attach_session: Option<String>,
     /// Whether [`Self::attach_session`] was spelled `--session <NAME>` rather than positionally.
@@ -55,23 +54,66 @@ pub(crate) struct CliArgs {
     /// wins over it, and `--remote` skips it: the session lives on the far host, which local
     /// discovery does not describe.
     pub(crate) pick: bool,
-    pub(crate) read_only: bool,
-    pub(crate) on_attach: Option<crate::config::SessionOnAttach>,
     /// SSH remote host alias or `ssh://` URL (`--remote`).
     pub(crate) remote: Option<String>,
-    /// First-pane directory for a `sessions new` session, on the session's host (`--cwd`).
+}
+
+impl CliArgs {
+    pub(crate) fn read_only(&self) -> bool {
+        self.session_command.access().is_read_only()
+    }
+
+    /// The first option given that only shapes how a UI launches, for the commands that launch
+    /// none and must refuse it rather than ignore it.
+    fn launch_only_option(&self) -> Option<&'static str> {
+        if self.read_only() {
+            Some("--read-only")
+        } else if self.pick {
+            Some("--pick")
+        } else {
+            None
+        }
+    }
+}
+
+/// What a launch does with its session target. Each command carries the options only it accepts,
+/// so a parsed launch cannot hold an option its command would ignore.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionCommand {
+    /// A bare target: attach when it is running, otherwise launch its same-name profile.
+    Dwim { read_only: bool },
+    /// `sessions attach`: join a running session, never create one.
+    Attach(crate::state::AttachAccess),
+    /// `sessions new`: create a session.
+    New(NewSession),
+}
+
+impl Default for SessionCommand {
+    fn default() -> Self {
+        Self::Dwim { read_only: false }
+    }
+}
+
+impl SessionCommand {
+    pub(crate) fn access(&self) -> crate::state::AttachAccess {
+        match self {
+            Self::Dwim { read_only: true } => crate::state::AttachAccess::ReadOnly,
+            Self::Dwim { read_only: false } | Self::New(_) => crate::state::AttachAccess::WRITABLE,
+            Self::Attach(access) => *access,
+        }
+    }
+}
+
+/// `sessions new` and what the created session is seeded with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NewSession {
+    /// Seed the session from this profile (`--profile`).
+    pub(crate) profile: Option<String>,
+    /// First-pane directory, on the session's host (`--cwd`).
     pub(crate) cwd: Option<String>,
     /// Record [`Self::cwd`] as the session's worktree origin, with its repository's checkouts on the
     /// session host. Set by `worktrees open`, never by argv.
     pub(crate) worktree_checkouts: Option<Vec<String>>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum SessionCommand {
-    #[default]
-    Dwim,
-    Attach,
-    New,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -336,20 +378,6 @@ pub(crate) fn usage_hint(args: &[String]) -> String {
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
-    let mut attach_mode_seen = false;
-    let parsed = parse_cli_args_inner(args, &mut attach_mode_seen)?;
-    // Subcommands can return before launch validation. Keep this check outside that parser so
-    // every non-launch result rejects a parsed attach flag.
-    if attach_mode_seen && !matches!(parsed, ParsedCli::Run(_)) {
-        return Err("--take-control and --follow can only be used with sessions attach".into());
-    }
-    Ok(parsed)
-}
-
-fn parse_cli_args_inner(
-    args: Vec<String>,
-    attach_mode_seen: &mut bool,
-) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
             Ok(ParsedCli::Skill(SkillCommand::Print))
@@ -410,9 +438,13 @@ fn parse_cli_args_inner(
                 return Ok(ParsedCli::Update(command));
             }
             "sessions" => {
-                if let Some(parsed) = sessions::parse(&mut iter, &mut cli)? {
-                    return Ok(parsed);
+                if socket_flag_seen {
+                    return Err("--socket requires a control command".to_string());
                 }
+                if cli.here {
+                    return Err("--here requires a control command".into());
+                }
+                return sessions::parse(&mut iter, cli);
             }
             "--here" => cli.here = true,
             "context" => return context::parse(&mut iter, cli, socket),
@@ -422,12 +454,12 @@ fn parse_cli_args_inner(
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --server".to_string());
                 }
-                if cli.read_only {
+                if cli.read_only() {
                     return Err("--read-only cannot be combined with --server".to_string());
                 }
                 let name = match cli.attach_session.take() {
                     Some(name) => {
-                        if !cli.session_flag_target || cli.session_command != SessionCommand::Dwim {
+                        if !cli.session_flag_target {
                             return Err("--server must follow --session <NAME>".to_string());
                         }
                         name
@@ -446,13 +478,13 @@ fn parse_cli_args_inner(
                 let Some(name) = cli.attach_session.take() else {
                     return Err("--fresh-server must follow --session <NAME>".to_string());
                 };
-                if !cli.session_flag_target || cli.session_command != SessionCommand::Dwim {
+                if !cli.session_flag_target {
                     return Err("--fresh-server must follow --session <NAME>".to_string());
                 }
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --fresh-server".to_string());
                 }
-                if cli.read_only {
+                if cli.read_only() {
                     return Err("--read-only cannot be combined with --fresh-server".to_string());
                 }
                 reject_trailing_control_args(&mut iter, "--fresh-server")?;
@@ -503,59 +535,20 @@ fn parse_cli_args_inner(
                     autostart: false,
                 });
             }
-            "--remote" => {
-                // Host is optional when `[remote] default_host` is set (resolved in app::run).
-                let target = match iter.peek().map(|s| s.as_str()) {
-                    Some(next)
-                        if !next.starts_with('-') && !matches!(next, "sessions" | "worktrees") =>
-                    {
-                        let target = iter.next().expect("peeked");
-                        session::remote::parse_remote_target(&target)?;
-                        target
-                    }
-                    _ => String::new(),
-                };
-                if cli.remote.replace(target).is_some() {
-                    return Err("--remote specified more than once".to_string());
-                }
-            }
+            _ if take_launch_option(&arg, &mut iter, &mut cli)? => {}
             "--session" => {
                 let name = require_value(&mut iter, "--session requires a session name")?;
                 if cli.attach_session.is_some() {
                     return Err("session target specified more than once".to_string());
                 }
                 cli.attach_session = Some(name);
-                cli.session_command = SessionCommand::Dwim;
                 cli.session_flag_target = true;
             }
-            "--profile" => {
-                let profile = require_value(&mut iter, "--profile requires a profile name")?;
-                if cli.profile.replace(profile).is_some() {
-                    return Err("--profile specified more than once".to_string());
-                }
-            }
-            "--cwd" => {
-                let cwd = require_value(&mut iter, "--cwd requires a directory")?;
-                if cli.cwd.replace(cwd).is_some() {
-                    return Err("--cwd specified more than once".to_string());
-                }
-            }
-            "--pick" => {
-                cli.pick = true;
-            }
-            "--take-control" | "--follow" => {
-                sessions::parse_attach_mode(&mut cli, &arg)?;
-                *attach_mode_seen = true;
-            }
-            "--read-only" => {
-                cli.read_only = true;
-            }
-            "--config" => {
-                let path = require_value(&mut iter, "--config requires a path")?;
-                if cli.config_path.replace(path).is_some() {
-                    return Err("--config specified more than once".to_string());
-                }
-            }
+            "--profile" | "--cwd" => return Err(sessions::new_only(&arg)),
+            "--take-control" | "--follow" => return Err(sessions::attach_only(&arg)),
+            // `sessions attach` and `sessions new` read the rest of the line themselves, so the
+            // command here is still the bare target's.
+            "--read-only" => cli.session_command = SessionCommand::Dwim { read_only: true },
             "--socket" => {
                 socket_flag_seen = true;
                 let path = require_value(&mut iter, "--socket requires a path")?;
@@ -1337,33 +1330,55 @@ fn parse_cli_args_inner(
                     return Err(format!("unexpected argument `{name}`"));
                 }
                 cli.attach_session = Some(name.to_string());
-                cli.session_command = SessionCommand::Dwim;
             }
         }
     }
-    sessions::validate_attach_mode(&cli)?;
     if socket_flag_seen {
         return Err("--socket requires a control command".to_string());
     }
-    if cli.read_only && cli.attach_session.is_none() {
+    if cli.read_only() && cli.attach_session.is_none() {
         return Err("--read-only requires a target or --session".to_string());
-    }
-    if cli.read_only && cli.session_command == SessionCommand::New {
-        return Err("--read-only cannot be used with sessions new".to_string());
-    }
-    if cli.profile.is_some() && cli.session_command != SessionCommand::New {
-        return Err("--profile can only be used with sessions new".to_string());
-    }
-    if cli.cwd.is_some() && cli.session_command != SessionCommand::New {
-        return Err("--cwd can only be used with sessions new".to_string());
-    }
-    if cli.cwd.is_some() && cli.profile.is_some() {
-        return Err("--cwd cannot be combined with --profile".to_string());
     }
     if cli.here {
         return Err("--here requires a control command".into());
     }
     Ok(ParsedCli::Run(cli))
+}
+
+/// Read `arg` if it is an option that qualifies any launch, wherever it appears: before the
+/// command, or after a `sessions attach` or `sessions new` target. `Ok(false)` leaves it alone.
+fn take_launch_option(
+    arg: &str,
+    iter: &mut std::iter::Peekable<std::vec::IntoIter<String>>,
+    cli: &mut CliArgs,
+) -> std::result::Result<bool, String> {
+    match arg {
+        "--remote" => {
+            // Host is optional when `[remote] default_host` is set (resolved in app::run).
+            let target = match iter.peek().map(|s| s.as_str()) {
+                Some(next)
+                    if !next.starts_with('-') && !matches!(next, "sessions" | "worktrees") =>
+                {
+                    let target = iter.next().expect("peeked");
+                    session::remote::parse_remote_target(&target)?;
+                    target
+                }
+                _ => String::new(),
+            };
+            if cli.remote.replace(target).is_some() {
+                return Err("--remote specified more than once".to_string());
+            }
+        }
+        "--config" => {
+            let path = require_value(iter, "--config requires a path")?;
+            if cli.config_path.replace(path).is_some() {
+                return Err("--config specified more than once".to_string());
+            }
+        }
+        "--pick" => cli.pick = true,
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 /// Take the value that must follow a name-taking flag or verb, rejecting a flag-shaped one.
@@ -1639,21 +1654,11 @@ pub(super) fn control_endpoint(
     let offender = if cli.config_path.is_some()
         && !matches!(command, control::ControlCommand::NewPane { .. })
     {
-        "--config"
-    } else if cli.on_attach.is_some() {
-        "--take-control/--follow"
-    } else if cli.read_only {
-        "--read-only"
-    } else if cli.pick {
-        "--pick"
-    } else if cli.profile.is_some() {
-        "--profile"
-    } else if cli.cwd.is_some() {
-        "--cwd"
+        Some("--config")
     } else {
-        ""
+        cli.launch_only_option()
     };
-    if !offender.is_empty() {
+    if let Some(offender) = offender {
         return Err(format!("{offender} does not apply to control commands"));
     }
     if cli.here {
@@ -1836,8 +1841,7 @@ mod tests {
     #[test]
     fn cli_parses_positional_target_and_rejects_removed_flags() {
         let positional = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
-        assert_eq!(positional.session_command, SessionCommand::Dwim);
-        assert_eq!(positional.profile, None);
+        assert_eq!(positional.session_command, SessionCommand::default());
         assert_eq!(positional.attach_session.as_deref(), Some("dev"));
         assert!(parse_cli_args(vec!["--profile".into(), "dev".into()]).is_err());
         assert!(parse_cli_args(vec!["--attach".into(), "dev".into()]).is_err());
@@ -2451,7 +2455,7 @@ mod tests {
         for args in [
             vec!["--config", "/tmp/c.toml", "--session", "dev", "list-panes"],
             vec!["--read-only", "--session", "dev", "list-panes"],
-            vec!["--profile", "work", "--session", "dev", "list-panes"],
+            vec!["--pick", "--session", "dev", "list-panes"],
         ] {
             let error = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
                 .expect_err("launch options do not apply to control commands");
@@ -3249,7 +3253,7 @@ mod tests {
     fn cli_parses_positional_and_namespaced_session_targets() {
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
-        assert_eq!(attached.session_command, SessionCommand::Dwim);
+        assert_eq!(attached.session_command, SessionCommand::default());
         let attached = expect_run(
             parse_cli_args(vec![
                 "sessions".into(),
@@ -3260,8 +3264,10 @@ mod tests {
             .expect("parses"),
         );
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
-        assert_eq!(attached.session_command, SessionCommand::Attach);
-        assert!(attached.read_only);
+        assert_eq!(
+            attached.session_command,
+            SessionCommand::Attach(crate::state::AttachAccess::ReadOnly)
+        );
         let created = expect_run(
             parse_cli_args(vec![
                 "sessions".into(),
@@ -3273,8 +3279,13 @@ mod tests {
             .expect("parses"),
         );
         assert_eq!(created.attach_session.as_deref(), Some("work"));
-        assert_eq!(created.session_command, SessionCommand::New);
-        assert_eq!(created.profile.as_deref(), Some("rust-dev"));
+        assert_eq!(
+            created.session_command,
+            SessionCommand::New(NewSession {
+                profile: Some("rust-dev".into()),
+                ..NewSession::default()
+            })
+        );
         let session =
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
         assert_eq!(session.attach_session.as_deref(), Some("dev"));
@@ -3309,7 +3320,7 @@ mod tests {
         let args =
             expect_run(parse_cli_args(vec!["dev".into(), "--read-only".into()]).expect("parses"));
         assert_eq!(args.attach_session.as_deref(), Some("dev"));
-        assert!(args.read_only);
+        assert!(args.read_only());
     }
 
     #[test]
@@ -3424,7 +3435,10 @@ mod tests {
             ])
             .expect("parses"),
         );
-        assert_eq!(dash.profile.as_deref(), Some("-"));
+        assert!(matches!(
+            dash.session_command,
+            SessionCommand::New(NewSession { profile: Some(ref profile), .. }) if profile == "-"
+        ));
     }
 
     /// Plain lines are the default so a shell pipeline needs no `jq` on either end; `--json` is

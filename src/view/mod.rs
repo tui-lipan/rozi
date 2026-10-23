@@ -176,7 +176,7 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
             .current()
             .pending_session_attach
             .as_ref()
-            .is_some_and(|pending| pending.reconnect);
+            .is_some_and(|pending| pending.request.is_reconnect());
     let offline = ctx.state.current().connection == crate::state::ConnectionState::Unreachable
         && ctx.state.current().session_name.is_some()
         && ctx.state.current().pending_session_attach.is_none();
@@ -779,13 +779,11 @@ mod grouped_search_tests {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: state.runtime_epoch,
-                        name: "dev".into(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        ),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: None,
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });
@@ -838,13 +836,14 @@ mod grouped_search_tests {
                             == ConnectionState::Reconnecting)
                             .then(|| PendingSessionAttach {
                                 epoch,
-                                name: "test".into(),
+                                request: crate::state::AttachRequest::new(
+                                    "test",
+                                    crate::state::AttachMode::Reconnect,
+                                )
+                                .on_host(Some(
+                                    crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                                )),
                                 client: None,
-                                autostart: false,
-                                read_only: false,
-                                reconnect: true,
-                                remote_host: Some("workbox".into()),
-                                intent: crate::state::AttachIntent::Plain,
                                 left: None,
                                 parked_epoch: None,
                             });
@@ -960,13 +959,14 @@ mod grouped_search_tests {
                 state.current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: state.runtime_epoch,
-                        name: "dev".into(),
+                        request: crate::state::AttachRequest::new(
+                            "dev",
+                            crate::state::AttachMode::Reconnect,
+                        )
+                        .on_host(Some(
+                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                        )),
                         client: None,
-                        autostart: false,
-                        read_only: false,
-                        reconnect: true,
-                        remote_host: Some("workbox".into()),
-                        intent: crate::state::AttachIntent::Plain,
                         left: None,
                         parked_epoch: None,
                     });

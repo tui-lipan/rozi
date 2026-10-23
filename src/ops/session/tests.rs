@@ -1086,7 +1086,7 @@ fn starting_a_shell_from_the_picker_attaches_the_ephemeral_with_the_launch_seed(
                 .pending_session_attach
                 .as_ref()
                 .expect("attaching the ephemeral session");
-            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
             assert!(
                 state.launcher_seed.is_none(),
                 "the parked launch panes are consumed, not left for a second start"
@@ -1223,8 +1223,8 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
                 .pending_session_attach
                 .as_ref()
                 .expect("create queues an attach");
-            assert_eq!(pending.name, name);
-            assert_eq!(pending.intent, crate::state::AttachIntent::Plain);
+            assert_eq!(pending.request.name, name);
+            assert_eq!(pending.request.intent, crate::state::AttachIntent::Plain);
             // Creating from an attached (ephemeral) session parks it rather than detaching, so
             // there is no "left" session named in the toast, and the parked id is recorded so a
             // failed attach can restore it. The parked session is retained in the background.
@@ -1531,7 +1531,7 @@ fn cold_attach_closes_profile_picker_before_connect() {
                     .current()
                     .pending_session_attach
                     .as_ref()
-                    .is_some_and(|pending| pending.name == "dev")
+                    .is_some_and(|pending| pending.request.name == "dev")
             );
         })
         .expect("spawn test thread")
@@ -1564,8 +1564,8 @@ fn activating_restorable_session_autostarts_its_server() {
                 .pending_session_attach
                 .as_ref()
                 .expect("snapshot attach");
-            assert_eq!(pending.name, "saved");
-            assert!(pending.autostart);
+            assert_eq!(pending.request.name, "saved");
+            assert_eq!(pending.request.mode, crate::state::AttachMode::JoinOrStart);
         })
         .expect("spawn test thread")
         .join()
@@ -1606,7 +1606,7 @@ fn restart_is_inert_for_a_restorable_session() {
                     .current()
                     .pending_session_attach
                     .as_ref()
-                    .is_none_or(|pending| pending.name != "saved"),
+                    .is_none_or(|pending| pending.request.name != "saved"),
                 "restart must not restore the snapshot"
             );
         })
@@ -1763,9 +1763,9 @@ fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
                 .pending_session_attach
                 .as_ref()
                 .expect("an attach is in flight");
-            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
             assert!(
-                pending.remote_host.is_none(),
+                pending.request.remote.is_none(),
                 "the global picker's scratch key must not inherit the attached session's host"
             );
             assert!(backend.state().current().remote_target.is_none());
@@ -1812,7 +1812,7 @@ fn a_scratch_session_started_from_an_attached_session_opens_with_a_pane() {
                 .pending_session_attach
                 .as_ref()
                 .expect("an attach is in flight");
-            assert_eq!(pending.name, crate::state::ephemeral_session_name());
+            assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
             assert_eq!(
                 state
                     .current()
@@ -1864,8 +1864,8 @@ fn a_remote_scratch_session_does_not_answer_for_the_local_one() {
                 .pending_session_attach
                 .as_ref()
                 .expect("an attach is in flight rather than a silent close");
-            assert_eq!(pending.name, crate::state::ephemeral_session_name());
-            assert!(pending.remote_host.is_none());
+            assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+            assert!(pending.request.remote.is_none());
         })
         .expect("spawn remote scratch distinctness test")
         .join()
@@ -1904,8 +1904,11 @@ fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
                 .pending_session_attach
                 .as_ref()
                 .expect("an attach is in flight");
-            assert_eq!(pending.name, crate::state::remote_ephemeral_session_name());
-            assert_eq!(pending.remote_host.as_deref(), Some("workbox"));
+            assert_eq!(
+                pending.request.name,
+                crate::state::remote_ephemeral_session_name()
+            );
+            assert_eq!(pending.request.remote_label().as_deref(), Some("workbox"));
             assert_eq!(
                 state
                     .current()
@@ -2122,8 +2125,8 @@ fn disconnecting_the_launcher_picker_host_moves_to_local_before_starting_a_shell
                 .pending_session_attach
                 .as_ref()
                 .expect("local attach is pending");
-            assert_eq!(pending.name, crate::state::ephemeral_session_name());
-            assert!(pending.remote_host.is_none());
+            assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+            assert!(pending.request.remote.is_none());
             assert!(backend.state().current().remote_target.is_none());
         })
         .expect("spawn launcher picker disconnect test")

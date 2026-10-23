@@ -166,7 +166,7 @@ pub(crate) fn arm_connect_hold(ctx: &mut Context<AppRoot>) {
     let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return;
     };
-    if pending.reconnect {
+    if pending.request.is_reconnect() {
         return;
     }
     let epoch = pending.epoch;
@@ -203,7 +203,7 @@ pub(crate) fn holding_previous_view(state: &crate::state::State) -> bool {
             .pending_session_attach
             .as_ref()
             .is_some_and(|pending| {
-                !pending.reconnect
+                !pending.request.is_reconnect()
                     && state
                         .connect_hold
                         .is_some_and(|hold| hold.epoch == pending.epoch)
@@ -259,7 +259,7 @@ pub(crate) fn handle_offline_session_key(
                 .current()
                 .pending_session_attach
                 .as_ref()
-                .is_some_and(|pending| pending.reconnect) =>
+                .is_some_and(|pending| pending.request.is_reconnect()) =>
         {
             match key.code {
                 KeyCode::Esc => Some(abandon_session_reconnect(ctx)),
@@ -281,7 +281,7 @@ pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
             .current()
             .pending_session_attach
             .as_ref()
-            .is_some_and(|pending| pending.reconnect);
+            .is_some_and(|pending| pending.request.is_reconnect());
     if !reconnecting {
         return Update::none();
     }
@@ -310,35 +310,61 @@ pub(crate) fn abandon_session_reconnect(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
+/// Make `pending` the current attachment's attach attempt, pointed at the request's host. The
+/// caller starts the attempt; [`start_attach`] does both.
+pub(crate) fn install_pending_attach(
+    ctx: &mut Context<AppRoot>,
+    pending: crate::state::PendingSessionAttach,
+) {
+    let current = ctx.state.current_mut();
+    current.connection = if pending.request.is_reconnect() {
+        crate::state::ConnectionState::Reconnecting
+    } else {
+        crate::state::ConnectionState::Connecting
+    };
+    current.remote_host = pending.request.remote_label();
+    current.remote_target = pending.request.remote.clone();
+    current.pending_session_attach = Some(pending);
+}
+
+/// Install `pending` on the current attachment and start its attempt on a worker thread.
+pub(crate) fn start_attach(
+    ctx: &mut Context<AppRoot>,
+    pending: crate::state::PendingSessionAttach,
+) -> Update {
+    let epoch = pending.epoch;
+    let request = pending.request.clone();
+    install_pending_attach(ctx, pending);
+    let remote_config = ctx.state.config.remote.clone();
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || {
+            crate::session::bootstrap::run_attach(epoch, request, &remote_config, link)
+        });
+    }))
+}
+
 /// Reconnect the current attachment without replacing its retained screens or window-manager state.
 /// The new id invalidates frames from the dead transport while preserving the attachment identity.
 ///
 /// For a reconnect the user asked for (Enter or Retry on the offline overlay, switching back to a
 /// detached session), so ssh may raise its password or host-key dialog.
 pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
-    begin_current_session_reconnect(ctx, true, Prompting::Allowed)
+    begin_current_session_reconnect(
+        ctx,
+        crate::state::AttachMode::Reconnect,
+        crate::state::AttachPrompting::Allowed,
+    )
 }
 
 /// Reconnect after the transport dropped on its own. Nobody is waiting on this attempt, so it must
 /// not open a dialog over the session: an attempt that would need one fails and leaves the session
 /// offline, where Enter retries with prompts allowed.
 pub(crate) fn reconnect_after_transport_loss(ctx: &mut Context<AppRoot>) -> Update {
-    begin_current_session_reconnect(ctx, true, Prompting::Forbidden)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Prompting {
-    Allowed,
-    Forbidden,
-}
-
-impl Prompting {
-    fn remote_config(self, config: &crate::config::RemoteConfig) -> crate::config::RemoteConfig {
-        match self {
-            Self::Allowed => config.clone(),
-            Self::Forbidden => config.unattended(),
-        }
-    }
+    begin_current_session_reconnect(
+        ctx,
+        crate::state::AttachMode::Reconnect,
+        crate::state::AttachPrompting::Forbidden,
+    )
 }
 
 /// Explicitly adopt a replacement after the reconnect path proved the original remote server is
@@ -347,19 +373,30 @@ pub(crate) fn recreate_lost_remote_session(ctx: &mut Context<AppRoot>) -> Update
     if !ctx.state.current().remote_session_lost || ctx.state.current().remote_target.is_none() {
         return Update::none();
     }
-    begin_current_session_reconnect(ctx, false, Prompting::Allowed)
+    begin_current_session_reconnect(
+        ctx,
+        crate::state::AttachMode::Recreate,
+        crate::state::AttachPrompting::Allowed,
+    )
 }
 
 fn begin_current_session_reconnect(
     ctx: &mut Context<AppRoot>,
-    recover_existing: bool,
-    prompting: Prompting,
+    mode: crate::state::AttachMode,
+    prompting: crate::state::AttachPrompting,
 ) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
         return Update::none();
     };
-    let read_only = ctx.state.current().reconnect_read_only;
-    let autostart = crate::state::is_ephemeral_session_name(&name);
+    let access = if ctx.state.current().reconnect_read_only {
+        crate::state::AttachAccess::ReadOnly
+    } else {
+        crate::state::AttachAccess::WRITABLE
+    };
+    let request = crate::state::AttachRequest::new(name, mode)
+        .on_host(ctx.state.current().remote_target.clone())
+        .with_access(access)
+        .with_prompting(prompting);
     let epoch = ctx.state.mint_attachment_id();
     ctx.state.runtime_epoch = epoch;
     ctx.state.current_mut().epoch = epoch;
@@ -367,48 +404,8 @@ fn begin_current_session_reconnect(
     // it so a geometry change during reconnect can schedule a replacement; retained sizes remain
     // queued and are force-flushed when the new client is installed.
     ctx.state.current_mut().resize_flush_scheduled = false;
-    ctx.state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
     ctx.state.commands_dirty = true;
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch,
-        name: name.clone(),
-        client: None,
-        autostart,
-        read_only,
-        reconnect: true,
-        remote_host: ctx.state.current().remote_host.clone(),
-        intent: crate::state::AttachIntent::Plain,
-        left: None,
-        parked_epoch: None,
-    });
-    if let Some(target) = ctx.state.current().remote_target.clone() {
-        let remote_config = prompting.remote_config(&ctx.state.config.remote);
-        return Update::with_command(Command::spawn(move |link| {
-            std::thread::spawn(move || {
-                crate::session::bootstrap::attach_remote_session_client(
-                    epoch,
-                    name,
-                    read_only,
-                    false,
-                    target,
-                    remote_config,
-                    if recover_existing {
-                        crate::session::bootstrap::RemoteAttachMode::Recover
-                    } else {
-                        crate::session::bootstrap::RemoteAttachMode::Recreate
-                    },
-                    link,
-                )
-            });
-        }));
-    }
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            crate::session::bootstrap::reconnect_session_client(
-                epoch, name, autostart, read_only, link,
-            )
-        });
-    }))
+    start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request))
 }
 
 pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
@@ -676,24 +673,9 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     // `[profile] default` exactly as the launch that started rozi did.
     let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
     install_fresh_attachment(ctx, attachment);
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch,
-        name: name.clone(),
-        client: None,
-        autostart: true,
-        read_only: false,
-        reconnect: false,
-        remote_host: None,
-        intent,
-        left: None,
-        parked_epoch: None,
-    });
-    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
-        });
-    }))
+    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::JoinOrStart)
+        .with_intent(intent);
+    start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request))
 }
 
 fn parse_attach_remote(
@@ -720,11 +702,8 @@ fn parse_attach_remote(
 
 fn begin_named_attach(
     ctx: &mut Context<AppRoot>,
-    name: String,
-    remote_host: Option<String>,
-    remote_target: Option<crate::session::remote::RemoteTarget>,
-    autostart: bool,
-    seed: Option<(crate::state::Attachment, crate::state::AttachIntent)>,
+    request: crate::state::AttachRequest,
+    seed: Option<crate::state::Attachment>,
 ) -> Update {
     // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
     // stay scoped to their own identity. Reusing an offline attachment here would seed its panes
@@ -751,53 +730,17 @@ fn begin_named_attach(
         };
     // An empty server is seeded from the panes the client holds, so a session this attach creates
     // gets its panes here. Without a seed the server is joined as it is.
-    let intent = match seed {
-        Some((attachment, intent)) => {
-            ctx.state.attachment = attachment;
-            finish_session_install(ctx);
-            intent
-        }
-        None => crate::state::AttachIntent::Plain,
-    };
+    if let Some(attachment) = seed {
+        ctx.state.attachment = attachment;
+        finish_session_install(ctx);
+    }
     ctx.state.runtime_epoch = epoch;
     dismiss_session_pickers(ctx);
     ctx.state.commands_dirty = true;
-    ctx.state.current_mut().remote_host = remote_host.clone();
-    ctx.state.current_mut().remote_target = remote_target.clone();
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch,
-        name: name.clone(),
-        client: None,
-        autostart,
-        read_only: false,
-        reconnect: false,
-        remote_host,
-        intent,
-        left,
-        parked_epoch,
-    });
-    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-    let remote_config = ctx.state.config.remote.clone();
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            if let Some(target) = remote_target {
-                crate::session::bootstrap::attach_remote_session_client(
-                    epoch,
-                    name,
-                    false,
-                    false,
-                    target,
-                    remote_config,
-                    crate::session::bootstrap::RemoteAttachMode::Initial,
-                    link,
-                );
-            } else {
-                crate::session::bootstrap::attach_session_client(
-                    epoch, name, autostart, false, link,
-                );
-            }
-        });
-    }))
+    start_attach(
+        ctx,
+        crate::state::PendingSessionAttach::new(epoch, request).leaving(left, parked_epoch),
+    )
 }
 
 pub(crate) fn attach_session_by_name(
@@ -852,7 +795,7 @@ fn attach_or_create_by_name(
     // (it has no live client to keep), and the abandoned attach thread's reply is discarded by the
     // epoch check in `attach_failed`/`connected`.
     if let Some(pending) = ctx.state.current().pending_session_attach.as_ref()
-        && pending.name == name
+        && pending.request.name == name
         && ctx.state.current().remote_target == remote_target
     {
         return Update::none();
@@ -865,8 +808,18 @@ fn attach_or_create_by_name(
     {
         return switch_to_parked(ctx, parked);
     }
-    let seed = seed_default.then(|| crate::profiles::default_session_seed(&ctx.state.config));
-    begin_named_attach(ctx, name, remote_host, remote_target, autostart, seed)
+    let mode = if autostart {
+        crate::state::AttachMode::JoinOrStart
+    } else {
+        crate::state::AttachMode::Join
+    };
+    let mut request = crate::state::AttachRequest::new(name, mode).on_host(remote_target);
+    let seed = seed_default.then(|| {
+        let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
+        request.intent = intent;
+        attachment
+    });
+    begin_named_attach(ctx, request, seed)
 }
 
 /// The launcher's one offer: start this client's ephemeral session now, in the launcher's own
@@ -969,12 +922,6 @@ pub(crate) fn attach_startup_ephemeral(
         ctx.state.current_mut().auto_created = true;
         finish_session_install(ctx);
     }
-    // The scope is authoritative in both directions: it installs the host a scoped launcher starts
-    // on, and clears any target left over from a failed `--remote` attach so a local shell resolves
-    // its shell/cwd locally and the sidebar stops probing a dead host.
-    let remote_host = scope.as_ref().map(|target| target.display_label());
-    ctx.state.current_mut().remote_host = remote_host.clone();
-    ctx.state.current_mut().remote_target = scope.clone();
     let epoch = ctx.state.runtime_epoch;
     // A remote scratch session lives on the far host, where a bare `eph-<pid>` could collide with
     // another client sharing that pid on a different machine.
@@ -987,38 +934,13 @@ pub(crate) fn attach_startup_ephemeral(
         Some((profile, path)) => crate::state::AttachIntent::ProfileSeed { profile, path },
         None => seeded_intent.unwrap_or(crate::state::AttachIntent::Plain),
     };
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch,
-        name: name.clone(),
-        client: None,
-        autostart: true,
-        read_only: false,
-        reconnect: false,
-        remote_host,
-        intent,
-        left: None,
-        parked_epoch: None,
-    });
-    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-    let remote_config = ctx.state.config.remote.clone();
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || match scope {
-            Some(target) => crate::session::bootstrap::attach_remote_session_client(
-                epoch,
-                name,
-                false,
-                false,
-                target,
-                remote_config,
-                // Explicit request: fail fast rather than blocking the UI on a dead host.
-                crate::session::bootstrap::RemoteAttachMode::Initial,
-                link,
-            ),
-            None => {
-                crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
-            }
-        });
-    }))
+    // The scope is authoritative in both directions: it installs the host a scoped launcher starts
+    // on, and clears any target left over from a failed `--remote` attach so a local shell resolves
+    // its shell/cwd locally and the sidebar stops probing a dead host.
+    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::JoinOrStart)
+        .on_host(scope)
+        .with_intent(intent);
+    start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request))
 }
 
 /// True when a PTY spawn would hang with no client and no attach in flight.
@@ -1223,8 +1145,8 @@ pub(crate) fn disconnect_host(
 
 #[cfg(test)]
 mod tests {
-    use super::Prompting;
     use crate::config::RemoteConfig;
+    use crate::state::AttachPrompting;
 
     /// A reconnect nobody asked for must not open an SSH dialog over the session, even with
     /// `batch_mode = false`; one the user asked for keeps the configured choice.
@@ -1232,10 +1154,10 @@ mod tests {
     fn only_requested_reconnects_may_prompt() {
         let config = RemoteConfig::default();
         assert!(!config.batch_mode);
-        assert!(Prompting::Forbidden.remote_config(&config).batch_mode);
-        assert!(!Prompting::Allowed.remote_config(&config).batch_mode);
+        assert!(AttachPrompting::Forbidden.remote_config(&config).batch_mode);
+        assert!(!AttachPrompting::Allowed.remote_config(&config).batch_mode);
 
         let refused = config.unattended();
-        assert!(Prompting::Allowed.remote_config(&refused).batch_mode);
+        assert!(AttachPrompting::Allowed.remote_config(&refused).batch_mode);
     }
 }

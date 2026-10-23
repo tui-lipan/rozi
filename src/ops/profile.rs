@@ -584,32 +584,17 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     let attachment = crate::profiles::attachment_from_profile(&ctx.state.config, profile)
         .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config));
     crate::ops::session::install_fresh_attachment(ctx, attachment);
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch,
-        name: name.clone(),
-        client: None,
-        autostart: true,
-        read_only: false,
-        reconnect: false,
-        remote_host: None,
-        intent: crate::state::AttachIntent::ProfileSeed {
-            profile: entry.name.clone(),
-            path: entry.path.clone(),
-        },
-        left: None,
-        parked_epoch: None,
-    });
-    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     crate::ops::overlay_return::leave(ctx);
+    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::JoinOrStart)
+        .with_intent(crate::state::AttachIntent::ProfileSeed {
+            profile: entry.name,
+            path: entry.path,
+        });
     // The theme-tick, workbar-tick, and workbar-command loops started at app launch are
     // self-sustaining and survive the state swap, so don't restart them here.
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
-        });
-    }))
+    crate::ops::session::start_attach(ctx, crate::state::PendingSessionAttach::new(epoch, request))
 }
 
 fn selected_profile_entry(ctx: &Context<AppRoot>) -> Option<crate::config::ProfileEntry> {
@@ -976,10 +961,10 @@ mod tests {
                 .as_ref()
                 .expect("fresh session attach queued");
             assert_eq!(pending.epoch, old_epoch.saturating_add(1));
-            assert!(pending.autostart);
-            assert_eq!(pending.name, "empty");
+            assert_eq!(pending.request.mode, crate::state::AttachMode::JoinOrStart);
+            assert_eq!(pending.request.name, "empty");
             assert_eq!(
-                pending.intent,
+                pending.request.intent,
                 crate::state::AttachIntent::ProfileSeed {
                     profile: "empty".to_string(),
                     path: path.clone(),
@@ -1030,7 +1015,7 @@ mod tests {
                     .pending_session_attach
                     .as_ref()
                     .is_some_and(|pending| matches!(
-                        pending.intent,
+                        pending.request.intent,
                         crate::state::AttachIntent::ProfileSeed { .. }
                     )),
                 "no fresh profile seed replaces the held session"
@@ -1068,9 +1053,9 @@ mod tests {
                 .as_ref()
                 .map(|pending| {
                     (
-                        pending.name.clone(),
-                        pending.autostart,
-                        pending.intent.clone(),
+                        pending.request.name.clone(),
+                        (pending.request.mode == crate::state::AttachMode::JoinOrStart),
+                        pending.request.intent.clone(),
                     )
                 });
             crate::session::server::delete_snapshot(NAME).expect("remove snapshot");
@@ -1157,9 +1142,9 @@ mod tests {
                 .pending_session_attach
                 .as_ref()
                 .unwrap();
-            assert_eq!(pending.name, "work-copy");
+            assert_eq!(pending.request.name, "work-copy");
             assert_eq!(
-                pending.intent,
+                pending.request.intent,
                 crate::state::AttachIntent::ProfileSeed {
                     profile: "rust-dev".to_string(),
                     path: path.clone(),
@@ -1197,9 +1182,9 @@ mod tests {
                 .pending_session_attach
                 .as_ref()
                 .unwrap();
-            assert!(pending.name.starts_with("eph-"));
+            assert!(pending.request.name.starts_with("eph-"));
             assert_eq!(
-                pending.intent,
+                pending.request.intent,
                 crate::state::AttachIntent::ProfileSeed {
                     profile: "rust-dev".to_string(),
                     path: path.clone(),

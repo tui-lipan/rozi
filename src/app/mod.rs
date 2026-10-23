@@ -16,7 +16,7 @@ mod startup;
 
 pub use entry::run;
 pub(crate) use entry::{clipboard_config, clipboard_copy_feedback_duration};
-use startup::{StartupCwd, StartupProfile, StartupTasks};
+use startup::{StartupCwd, StartupProfile, StartupSession, StartupTasks};
 
 pub struct AppRoot {
     config: Config,
@@ -28,20 +28,10 @@ pub struct AppRoot {
     startup_messages: Vec<String>,
     control_listener: Option<crate::platform::ipc::IpcListener>,
     control_guard: Option<control::ControlSocketGuard>,
-    attach_session: Option<String>,
-    startup_autostart: bool,
-    startup_create_only: bool,
-    read_only: bool,
-    on_attach: Option<crate::config::SessionOnAttach>,
-    /// When set, attach through SSH to this remote target instead of a local endpoint.
-    remote: Option<crate::session::remote::RemoteTarget>,
-    /// Whether a bare launch should open the session picker instead of attaching (`--pick`, the
-    /// default `[session] startup = "picker"`, or a `last` whose session is gone). Only honored
-    /// when there is no target/`--session`; opening it attaches nothing, so the client starts
-    /// sessionless even when the list is empty.
-    want_startup_picker: bool,
-    /// Session name the startup picker should land on, from a `last` that could not reopen.
-    startup_last_session: Option<String>,
+    /// The attach the launch asked for, or the startup picker (`--pick`, the default
+    /// `[session] startup = "picker"`, or a `last` whose session is gone). Opening the picker
+    /// attaches nothing, so the client starts sessionless even when the list is empty.
+    startup_session: StartupSession,
     /// Loaded once; never synchronized into another running client.
     sidebar_memory: Option<[bool; 2]>,
     /// Whether to install the process-global terminal-hangup handler
@@ -80,14 +70,13 @@ impl Default for AppRoot {
             startup_messages: Vec::new(),
             control_listener: None,
             control_guard: None,
-            attach_session: None,
-            startup_autostart: true,
-            startup_create_only: false,
-            read_only: false,
-            on_attach: None,
-            remote: None,
-            want_startup_picker: false,
-            startup_last_session: None,
+            startup_session: StartupSession::Attach {
+                request: state::AttachRequest::new(
+                    state::ephemeral_session_name(),
+                    state::AttachMode::JoinOrStart,
+                ),
+                auto_created: true,
+            },
             sidebar_memory: None,
             watch_hangup: false,
             startup_tasks: false,
@@ -108,13 +97,7 @@ impl AppRoot {
         mut startup_messages: Vec<String>,
         control_listener: Option<crate::platform::ipc::IpcListener>,
         control_guard: Option<control::ControlSocketGuard>,
-        attach_session: Option<String>,
-        startup_autostart: bool,
-        startup_create_only: bool,
-        read_only: bool,
-        remote: Option<crate::session::remote::RemoteTarget>,
-        want_startup_picker: bool,
-        startup_last_session: Option<String>,
+        startup_session: StartupSession,
     ) -> Self {
         let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
             startup_messages.push(format!("Could not read remembered sidebars: {error}"));
@@ -129,14 +112,7 @@ impl AppRoot {
             startup_messages,
             control_listener,
             control_guard,
-            attach_session,
-            startup_autostart,
-            startup_create_only,
-            read_only,
-            on_attach: None,
-            remote,
-            want_startup_picker,
-            startup_last_session,
+            startup_session,
             sidebar_memory,
             watch_hangup: true,
             startup_tasks: true,
@@ -144,11 +120,6 @@ impl AppRoot {
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
-    }
-
-    fn with_on_attach(mut self, mode: Option<crate::config::SessionOnAttach>) -> Self {
-        self.on_attach = mode;
-        self
     }
 
     fn with_startup_cwd(mut self, cwd: Option<StartupCwd>) -> Self {
@@ -169,13 +140,13 @@ impl AppRoot {
             Vec::new(),
             Some(listener),
             Some(guard),
-            None,
-            false,
-            false,
-            false,
-            None,
-            false,
-            None,
+            StartupSession::Attach {
+                request: state::AttachRequest::new(
+                    state::ephemeral_session_name(),
+                    state::AttachMode::Join,
+                ),
+                auto_created: true,
+            },
         );
         app.update_checks = false;
         app
@@ -199,73 +170,37 @@ impl AppRoot {
     }
 
     fn prepare_session_start(&mut self, ctx: &mut Context<Self>) -> SessionStart {
-        if self.want_startup_picker {
-            let seed = std::mem::take(ctx.state.current_mut());
-            ctx.state.launcher_seed = Some(seed);
-            return match self.remote.clone() {
-                Some(target) => {
-                    ctx.state.launcher_scope = Some(target.clone());
-                    ops::session::open_startup_remote_picker(
-                        ctx,
-                        target.clone(),
-                        self.startup_last_session.take(),
-                    );
-                    SessionStart::RemotePicker { target }
-                }
-                None => {
-                    let epoch = ops::session::open_startup_session_picker(
-                        ctx,
-                        self.startup_last_session.take(),
-                    );
-                    SessionStart::Picker { epoch }
-                }
-            };
-        }
-
-        let name = self.attach_session.clone().unwrap_or_else(|| {
-            if self.remote.is_some() {
-                state::remote_ephemeral_session_name()
-            } else {
-                state::ephemeral_session_name()
+        let (request, auto_created) = match self.startup_session.clone() {
+            StartupSession::Attach {
+                request,
+                auto_created,
+            } => (request, auto_created),
+            StartupSession::Picker {
+                remote,
+                last_session,
+            } => {
+                let seed = std::mem::take(ctx.state.current_mut());
+                ctx.state.launcher_seed = Some(seed);
+                return match remote {
+                    Some(target) => {
+                        ctx.state.launcher_scope = Some(target.clone());
+                        ops::session::open_startup_remote_picker(ctx, target.clone(), last_session);
+                        SessionStart::RemotePicker { target }
+                    }
+                    None => {
+                        let epoch = ops::session::open_startup_session_picker(ctx, last_session);
+                        SessionStart::Picker { epoch }
+                    }
+                };
             }
-        });
-        let epoch = ctx.state.runtime_epoch;
-        let autostart = self.startup_autostart && !self.read_only;
-        let intent = match (&self.startup_profile, &self.startup_cwd) {
-            (Some(profile), _) if profile.records_origin => {
-                crate::state::AttachIntent::ProfileSeed {
-                    profile: profile.name.clone(),
-                    path: profile.path.clone(),
-                }
-            }
-            (_, Some(cwd)) => cwd
-                .seed(&ctx.state.config)
-                .map_or(crate::state::AttachIntent::Plain, |(_, intent)| intent),
-            _ => crate::state::AttachIntent::Plain,
         };
-        let remote_host = self.remote.as_ref().map(|target| target.display_label());
-        ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-            epoch,
-            name: name.clone(),
-            client: None,
-            autostart,
-            read_only: self.read_only,
-            reconnect: false,
-            remote_host: remote_host.clone(),
-            intent,
-            left: None,
-            parked_epoch: None,
-        });
-        ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
-        ctx.state.current_mut().auto_created = self.attach_session.is_none();
-        ctx.state.current_mut().remote_host = remote_host;
-        ctx.state.current_mut().remote_target = self.remote.clone();
-        SessionStart::Attach {
-            epoch,
-            name,
-            autostart,
-            create_only: self.startup_create_only,
-        }
+        let epoch = ctx.state.runtime_epoch;
+        ops::session::install_pending_attach(
+            ctx,
+            state::PendingSessionAttach::new(epoch, request.clone()),
+        );
+        ctx.state.current_mut().auto_created = auto_created;
+        SessionStart::Attach { epoch, request }
     }
 }
 
@@ -322,7 +257,6 @@ impl Component for AppRoot {
                 }
             }
         }
-        state.attach_mode_override = self.on_attach;
         state.system_theme = self.initial_system_theme.clone();
         state.control_socket_path = self
             .control_guard
@@ -359,8 +293,6 @@ impl Component for AppRoot {
             control_listener: self.control_listener.take(),
             event_hub: self.event_hub.clone(),
             start,
-            read_only: self.read_only,
-            remote: self.remote.clone(),
             remote_config: self.config.remote.clone(),
             theme_tick: ctx.state.theme_watcher.is_some(),
             workbar_tick: ctx.state.config.workbar.has_clock(),
@@ -614,13 +546,13 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        None,
-                        false,
-                        false,
-                        false,
-                        None,
-                        false,
-                        None,
+                        StartupSession::Attach {
+                            request: state::AttachRequest::new(
+                                state::ephemeral_session_name(),
+                                state::AttachMode::Join,
+                            ),
+                            auto_created: true,
+                        },
                     )
                 };
                 let mut config = Config::default();
@@ -692,7 +624,10 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let root = AppRoot {
-                    want_startup_picker: true,
+                    startup_session: StartupSession::Picker {
+                        remote: None,
+                        last_session: None,
+                    },
                     ..Default::default()
                 };
 

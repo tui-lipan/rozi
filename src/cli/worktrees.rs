@@ -4,7 +4,9 @@
 //! forwarded to the far host's rozi, which resolves every path with its own rules, so nothing here
 //! interprets a path beyond printing it.
 
-use super::args::{CliArgs, ListFormat, SessionCommand, WorktreesCli, WorktreesCommand};
+use super::args::{
+    CliArgs, ListFormat, NewSession, SessionCommand, WorktreesCli, WorktreesCommand,
+};
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 use crate::git::worktrees::BranchOutcome;
 use crate::session;
@@ -201,9 +203,11 @@ fn open_checkout(
         }
     };
     launch.attach_session = Some(name);
-    launch.session_command = SessionCommand::New;
-    launch.cwd = Some(worktree.path);
-    launch.worktree_checkouts = Some(checkouts);
+    launch.session_command = SessionCommand::New(NewSession {
+        profile: None,
+        cwd: Some(worktree.path),
+        worktree_checkouts: Some(checkouts),
+    });
     Ok(launch)
 }
 

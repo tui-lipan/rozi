@@ -269,9 +269,8 @@ ui`, `record mark --ui`, and `record stop --ui` record the UI itself, which writ
 own machine. `record export` and `record play` read a file and take no endpoint. See
 [Record a pane or the UI](recording.md).
 
-Control commands reject the launch-only options `--read-only`, `--follow`, `--take-control`,
-`--profile`, `--pick`, and `--cwd`. `--config PATH` selects the configuration for `split`; other control commands reject
-it. Select a session with `--here` or `--session <NAME>`, optionally qualified by
+Control commands reject the launch-only options `--read-only` and `--pick`. `--config PATH` selects
+the configuration for `split`; other control commands reject it. Select a session with `--here` or `--session <NAME>`, optionally qualified by
 `--remote <HOST>` for a named session.
 
 ### Check the installed API

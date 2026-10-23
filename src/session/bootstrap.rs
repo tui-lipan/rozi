@@ -34,9 +34,7 @@ pub(crate) fn finish_cancelled_remote_attach(epoch: u64) {
 pub(crate) enum SessionStart {
     Attach {
         epoch: u64,
-        name: String,
-        autostart: bool,
-        create_only: bool,
+        request: crate::state::AttachRequest,
     },
     Picker {
         epoch: u64,
@@ -70,43 +68,68 @@ pub(crate) fn has_session_candidates() -> bool {
             .any(|sessions| !sessions.is_empty())
 }
 
-pub(crate) fn attach_session_client(
+/// Carry out one attach attempt, reporting its outcome through `link` under `epoch`. Blocks until
+/// the attempt connects or fails, so call it on a worker thread.
+///
+/// A local reconnect restarts a temporary session's server when it is gone, since nothing can
+/// come back to that session by name; a named one stays gone.
+pub(crate) fn run_attach(
     epoch: u64,
-    name: String,
-    autostart: bool,
-    read_only: bool,
+    request: crate::state::AttachRequest,
+    remote_config: &crate::config::RemoteConfig,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, false, link);
+    use crate::state::AttachMode;
+
+    let read_only = request.access.is_read_only();
+    let name = request.name;
+    if let Some(target) = request.remote {
+        let (create_only, mode) = match request.mode {
+            AttachMode::Join | AttachMode::JoinOrStart => (false, RemoteAttachMode::Initial),
+            AttachMode::Create => (true, RemoteAttachMode::Initial),
+            AttachMode::Reconnect => (false, RemoteAttachMode::Recover),
+            AttachMode::Recreate => (false, RemoteAttachMode::Recreate),
+        };
+        attach_remote(
+            epoch,
+            name,
+            read_only,
+            mode.create_only(create_only),
+            target,
+            request.prompting.remote_config(remote_config),
+            mode.reconnect(),
+            mode.recover_existing(),
+            link,
+        );
+        return;
+    }
+    let (autostart, create_only, reconnect) = match request.mode {
+        AttachMode::Join => (false, false, false),
+        AttachMode::JoinOrStart => (true, false, false),
+        AttachMode::Create => (true, true, false),
+        AttachMode::Reconnect | AttachMode::Recreate => {
+            (crate::state::is_ephemeral_session_name(&name), false, true)
+        }
+    };
+    attach_local(
+        epoch,
+        name,
+        autostart,
+        read_only,
+        create_only,
+        reconnect,
+        link,
+    );
 }
 
 /// How long a local reconnect keeps retrying a server that is alive but did not answer the
 /// handshake in time. Matches the server's heartbeat budget for a busy peer.
 const LOCAL_RECONNECT_BUSY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Re-drive an established local link that dropped. Unlike [`attach_session_client`], a busy
-/// server is retried until [`LOCAL_RECONNECT_BUSY_DEADLINE`] before the reconnect is abandoned.
-pub(crate) fn reconnect_session_client(
-    epoch: u64,
-    name: String,
-    autostart: bool,
-    read_only: bool,
-    link: CommandLink<Msg>,
-) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, true, link);
-}
-
-pub(crate) fn create_session_client(
-    epoch: u64,
-    name: String,
-    read_only: bool,
-    link: CommandLink<Msg>,
-) {
-    attach_session_client_with_profile(epoch, name, true, read_only, true, false, link);
-}
-
+/// In-place recovery and recreation both get deadline/cancellation handling. Recovery additionally
+/// forbids replacing the original server; explicit recreation deliberately allows a new one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RemoteAttachMode {
+enum RemoteAttachMode {
     Initial,
     Recover,
     Recreate,
@@ -126,34 +149,10 @@ impl RemoteAttachMode {
     }
 }
 
-/// In-place recovery and recreation both get deadline/cancellation handling. Recovery additionally
-/// forbids replacing the original server; explicit recreation deliberately allows a new one.
+/// `reconnect` re-drives an established link that dropped: a busy server is retried until
+/// [`LOCAL_RECONNECT_BUSY_DEADLINE`] before the reconnect is abandoned.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_remote_session_client(
-    epoch: u64,
-    name: String,
-    read_only: bool,
-    create_only: bool,
-    remote: super::remote::RemoteTarget,
-    remote_config: crate::config::RemoteConfig,
-    mode: RemoteAttachMode,
-    link: CommandLink<Msg>,
-) {
-    attach_remote(
-        epoch,
-        name,
-        read_only,
-        mode.create_only(create_only),
-        remote,
-        remote_config,
-        mode.reconnect(),
-        mode.recover_existing(),
-        link,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn attach_session_client_with_profile(
+fn attach_local(
     epoch: u64,
     name: String,
     autostart: bool,

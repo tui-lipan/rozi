@@ -9,11 +9,11 @@ pub(crate) use attach::{
     CONNECT_HOLD, abandon_session_reconnect, apply_pending_background_closes, arm_connect_hold,
     attach_session_by_name, clear_pending_session_action, connect_hold_elapsed, disconnect_host,
     ensure_session_for_pty, enter_launcher, handle_offline_session_key, held_ephemeral_session_in,
-    holding_previous_view, install_fresh_attachment, kill_current_session,
+    holding_previous_view, install_fresh_attachment, install_pending_attach, kill_current_session,
     land_on_surviving_session, may_shutdown_ephemeral, needs_session_for_pty,
     park_current_and_install, reconnect_after_transport_loss, reconnect_current_session,
     recreate_lost_remote_session, release_background_for_exit, release_current_session,
-    restart_current_session, run_pending_session_action, start_launcher_shell,
+    restart_current_session, run_pending_session_action, start_attach, start_launcher_shell,
     swap_to_fresh_ephemeral, switch_to_parked,
 };
 pub(crate) use control_lease::{

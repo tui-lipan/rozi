@@ -162,9 +162,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         note: "",
         rows: &[
             row(
-                "sessions attach <NAME>",
+                "sessions attach <NAME> [OPTIONS]",
                 "Attach to a running session, never create",
             ),
+            row("", "--read-only, --follow, or --take-control"),
             row(
                 "sessions new <NAME> [--profile <PROFILE>]",
                 "Create a session, optionally from a profile",
@@ -397,15 +398,6 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             row(
                 "    --session <NAME>",
                 "Session target, same as a positional TARGET",
-            ),
-            row(
-                "    --profile <NAME>",
-                "Seed a `sessions new` session from this profile",
-            ),
-            row("    --follow", "Follow on shared attach"),
-            row(
-                "    --take-control",
-                "Take or request control on shared attach",
             ),
             row("    --read-only", "Attach as a viewer; cannot type or tile"),
             row("    --pick", "Force the startup session picker, whatever"),

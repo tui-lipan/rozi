@@ -370,7 +370,7 @@ pub fn run() -> Result<()> {
         .global_quit(None);
 
     // Probe / prompt / install before the TUI takes stdin (install = "prompt").
-    if let Some(ref target) = plan.remote {
+    if let Some(target) = plan.remote() {
         let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
         if let Err(err) =
             crate::session::remote::ensure_remote_binary(target, &plan.config.remote, interactive)
@@ -393,16 +393,9 @@ pub fn run() -> Result<()> {
                 plan.messages,
                 control_listener,
                 control_guard,
-                plan.attach_session,
-                plan.autostart,
-                plan.create_only,
-                cli.read_only,
-                plan.remote,
-                plan.want_picker,
-                plan.last_session,
+                plan.session,
             )
-            .with_startup_cwd(plan.cwd)
-            .with_on_attach(cli.on_attach),
+            .with_startup_cwd(plan.cwd),
         )
         .exit_view(crate::view::exit::exit_view)
         .run();

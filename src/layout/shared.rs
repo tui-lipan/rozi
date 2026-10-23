@@ -3245,13 +3245,11 @@ mod reconciler_tests {
             backend.state_mut().current_mut().pending_session_attach =
                 Some(crate::state::PendingSessionAttach {
                     epoch: 1,
-                    name: "live".into(),
+                    request: crate::state::AttachRequest::new(
+                        "live",
+                        crate::state::AttachMode::Join,
+                    ),
                     client: Some(client),
-                    autostart: false,
-                    read_only: false,
-                    reconnect: false,
-                    remote_host: None,
-                    intent: crate::state::AttachIntent::Plain,
                     left: None,
                     parked_epoch: None,
                 });
@@ -3309,13 +3307,8 @@ mod reconciler_tests {
         state.runtime_epoch = epoch;
         state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
             epoch,
-            name: name.into(),
+            request: crate::state::AttachRequest::new(name, crate::state::AttachMode::Join),
             client: Some(client),
-            autostart: false,
-            read_only: false,
-            reconnect: false,
-            remote_host: None,
-            intent: crate::state::AttachIntent::Plain,
             left: None,
             parked_epoch: None,
         });

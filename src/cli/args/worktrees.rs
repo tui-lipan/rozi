@@ -159,17 +159,13 @@ pub(super) fn parse(
     {
         return Ok(ParsedCli::WorktreesHelp);
     }
-    for (set, flag) in [
-        (cli.attach_session.is_some(), "a session target"),
-        (cli.profile.is_some(), "--profile"),
-        (cli.read_only, "--read-only"),
-        (cli.on_attach.is_some(), "--take-control/--follow"),
-        (cli.pick, "--pick"),
-        (cli.cwd.is_some(), "--cwd"),
-    ] {
-        if set {
-            return Err(format!("{flag} does not apply to worktrees commands"));
-        }
+    let offender = if cli.attach_session.is_some() {
+        Some("a session target")
+    } else {
+        cli.launch_only_option()
+    };
+    if let Some(flag) = offender {
+        return Err(format!("{flag} does not apply to worktrees commands"));
     }
     let Some(verb) = iter.next() else {
         return Ok(ParsedCli::WorktreesHelp);

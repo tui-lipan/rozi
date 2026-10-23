@@ -2,471 +2,57 @@ use super::*;
 
 use std::collections::HashSet;
 
+use crate::state::SettingControl;
+
 const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 70;
 const SETTINGS_MODAL_WIDTH: u16 = 64;
 const SETTINGS_CHOICE_WIDTH: u16 = 40;
 
 type SettingEntry = SearchEntry<(SettingsAction, String)>;
-type SettingGroup = (&'static str, Vec<SettingEntry>);
+type SettingGroup = (crate::state::SettingsGroup, Vec<SettingEntry>);
 
 fn settings_groups(ctx: &Context<AppRoot>) -> Vec<SettingGroup> {
-    use SettingsAction::*;
-
-    let pane = &ctx.state.config.pane;
-    let animations = &ctx.state.config.animations;
-    let alert = &ctx.state.config.workbar.alert;
-    let mut groups = vec![
-        settings_group(
-            "General",
-            vec![
-                ("Theme", current_theme_label(ctx), Theme),
-                (
-                    "Cursor blink",
-                    ctx.state.config.cursor.blink.label().to_string(),
-                    CycleCursorBlink,
-                ),
-                (
-                    "Nerd icons",
-                    enabled_status(ctx.state.config.nerd_icons),
-                    ToggleNerdIcons,
-                ),
-                (
-                    "Which-key",
-                    ctx.state.config.input.which_key.label().to_string(),
-                    CycleWhichKey,
-                ),
-                (
-                    "Focus on hover",
-                    enabled_status(pane.focus_on_hover),
-                    ToggleFocusOnHover,
-                ),
-                (
-                    "Scroll multiplier",
-                    crate::state::scroll_multiplier_label(ctx.state.config.input.scroll_multiplier),
-                    EditScrollMultiplier,
-                ),
-            ],
-        ),
-        // Every motion control in one place, the master switch first: the rows below it grey out
-        // when it is off, so they read as its dependents.
-        settings_group(
-            "Animations",
-            vec![
-                (
-                    "Play animations",
-                    enabled_status(animations.enabled),
-                    ToggleAnimations,
-                ),
-                (
-                    "Workspace switching",
-                    enabled_status(animations.workspace),
-                    ToggleWorkspaceAnimation,
-                ),
-                (
-                    "Session switching",
-                    animations.session.label().to_string(),
-                    CycleSessionAnimation,
-                ),
-                (
-                    "Pickers",
-                    animations.picker.label().to_string(),
-                    CyclePickerAnimation,
-                ),
-                (
-                    "Pane open",
-                    animations.pane_open_style.label().to_string(),
-                    CyclePaneOpenAnimation,
-                ),
-                (
-                    "Pane close",
-                    animations.pane_close_style.label().to_string(),
-                    CyclePaneCloseAnimation,
-                ),
-            ],
-        ),
-        settings_group(
-            "Clipboard",
-            vec![
-                (
-                    "Copy on selection",
-                    ctx.state
-                        .config
-                        .clipboard
-                        .copy_on_select
-                        .label()
-                        .to_string(),
-                    CycleCopyOnSelect,
-                ),
-                (
-                    "Middle-click paste",
-                    ctx.state
-                        .config
-                        .clipboard
-                        .middle_click_paste
-                        .label()
-                        .to_string(),
-                    CycleMiddleClickPaste,
-                ),
-                (
-                    "Right-click action",
-                    ctx.state.config.clipboard.right_click.label().to_string(),
-                    CycleRightClickClipboard,
-                ),
-                (
-                    "OSC 52",
-                    enabled_status(ctx.state.config.clipboard.enable_osc52),
-                    ToggleOsc52,
-                ),
-            ],
-        ),
-        settings_group(
-            "Pickers",
-            vec![
-                (
-                    "Border",
-                    pane.picker_border_style.label().to_string(),
-                    CyclePickerBorderStyle,
-                ),
-                (
-                    "Tab strip",
-                    enabled_status(pane.picker_tab_background),
-                    TogglePickerTabBackground,
-                ),
-                (
-                    "Tab style",
-                    cap_style_label(pane.picker_tab_style).to_string(),
-                    CyclePickerTabStyle,
-                ),
-                (
-                    "Selection style",
-                    cap_style_label(pane.picker_selection_style).to_string(),
-                    CyclePickerSelectionStyle,
-                ),
-            ],
-        ),
-        settings_group(
-            "Background",
-            vec![
-                (
-                    "Follows terminal",
-                    enabled_status(pane.background_follows_terminal),
-                    ToggleBackgroundFollowsTerminal,
-                ),
-                (
-                    "Focused",
-                    enabled_status(pane.highlight_focused_background),
-                    ToggleHighlightFocusedBackground,
-                ),
-                (
-                    "Terminal padding",
-                    padding_summary(pane.padding),
-                    EditPadding,
-                ),
-            ],
-        ),
-        settings_group(
-            "Borders",
-            vec![
-                (
-                    "Mode",
-                    pane.border_mode.label().to_string(),
-                    CycleBorderMode,
-                ),
-                (
-                    "Style",
-                    pane.border_style.label().to_string(),
-                    CycleBorderStyle,
-                ),
-                (
-                    "Focused",
-                    enabled_status(pane.highlight_focused_border),
-                    ToggleHighlightFocusedBorder,
-                ),
-                (
-                    "Floating",
-                    pane.float_border_style.label().to_string(),
-                    CycleFloatBorderStyle,
-                ),
-                (
-                    "Scratchpad",
-                    pane.scratch_border_style.label().to_string(),
-                    CycleScratchBorderStyle,
-                ),
-                (
-                    "Fullscreen",
-                    pane.fullscreen_border_style.label().to_string(),
-                    CycleFullscreenBorderStyle,
-                ),
-            ],
-        ),
-        settings_group(
-            "Titlebar",
-            vec![
-                ("Layout", choice_status(ctx, ChooseTitlebar), ChooseTitlebar),
-                (
-                    "Style",
-                    cap_style_label(pane.title_style).to_string(),
-                    CycleTitleStyle,
-                ),
-                (
-                    "Focused",
-                    enabled_status(pane.highlight_focused_titlebar),
-                    ToggleHighlightFocusedTitlebar,
-                ),
-            ],
-        ),
-        settings_group(
-            "Workbar",
-            vec![
-                ("Position", choice_status(ctx, ChooseWorkbar), ChooseWorkbar),
-                ("Gap", enabled_status(pane.workbar_gap), ToggleWorkbarGap),
-                (
-                    "Background",
-                    enabled_status(pane.workbar_background),
-                    ToggleWorkbarBackground,
-                ),
-                (
-                    "Style",
-                    cap_style_label(pane.workbar_style).to_string(),
-                    CycleWorkbarStyle,
-                ),
-                (
-                    "Badge style",
-                    cap_style_label(pane.workbar_badge_style).to_string(),
-                    CycleWorkbarBadgeStyle,
-                ),
-                (
-                    "Tab style",
-                    cap_style_label(pane.workbar_tab_style).to_string(),
-                    CycleWorkbarTabStyle,
-                ),
-                (
-                    "Powerline",
-                    enabled_status(pane.workbar_powerline),
-                    ToggleWorkbarPowerline,
-                ),
-            ],
-        ),
-        settings_group(
-            "Sidebar",
-            vec![
-                (
-                    "Left panels",
-                    sidebar_dock_status(&ctx.state.config.sidebar.layout.left),
-                    LeftSidebarPanels,
-                ),
-                (
-                    "Right panels",
-                    sidebar_dock_status(&ctx.state.config.sidebar.layout.right),
-                    RightSidebarPanels,
-                ),
-                (
-                    "Open sidebars at startup",
-                    enabled_status(ctx.state.config.sidebar.startup),
-                    ToggleSidebarStartup,
-                ),
-                ("Sidebar tabs", String::new(), SidebarTabs),
-                ("Sidebar layout preset", String::new(), SidebarLayoutPreset),
-                (
-                    "Background follows canvas",
-                    enabled_status(ctx.state.config.sidebar.background_follows_canvas),
-                    ToggleSidebarBackgroundFollowsCanvas,
-                ),
-                (
-                    "Gap",
-                    enabled_status(ctx.state.config.sidebar.gap),
-                    ToggleSidebarGap,
-                ),
-                (
-                    "Tab strip",
-                    enabled_status(ctx.state.config.sidebar.background),
-                    ToggleSidebarBackground,
-                ),
-                (
-                    "Tab style",
-                    cap_style_label(ctx.state.config.sidebar.tab_style).to_string(),
-                    CycleSidebarTabStyle,
-                ),
-            ],
-        ),
-        settings_group(
-            "Alerts",
-            vec![(
-                "Bell urgency",
-                enabled_status(ctx.state.config.notifications.bell),
-                ToggleBellUrgency,
-            )],
-        ),
-        settings_group(
-            "Highlights",
-            vec![
-                (
-                    "Pane effect",
-                    pane.alert_border
-                        .status_label(animations.enabled, animations.focus_chrome),
-                    CycleAlertBorder,
-                ),
-                (
-                    "Pane paint",
-                    pane.alert_paint.label().to_string(),
-                    CycleAlertPaint,
-                ),
-                (
-                    "Workspace tab",
-                    alert
-                        .mode
-                        .status_label(animations.enabled, animations.focus_chrome),
-                    CycleWorkbarAlert,
-                ),
-                (
-                    "Workspace tab paint",
-                    alert.paint.label().to_string(),
-                    CycleWorkbarAlertPaint,
-                ),
-            ],
-        ),
-        // Workspace tab markers. Working and Idle are status, not alerts, but they share the
-        // marker surface and its `workbar.alert` keys.
-        settings_group(
-            "Marks",
-            vec![
-                ("Bell", enabled_status(alert.bell), ToggleMarkBell),
-                ("Blocked", enabled_status(alert.blocked), ToggleMarkBlocked),
-                (
-                    "Finished",
-                    enabled_status(alert.finished),
-                    ToggleMarkFinished,
-                ),
-                ("Working", enabled_status(alert.working), ToggleMarkWorking),
-                ("Idle", enabled_status(alert.idle), ToggleMarkIdle),
-            ],
-        ),
-        settings_group(
-            "Desktop notifications",
-            vec![
-                (
-                    "Show notifications",
-                    enabled_status(ctx.state.config.notifications.enabled),
-                    ToggleDesktopEnabled,
-                ),
-                (
-                    "Blocked",
-                    enabled_status(ctx.state.config.notifications.pane_blocked),
-                    ToggleDesktopBlocked,
-                ),
-                (
-                    "Finished",
-                    enabled_status(ctx.state.config.notifications.pane_done),
-                    ToggleDesktopDone,
-                ),
-                (
-                    "Exit",
-                    enabled_status(ctx.state.config.notifications.pane_exit),
-                    ToggleDesktopExit,
-                ),
-                (
-                    "Exit with error",
-                    enabled_status(ctx.state.config.notifications.pane_exit_error),
-                    ToggleDesktopExitError,
-                ),
-            ],
-        ),
-        settings_group(
-            "Sounds",
-            vec![
-                (
-                    "Play sounds",
-                    enabled_status(ctx.state.config.sounds.enabled),
-                    ToggleSoundEnabled,
-                ),
-                (
-                    "Bell",
-                    enabled_status(ctx.state.config.sounds.bell),
-                    ToggleSoundBell,
-                ),
-                (
-                    "Blocked",
-                    enabled_status(ctx.state.config.sounds.blocked),
-                    ToggleSoundBlocked,
-                ),
-                (
-                    "Finished",
-                    enabled_status(ctx.state.config.sounds.done),
-                    ToggleSoundDone,
-                ),
-                (
-                    "Exit with error",
-                    enabled_status(ctx.state.config.sounds.error),
-                    ToggleSoundError,
-                ),
-            ],
-        ),
-        // Session startup, attach behavior, and server policies.
-        settings_group(
-            "Sessions",
-            vec![
-                (
-                    "Startup mode",
-                    ctx.state.config.session.startup.label().to_string(),
-                    CycleStartupMode,
-                ),
-                (
-                    "Open Sessions on",
-                    ctx.state.config.session.picker_open_on.label().to_string(),
-                    CycleSessionPickerOpenOn,
-                ),
-                (
-                    "On shared attach",
-                    ctx.state.config.session.on_attach.label().to_string(),
-                    CycleSessionOnAttach,
-                ),
-                (
-                    "Keep awake while agents work",
-                    enabled_status(ctx.state.config.session.keep_awake_while_agents_work),
-                    ToggleKeepAwakeWhileAgentsWork,
-                ),
-                (
-                    "Layout autosave",
-                    enabled_status(ctx.state.config.session.autosave),
-                    ToggleSessionAutosave,
-                ),
-                (
-                    "Resurrect named sessions",
-                    enabled_status(ctx.state.config.session.resurrect),
-                    ToggleSessionResurrect,
-                ),
-                (
-                    "Restored running commands",
-                    ctx.state
-                        .config
-                        .session
-                        .resurrect_foreground
-                        .label()
-                        .to_string(),
-                    CycleResurrectForeground,
-                ),
-            ],
-        ),
-    ];
-    if ctx.state.config.sidebar.presets.is_empty() {
-        for (_, entries) in &mut groups {
-            entries.retain(|entry| !matches!(entry, SearchEntry::Item(item) if item.value.0 == SidebarLayoutPreset));
+    let config = &ctx.state.config;
+    let mut groups: Vec<SettingGroup> = Vec::new();
+    for spec in crate::state::SETTINGS {
+        if spec.action == SettingsAction::SidebarLayoutPreset && config.sidebar.presets.is_empty() {
+            continue;
+        }
+        let status = match &spec.control {
+            SettingControl::Toggle { field, .. } => enabled_status((field.get)(config)),
+            SettingControl::ActionToggle { value, .. } => enabled_status(value(config)),
+            SettingControl::Choice(choice) | SettingControl::Cycle(choice) => choice.status(config),
+            SettingControl::Custom => custom_status(ctx, spec.action),
+        };
+        let mut aliases: Vec<Arc<str>> = spec.aliases.iter().copied().map(Arc::from).collect();
+        aliases.push(Arc::from(spec.group.label()));
+        aliases.push(Arc::from(spec.group.tab().label()));
+        let entry =
+            SearchEntry::Item(SearchItem::new(spec.label, (spec.action, status)).aliases(aliases));
+        match groups.last_mut() {
+            Some((group, entries)) if *group == spec.group => entries.push(entry),
+            _ => groups.push((spec.group, vec![entry])),
         }
     }
     groups
 }
 
-fn setting_category(group: &str) -> crate::state::SettingsTab {
-    use crate::state::SettingsTab;
-    match group {
-        "General" | "Animations" | "Clipboard" | "Pickers" => SettingsTab::General,
-        "Background" | "Borders" | "Titlebar" => SettingsTab::Panes,
-        "Workbar" | "Sidebar" => SettingsTab::Bars,
-        "Alerts" | "Highlights" | "Marks" | "Desktop notifications" | "Sounds" => {
-            SettingsTab::Alerts
+/// The value text of a row with an editor of its own.
+fn custom_status(ctx: &Context<AppRoot>, action: SettingsAction) -> String {
+    let config = &ctx.state.config;
+    match action {
+        SettingsAction::Theme => current_theme_label(ctx),
+        SettingsAction::EditScrollMultiplier => {
+            crate::state::scroll_multiplier_label(config.input.scroll_multiplier)
         }
-        "Sessions" => SettingsTab::Sessions,
-        _ => unreachable!("unknown settings group"),
+        SettingsAction::EditPadding => padding_summary(config.pane.padding),
+        SettingsAction::ChooseTitlebar | SettingsAction::ChooseWorkbar => {
+            choice_status(ctx, action)
+        }
+        SettingsAction::LeftSidebarPanels => sidebar_dock_status(&config.sidebar.layout.left),
+        SettingsAction::RightSidebarPanels => sidebar_dock_status(&config.sidebar.layout.right),
+        SettingsAction::ToggleSidebarStartup => enabled_status(config.sidebar.startup),
+        _ => String::new(),
     }
 }
 
@@ -544,14 +130,14 @@ fn settings_entries_for_tab(
         settings_groups(ctx)
             .into_iter()
             .filter_map(|(group, entries)| {
-                let category = setting_category(group);
+                let category = group.tab();
                 if tab != crate::state::SettingsTab::All && tab != category {
                     return None;
                 }
-                let heading = if searching && category.label() != group {
-                    format!("{} › {group}", category.label())
+                let heading = if searching && category.label() != group.label() {
+                    format!("{} › {}", category.label(), group.label())
                 } else {
-                    group.to_string()
+                    group.label().to_string()
                 };
                 Some((heading, entries))
             }),
@@ -821,21 +407,6 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::CloseSettings))
         .child(panel)
         .key("rozi-settings-modal")
-}
-
-fn settings_group(
-    group: &'static str,
-    rows: Vec<(&'static str, String, SettingsAction)>,
-) -> (&'static str, Vec<SearchEntry<(SettingsAction, String)>>) {
-    let entries = rows
-        .into_iter()
-        .map(|(label, status, action)| {
-            let mut aliases = settings_palette_aliases(group, action);
-            aliases.push(Arc::from(setting_category(group).label()));
-            SearchEntry::Item(SearchItem::new(label, (action, status)).aliases(aliases))
-        })
-        .collect();
-    (group, entries)
 }
 
 fn settings_actions(

@@ -1432,32 +1432,10 @@ fn help_key_spans(row: &HelpRow, theme: &Theme) -> Vec<Span> {
 #[cfg(test)]
 mod palette_alias_tests {
     use super::super::commands::{command_entries_with_groups, command_palette_aliases};
-    use super::{
-        HelpRow, filtered_help_groups, help_category_priority, scheme_rows,
-        settings_palette_aliases,
-    };
-    use crate::state::{HelpTab, SettingsAction};
+    use super::{HelpRow, filtered_help_groups, help_category_priority, scheme_rows};
+    use crate::state::HelpTab;
     use std::str::FromStr;
     use tui_lipan::prelude::SearchEntry;
-
-    /// `settings_palette_aliases` always appends the group name, so a row with no aliases of its
-    /// own still returns a one-element list. Assert on the aliases *besides* the group, or the
-    /// check passes for every row whether or not anyone wrote one.
-    #[test]
-    fn every_settings_action_has_search_aliases() {
-        for action in SettingsAction::all().iter().copied() {
-            let group = "Test group";
-            let aliases = settings_palette_aliases(group, action);
-            let own: Vec<_> = aliases
-                .iter()
-                .filter(|alias| alias.as_ref() != group)
-                .collect();
-            assert!(
-                !own.is_empty(),
-                "{action:?} is searchable only by its group name; give it aliases of its own"
-            );
-        }
-    }
 
     #[test]
     fn extensions_command_keeps_plugin_aliases() {

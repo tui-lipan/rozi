@@ -248,7 +248,7 @@ fn settings_all_keeps_every_control_available() {
                 layout: rozi::config::SidebarDockLayout::default(),
             });
         let frame = rendered_rows(&mut backend);
-        let rows = SettingsAction::all().len();
+        let rows = SettingsAction::all().count();
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
         for label in [
             "Theme",
@@ -1322,7 +1322,7 @@ fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() 
         let _guard = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 40);
         let mut checked = 0;
-        for &action in SettingsAction::all() {
+        for action in SettingsAction::all() {
             if action.previews_choice() {
                 continue;
             }

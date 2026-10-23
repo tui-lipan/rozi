@@ -8,7 +8,6 @@ pub(in crate::view::overlays) use tui_lipan::utils::color_contrast::readable_tex
 pub(in crate::view::overlays) use crate::input::Action;
 pub(in crate::view::overlays) use crate::state::{
     MAX_MATCHES, ProfilePickerState, ScrollbackSearchState, SessionPickerState, SettingsAction,
-    cap_style_label,
 };
 pub(in crate::view::overlays) use crate::{AppRoot, Msg};
 
@@ -68,7 +67,6 @@ pub(crate) use settings::{
 };
 pub(crate) use worktrees::worktree_overlay;
 
-pub(in crate::view::overlays) use commands::settings_palette_aliases;
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_button, hint_pill, hint_row};
 pub(in crate::view::overlays) use confirm::{DialogButton, DialogChrome, dialog_overlay};
 pub(crate) use palette::PICKER_DESCRIPTION_GAP;

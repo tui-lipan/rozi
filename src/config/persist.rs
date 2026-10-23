@@ -319,21 +319,6 @@ pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<Pat
     Ok(path)
 }
 
-pub fn persist_animation_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
-    let _edit = config_edit_lock();
-    let path = config_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
-    };
-
-    let serialized = toml_string(value);
-    let updated = upsert_value_in_section(&text, "animations", key, &serialized);
-    write_config_text(&path, updated)?;
-    Ok(path)
-}
-
 /// Save the resolved pair before removing the legacy shared style, preserving the other action.
 pub fn persist_pane_animation_styles(
     open: &str,
@@ -427,24 +412,28 @@ fn toml_key_name(key: &str) -> String {
     }
 }
 
-pub fn persist_notification_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
-    persist_bool("notifications", key, value)
-}
-pub fn persist_sound_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
-    persist_bool("sounds", key, value)
-}
-pub fn persist_workbar_alert_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
-    persist_bool("workbar.alert", key, value)
-}
 pub fn persist_session_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     persist_bool("session", key, value)
 }
-pub fn persist_input_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
-    persist_bool("input", key, value)
+
+/// Set a boolean `key` in `[section]`, which may be dotted.
+pub fn persist_section_flag(
+    section: &str,
+    key: &str,
+    value: bool,
+) -> std::result::Result<PathBuf, String> {
+    persist_bool(section, key, value)
 }
-pub fn persist_clipboard_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
-    persist_bool("clipboard", key, value)
+
+/// Set a string `key` in `[section]`, which may be dotted.
+pub fn persist_section_string(
+    section: &str,
+    key: &str,
+    value: &str,
+) -> std::result::Result<PathBuf, String> {
+    persist_section_values(section, &[(key, &toml_string(value))])
 }
+
 fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     let _edit = config_edit_lock();
     let path = config_path();
@@ -508,34 +497,6 @@ pub fn persist_session_string(key: &str, value: &str) -> std::result::Result<Pat
     };
 
     let updated = upsert_value_in_section(&text, "session", key, &format!("\"{value}\""));
-    write_config_text(&path, updated)?;
-    Ok(path)
-}
-
-pub fn persist_input_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
-    let _edit = config_edit_lock();
-    let path = config_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
-    };
-
-    let updated = upsert_value_in_section(&text, "input", key, &format!("\"{value}\""));
-    write_config_text(&path, updated)?;
-    Ok(path)
-}
-
-pub fn persist_clipboard_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
-    let _edit = config_edit_lock();
-    let path = config_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
-    };
-
-    let updated = upsert_value_in_section(text.as_str(), "clipboard", key, &toml_string(value));
     write_config_text(&path, updated)?;
     Ok(path)
 }

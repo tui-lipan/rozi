@@ -108,7 +108,7 @@ pub fn replayable_foreground_command(
         return Some(program.to_string());
     }
     let program = match snapshot.executable {
-        Some(path) => shell_quote(path),
+        Some(path) => quote_for_prompt(path, PromptQuoting::Posix),
         None => program.to_string(),
     };
     Some(
@@ -117,7 +117,7 @@ pub fn replayable_foreground_command(
                 snapshot
                     .arguments
                     .iter()
-                    .map(|argument| shell_quote(argument)),
+                    .map(|argument| quote_for_prompt(argument, PromptQuoting::Posix)),
             )
             .collect::<Vec<_>>()
             .join(" "),
@@ -212,7 +212,7 @@ pub fn quote_for_prompt(word: &str, quoting: PromptQuoting) -> String {
         return word.to_string();
     }
     match quoting {
-        PromptQuoting::Posix => format!("'{}'", word.replace('\'', r"'\''")),
+        PromptQuoting::Posix => crate::platform::command::quote_posix_arg(word),
         PromptQuoting::Fish => format!("'{}'", word.replace('\\', r"\\").replace('\'', r"\'")),
         PromptQuoting::PowerShell => format!("'{}'", word.replace('\'', "''")),
         PromptQuoting::Cmd => format!("\"{}\"", word.replace('"', "\"\"")),
@@ -235,14 +235,6 @@ pub fn prompt_line(argv: &[String], quoting: PromptQuoting) -> String {
         PromptQuoting::PowerShell => format!("& {line}"),
         _ => line,
     }
-}
-
-/// POSIX quoting, for the capture path.
-///
-/// Kept separate from [`quote_for_prompt`] only by name: the inspector-reported paths and
-/// arguments this quotes exist on Unix alone, so the shell behind them is a POSIX one.
-pub fn shell_quote(word: &str) -> String {
-    quote_for_prompt(word, PromptQuoting::Posix)
 }
 
 /// Program names that mean "this pane is sitting in a shell", not "this pane is running something".

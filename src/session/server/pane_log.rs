@@ -14,7 +14,7 @@
 //! disk filled. At the limit the log closes itself with a trailer and reports why, taking the same
 //! path a write error does.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -172,7 +172,7 @@ impl LogHeader<'_> {
 
 impl PaneLog {
     pub(super) fn open(path: &Path, limit: u64, header: &LogHeader<'_>) -> io::Result<Self> {
-        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut file = crate::platform::persist::open_private_append(path)?;
         let existing = file.metadata()?.len();
         let mut opening = header.render();
         if existing == 0 {
@@ -249,6 +249,32 @@ mod tests {
         }
         filter.flush(&mut out);
         out
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn logging_opens_private_files_and_refuses_symlink_destinations() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("pane.log");
+        let header = LogHeader {
+            session: "test",
+            pane_id: 1,
+            generation: 1,
+            cols: 80,
+            rows: 24,
+        };
+        let mut log = PaneLog::open(&path, 0, &header).unwrap();
+        log.write(b"private output").unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let before = std::fs::read(&path).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(PaneLog::open(&link, 0, &header).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]

@@ -706,9 +706,52 @@ pub fn resolve_launch_argv(
     )
 }
 
+/// Quote one literal POSIX shell argument. This can also quote a complete script as the single
+/// argument after `sh -c`; it does not quote Fish, PowerShell, or cmd.exe input.
+pub fn quote_posix_arg(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_arguments_round_trip_hostile_text() {
+        for word in [
+            "",
+            "plain",
+            "it's",
+            "two words",
+            "; echo injected",
+            "$HOME",
+            "`whoami`",
+            "first\nsecond",
+            "' ; $x `id`\n",
+        ] {
+            let quoted = quote_posix_arg(word);
+            let output = std::process::Command::new("sh")
+                .args(["-c", &format!("printf '%s' {quoted}")])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(output.stdout, word.as_bytes());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_script_argument_is_literal_through_sh_c() {
+        let script = "printf '%s' 'apostrophe: '\\'' ; $HOME `id`\n'";
+        let command = format!("sh -c {}", quote_posix_arg(script));
+        let output = std::process::Command::new("sh")
+            .args(["-c", &command])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        assert_eq!(output.stdout, b"apostrophe: ' ; $HOME `id`\n");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

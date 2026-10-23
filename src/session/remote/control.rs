@@ -13,17 +13,13 @@
 //! No new transport. This is the SSH path `--remote` attach already uses: saved host config,
 //! connection multiplexing, the discovered remote binary, and the same askpass rules.
 
-use std::io::{Read, Write};
-use std::process::Stdio;
+use std::io::Read;
 
 use crate::config::RemoteConfig;
 use crate::control::{ControlRequest, ControlResponse};
 
+use super::json_transport::{self, TransportError};
 use super::target::RemoteTarget;
-use super::{
-    ResolvedRemote, append_remote_rozi_command, append_ssh_destination, ssh_base_command,
-    validate_remote_executable_token, validate_remote_target,
-};
 
 /// Exit status the far side uses for "the session could not be reached at all", as distinct from a
 /// command the session answered by refusing. Mirrors what the local CLI exits with in that case.
@@ -43,87 +39,28 @@ pub fn forward_control(
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
     }
-    validate_remote_target(target)?;
-    let resolved = ResolvedRemote::resolve(target, config);
-    let remote_bin = super::binary::resolve(target, config)?;
-    validate_remote_executable_token(&remote_bin.path)?;
-
-    let payload = serde_json::to_vec(request)
-        .map_err(|err| format!("could not encode the control request: {err}"))?;
-
-    let mut command = ssh_base_command(&resolved, config);
-    append_ssh_destination(&mut command, &resolved);
-    append_remote_rozi_command(
-        &mut command,
-        &remote_bin.path,
-        &["--remote-control", session],
-        remote_bin.family,
-    );
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("remote control ssh failed: {err}"))?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "remote control ssh gave no stdin".to_string())?;
-        stdin
-            .write_all(&payload)
-            .and_then(|()| stdin.write_all(b"\n"))
-            .map_err(|err| format!("could not send the control request: {err}"))?;
-        // Dropped here: the far side reads one request and then waits for end of input, and a
-        // wait holds the connection open for as long as it takes.
-    }
-    // Deliberately unbounded. `agents wait` and `agents prompt --wait` are supposed to take as
-    // long as the thing they are waiting for; the deadline belongs to the request, and the far
-    // side's session server enforces it.
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("remote control ssh failed: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        super::binary::invalidate(target, config);
-        return Err(control_forward_failure(
-            output.status.code(),
-            &stderr,
-            session,
-            &target.display_label(),
-        ));
-    }
-    parse_response(&output.stdout)
-}
-
-/// Find the answer in whatever else the remote login put on stdout.
-///
-/// A shell profile that prints a message of the day, a banner, or a `logout` line shares this
-/// stdout with the answer, and neither end controls what a host's `/etc/profile` does. Rozi's own
-/// host probe is already deliberately tolerant of that; this has to be too, or a forwarded command
-/// fails on a perfectly working machine for a reason that has nothing to do with the command.
-///
-/// Searched from the end, because the answer is the last thing this process writes and a banner is
-/// among the first. Being a parseable [`ControlResponse`] is the test: every line is tried, so
-/// output on either side of the answer is skipped rather than mistaken for it.
-fn parse_response(stdout: &[u8]) -> Result<ControlResponse, String> {
-    let mut lines = stdout
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
-        .peekable();
-    if lines.peek().is_none() {
-        return Err("the remote rozi answered with nothing".to_string());
-    }
-    lines
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .find_map(|line| serde_json::from_slice(line).ok())
-        .ok_or_else(|| {
-            "could not read the remote rozi's answer: no control response in its output".to_string()
-        })
+    json_transport::forward(target, config, &["--remote-control", session], request).map_err(
+        |error| match error {
+            TransportError::Preflight(message) => message,
+            TransportError::Encode(error) => {
+                format!("could not encode the control request: {error}")
+            }
+            TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
+            TransportError::Send(error) => format!("could not send the control request: {error}"),
+            TransportError::Failed(output) => control_forward_failure(
+                output.status.code(),
+                &String::from_utf8_lossy(&output.stderr),
+                session,
+                &target.display_label(),
+            ),
+            TransportError::Answer(json_transport::AnswerError::Empty) => {
+                "the remote rozi answered with nothing".into()
+            }
+            TransportError::Answer(json_transport::AnswerError::Malformed) => {
+                "could not read the remote rozi's answer: no control response in its output".into()
+            }
+        },
+    )
 }
 
 /// Turn a failed forwarding attempt into one line worth reading.
@@ -211,7 +148,8 @@ mod tests {
         );
         let encoded = serde_json::to_vec(&refusal).expect("response encodes");
 
-        let parsed = parse_response(&encoded).expect("a refusal is still an answer");
+        let parsed: ControlResponse =
+            json_transport::parse_answer(&encoded).expect("a refusal is still an answer");
 
         assert!(!parsed.ok);
         assert_eq!(
@@ -220,43 +158,7 @@ mod tests {
         );
     }
 
-    /// A host whose `/etc/profile` prints a message of the day shares this stdout with the answer.
-    /// Neither end gets to decide that, so reading only the first line made every forwarded command
-    /// fail on an otherwise working machine.
-    #[test]
-    fn the_answer_is_found_past_whatever_the_login_printed() {
-        let response = ControlResponse::ok(serde_json::json!({"panes": []}));
-        let encoded = serde_json::to_vec(&response).expect("response encodes");
-
-        let mut stdout =
-            b"Welcome to workbox!\n  \n* 3 packages can be updated.\nLast login: Tue\n".to_vec();
-        stdout.extend_from_slice(&encoded);
-        // Some logins have something to say on the way out, too.
-        stdout.extend_from_slice(b"\nlogout\n");
-
-        assert!(
-            parse_response(&stdout)
-                .expect("answer found past the banner")
-                .ok,
-            "the answer was lost among the login's own output"
-        );
-    }
-
-    #[test]
-    fn output_with_no_answer_in_it_says_so() {
-        assert_eq!(
-            parse_response(b"   \n\n"),
-            Err("the remote rozi answered with nothing".to_string())
-        );
-        assert!(
-            parse_response(b"Welcome to workbox!\nLast login: Tue\n")
-                .expect_err("a banner alone is not an answer")
-                .contains("no control response")
-        );
-    }
-
-    /// Version skew has to be named. `unknown flag` alone reads like a typo in the user's command
-    /// rather than a rozi on the far host that predates the feature.
+    /// Old runners must report version skew rather than a typo in the caller's command.
     #[test]
     fn an_old_remote_rozi_is_named_as_the_problem() {
         let skew = control_forward_failure(

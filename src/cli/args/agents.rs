@@ -137,7 +137,8 @@ pub(super) fn parse_agents_args(
             while let Some(flag) = iter.next() {
                 match flag.as_str() {
                     "--location" => {
-                        let value = next_value(&mut iter, "--location requires a JSON object")?;
+                        let value =
+                            super::require_value(&mut iter, "--location requires a JSON object")?;
                         let parsed = serde_json::from_str(&value)
                             .map_err(|error| format!("--location is not a location: {error}"))?;
                         if location.replace(parsed).is_some() {
@@ -180,7 +181,7 @@ fn parse_report(
     while let Some(flag) = iter.next() {
         match flag.as_str() {
             "--target" => {
-                let value = next_value(&mut iter, "--target requires a pane id")?;
+                let value = super::require_value(&mut iter, "--target requires a pane id")?;
                 target = Some(
                     value
                         .parse()
@@ -188,19 +189,31 @@ fn parse_report(
                 );
             }
             "--state" => {
-                let value = next_value(&mut iter, "--state requires a state")?;
+                let value = super::require_value(&mut iter, "--state requires a state")?;
                 state = Some(parse_report_state(&value)?);
             }
-            "--agent" => agent = Some(next_value(&mut iter, "--agent requires an id")?),
+            "--agent" => agent = Some(super::require_value(&mut iter, "--agent requires an id")?),
             "--integration" => {
-                integration = Some(next_value(&mut iter, "--integration requires a token")?)
+                integration = Some(super::require_value(
+                    &mut iter,
+                    "--integration requires a token",
+                )?)
             }
-            "--reason" => reason = Some(next_value(&mut iter, "--reason requires text")?),
+            "--reason" => {
+                // Reasons are arbitrary text, including words that look like flags.
+                reason = Some(
+                    iter.next()
+                        .ok_or_else(|| "--reason requires text".to_string())?,
+                );
+            }
             "--native-session" => {
-                native_session = Some(next_value(&mut iter, "--native-session requires a value")?)
+                native_session = Some(super::require_value(
+                    &mut iter,
+                    "--native-session requires a value",
+                )?)
             }
             "--seq" => {
-                let value = next_value(&mut iter, "--seq requires an integer")?;
+                let value = super::require_value(&mut iter, "--seq requires an integer")?;
                 seq = Some(
                     value
                         .parse()
@@ -236,20 +249,23 @@ fn parse_release(
         match flag.as_str() {
             "--target" => {
                 target = Some(
-                    next_value(&mut iter, "--target requires a pane id")?
+                    super::require_value(&mut iter, "--target requires a pane id")?
                         .parse()
                         .map_err(|_| "--target requires a numeric pane id".to_string())?,
                 )
             }
             "--seq" => {
                 seq = Some(
-                    next_value(&mut iter, "--seq requires an integer")?
+                    super::require_value(&mut iter, "--seq requires an integer")?
                         .parse()
                         .map_err(|_| "--seq requires an unsigned integer".to_string())?,
                 )
             }
             "--integration" => {
-                integration = Some(next_value(&mut iter, "--integration requires a token")?)
+                integration = Some(super::require_value(
+                    &mut iter,
+                    "--integration requires a token",
+                )?)
             }
             other => return Err(format!("unexpected agents release argument `{other}`")),
         }
@@ -293,13 +309,13 @@ fn parse_prompt(
         match argument.as_str() {
             "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
             "--wait" => {
-                let value = next_value(&mut iter, "--wait requires a condition")?;
+                let value = super::require_value(&mut iter, "--wait requires a condition")?;
                 if wait.replace(parse_condition(&value)?).is_some() {
                     return Err("agents prompt --wait specified more than once".into());
                 }
             }
             "--timeout" => {
-                let value = next_value(&mut iter, "--timeout requires a duration")?;
+                let value = super::require_value(&mut iter, "--timeout requires a duration")?;
                 if timeout_ms
                     .replace(super::parse_duration_ms(&value, "--timeout")?)
                     .is_some()
@@ -308,7 +324,7 @@ fn parse_prompt(
                 }
             }
             "--capture" => {
-                let value = next_value(&mut iter, "--capture requires text or ansi")?;
+                let value = super::require_value(&mut iter, "--capture requires text or ansi")?;
                 let render = CaptureRender::parse_cli(&value)?;
                 if !matches!(render, CaptureRender::Text | CaptureRender::Ansi) {
                     return Err("agents prompt --capture requires text or ansi".into());
@@ -371,7 +387,7 @@ fn parse_read(
         match flag.as_str() {
             "--target" | "--ref" => set_target(&mut target, &flag, &mut iter)?,
             "--scrollback" => {
-                let value = next_value(&mut iter, "--scrollback requires a value")?;
+                let value = super::require_value(&mut iter, "--scrollback requires a value")?;
                 if scrollback
                     .replace(CaptureScrollback::parse_cli(&value)?)
                     .is_some()
@@ -404,13 +420,13 @@ fn parse_wait(
         match flag.as_str() {
             "--target" | "--ref" => set_target(&mut target, &flag, &mut iter)?,
             "--until" => {
-                let value = next_value(&mut iter, "--until requires a condition")?;
+                let value = super::require_value(&mut iter, "--until requires a condition")?;
                 if until.replace(parse_condition(&value)?).is_some() {
                     return Err("agents wait --until specified more than once".into());
                 }
             }
             "--timeout" => {
-                let value = next_value(&mut iter, "--timeout requires a duration")?;
+                let value = super::require_value(&mut iter, "--timeout requires a duration")?;
                 if timeout_ms
                     .replace(super::parse_duration_ms(&value, "--timeout")?)
                     .is_some()
@@ -488,7 +504,7 @@ fn set_target(
     if target.is_some() {
         return Err("agent target specified more than once".into());
     }
-    let value = next_value(iter, &format!("{flag} requires a value"))?;
+    let value = super::require_value(iter, &format!("{flag} requires a value"))?;
     *target = Some(if flag == "--target" {
         AgentTarget::Pane(
             value
@@ -509,7 +525,7 @@ fn set_format(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
 ) -> std::result::Result<(), String> {
-    let value = next_value(iter, "--format requires text or json")?;
+    let value = super::require_value(iter, "--format requires text or json")?;
     if format
         .replace(parse_list_format(&value, command)?)
         .is_some()
@@ -540,13 +556,6 @@ fn parse_condition(value: &str) -> std::result::Result<AgentWaitCondition, Strin
     }
 }
 
-fn next_value(
-    iter: &mut impl Iterator<Item = String>,
-    message: &str,
-) -> std::result::Result<String, String> {
-    iter.next().ok_or_else(|| message.to_string())
-}
-
 fn reject_rest(rest: Vec<String>, command: &str) -> std::result::Result<(), String> {
     match rest.first() {
         Some(value) => Err(unexpected(command, value)),
@@ -575,6 +584,100 @@ fn positional_target(command: &str, pane: &str) -> String {
 mod tests {
     use super::super::{ParsedCli, parse_cli_args};
     use super::*;
+
+    #[test]
+    fn option_values_never_consume_the_next_flag() {
+        for (command, flags) in [
+            ("list", vec!["--format"]),
+            ("go", vec!["--location"]),
+            ("get", vec!["--target", "--ref", "--format"]),
+            (
+                "read",
+                vec!["--target", "--ref", "--scrollback", "--format"],
+            ),
+            (
+                "wait",
+                vec!["--target", "--ref", "--until", "--timeout", "--format"],
+            ),
+            (
+                "prompt",
+                vec![
+                    "--target",
+                    "--ref",
+                    "--wait",
+                    "--timeout",
+                    "--capture",
+                    "--format",
+                ],
+            ),
+            (
+                "report",
+                vec![
+                    "--target",
+                    "--agent",
+                    "--integration",
+                    "--state",
+                    "--seq",
+                    "--native-session",
+                ],
+            ),
+            ("release", vec!["--target", "--integration", "--seq"]),
+        ] {
+            for flag in flags {
+                for following in [None, Some("--timeout"), Some("-h")] {
+                    let mut args = vec![command.to_string(), flag.to_string()];
+                    if let Some(next) = following {
+                        args.push(next.to_string());
+                    }
+                    let error = parse_agents_args(args).unwrap_err();
+                    assert!(
+                        error.starts_with(&format!("{flag} requires")),
+                        "{command} {flag}: {error}"
+                    );
+                }
+            }
+        }
+        for args in [
+            "wait --target --until done --timeout 1m",
+            "prompt --ref --wait done --timeout 1m hello",
+        ] {
+            let error = parse_agents_args(args.split_whitespace().map(str::to_string).collect())
+                .unwrap_err();
+            assert!(error.contains("requires a value (got the flag"), "{error}");
+        }
+    }
+
+    #[test]
+    fn report_reasons_accept_literal_dash_prefixed_text() {
+        for reason in ["-blocked", "--timeout", "-", "", "waiting for input"] {
+            let (command, _) = parse_agents_args(
+                [
+                    "report",
+                    "--agent",
+                    "claude",
+                    "--integration",
+                    "hook-abc",
+                    "--state",
+                    "blocked",
+                    "--reason",
+                    reason,
+                    "--seq",
+                    "42",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            )
+            .unwrap();
+            assert!(matches!(command, ControlCommand::AgentReport {
+                reason: Some(actual), seq: 42, ..
+            } if actual == reason));
+        }
+        assert_eq!(
+            parse_agents_args(vec!["report".into(), "--reason".into()]).unwrap_err(),
+            "--reason requires text"
+        );
+    }
 
     #[test]
     fn prompt_capture_requires_a_turn_outcome() {

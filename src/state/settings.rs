@@ -1,15 +1,12 @@
-use tui_lipan::prelude::{CapStyle, TextInput};
+use tui_lipan::prelude::TextInput;
 
-use crate::config::{
-    Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
-    RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
-};
-use crate::layout::anim::PaneAnimationStyle;
+use crate::config::Config;
 
-use super::{
-    AlertMode, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, badge_cap_styles,
-    cap_style_label,
-};
+use super::{PaneBorderMode, PaneTitlebarMode};
+
+mod catalog;
+
+pub use catalog::*;
 
 /// Browsing category. Search always spans every category.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,8 +88,22 @@ pub fn assign_settings_selection(state: &mut super::State, selected: Option<Sett
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettingsAction {
+// Keep the test oracle independent of SETTINGS while making new variants automatic.
+macro_rules! settings_actions {
+    ($($action:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum SettingsAction {
+            $($action),+
+        }
+
+        impl SettingsAction {
+            #[cfg(test)]
+            const ALL: &'static [Self] = &[$(Self::$action),+];
+        }
+    };
+}
+
+settings_actions! {
     Theme,
     EditPadding,
     ToggleAnimations,
@@ -171,236 +182,14 @@ pub enum SettingsAction {
 }
 
 impl SettingsAction {
-    /// Every setting; the view groups these into browsing categories. Anything that has to reason about
-    /// the whole set - search aliases, coverage tests - iterates this instead of repeating a
-    /// hand-maintained list that silently omits whatever was added last.
-    pub const fn all() -> &'static [Self] {
-        &[
-            // General
-            Self::Theme,
-            Self::ToggleNerdIcons,
-            Self::CycleWhichKey,
-            Self::CycleCursorBlink,
-            Self::ToggleFocusOnHover,
-            Self::EditScrollMultiplier,
-            // Animations
-            Self::ToggleAnimations,
-            Self::ToggleWorkspaceAnimation,
-            Self::CycleSessionAnimation,
-            Self::CyclePickerAnimation,
-            Self::CyclePaneOpenAnimation,
-            Self::CyclePaneCloseAnimation,
-            // Clipboard
-            Self::CycleCopyOnSelect,
-            Self::CycleMiddleClickPaste,
-            Self::CycleRightClickClipboard,
-            Self::ToggleOsc52,
-            // Pickers
-            Self::CyclePickerBorderStyle,
-            Self::TogglePickerTabBackground,
-            Self::CyclePickerTabStyle,
-            Self::CyclePickerSelectionStyle,
-            // Panes: background
-            Self::ToggleBackgroundFollowsTerminal,
-            Self::ToggleHighlightFocusedBackground,
-            Self::EditPadding,
-            // Panes: borders
-            Self::CycleBorderMode,
-            Self::CycleBorderStyle,
-            Self::ToggleHighlightFocusedBorder,
-            Self::CycleFloatBorderStyle,
-            Self::CycleScratchBorderStyle,
-            Self::CycleFullscreenBorderStyle,
-            // Panes: titlebar
-            Self::ChooseTitlebar,
-            Self::CycleTitleStyle,
-            Self::ToggleHighlightFocusedTitlebar,
-            // Workbar
-            Self::ChooseWorkbar,
-            Self::ToggleWorkbarGap,
-            Self::ToggleWorkbarBackground,
-            Self::CycleWorkbarStyle,
-            Self::CycleWorkbarBadgeStyle,
-            Self::CycleWorkbarTabStyle,
-            Self::ToggleWorkbarPowerline,
-            // Sidebar
-            Self::ToggleSidebarStartup,
-            Self::LeftSidebarPanels,
-            Self::RightSidebarPanels,
-            Self::SidebarTabs,
-            Self::SidebarLayoutPreset,
-            Self::ToggleSidebarBackgroundFollowsCanvas,
-            Self::ToggleSidebarGap,
-            Self::ToggleSidebarBackground,
-            Self::CycleSidebarTabStyle,
-            // Alerts
-            Self::ToggleBellUrgency,
-            // Highlights
-            Self::CycleAlertBorder,
-            Self::CycleAlertPaint,
-            Self::CycleWorkbarAlert,
-            Self::CycleWorkbarAlertPaint,
-            // Marks
-            Self::ToggleMarkBell,
-            Self::ToggleMarkBlocked,
-            Self::ToggleMarkFinished,
-            Self::ToggleMarkWorking,
-            Self::ToggleMarkIdle,
-            // Desktop notifications
-            Self::ToggleDesktopEnabled,
-            Self::ToggleDesktopBlocked,
-            Self::ToggleDesktopDone,
-            Self::ToggleDesktopExit,
-            Self::ToggleDesktopExitError,
-            // Sounds
-            Self::ToggleSoundEnabled,
-            Self::ToggleSoundBell,
-            Self::ToggleSoundBlocked,
-            Self::ToggleSoundDone,
-            Self::ToggleSoundError,
-            // Sessions
-            Self::CycleStartupMode,
-            Self::CycleSessionPickerOpenOn,
-            Self::ToggleSessionAutosave,
-            Self::ToggleKeepAwakeWhileAgentsWork,
-            Self::ToggleSessionResurrect,
-            Self::CycleResurrectForeground,
-            Self::CycleSessionOnAttach,
-        ]
-    }
-
     /// Multi-value rows. Enter opens a compact picker; Shift+Enter cycles the live value.
     pub fn choice_ring(self, config: &Config) -> Option<SettingsChoiceRing> {
-        let pane = &config.pane;
+        if let Some(choice) = self.choice() {
+            return Some(choice.ring(config));
+        }
         match self {
-            Self::CycleCursorBlink => Some(choice_ring(
-                "Cursor blink",
-                CursorBlink::all(),
-                config.cursor.blink,
-                CursorBlink::label,
-            )),
-            Self::CycleWhichKey => Some(choice_ring(
-                "Which-key",
-                WhichKey::all(),
-                config.input.which_key,
-                WhichKey::label,
-            )),
-            Self::CycleCopyOnSelect => Some(choice_ring(
-                "Copy on selection",
-                CopyOnSelect::all(),
-                config.clipboard.copy_on_select,
-                CopyOnSelect::label,
-            )),
-            Self::CycleMiddleClickPaste => Some(choice_ring(
-                "Middle-click paste",
-                MiddleClickPaste::all(),
-                config.clipboard.middle_click_paste,
-                MiddleClickPaste::label,
-            )),
-            Self::CycleRightClickClipboard => Some(choice_ring(
-                "Right-click action",
-                RightClickClipboardAction::all(),
-                config.clipboard.right_click,
-                RightClickClipboardAction::label,
-            )),
-            Self::CyclePickerBorderStyle => Some(choice_ring(
-                "Picker border",
-                PaneBorderStyle::all(),
-                pane.picker_border_style,
-                PaneBorderStyle::label,
-            )),
-            Self::CyclePickerTabStyle => Some(choice_ring(
-                "Picker tab style",
-                badge_cap_styles(),
-                pane.picker_tab_style,
-                cap_style_label,
-            )),
-            Self::CyclePickerSelectionStyle => Some(choice_ring(
-                "Picker selection style",
-                badge_cap_styles(),
-                pane.picker_selection_style,
-                cap_style_label,
-            )),
-            Self::ChooseTitlebar => Some(titlebar_choice_ring(pane)),
-            Self::ChooseWorkbar => Some(workbar_choice_ring(pane)),
-            Self::CycleTitleStyle => Some(choice_ring(
-                "Titlebar style",
-                CapStyle::all(),
-                pane.title_style,
-                cap_style_label,
-            )),
-            Self::CycleWorkbarStyle => Some(choice_ring(
-                "Workbar style",
-                CapStyle::all(),
-                pane.workbar_style,
-                cap_style_label,
-            )),
-            Self::CycleWorkbarBadgeStyle => Some(choice_ring(
-                "Workbar badge style",
-                badge_cap_styles(),
-                pane.workbar_badge_style,
-                cap_style_label,
-            )),
-            Self::CycleWorkbarTabStyle => Some(choice_ring(
-                "Workbar tab style",
-                badge_cap_styles(),
-                pane.workbar_tab_style,
-                cap_style_label,
-            )),
-            Self::CycleBorderMode => Some(choice_ring(
-                "Border mode",
-                PaneBorderMode::all(),
-                pane.border_mode,
-                PaneBorderMode::label,
-            )),
-            Self::CycleBorderStyle => Some(choice_ring(
-                "Border style",
-                PaneBorderStyle::all(),
-                pane.border_style,
-                PaneBorderStyle::label,
-            )),
-            Self::CycleFloatBorderStyle => Some(choice_ring(
-                "Floating border",
-                PaneBorderStyle::all(),
-                pane.float_border_style,
-                PaneBorderStyle::label,
-            )),
-            Self::CycleScratchBorderStyle => Some(choice_ring(
-                "Scratchpad border",
-                PaneBorderStyle::all(),
-                pane.scratch_border_style,
-                PaneBorderStyle::label,
-            )),
-            Self::CycleFullscreenBorderStyle => Some(choice_ring(
-                "Fullscreen border",
-                PaneBorderStyle::all(),
-                pane.fullscreen_border_style,
-                PaneBorderStyle::label,
-            )),
-            Self::CyclePickerAnimation => Some(choice_ring(
-                "Picker animation",
-                crate::layout::anim::PickerAnimationStyle::all(),
-                config.animations.picker,
-                crate::layout::anim::PickerAnimationStyle::label,
-            )),
-            Self::CycleSessionAnimation => Some(choice_ring(
-                "Session switching animation",
-                crate::layout::anim::SessionAnimationStyle::all(),
-                config.animations.session,
-                crate::layout::anim::SessionAnimationStyle::label,
-            )),
-            Self::CyclePaneOpenAnimation => Some(choice_ring(
-                "Pane open animation",
-                PaneAnimationStyle::all(),
-                config.animations.pane_open_style,
-                PaneAnimationStyle::label,
-            )),
-            Self::CyclePaneCloseAnimation => Some(choice_ring(
-                "Pane close animation",
-                PaneAnimationStyle::all(),
-                config.animations.pane_close_style,
-                PaneAnimationStyle::label,
-            )),
+            Self::ChooseTitlebar => Some(titlebar_choice_ring(&config.pane)),
+            Self::ChooseWorkbar => Some(workbar_choice_ring(&config.pane)),
             Self::LeftSidebarPanels | Self::RightSidebarPanels => {
                 let (title, dock) = if self == Self::LeftSidebarPanels {
                     ("Left panels", &config.sidebar.layout.left)
@@ -431,57 +220,6 @@ impl SettingsAction {
                     .collect(),
                 index: 0,
             }),
-            Self::CycleSidebarTabStyle => Some(choice_ring(
-                "Sidebar tab style",
-                badge_cap_styles(),
-                config.sidebar.tab_style,
-                cap_style_label,
-            )),
-            Self::CycleAlertBorder => Some(choice_ring(
-                "Pane alert effect",
-                AlertMode::all(),
-                pane.alert_border,
-                AlertMode::label,
-            )),
-            Self::CycleAlertPaint => Some(choice_ring(
-                "Pane alert paint",
-                PaneAlertPaint::all(),
-                pane.alert_paint,
-                PaneAlertPaint::label,
-            )),
-            Self::CycleWorkbarAlert => Some(choice_ring(
-                "Workspace tab effect",
-                AlertMode::all(),
-                config.workbar.alert.mode,
-                AlertMode::label,
-            )),
-            Self::CycleSessionPickerOpenOn => Some(choice_ring(
-                "Open Sessions on",
-                SessionPickerOpenOn::all(),
-                config.session.picker_open_on,
-                SessionPickerOpenOn::label,
-            )),
-            Self::CycleStartupMode => {
-                let choices = SessionStartup::choices(config.profile.default.is_some());
-                Some(choice_ring(
-                    "Startup mode",
-                    &choices,
-                    config.session.startup,
-                    SessionStartup::label,
-                ))
-            }
-            Self::CycleSessionOnAttach => Some(choice_ring(
-                "On shared attach",
-                SessionOnAttach::all(),
-                config.session.on_attach,
-                SessionOnAttach::label,
-            )),
-            Self::CycleResurrectForeground => Some(choice_ring(
-                "Restored running commands",
-                ForegroundRestore::all(),
-                config.session.resurrect_foreground,
-                ForegroundRestore::label,
-            )),
             _ => None,
         }
     }
@@ -498,122 +236,18 @@ impl SettingsAction {
 
     /// Preview only static appearance choices; behavior and event-driven effects need confirmation.
     pub fn previews_choice(self) -> bool {
-        matches!(
-            self,
-            Self::CyclePickerBorderStyle
-                | Self::CyclePickerTabStyle
-                | Self::CyclePickerSelectionStyle
-                | Self::ChooseTitlebar
-                | Self::ChooseWorkbar
-                | Self::CycleTitleStyle
-                | Self::CycleWorkbarStyle
-                | Self::CycleWorkbarBadgeStyle
-                | Self::CycleWorkbarTabStyle
-                | Self::CycleBorderMode
-                | Self::CycleBorderStyle
-                | Self::CycleFloatBorderStyle
-                | Self::CycleScratchBorderStyle
-                | Self::CycleFullscreenBorderStyle
-                | Self::CycleSidebarTabStyle
-        )
+        matches!(self, Self::ChooseTitlebar | Self::ChooseWorkbar)
+            || self.choice().is_some_and(|choice| choice.previews())
     }
 
     /// Write `index` into live config without persisting.
     pub fn apply_choice(self, config: &mut Config, index: usize) -> bool {
+        if let Some(choice) = self.choice() {
+            return choice.apply(config, index);
+        }
         match self {
-            Self::CycleCursorBlink => {
-                assign_choice(CursorBlink::all(), index, &mut config.cursor.blink)
-            }
-            Self::CycleWhichKey => {
-                assign_choice(WhichKey::all(), index, &mut config.input.which_key)
-            }
-            Self::CycleCopyOnSelect => assign_choice(
-                CopyOnSelect::all(),
-                index,
-                &mut config.clipboard.copy_on_select,
-            ),
-            Self::CycleMiddleClickPaste => assign_choice(
-                MiddleClickPaste::all(),
-                index,
-                &mut config.clipboard.middle_click_paste,
-            ),
-            Self::CycleRightClickClipboard => assign_choice(
-                RightClickClipboardAction::all(),
-                index,
-                &mut config.clipboard.right_click,
-            ),
-            Self::CyclePickerBorderStyle => assign_choice(
-                PaneBorderStyle::all(),
-                index,
-                &mut config.pane.picker_border_style,
-            ),
-            Self::CyclePickerTabStyle => {
-                assign_choice(badge_cap_styles(), index, &mut config.pane.picker_tab_style)
-            }
-            Self::CyclePickerSelectionStyle => assign_choice(
-                badge_cap_styles(),
-                index,
-                &mut config.pane.picker_selection_style,
-            ),
             Self::ChooseTitlebar => apply_titlebar_choice(config, index),
             Self::ChooseWorkbar => apply_workbar_choice(config, index),
-            Self::CycleTitleStyle => {
-                assign_choice(CapStyle::all(), index, &mut config.pane.title_style)
-            }
-            Self::CycleWorkbarStyle => {
-                assign_choice(CapStyle::all(), index, &mut config.pane.workbar_style)
-            }
-            Self::CycleWorkbarBadgeStyle => assign_choice(
-                badge_cap_styles(),
-                index,
-                &mut config.pane.workbar_badge_style,
-            ),
-            Self::CycleWorkbarTabStyle => assign_choice(
-                badge_cap_styles(),
-                index,
-                &mut config.pane.workbar_tab_style,
-            ),
-            Self::CycleBorderMode => {
-                assign_choice(PaneBorderMode::all(), index, &mut config.pane.border_mode)
-            }
-            Self::CycleBorderStyle => {
-                assign_choice(PaneBorderStyle::all(), index, &mut config.pane.border_style)
-            }
-            Self::CycleFloatBorderStyle => assign_choice(
-                PaneBorderStyle::all(),
-                index,
-                &mut config.pane.float_border_style,
-            ),
-            Self::CycleScratchBorderStyle => assign_choice(
-                PaneBorderStyle::all(),
-                index,
-                &mut config.pane.scratch_border_style,
-            ),
-            Self::CycleFullscreenBorderStyle => assign_choice(
-                PaneBorderStyle::all(),
-                index,
-                &mut config.pane.fullscreen_border_style,
-            ),
-            Self::CyclePickerAnimation => assign_choice(
-                crate::layout::anim::PickerAnimationStyle::all(),
-                index,
-                &mut config.animations.picker,
-            ),
-            Self::CycleSessionAnimation => assign_choice(
-                crate::layout::anim::SessionAnimationStyle::all(),
-                index,
-                &mut config.animations.session,
-            ),
-            Self::CyclePaneOpenAnimation => assign_choice(
-                PaneAnimationStyle::all(),
-                index,
-                &mut config.animations.pane_open_style,
-            ),
-            Self::CyclePaneCloseAnimation => assign_choice(
-                PaneAnimationStyle::all(),
-                index,
-                &mut config.animations.pane_close_style,
-            ),
             Self::LeftSidebarPanels | Self::RightSidebarPanels => {
                 let dock = if self == Self::LeftSidebarPanels {
                     &mut config.sidebar.layout.left
@@ -623,35 +257,6 @@ impl SettingsAction {
                 assign_choice(&[1_usize, 2, 3], index, &mut dock.panel_count)
             }
             Self::SidebarLayoutPreset => index <= config.sidebar.presets.len(),
-            Self::CycleSidebarTabStyle => {
-                assign_choice(badge_cap_styles(), index, &mut config.sidebar.tab_style)
-            }
-            Self::CycleAlertBorder => {
-                assign_choice(AlertMode::all(), index, &mut config.pane.alert_border)
-            }
-            Self::CycleAlertPaint => {
-                assign_choice(PaneAlertPaint::all(), index, &mut config.pane.alert_paint)
-            }
-            Self::CycleWorkbarAlert => {
-                assign_choice(AlertMode::all(), index, &mut config.workbar.alert.mode)
-            }
-            Self::CycleSessionPickerOpenOn => assign_choice(
-                SessionPickerOpenOn::all(),
-                index,
-                &mut config.session.picker_open_on,
-            ),
-            Self::CycleStartupMode => {
-                let choices = SessionStartup::choices(config.profile.default.is_some());
-                assign_choice(&choices, index, &mut config.session.startup)
-            }
-            Self::CycleSessionOnAttach => {
-                assign_choice(SessionOnAttach::all(), index, &mut config.session.on_attach)
-            }
-            Self::CycleResurrectForeground => assign_choice(
-                ForegroundRestore::all(),
-                index,
-                &mut config.session.resurrect_foreground,
-            ),
             _ => false,
         }
     }
@@ -1199,7 +804,7 @@ mod tests {
             None,
             "the default paint still tints content without borders"
         );
-        config.pane.alert_paint = PaneAlertPaint::Border;
+        config.pane.alert_paint = crate::state::PaneAlertPaint::Border;
         assert_eq!(
             SettingsAction::CycleAlertBorder.disabled_reason(&config),
             Some("Needs pane borders")

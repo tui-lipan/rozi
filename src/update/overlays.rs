@@ -361,259 +361,41 @@ fn open_settings_choice(
 }
 
 fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsAction) -> Update {
+    use crate::state::{SettingControl, SettingsAction::*};
+
     if action.disabled_reason_for_state(&ctx.state).is_some() {
         ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
-    use crate::state::SettingsAction::*;
-    let mut persisted: Option<(&str, &str, bool)> = None;
-    match action {
-        Theme => {
-            execute_action(ctx, Action::OpenThemePicker);
+    match &action.spec().control {
+        SettingControl::Toggle { field, key, effect } => {
+            let slot = (field.slot)(&mut ctx.state.config);
+            *slot = !*slot;
+            let value = *slot;
+            let saved = key.save_flag(value);
+            setting_saved(ctx, *effect, saved);
         }
-        EditPadding | EditScrollMultiplier => {
-            ctx.state.settings_number_editor =
-                crate::state::SettingsNumberEditor::for_action(action, &ctx.state.config);
-            ctx.request_focus(crate::view::settings_number_field_key(0));
+        SettingControl::ActionToggle { action, .. } => {
+            execute_action(ctx, *action);
         }
-        ChooseTitlebar
-        | ChooseWorkbar
-        | CycleTitleStyle
-        | CycleSidebarTabStyle
-        | LeftSidebarPanels
-        | RightSidebarPanels
-        | SidebarLayoutPreset
-        | CycleWorkbarStyle
-        | CycleWorkbarBadgeStyle
-        | CycleWorkbarTabStyle
-        | CyclePaneOpenAnimation
-        | CyclePaneCloseAnimation
-        | CycleSessionAnimation
-        | CyclePickerAnimation
-        | CycleCursorBlink
-        | CycleWhichKey
-        | CycleCopyOnSelect
-        | CycleMiddleClickPaste
-        | CycleRightClickClipboard
-        | CycleBorderMode
-        | CycleBorderStyle
-        | CycleFloatBorderStyle
-        | CycleScratchBorderStyle
-        | CycleFullscreenBorderStyle
-        | CyclePickerBorderStyle
-        | CyclePickerTabStyle
-        | CyclePickerSelectionStyle
-        | CycleAlertBorder
-        | CycleAlertPaint
-        | CycleWorkbarAlert
-        | CycleSessionPickerOpenOn
-        | CycleStartupMode
-        | CycleResurrectForeground
-        | CycleSessionOnAttach => {
-            return open_settings_choice(ctx, action);
-        }
-        ToggleWorkbarGap => {
-            execute_action(ctx, Action::ToggleWorkbarGap);
-        }
-        ToggleWorkbarBackground => {
-            execute_action(ctx, Action::ToggleWorkbarBackground);
-        }
-        TogglePickerTabBackground => {
-            execute_action(ctx, Action::TogglePickerTabBackground);
-        }
-        ToggleSidebarGap => {
-            execute_action(ctx, Action::ToggleSidebarGap);
-        }
-        SidebarTabs => {
-            return crate::update::sidebar::open_manager(ctx);
-        }
-        ToggleSidebarStartup => {
-            ctx.state.config.sidebar.startup = !ctx.state.config.sidebar.startup;
-            crate::update::sidebar::save_layout(ctx);
-        }
-        ToggleSidebarBackground => {
-            execute_action(ctx, Action::ToggleSidebarBackground);
-        }
-        ToggleSidebarBackgroundFollowsCanvas => {
-            execute_action(ctx, Action::ToggleSidebarBackgroundFollowsCanvas);
-        }
-        ToggleWorkbarPowerline => {
-            execute_action(ctx, Action::ToggleWorkbarPowerline);
-        }
-        ToggleWorkspaceAnimation => {
-            let value = !ctx.state.config.animations.workspace;
-            ctx.state.config.animations.workspace = value;
-            if let Err(err) = crate::config::persist_animation_flag("workspace", value) {
-                preference_error(ctx, err);
+        SettingControl::Choice(_) => return open_settings_choice(ctx, action),
+        SettingControl::Cycle(_) => return cycle_settings_choice(ctx, action),
+        SettingControl::Custom => match action {
+            Theme => {
+                execute_action(ctx, Action::OpenThemePicker);
             }
-        }
-        ToggleAnimations => {
-            execute_action(ctx, Action::ToggleAnimations);
-        }
-        ToggleNerdIcons => {
-            execute_action(ctx, Action::ToggleNerdIcons);
-        }
-        ToggleOsc52 => {
-            ctx.state.config.clipboard.enable_osc52 = !ctx.state.config.clipboard.enable_osc52;
-            ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
-            persisted = Some((
-                "clipboard",
-                "enable_osc52",
-                ctx.state.config.clipboard.enable_osc52,
-            ));
-        }
-        ToggleFocusOnHover => {
-            execute_action(ctx, Action::ToggleFocusOnHover);
-        }
-        ToggleBackgroundFollowsTerminal => {
-            execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
-        }
-        ToggleHighlightFocusedBackground => {
-            execute_action(ctx, Action::ToggleHighlightFocusedBackground);
-        }
-        ToggleHighlightFocusedBorder => {
-            execute_action(ctx, Action::ToggleHighlightFocusedBorder);
-        }
-        ToggleHighlightFocusedTitlebar => {
-            execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
-        }
-        ToggleBellUrgency => {
-            ctx.state.config.notifications.bell = !ctx.state.config.notifications.bell;
-            persisted = Some(("notifications", "bell", ctx.state.config.notifications.bell));
-        }
-        CycleWorkbarAlertPaint => {
-            let value = ctx.state.config.workbar.alert.paint.next();
-            ctx.state.config.workbar.alert.paint = value;
-            if let Err(err) = crate::config::persist_workbar_alert_string("paint", value.id()) {
-                preference_error(ctx, err);
+            EditPadding | EditScrollMultiplier => {
+                ctx.state.settings_number_editor =
+                    crate::state::SettingsNumberEditor::for_action(action, &ctx.state.config);
+                ctx.request_focus(crate::view::settings_number_field_key(0));
             }
-        }
-        ToggleMarkBell => {
-            ctx.state.config.workbar.alert.bell = !ctx.state.config.workbar.alert.bell;
-            persisted = Some(("workbar.alert", "bell", ctx.state.config.workbar.alert.bell));
-        }
-        ToggleMarkBlocked => {
-            ctx.state.config.workbar.alert.blocked = !ctx.state.config.workbar.alert.blocked;
-            persisted = Some((
-                "workbar.alert",
-                "blocked",
-                ctx.state.config.workbar.alert.blocked,
-            ));
-        }
-        ToggleMarkFinished => {
-            ctx.state.config.workbar.alert.finished = !ctx.state.config.workbar.alert.finished;
-            persisted = Some((
-                "workbar.alert",
-                "finished",
-                ctx.state.config.workbar.alert.finished,
-            ));
-        }
-        ToggleMarkWorking => {
-            ctx.state.config.workbar.alert.working = !ctx.state.config.workbar.alert.working;
-            persisted = Some((
-                "workbar.alert",
-                "working",
-                ctx.state.config.workbar.alert.working,
-            ));
-        }
-        ToggleMarkIdle => {
-            ctx.state.config.workbar.alert.idle = !ctx.state.config.workbar.alert.idle;
-            persisted = Some(("workbar.alert", "idle", ctx.state.config.workbar.alert.idle));
-        }
-        ToggleDesktopEnabled => {
-            ctx.state.config.notifications.enabled = !ctx.state.config.notifications.enabled;
-            persisted = Some((
-                "notifications",
-                "enabled",
-                ctx.state.config.notifications.enabled,
-            ));
-        }
-        ToggleDesktopBlocked => {
-            ctx.state.config.notifications.pane_blocked =
-                !ctx.state.config.notifications.pane_blocked;
-            persisted = Some((
-                "notifications",
-                "pane_blocked",
-                ctx.state.config.notifications.pane_blocked,
-            ));
-        }
-        ToggleDesktopDone => {
-            ctx.state.config.notifications.pane_done = !ctx.state.config.notifications.pane_done;
-            persisted = Some((
-                "notifications",
-                "pane_done",
-                ctx.state.config.notifications.pane_done,
-            ));
-        }
-        ToggleDesktopExit => {
-            ctx.state.config.notifications.pane_exit = !ctx.state.config.notifications.pane_exit;
-            persisted = Some((
-                "notifications",
-                "pane_exit",
-                ctx.state.config.notifications.pane_exit,
-            ));
-        }
-        ToggleDesktopExitError => {
-            ctx.state.config.notifications.pane_exit_error =
-                !ctx.state.config.notifications.pane_exit_error;
-            persisted = Some((
-                "notifications",
-                "pane_exit_error",
-                ctx.state.config.notifications.pane_exit_error,
-            ));
-        }
-        ToggleSoundEnabled => {
-            ctx.state.config.sounds.enabled = !ctx.state.config.sounds.enabled;
-            persisted = Some(("sounds", "enabled", ctx.state.config.sounds.enabled));
-        }
-        ToggleSoundBell => {
-            ctx.state.config.sounds.bell = !ctx.state.config.sounds.bell;
-            persisted = Some(("sounds", "bell", ctx.state.config.sounds.bell));
-        }
-        ToggleSoundBlocked => {
-            ctx.state.config.sounds.blocked = !ctx.state.config.sounds.blocked;
-            persisted = Some(("sounds", "blocked", ctx.state.config.sounds.blocked));
-        }
-        ToggleSoundDone => {
-            ctx.state.config.sounds.done = !ctx.state.config.sounds.done;
-            persisted = Some(("sounds", "done", ctx.state.config.sounds.done));
-        }
-        ToggleSoundError => {
-            ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
-            persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
-        }
-        ToggleKeepAwakeWhileAgentsWork => {
-            ctx.state.config.session.keep_awake_while_agents_work =
-                !ctx.state.config.session.keep_awake_while_agents_work;
-            persisted = Some((
-                "session",
-                "keep_awake_while_agents_work",
-                ctx.state.config.session.keep_awake_while_agents_work,
-            ));
-        }
-        ToggleSessionAutosave => {
-            ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
-            persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
-        }
-        ToggleSessionResurrect => {
-            ctx.state.config.session.resurrect = !ctx.state.config.session.resurrect;
-            persisted = Some(("session", "resurrect", ctx.state.config.session.resurrect));
-        }
-    }
-    if let Some((section, key, value)) = persisted {
-        let result = match section {
-            "notifications" => crate::config::persist_notification_flag(key, value),
-            "sounds" => crate::config::persist_sound_flag(key, value),
-            "session" => crate::config::persist_session_flag(key, value),
-            "input" => crate::config::persist_input_flag(key, value),
-            "clipboard" => crate::config::persist_clipboard_flag(key, value),
-            _ => crate::config::persist_workbar_alert_flag(key, value),
-        };
-        if let Err(err) = result {
-            preference_error(ctx, err);
-        } else if action == ToggleKeepAwakeWhileAgentsWork {
-            crate::ops::config::reload_sleep_policy(ctx);
-        }
+            SidebarTabs => return crate::update::sidebar::open_manager(ctx),
+            ToggleSidebarStartup => {
+                ctx.state.config.sidebar.startup = !ctx.state.config.sidebar.startup;
+                crate::update::sidebar::save_layout(ctx);
+            }
+            _ => return open_settings_choice(ctx, action),
+        },
     }
     if !matches!(action, Theme | EditPadding | EditScrollMultiplier) {
         ctx.state.show_settings = true;
@@ -621,6 +403,39 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
         ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
+}
+
+/// Bring runtime state in line with a changed setting.
+fn apply_setting_effect(ctx: &mut Context<AppRoot>, effect: crate::state::SettingEffect) {
+    use crate::state::SettingEffect;
+
+    match effect {
+        SettingEffect::Clipboard => {
+            ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
+        }
+        SettingEffect::WhichKeyDelay => {
+            ctx.set_command_chord_reveal_delay(ctx.state.config.input.which_key.reveal_delay());
+        }
+        SettingEffect::SleepPolicy => crate::ops::config::reload_sleep_policy(ctx),
+    }
+}
+
+/// Finish a saved setting change: report a failed save, and run the setting's effect, which an
+/// effect that reads the saved file only does once the save went through.
+fn setting_saved(
+    ctx: &mut Context<AppRoot>,
+    effect: Option<crate::state::SettingEffect>,
+    saved: std::result::Result<std::path::PathBuf, String>,
+) {
+    let ok = saved.is_ok();
+    if let Err(err) = saved {
+        preference_error(ctx, err);
+    }
+    if let Some(effect) = effect
+        && (ok || !effect.after_save())
+    {
+        apply_setting_effect(ctx, effect);
+    }
 }
 
 fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
@@ -666,28 +481,6 @@ fn persist_workbar_choice(ctx: &mut Context<AppRoot>) {
     }
 }
 
-fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
-    if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            crate::state::ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-fn persist_sidebar_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
-    if let Err(err) = crate::config::persist_sidebar_string(key, value) {
-        crate::pane::pty_events::notify_on(
-            ctx,
-            crate::state::ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
 fn cycle_settings_choice(
     ctx: &mut Context<AppRoot>,
     action: crate::state::SettingsAction,
@@ -722,225 +515,38 @@ fn apply_settings_choice(
     index: usize,
     persist: bool,
 ) {
+    use crate::state::SettingsAction::*;
+
     if !action.apply_choice(&mut ctx.state.config, index) {
         return;
     }
-    if matches!(action, crate::state::SettingsAction::CycleWhichKey) {
-        ctx.set_command_chord_reveal_delay(ctx.state.config.input.which_key.reveal_delay());
+    if let Some(choice) = action.choice() {
+        let effect = choice.effect();
+        if let Some(effect) = effect.filter(|effect| !effect.after_save()) {
+            apply_setting_effect(ctx, effect);
+        }
+        if persist {
+            let saved = choice.save(&ctx.state.config);
+            setting_saved(ctx, effect.filter(|effect| effect.after_save()), saved);
+        }
+        return;
     }
-    if matches!(
-        action,
-        crate::state::SettingsAction::CycleCopyOnSelect
-            | crate::state::SettingsAction::CycleMiddleClickPaste
-            | crate::state::SettingsAction::CycleRightClickClipboard
-    ) {
-        ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
+    if !persist {
+        return;
     }
-    if persist
-        && matches!(
-            action,
-            crate::state::SettingsAction::LeftSidebarPanels
-                | crate::state::SettingsAction::RightSidebarPanels
-        )
-    {
-        let side = if action == crate::state::SettingsAction::LeftSidebarPanels {
-            crate::config::SidebarPosition::Left
-        } else {
-            crate::config::SidebarPosition::Right
-        };
-        crate::update::sidebar::set_panel_count(ctx, side, index + 1);
-        let _ = crate::update::sidebar::visibility_changed(ctx);
-    }
-    if persist && action == crate::state::SettingsAction::SidebarLayoutPreset {
-        crate::update::sidebar::apply_layout_preset(ctx, index);
-    }
-    if persist {
-        persist_applied_settings_choice(ctx, action);
-    }
-}
-
-fn persist_applied_settings_choice(
-    ctx: &mut Context<AppRoot>,
-    action: crate::state::SettingsAction,
-) {
-    use crate::state::SettingsAction::*;
     match action {
-        CycleCursorBlink => {
-            let value = format!("\"{}\"", ctx.state.config.cursor.blink.id());
-            if let Err(err) = crate::config::persist_section_values("cursor", &[("blink", &value)])
-            {
-                preference_error(ctx, err);
-            }
+        LeftSidebarPanels | RightSidebarPanels => {
+            let side = if action == LeftSidebarPanels {
+                crate::config::SidebarPosition::Left
+            } else {
+                crate::config::SidebarPosition::Right
+            };
+            crate::update::sidebar::set_panel_count(ctx, side, index + 1);
+            let _ = crate::update::sidebar::visibility_changed(ctx);
         }
-        CycleWhichKey => {
-            if let Err(err) = crate::config::persist_input_string(
-                "which_key",
-                ctx.state.config.input.which_key.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleCopyOnSelect => {
-            if let Err(err) = crate::config::persist_clipboard_string(
-                "copy_on_select",
-                ctx.state.config.clipboard.copy_on_select.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleMiddleClickPaste => {
-            if let Err(err) = crate::config::persist_clipboard_string(
-                "middle_click_paste",
-                ctx.state.config.clipboard.middle_click_paste.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleRightClickClipboard => {
-            if let Err(err) = crate::config::persist_clipboard_string(
-                "right_click",
-                ctx.state.config.clipboard.right_click.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CyclePickerBorderStyle => persist_pane_string_or_toast(
-            ctx,
-            "picker_border_style",
-            ctx.state.config.pane.picker_border_style.id(),
-        ),
-        CyclePickerTabStyle => persist_pane_string_or_toast(
-            ctx,
-            "picker_tab_style",
-            crate::state::cap_style_id(ctx.state.config.pane.picker_tab_style),
-        ),
-        CyclePickerSelectionStyle => persist_pane_string_or_toast(
-            ctx,
-            "picker_selection_style",
-            crate::state::cap_style_id(ctx.state.config.pane.picker_selection_style),
-        ),
+        SidebarLayoutPreset => crate::update::sidebar::apply_layout_preset(ctx, index),
         ChooseTitlebar => persist_titlebar_choice(ctx),
         ChooseWorkbar => persist_workbar_choice(ctx),
-        CycleTitleStyle => persist_pane_string_or_toast(
-            ctx,
-            "title_style",
-            crate::state::cap_style_id(ctx.state.config.pane.title_style),
-        ),
-        CycleWorkbarStyle => persist_pane_string_or_toast(
-            ctx,
-            "workbar_style",
-            crate::state::cap_style_id(ctx.state.config.pane.workbar_style),
-        ),
-        CycleWorkbarBadgeStyle => persist_pane_string_or_toast(
-            ctx,
-            "workbar_badge_style",
-            crate::state::cap_style_id(ctx.state.config.pane.workbar_badge_style),
-        ),
-        CycleWorkbarTabStyle => persist_pane_string_or_toast(
-            ctx,
-            "workbar_tab_style",
-            crate::state::cap_style_id(ctx.state.config.pane.workbar_tab_style),
-        ),
-        CycleBorderMode => {
-            persist_pane_string_or_toast(ctx, "border_mode", ctx.state.config.pane.border_mode.id())
-        }
-        CycleBorderStyle => persist_pane_string_or_toast(
-            ctx,
-            "border_style",
-            ctx.state.config.pane.border_style.id(),
-        ),
-        CycleFloatBorderStyle => persist_pane_string_or_toast(
-            ctx,
-            "float_border_style",
-            ctx.state.config.pane.float_border_style.id(),
-        ),
-        CycleScratchBorderStyle => persist_pane_string_or_toast(
-            ctx,
-            "scratch_border_style",
-            ctx.state.config.pane.scratch_border_style.id(),
-        ),
-        CycleFullscreenBorderStyle => persist_pane_string_or_toast(
-            ctx,
-            "fullscreen_border_style",
-            ctx.state.config.pane.fullscreen_border_style.id(),
-        ),
-        CyclePaneOpenAnimation | CyclePaneCloseAnimation => {
-            if let Err(err) = crate::config::persist_pane_animation_styles(
-                ctx.state.config.animations.pane_open_style.id(),
-                ctx.state.config.animations.pane_close_style.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CyclePickerAnimation => {
-            if let Err(err) = crate::config::persist_animation_string(
-                "picker",
-                ctx.state.config.animations.picker.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleSessionAnimation => {
-            if let Err(err) = crate::config::persist_animation_string(
-                "session",
-                ctx.state.config.animations.session.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleSidebarTabStyle => persist_sidebar_string_or_toast(
-            ctx,
-            "tab_style",
-            crate::state::cap_style_id(ctx.state.config.sidebar.tab_style),
-        ),
-        CycleAlertBorder => persist_pane_string_or_toast(
-            ctx,
-            "alert_border",
-            ctx.state.config.pane.alert_border.id(),
-        ),
-        CycleAlertPaint => {
-            persist_pane_string_or_toast(ctx, "alert_paint", ctx.state.config.pane.alert_paint.id())
-        }
-        CycleWorkbarAlert => {
-            if let Err(err) = crate::config::persist_workbar_alert_string(
-                "mode",
-                ctx.state.config.workbar.alert.mode.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleSessionPickerOpenOn => {
-            if let Err(err) = crate::config::persist_session_string(
-                "picker_open_on",
-                ctx.state.config.session.picker_open_on.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleStartupMode => {
-            if let Err(err) = crate::config::persist_session_string(
-                "startup",
-                ctx.state.config.session.startup.id(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleSessionOnAttach => {
-            if let Err(err) = crate::config::persist_session_string(
-                "on_attach",
-                ctx.state.config.session.on_attach.as_str(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
-        CycleResurrectForeground => {
-            if let Err(err) = crate::config::persist_session_string(
-                "resurrect_foreground",
-                ctx.state.config.session.resurrect_foreground.as_str(),
-            ) {
-                preference_error(ctx, err);
-            }
-        }
         _ => {}
     }
 }

@@ -345,6 +345,74 @@ mod tests {
     }
 
     #[test]
+    fn attach_mode_flags_cannot_be_ignored_by_early_return_commands() {
+        for flag in ["--follow", "--take-control"] {
+            for command in [
+                vec!["sessions", "list"],
+                vec!["sessions", "watch"],
+                vec!["sessions", "kill", "dev"],
+                vec!["update", "--check"],
+                vec!["install"],
+                vec!["api", "describe"],
+                vec!["--version"],
+                vec!["--server", "dev"],
+                vec!["extensions", "list"],
+            ] {
+                let prefix = [flag];
+                let args: Vec<String> = prefix
+                    .iter()
+                    .chain(&command)
+                    .map(|arg| arg.to_string())
+                    .collect();
+                let error =
+                    parse_cli_args(args.clone()).expect_err("must reject ignored attach flag");
+                assert!(
+                    error.contains("can only be used with sessions attach"),
+                    "{args:?}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn attach_mode_flags_are_rejected_if_an_attach_is_replaced_by_a_subcommand() {
+        for flag in ["--follow", "--take-control"] {
+            let error = parse_cli_args(
+                ["sessions", "attach", "dev", flag, "update", "--check"]
+                    .map(String::from)
+                    .to_vec(),
+            )
+            .expect_err("update must not ignore an attach flag");
+            assert!(
+                error.contains("can only be used with sessions attach"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_mode_flags_accept_global_and_trailing_positions_on_attach() {
+        for (flag, mode) in [
+            ("--follow", crate::config::SessionOnAttach::Follow),
+            ("--take-control", crate::config::SessionOnAttach::Take),
+        ] {
+            for args in [
+                vec![flag, "sessions", "attach", "dev"],
+                vec!["sessions", "attach", "dev", flag],
+            ] {
+                let ParsedCli::Run(cli) =
+                    parse_cli_args(args.into_iter().map(String::from).collect())
+                        .expect("attach mode parses")
+                else {
+                    panic!("expected attach");
+                };
+                assert_eq!(cli.session_command, SessionCommand::Attach);
+                assert_eq!(cli.on_attach, Some(mode));
+            }
+        }
+    }
+
+    #[test]
     fn cwd_seeds_only_a_created_session() {
         let ParsedCli::Run(created) = parse_cli_args(vec![
             "sessions".into(),

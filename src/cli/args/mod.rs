@@ -336,6 +336,20 @@ pub(crate) fn usage_hint(args: &[String]) -> String {
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
+    let mut attach_mode_seen = false;
+    let parsed = parse_cli_args_inner(args, &mut attach_mode_seen)?;
+    // Subcommands can return before launch validation. Keep this check outside that parser so
+    // every non-launch result rejects a parsed attach flag.
+    if attach_mode_seen && !matches!(parsed, ParsedCli::Run(_)) {
+        return Err("--take-control and --follow can only be used with sessions attach".into());
+    }
+    Ok(parsed)
+}
+
+fn parse_cli_args_inner(
+    args: Vec<String>,
+    attach_mode_seen: &mut bool,
+) -> std::result::Result<ParsedCli, String> {
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
             Ok(ParsedCli::Skill(SkillCommand::Print))
@@ -531,6 +545,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "--take-control" | "--follow" => {
                 sessions::parse_attach_mode(&mut cli, &arg)?;
+                *attach_mode_seen = true;
             }
             "--read-only" => {
                 cli.read_only = true;

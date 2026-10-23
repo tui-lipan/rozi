@@ -88,8 +88,22 @@ pub fn assign_settings_selection(state: &mut super::State, selected: Option<Sett
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SettingsAction {
+// Keep the test oracle independent of SETTINGS while making new variants automatic.
+macro_rules! settings_actions {
+    ($($action:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum SettingsAction {
+            $($action),+
+        }
+
+        impl SettingsAction {
+            #[cfg(test)]
+            const ALL: &'static [Self] = &[$(Self::$action),+];
+        }
+    };
+}
+
+settings_actions! {
     Theme,
     EditPadding,
     ToggleAnimations,

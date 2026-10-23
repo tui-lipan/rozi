@@ -1271,99 +1271,18 @@ impl SettingsAction {
 mod tests {
     use super::*;
 
-    /// Lists every action. The match is exhaustive, so a new action fails to compile here until it
-    /// is listed, and the test then fails until it has a row in [`SETTINGS`].
-    fn listed(action: SettingsAction) -> SettingsAction {
-        use SettingsAction::*;
-        match action {
-            Theme
-            | EditPadding
-            | ToggleAnimations
-            | ToggleWorkspaceAnimation
-            | CycleSessionAnimation
-            | CyclePickerAnimation
-            | ToggleNerdIcons
-            | CycleWhichKey
-            | CycleCursorBlink
-            | CycleCopyOnSelect
-            | CycleMiddleClickPaste
-            | CycleRightClickClipboard
-            | ToggleOsc52
-            | ToggleFocusOnHover
-            | EditScrollMultiplier
-            | ToggleBackgroundFollowsTerminal
-            | ChooseTitlebar
-            | CycleTitleStyle
-            | ChooseWorkbar
-            | ToggleWorkbarGap
-            | ToggleWorkbarBackground
-            | CycleWorkbarStyle
-            | CycleWorkbarBadgeStyle
-            | CycleWorkbarTabStyle
-            | ToggleWorkbarPowerline
-            | ToggleHighlightFocusedBackground
-            | ToggleHighlightFocusedBorder
-            | ToggleHighlightFocusedTitlebar
-            | CycleBorderMode
-            | CycleBorderStyle
-            | CycleFloatBorderStyle
-            | CycleScratchBorderStyle
-            | CycleFullscreenBorderStyle
-            | CyclePickerBorderStyle
-            | TogglePickerTabBackground
-            | CyclePickerTabStyle
-            | CyclePickerSelectionStyle
-            | CyclePaneOpenAnimation
-            | CyclePaneCloseAnimation
-            | ToggleSidebarBackgroundFollowsCanvas
-            | ToggleSidebarStartup
-            | LeftSidebarPanels
-            | RightSidebarPanels
-            | SidebarTabs
-            | SidebarLayoutPreset
-            | ToggleSidebarGap
-            | ToggleSidebarBackground
-            | CycleSidebarTabStyle
-            | ToggleBellUrgency
-            | CycleAlertBorder
-            | CycleAlertPaint
-            | CycleWorkbarAlert
-            | CycleWorkbarAlertPaint
-            | ToggleMarkBell
-            | ToggleMarkBlocked
-            | ToggleMarkFinished
-            | ToggleMarkWorking
-            | ToggleMarkIdle
-            | ToggleDesktopEnabled
-            | ToggleDesktopBlocked
-            | ToggleDesktopDone
-            | ToggleDesktopExit
-            | ToggleDesktopExitError
-            | ToggleSoundEnabled
-            | ToggleSoundBell
-            | ToggleSoundBlocked
-            | ToggleSoundDone
-            | ToggleSoundError
-            | CycleStartupMode
-            | CycleSessionPickerOpenOn
-            | ToggleSessionAutosave
-            | ToggleKeepAwakeWhileAgentsWork
-            | ToggleSessionResurrect
-            | CycleResurrectForeground
-            | CycleSessionOnAttach => action,
-        }
-    }
-
     #[test]
     fn every_action_has_exactly_one_row() {
-        let actions: Vec<_> = SettingsAction::all().map(listed).collect();
-        for (index, action) in actions.iter().enumerate() {
-            assert!(
-                !actions[index + 1..].contains(action),
-                "{action:?} has two rows"
+        for action in SettingsAction::ALL {
+            assert_eq!(
+                SETTINGS
+                    .iter()
+                    .filter(|spec| spec.action == *action)
+                    .count(),
+                1,
+                "{action:?} must have exactly one row in SETTINGS"
             );
         }
-        assert_eq!(actions.len(), 75, "a listed action has no row in SETTINGS");
     }
 
     #[test]
@@ -1448,6 +1367,56 @@ mod tests {
             let slot = (field.slot)(&mut config);
             *slot = !*slot;
             assert_eq!((field.get)(&config), !before, "{:?}", spec.action);
+        }
+    }
+
+    fn reset_saved_config() {
+        let path = crate::config::config_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn toggles_round_trip_through_their_config_keys() {
+        let _guard = crate::test_support::lock_config_file();
+        for spec in SETTINGS {
+            let SettingControl::Toggle { field, key, .. } = &spec.control else {
+                continue;
+            };
+            let mut config = Config::default();
+            let before = (field.get)(&config);
+            for value in [!before, before] {
+                reset_saved_config();
+                *(field.slot)(&mut config) = value;
+                key.save_flag((field.get)(&config)).unwrap();
+                let loaded = crate::config::load_config();
+                assert!(!loaded.rejected, "{:?}: {:?}", spec.action, loaded.warnings);
+                assert_eq!((field.get)(&loaded.config), value, "{:?}", spec.action);
+            }
+        }
+    }
+
+    #[test]
+    fn choices_round_trip_through_their_config_keys() {
+        let _guard = crate::test_support::lock_config_file();
+        for spec in SETTINGS {
+            let Some(choice) = spec.action.choice() else {
+                continue;
+            };
+            let mut config = Config::default();
+            for index in 0..choice.ring(&config).options.len() {
+                reset_saved_config();
+                assert!(choice.apply(&mut config, index), "{:?}", spec.action);
+                choice.save(&config).unwrap();
+                let loaded = crate::config::load_config();
+                assert!(!loaded.rejected, "{:?}: {:?}", spec.action, loaded.warnings);
+                assert_eq!(
+                    choice.ring(&loaded.config).index,
+                    index,
+                    "{:?}",
+                    spec.action
+                );
+            }
         }
     }
 }

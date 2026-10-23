@@ -199,7 +199,13 @@ fn parse_report(
                     "--integration requires a token",
                 )?)
             }
-            "--reason" => reason = Some(super::require_value(&mut iter, "--reason requires text")?),
+            "--reason" => {
+                // Reasons are arbitrary text, including words that look like flags.
+                reason = Some(
+                    iter.next()
+                        .ok_or_else(|| "--reason requires text".to_string())?,
+                );
+            }
             "--native-session" => {
                 native_session = Some(super::require_value(
                     &mut iter,
@@ -612,7 +618,6 @@ mod tests {
                     "--integration",
                     "--state",
                     "--seq",
-                    "--reason",
                     "--native-session",
                 ],
             ),
@@ -640,6 +645,38 @@ mod tests {
                 .unwrap_err();
             assert!(error.contains("requires a value (got the flag"), "{error}");
         }
+    }
+
+    #[test]
+    fn report_reasons_accept_literal_dash_prefixed_text() {
+        for reason in ["-blocked", "--timeout", "-", "", "waiting for input"] {
+            let (command, _) = parse_agents_args(
+                [
+                    "report",
+                    "--agent",
+                    "claude",
+                    "--integration",
+                    "hook-abc",
+                    "--state",
+                    "blocked",
+                    "--reason",
+                    reason,
+                    "--seq",
+                    "42",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            )
+            .unwrap();
+            assert!(matches!(command, ControlCommand::AgentReport {
+                reason: Some(actual), seq: 42, ..
+            } if actual == reason));
+        }
+        assert_eq!(
+            parse_agents_args(vec!["report".into(), "--reason".into()]).unwrap_err(),
+            "--reason requires text"
+        );
     }
 
     #[test]

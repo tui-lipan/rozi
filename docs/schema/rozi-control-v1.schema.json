@@ -4554,6 +4554,13 @@
             }
           ]
         },
+        "agent_session": {
+          "description": "The conversation the pane's own agent integration last reported through `agents report\n--native-session`, while one owns the pane. A client that runs several conversations shows\nthis one; a publisher listing the others places each in the pane that shows it from this.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "agent_state": {
           "type": [
             "string",

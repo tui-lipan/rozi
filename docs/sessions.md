@@ -40,6 +40,9 @@ rozi sessions list
 rozi sessions kill dev
 ```
 
+`rozi sessions attach <NAME>` requires a running session and reports an error if it is missing,
+including with `--remote`. It never creates a session.
+
 For a session another client controls, `[session] on_attach` chooses whether to ask, follow,
 or request control. Set it in **Settings**, **Sessions**, **On shared attach**. `--follow` and
 `--take-control` override it for one `sessions attach`; they conflict with each other and with

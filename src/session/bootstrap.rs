@@ -84,21 +84,13 @@ pub(crate) fn run_attach(
     let read_only = request.access.is_read_only();
     let name = request.name;
     if let Some(target) = request.remote {
-        let (create_only, mode) = match request.mode {
-            AttachMode::Join | AttachMode::JoinOrStart => (false, RemoteAttachMode::Initial),
-            AttachMode::Create => (true, RemoteAttachMode::Initial),
-            AttachMode::Reconnect => (false, RemoteAttachMode::Recover),
-            AttachMode::Recreate => (false, RemoteAttachMode::Recreate),
-        };
         attach_remote(
             epoch,
             name,
             read_only,
-            mode.create_only(create_only),
+            RemoteAttachPolicy::from(request.mode),
             target,
             request.prompting.remote_config(remote_config),
-            mode.reconnect(),
-            mode.recover_existing(),
             link,
         );
         return;
@@ -126,26 +118,24 @@ pub(crate) fn run_attach(
 /// handshake in time. Matches the server's heartbeat budget for a busy peer.
 const LOCAL_RECONNECT_BUSY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// In-place recovery and recreation both get deadline/cancellation handling. Recovery additionally
-/// forbids replacing the original server; explicit recreation deliberately allows a new one.
+/// Server creation is independent of retry/deadline handling: an initial join requires an
+/// existing server, just like recovery, but fails as an ordinary attach attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RemoteAttachMode {
-    Initial,
-    Recover,
-    Recreate,
+struct RemoteAttachPolicy {
+    existing_only: bool,
+    create_only: bool,
+    reconnect: bool,
 }
 
-impl RemoteAttachMode {
-    fn reconnect(self) -> bool {
-        matches!(self, Self::Recover | Self::Recreate)
-    }
+impl From<crate::state::AttachMode> for RemoteAttachPolicy {
+    fn from(mode: crate::state::AttachMode) -> Self {
+        use crate::state::AttachMode;
 
-    fn recover_existing(self) -> bool {
-        self == Self::Recover
-    }
-
-    fn create_only(self, requested: bool) -> bool {
-        requested || self == Self::Recreate
+        Self {
+            existing_only: matches!(mode, AttachMode::Join | AttachMode::Reconnect),
+            create_only: matches!(mode, AttachMode::Create | AttachMode::Recreate),
+            reconnect: matches!(mode, AttachMode::Reconnect | AttachMode::Recreate),
+        }
     }
 }
 
@@ -321,16 +311,13 @@ const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from
 const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
 
-#[allow(clippy::too_many_arguments)]
 fn attach_remote(
     epoch: u64,
     name: String,
     read_only: bool,
-    create_only: bool,
+    policy: RemoteAttachPolicy,
     target: super::remote::RemoteTarget,
     remote_config: crate::config::RemoteConfig,
-    reconnect: bool,
-    recover_existing: bool,
     link: CommandLink<Msg>,
 ) {
     use std::time::Instant;
@@ -344,7 +331,7 @@ fn attach_remote(
     // `SessionAttached` only once it is actually connected, so a failed attempt leaves nothing to
     // undo before the next try.
     let deadline = Instant::now()
-        + if reconnect {
+        + if policy.reconnect {
             REMOTE_RECONNECT_DEADLINE
         } else {
             std::time::Duration::ZERO
@@ -358,7 +345,7 @@ fn attach_remote(
         }
         // Each attempt is capped by the time still inside the advertised window, so a single
         // SSH/preamble wait cannot outrun the deadline and then decide whether to try again.
-        let budget = if reconnect {
+        let budget = if policy.reconnect {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 link.send(Msg::SessionAttachFailed {
@@ -375,12 +362,11 @@ fn attach_remote(
             epoch,
             &name,
             read_only,
-            create_only,
+            policy,
             &target,
             &remote_config,
-            recover_existing,
             budget,
-            reconnect.then_some(epoch),
+            policy.reconnect.then_some(epoch),
             &link,
         );
         if remote_attach_cancelled(epoch) {
@@ -391,13 +377,13 @@ fn attach_remote(
             AttachRemoteOutcome::Done => return,
             AttachRemoteOutcome::ProtocolSkew(message) => {
                 // Restarting here would deliberately destroy the original processes and then seed
-                // a replacement from retained client state. That is valid for a new attach, never
-                // for recovery of a link that was already established.
-                if !may_restart_after_protocol_skew(reconnect) {
+                // a replacement from retained client state. Only an initial attach that permits
+                // creation may do this; joins and recovery must preserve the existing server.
+                if !may_restart_after_protocol_skew(policy) {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
                         message: format!(
-                            "Remote attach to `{name}` failed: the original session runs an incompatible Rozi version and cannot be restarted automatically ({message})"
+                            "Remote attach to `{name}` failed: the session runs an incompatible Rozi version and cannot be restarted automatically ({message})"
                         ),
                     });
                     return;
@@ -406,7 +392,7 @@ fn attach_remote(
                     epoch,
                     &name,
                     read_only,
-                    create_only,
+                    policy,
                     &target,
                     &remote_config,
                     &link,
@@ -459,8 +445,8 @@ fn wait_for_remote_retry(epoch: u64, duration: std::time::Duration) -> bool {
     }
 }
 
-fn may_restart_after_protocol_skew(reconnect: bool) -> bool {
-    !reconnect
+fn may_restart_after_protocol_skew(policy: RemoteAttachPolicy) -> bool {
+    !policy.reconnect && !policy.existing_only
 }
 
 /// Version-skew recovery: kill the incompatible remote server, then try once more. Backing off and
@@ -470,7 +456,7 @@ fn attach_remote_after_skew(
     epoch: u64,
     name: &str,
     read_only: bool,
-    create_only: bool,
+    policy: RemoteAttachPolicy,
     target: &super::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
     link: &CommandLink<Msg>,
@@ -482,10 +468,9 @@ fn attach_remote_after_skew(
                 epoch,
                 name,
                 read_only,
-                create_only,
+                policy,
                 target,
                 remote_config,
-                false,
                 None,
                 None,
                 link,
@@ -531,10 +516,9 @@ fn try_attach_remote(
     epoch: u64,
     name: &str,
     read_only: bool,
-    create_only: bool,
+    policy: RemoteAttachPolicy,
     target: &super::remote::RemoteTarget,
     remote_config: &crate::config::RemoteConfig,
-    recover_existing: bool,
     budget: Option<std::time::Duration>,
     cancel_epoch: Option<u64>,
     link: &CommandLink<Msg>,
@@ -547,7 +531,7 @@ fn try_attach_remote(
         remote_config,
         budget,
         cancel_epoch,
-        recover_existing,
+        policy.existing_only,
     ) {
         Ok((stream, preamble)) => {
             if cancel_epoch.is_some_and(remote_attach_cancelled) {
@@ -563,23 +547,27 @@ fn try_attach_remote(
                     "Remote proxy started a server without an identity proof".to_string(),
                 );
             }
-            if create_only_rejects_existing(create_only, preamble.server_started) {
+            if create_only_rejects_existing(policy.create_only, preamble.server_started) {
                 drop(stream);
                 return AttachRemoteOutcome::Fatal(format!(
                     "Session `{name}` is already running on the remote host"
                 ));
             }
-            // Recovery asks the proxy not to autostart. `server_started` remains a defensive check
-            // for a version-skewed proxy that still did so.
-            if reconnect_found_original_missing(
-                recover_existing,
+            if existing_remote_session_missing(
+                policy.existing_only,
                 preamble.server_started,
                 preamble.session_missing,
             ) {
                 drop(stream);
-                return AttachRemoteOutcome::Lost(format!(
-                    "the original remote session `{name}` is gone"
-                ));
+                return if policy.reconnect {
+                    AttachRemoteOutcome::Lost(format!(
+                        "the original remote session `{name}` is gone"
+                    ))
+                } else {
+                    AttachRemoteOutcome::Fatal(format!(
+                        "Session `{name}` is not running on the remote host"
+                    ))
+                };
             }
             let handshake_budget =
                 budget.map(|budget| budget.saturating_sub(attempt_started.elapsed()));
@@ -641,14 +629,14 @@ fn try_attach_remote(
     }
 }
 
-/// Recovery either receives an explicit missing marker from an existing-only proxy, or defensively
-/// spots a version-skewed proxy that autostarted anyway.
-fn reconnect_found_original_missing(
-    recover_existing: bool,
+/// An existing-only proxy reports a missing server explicitly. Also reject a version-skewed
+/// proxy that autostarted one despite the request.
+fn existing_remote_session_missing(
+    existing_only: bool,
     server_started: bool,
     session_missing: bool,
 ) -> bool {
-    recover_existing && (server_started || session_missing)
+    existing_only && (server_started || session_missing)
 }
 
 fn create_only_rejects_existing(create_only: bool, server_started: bool) -> bool {
@@ -975,28 +963,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reconnect_does_not_treat_a_missing_or_autostarted_server_as_recovery() {
-        assert!(reconnect_found_original_missing(true, false, true));
-        assert!(reconnect_found_original_missing(true, true, false));
-        assert!(!reconnect_found_original_missing(true, false, false));
-        assert!(!reconnect_found_original_missing(false, true, true));
+    fn existing_only_attach_rejects_missing_or_autostarted_servers() {
+        assert!(existing_remote_session_missing(true, false, true));
+        assert!(existing_remote_session_missing(true, true, false));
+        assert!(!existing_remote_session_missing(true, false, false));
+        assert!(!existing_remote_session_missing(false, true, true));
     }
 
     #[test]
-    fn explicit_recreation_is_bounded_and_cancellable_without_requiring_the_original() {
-        assert!(RemoteAttachMode::Recreate.reconnect());
-        assert!(!RemoteAttachMode::Recreate.recover_existing());
-        assert!(RemoteAttachMode::Recreate.create_only(false));
-        assert!(create_only_rejects_existing(
-            RemoteAttachMode::Recreate.create_only(false),
-            false
-        ));
+    fn remote_creation_and_recovery_policies_are_independent() {
+        use crate::state::AttachMode;
+
+        for (mode, existing_only, create_only, reconnect, may_restart) in [
+            (AttachMode::Join, true, false, false, false),
+            (AttachMode::JoinOrStart, false, false, false, true),
+            (AttachMode::Create, false, true, false, true),
+            (AttachMode::Reconnect, true, false, true, false),
+            (AttachMode::Recreate, false, true, true, false),
+        ] {
+            let policy = RemoteAttachPolicy::from(mode);
+            assert_eq!(policy.existing_only, existing_only, "{mode:?}");
+            assert_eq!(policy.create_only, create_only, "{mode:?}");
+            assert_eq!(policy.reconnect, reconnect, "{mode:?}");
+            assert_eq!(
+                may_restart_after_protocol_skew(policy),
+                may_restart,
+                "{mode:?}"
+            );
+            assert_eq!(
+                create_only_rejects_existing(policy.create_only, false),
+                create_only
+            );
+        }
         assert!(started_server_lacks_identity(true, None));
         assert!(!started_server_lacks_identity(true, Some("proof")));
-        assert!(RemoteAttachMode::Recover.reconnect());
-        assert!(RemoteAttachMode::Recover.recover_existing());
-        assert!(!RemoteAttachMode::Recover.create_only(false));
-        assert!(!RemoteAttachMode::Initial.reconnect());
     }
 
     #[test]
@@ -1005,12 +1005,6 @@ mod tests {
         assert!(busy_attach_retry_delay(false, true).is_some());
         assert!(busy_attach_retry_delay(true, true).is_some());
         assert_eq!(busy_attach_retry_delay(false, false), None);
-    }
-
-    #[test]
-    fn reconnect_never_restarts_an_incompatible_original_session() {
-        assert!(!may_restart_after_protocol_skew(true));
-        assert!(may_restart_after_protocol_skew(false));
     }
 
     #[test]

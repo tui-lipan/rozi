@@ -422,6 +422,10 @@ impl SessionServer {
         client_id: ClientId,
         message: ClientMessage,
     ) -> Vec<(Target, ServerMessage)> {
+        let message = match self.defer_media_barrier(client_id, message) {
+            Ok(message) => message,
+            Err(responses) => return responses,
+        };
         match message {
             ClientMessage::Attach {
                 capabilities,

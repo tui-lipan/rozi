@@ -435,7 +435,16 @@ impl SessionServer {
                 self.retry_browse_requests();
                 None
             }
+            ServerEvent::MediaBarrier { client_id, message } => {
+                if self.client_attached(client_id) {
+                    for (target, message) in self.handle_message(client_id, *message) {
+                        self.enqueue(client_id, target, message);
+                    }
+                }
+                None
+            }
             ServerEvent::Pty(owner, id, generation, event) => {
+                let prepared = self.media.take_ready((owner, id, generation));
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {
                     return None;
@@ -448,7 +457,18 @@ impl SessionServer {
                             pane.log = None;
                         }
                         pane.output_seen = true;
-                        pane.screen_mut().process_bytes(&bytes);
+                        if let Some(prepared) = prepared {
+                            if pane
+                                .screen_mut()
+                                .process_prepared_media_input(prepared)
+                                .is_err()
+                            {
+                                self.media.discard_completed((owner, id, generation));
+                                return None;
+                            }
+                        } else {
+                            pane.screen_mut().process_bytes(&bytes);
+                        }
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the
                         // borrow checker accepts here.
@@ -851,8 +871,12 @@ impl SessionServer {
             .iter()
             .all(|client| !client.attached || client.shares_filesystem);
         ImageMedia {
-            policy: GraphicsMediaPolicy::SHARED,
-            relay_inline: !reachable,
+            policy: GraphicsMediaPolicy::default(),
+            relay: if reachable {
+                tui_lipan::GraphicsRelayPolicy::Consuming
+            } else {
+                tui_lipan::GraphicsRelayPolicy::All
+            },
         }
     }
 
@@ -1231,12 +1255,12 @@ mod tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ImageMedia {
     pub(super) policy: GraphicsMediaPolicy,
-    pub(super) relay_inline: bool,
+    pub(super) relay: tui_lipan::GraphicsRelayPolicy,
 }
 
 impl ImageMedia {
     pub(super) fn apply(self, screen: &mut TerminalScreen) {
         screen.set_image_media_policy(self.policy);
-        screen.set_image_inline_relay(self.relay_inline);
+        screen.set_image_relay_policy(self.relay);
     }
 }

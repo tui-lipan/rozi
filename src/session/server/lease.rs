@@ -1038,6 +1038,12 @@ impl SessionServer {
             }
             AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
             AttachSeedWork::BeginPane(key) => {
+                // The retained screen already includes the complete prepared image. Wait for its
+                // live emission to finish, so a fresh baseline cannot be followed by orphaned
+                // continuation chunks from a transmission that started before that baseline.
+                if self.media.blocks_replay(key) {
+                    return false;
+                }
                 if !*export_available {
                     return false;
                 }

@@ -125,11 +125,34 @@ impl SessionServer {
         else {
             return;
         };
-        let transactions = pane.recorded_output(bytes);
-        let mut staging = OutputStaging::default();
-        let now = Instant::now();
+        let mut transactions = pane.recorded_output(bytes);
         let completed = !transactions.is_empty();
         let continuation = !completed && pane.screen_without_change().output_transaction_pending();
+        if self
+            .media
+            .stage_output((owner, pane_id, generation), &mut transactions)
+        {
+            return;
+        }
+        self.deliver_output_transactions(owner, pane_id, generation, transactions, continuation);
+    }
+
+    pub(super) fn deliver_output_transactions(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        transactions: Vec<TerminalOutputTransaction>,
+        continuation: bool,
+    ) {
+        let Some(pane) = self
+            .pane_mut(owner, pane_id)
+            .filter(|pane| pane.generation == generation)
+        else {
+            return;
+        };
+        let mut staging = OutputStaging::default();
+        let now = Instant::now();
         pane.graphics_pacer.read_completed(continuation);
         for transaction in transactions {
             let metadata = pane.next_output_metadata(output_class(transaction.class));

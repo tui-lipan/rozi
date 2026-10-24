@@ -312,6 +312,7 @@ impl Component for AppRoot {
         }
         commands::sync_if_needed(ctx);
         crate::update::sync_modifier_key_reporting(ctx);
+        crate::update::host_title::sync(ctx);
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
         // management), so schedule the same commit chokepoint here to publish those changes.
         crate::ops::session::schedule_layout_commit(ctx);

@@ -721,10 +721,7 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 /// Ephemeral sessions return `None`: a bare launch is a disposable per-process session, so
 /// the badge/placeholder stays empty until the session is given a real name.
 fn attached_session_name(ctx: &Context<AppRoot>) -> Option<String> {
-    if !ctx.state.current().session_attached || ctx.state.is_ephemeral_session() {
-        return None;
-    }
-    ctx.state.current().session_name.clone()
+    ctx.state.named_session().map(str::to_string)
 }
 
 fn workbar_hostname() -> String {

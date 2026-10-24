@@ -1302,6 +1302,9 @@ pub struct EnvironmentConfig {
     pub forward: Vec<String>,
 }
 
+/// Default `window_title`: rozi, the session when it has a name, and the focused pane.
+pub const DEFAULT_WINDOW_TITLE: &str = "rozi · {session} · {pane}";
+
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Interactive-shell override (argument-preserving; first element is the program). `None`
@@ -1329,6 +1332,9 @@ pub struct Config {
     /// File-kind icons in the sidebar still need the per-tab `icons` flag as well. On by default
     /// so existing installs keep their current look.
     pub nerd_icons: bool,
+    /// Format of the host terminal's window title, kept in sync with the session and focused pane
+    /// (see `update::host_title`). Empty leaves the host title alone.
+    pub window_title: String,
     pub cursor: super::CursorConfig,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
@@ -2406,6 +2412,7 @@ impl Default for Config {
             scrollback: 5000,
             frame_rate: DEFAULT_FRAME_RATE,
             nerd_icons: true,
+            window_title: DEFAULT_WINDOW_TITLE.to_string(),
             cursor: super::CursorConfig::default(),
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),

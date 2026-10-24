@@ -100,6 +100,7 @@ session's panes.
 | `shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
 | `command_shell` | New command, hook, service, sidebar, and workbar executions. |
 | `scrollback` | New terminal screens. Existing screens never resize; restart an existing session server before creating panes that should use the new capacity. |
+| `window_title` | On save. Changing it to `""` keeps the last title until rozi exits. |
 | `frame_rate` | Next client launch or reattach. The active client keeps its startup cadence, including animation timing. |
 | `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
 | `sidebar.startup` | Boolean, default `false`. Open the remembered dock combination at client startup. Reload never opens or closes the sidebar. |
@@ -164,6 +165,7 @@ those clients and would appear only as restorable.
 | `scrollback` | integer | `5000` | Minimum `1`. |
 | `frame_rate` | integer | `120` | Clamped to `15..=480` with a warning. |
 | `nerd_icons` | bool | `true` | Uses [Nerd Font](https://www.nerdfonts.com/) glyphs in rozi's chrome. |
+| `window_title` | string | `"rozi · {session} · {pane}"` | Title rozi gives your terminal window. `{session}` is the session name, empty for a temporary session; `{pane}` is the focused pane's title; `{cwd}` is its working directory; `{host}` is this machine's name. An empty placeholder drops the text after it, and a separator left at either end is trimmed. `""` leaves the window title alone. |
 
 With `nerd_icons` on, rozi draws private-use glyphs for pane title icons, workbar location and
 named-session badges, the Sessions sidebar client-count badge, directory chevrons, the Files

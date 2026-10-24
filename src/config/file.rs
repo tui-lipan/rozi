@@ -101,6 +101,7 @@ struct FileConfig {
     scrollback: Option<usize>,
     frame_rate: Option<u16>,
     nerd_icons: Option<bool>,
+    window_title: Option<String>,
     cursor: CursorFileConfig,
     input: InputFileConfig,
     animations: AnimationFileConfig,
@@ -904,6 +905,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(nerd_icons) = parsed.nerd_icons {
         config.nerd_icons = nerd_icons;
+    }
+    if let Some(window_title) = parsed.window_title {
+        config.window_title = window_title.trim().to_string();
     }
     if let Some(dir) = non_empty(parsed.logging.dir) {
         config.logging.dir = Some(expand_path(dir));
@@ -2904,6 +2908,20 @@ on_open = { send = "danger\n" }
             overrides.close_curve.is_some(),
             "a valid key survives its neighbours being wrong"
         );
+    }
+
+    #[test]
+    fn window_title_parses_at_the_top_level_and_trims() {
+        assert_eq!(
+            crate::config::Config::default().window_title,
+            crate::config::DEFAULT_WINDOW_TITLE
+        );
+        let loaded =
+            load_config_from_text("window_title = \"  {pane}  \"\n", Path::new("config.toml"));
+        assert_eq!(loaded.config.window_title, "{pane}");
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let loaded = load_config_from_text("window_title = \"\"\n", Path::new("config.toml"));
+        assert!(loaded.config.window_title.is_empty());
     }
 
     #[test]

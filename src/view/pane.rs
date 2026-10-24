@@ -1339,7 +1339,9 @@ pub(crate) fn pane_element(
                     .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {
                         Msg::PaneLinkActivate(id, event.uri)
                     }))
-                    .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+                    .on_mouse_forward_event(
+                        ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
+                    );
         }
     }
     if let Some(selection) = copy_mode_selection(ctx, id) {

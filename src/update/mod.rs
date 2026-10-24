@@ -550,7 +550,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PaneKey(id, key) => panes::pane_key(ctx, id, key),
         Msg::PaneLinkActivate(id, event) => panes::pane_link_activate(ctx, id, event),
         Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
-        Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
+        Msg::PaneMouse(id, event) => panes::pane_mouse(ctx, id, event),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
         Msg::AuthorizeExtensionControl {
@@ -1061,42 +1061,19 @@ fn merge_handled_updates(left: HandledUpdate, right: HandledUpdate) -> HandledUp
     }
 }
 
-fn merge_updates(mut aggregate: Update, mut next: Update) -> Update {
-    debug_assert!(aggregate.command.is_none() || next.command.is_none());
-    let command = aggregate.command.take().or_else(|| next.command.take());
-    let level = strongest_update_level(aggregate.level(), next.level());
-    match (level, command) {
-        (UpdateLevel::None, None) => Update::none(),
-        (UpdateLevel::None, Some(command)) => Update::command_only(command),
-        (UpdateLevel::TerminalGraphics, None) => Update::terminal_graphics(),
-        (UpdateLevel::TerminalGraphics, Some(command)) => Update::with_command(command),
-        (UpdateLevel::TerminalPaint, None) => Update::terminal_paint(),
-        // Same reasoning as the paint case below, and the claim is narrower still: a
-        // terminal-only repaint asserts nothing else on screen moved, which a command's effects
-        // could contradict.
-        (UpdateLevel::TerminalPaint, Some(command)) => Update::with_command(command),
-        (UpdateLevel::Paint, None) => Update::paint(),
-        // tui-lipan has no paint-with-command constructor. This combination is rare on inbound
-        // control traffic; a full update preserves both requirements without losing the command.
-        (UpdateLevel::Paint, Some(command)) => Update::with_command(command),
-        (UpdateLevel::Layout, command) => Update::layout_with_command(command),
-        (UpdateLevel::Full, command) => Update::with_command(command),
+fn merge_updates(aggregate: Update, next: Update) -> Update {
+    let level = aggregate.level().max(next.level());
+    let mut merged = aggregate.merge(next);
+    // Rozi retains a root refresh when arbitrary work accompanies terminal-only damage.
+    // There is no terminal-paint-with-command contract.
+    if matches!(
+        level,
+        UpdateLevel::TerminalPaint | UpdateLevel::TerminalGraphics
+    ) && merged.command.is_some()
+    {
+        return Update::with_command(merged.command.take());
     }
-}
-
-fn strongest_update_level(left: UpdateLevel, right: UpdateLevel) -> UpdateLevel {
-    use UpdateLevel::{Full, Layout, None, Paint, TerminalGraphics, TerminalPaint};
-
-    match (left, right) {
-        (Full, _) | (_, Full) => Full,
-        (Layout, _) | (_, Layout) => Layout,
-        (Paint, _) | (_, Paint) => Paint,
-        // Below `Paint`, so anything else in the same frame widens it back: the terminal-only
-        // claim holds only if every source in the frame agrees nothing else moved.
-        (TerminalPaint, _) | (_, TerminalPaint) => TerminalPaint,
-        (TerminalGraphics, _) | (_, TerminalGraphics) => TerminalGraphics,
-        (None, None) => None,
-    }
+    merged
 }
 
 /// Physical modifier reports enable left-Alt picker navigation and shortcut recording.
@@ -1494,12 +1471,102 @@ mod tests {
     }
 
     #[test]
-    fn update_levels_merge_to_the_strongest_request() {
-        use UpdateLevel::{Full, Layout, None, Paint};
+    fn merging_commands_preserves_the_required_invalidation() {
+        let levels = [
+            UpdateLevel::None,
+            UpdateLevel::TerminalGraphics,
+            UpdateLevel::TerminalPaint,
+            UpdateLevel::Paint,
+            UpdateLevel::Layout,
+            UpdateLevel::Full,
+        ];
+        let update = |level| match level {
+            UpdateLevel::None => Update::none(),
+            UpdateLevel::TerminalGraphics => Update::terminal_graphics(),
+            UpdateLevel::TerminalPaint => Update::terminal_paint(),
+            UpdateLevel::Paint => Update::paint(),
+            UpdateLevel::Layout => Update::layout(),
+            UpdateLevel::Full => Update::full(),
+        };
+        let command = || {
+            Update::command_only(Command::after(
+                std::time::Duration::ZERO,
+                |_link: CommandLink<Msg>| {},
+            ))
+        };
+        for left in levels {
+            for right in levels {
+                let level = left.max(right);
+                assert_eq!(merge_updates(update(left), update(right)).level(), level);
+                let expected = match level {
+                    UpdateLevel::TerminalGraphics | UpdateLevel::TerminalPaint => UpdateLevel::Full,
+                    other => other,
+                };
+                for commands_on_left in [false, true] {
+                    let merged = if commands_on_left {
+                        merge_updates(command(), merge_updates(update(left), update(right)))
+                    } else {
+                        merge_updates(merge_updates(update(left), update(right)), command())
+                    };
+                    assert_eq!(merged.level(), expected, "{left:?} + {right:?}");
+                    assert!(merged.command.is_some());
+                }
+            }
+        }
+    }
 
-        assert_eq!(strongest_update_level(None, Paint), Paint);
-        assert_eq!(strongest_update_level(Paint, Layout), Layout);
-        assert_eq!(strongest_update_level(Layout, Full), Full);
-        assert_eq!(strongest_update_level(Full, None), Full);
+    #[test]
+    fn both_merged_commands_are_executed() {
+        struct Probe;
+        impl Component for Probe {
+            type State = Vec<u8>;
+            type Properties = ();
+            type Message = u8;
+            fn create_state(&self, _: &()) -> Vec<u8> {
+                Vec::new()
+            }
+            fn update(&mut self, msg: u8, ctx: &mut Context<Self>) -> Update {
+                if msg != 0 {
+                    ctx.state.push(msg);
+                    return Update::none();
+                }
+                let command = |value| {
+                    Command::after(std::time::Duration::ZERO, move |link: CommandLink<u8>| {
+                        link.send(value);
+                    })
+                };
+                merge_updates(
+                    Update::paint_with_command(command(1)),
+                    Update::command_only(command(2)),
+                )
+            }
+            fn view(&self, _: &Context<Self>) -> Element {
+                Element::default()
+            }
+        }
+        let mut backend = TestBackend::new(Probe);
+        backend.dispatch(0).expect("start commands");
+        backend.advance(std::time::Duration::from_millis(1));
+        backend.pump().expect("finish commands");
+        assert_eq!(backend.state(), &[1, 2]);
+    }
+
+    #[test]
+    fn update_levels_merge_to_the_strongest_request() {
+        use UpdateLevel::{Full, Layout, Paint};
+
+        assert_eq!(
+            merge_updates(Update::none(), Update::paint()).level(),
+            Paint
+        );
+        assert_eq!(
+            merge_updates(Update::paint(), Update::layout()).level(),
+            Layout
+        );
+        assert_eq!(
+            merge_updates(Update::layout(), Update::full()).level(),
+            Full
+        );
+        assert_eq!(merge_updates(Update::full(), Update::none()).level(), Full);
     }
 }

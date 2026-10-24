@@ -378,7 +378,15 @@ mod tests {
                 // consumed with the press: forwarded, it would hand pane 2 the focus and the child
                 // a button-up it never saw pressed.
                 backend
-                    .dispatch(Msg::PaneMouse(2, b"\x1b[<0;1;1m".to_vec()))
+                    .dispatch(Msg::PaneMouse(
+                        2,
+                        crate::test_support::forwarded_mouse(
+                            tui_lipan::core::event::MouseKind::Up(
+                                tui_lipan::core::event::MouseButton::Left,
+                            ),
+                            b"opaque release".to_vec(),
+                        ),
+                    ))
                     .expect("click release");
                 assert_eq!(backend.state().current().focused_pane, Some(1));
                 assert!(!backend.state().consumed_pointer_click);

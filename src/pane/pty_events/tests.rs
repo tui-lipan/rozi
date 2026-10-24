@@ -2,6 +2,7 @@ use super::input::*;
 use super::notifications::*;
 use crate::AppRoot;
 use crate::state::{Pane, State};
+use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::*;
 
 fn rect() -> FloatRect {
@@ -321,15 +322,31 @@ fn a_press_forwarded_to_a_mouse_tracking_child_answers_the_mark() {
             }
             backend.render();
 
-            for report in [&b"\x1b[<35;4;4M"[..], b"\x1b[<0;4;4m"] {
+            for kind in [
+                MouseKind::Moved,
+                MouseKind::Up(MouseButton::Left),
+                MouseKind::Drag(MouseButton::Left),
+            ] {
                 backend
-                    .dispatch(Msg::PaneMouse(id, report.to_vec()))
+                    .dispatch(Msg::PaneMouse(
+                        id,
+                        crate::test_support::forwarded_mouse(
+                            kind,
+                            b"opaque motion or release".to_vec(),
+                        ),
+                    ))
                     .expect("dispatch pointer report");
-                assert!(marked(&backend), "{report:?} is not a click");
+                assert!(marked(&backend), "{kind:?} is not a click");
             }
 
             backend
-                .dispatch(Msg::PaneMouse(id, b"\x1b[<0;4;4M".to_vec()))
+                .dispatch(Msg::PaneMouse(
+                    id,
+                    crate::test_support::forwarded_mouse(
+                        MouseKind::Down(MouseButton::Left),
+                        b"opaque press".to_vec(),
+                    ),
+                ))
                 .expect("dispatch press");
             assert!(!marked(&backend), "a click on the pane answers its mark");
         })
@@ -374,15 +391,24 @@ fn scrolling_answers_only_the_target_panes_marks() {
                 .process_server_output("history\r\n".repeat(80).as_bytes());
 
             // Native scrollback, including a callback at the live-view limit, and mouse-tracking
-            // reports in both supported encodings acknowledge the actual target of the gesture.
+            // semantic reports acknowledge the actual target of the gesture.
             for scroll in [
                 Msg::PaneScroll(id, 0),
                 Msg::PaneScroll(id, 1),
-                Msg::PaneMouse(id, b"\x1b[<64;4;4M".to_vec()),
-                Msg::PaneMouse(id, b"\x1b[<65;4;4M".to_vec()),
-                Msg::PaneMouse(id, b"\x1b[<80;4;4M".to_vec()),
-                Msg::PaneMouse(id, vec![0x1b, b'[', b'M', 96, 36, 36]),
-                Msg::PaneMouse(id, vec![0x1b, b'[', b'M', 97, 36, 36]),
+                Msg::PaneMouse(
+                    id,
+                    crate::test_support::forwarded_mouse(
+                        MouseKind::ScrollUp,
+                        b"opaque wheel up".to_vec(),
+                    ),
+                ),
+                Msg::PaneMouse(
+                    id,
+                    crate::test_support::forwarded_mouse(
+                        MouseKind::ScrollDown,
+                        b"opaque wheel down".to_vec(),
+                    ),
+                ),
             ] {
                 for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
                     pane.activity.has_unseen_output = true;
@@ -1431,4 +1457,61 @@ mod finished_rows_notice {
             None
         );
     }
+}
+
+#[test]
+fn structured_forwarding_delivers_authoritative_payloads_without_reencoding() {
+    use crate::session::client::{ClientOutbound, SessionClient};
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            let id = backend.state().focused_pane().unwrap();
+            backend.render();
+            for encoding in [
+                MouseEncoding::Sgr,
+                MouseEncoding::SgrPixels,
+                MouseEncoding::X10,
+                MouseEncoding::Utf8,
+            ] {
+                for kind in [
+                    MouseKind::Down(MouseButton::Left),
+                    MouseKind::Down(MouseButton::Right),
+                    MouseKind::Up(MouseButton::Middle),
+                    MouseKind::ScrollUp,
+                    MouseKind::ScrollDown,
+                ] {
+                    let bytes = b"opaque authoritative reports, including repetitions".to_vec();
+                    let mut event = crate::test_support::forwarded_mouse(kind, bytes.clone());
+                    event.mods = KeyMods::CTRL;
+                    event.cell = (19, 9);
+                    event.pixel = Some((157, 151));
+                    event.repeat_count = 3;
+                    event.mouse_mode.encoding = encoding;
+                    backend.dispatch(crate::Msg::PaneMouse(id, event)).unwrap();
+                    let sent = outbound
+                        .try_iter()
+                        .find_map(|message| match message {
+                            ClientOutbound::PaneInput {
+                                pane_id,
+                                bytes,
+                                latency_sensitive,
+                                ..
+                            } => {
+                                assert_eq!(pane_id, id);
+                                assert!(!latency_sensitive);
+                                Some(bytes)
+                            }
+                            _ => None,
+                        })
+                        .expect("forwarded input");
+                    assert_eq!(sent, bytes, "{encoding:?} {kind:?}");
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

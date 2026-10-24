@@ -579,7 +579,7 @@ pub enum Msg {
     PaneLinkActivate(PaneId, std::sync::Arc<str>),
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
     ForwardPrefix(KeyEvent),
-    PaneMouse(PaneId, Vec<u8>),
+    PaneMouse(PaneId, ForwardedMouseEvent),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),

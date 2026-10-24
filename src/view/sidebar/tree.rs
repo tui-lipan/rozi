@@ -97,16 +97,6 @@ pub(super) fn tree_tab(
         // A change deep in one subtree reads as a single `src/view/sidebar` row, not three levels
         // of directories that hold nothing else. Browsing keeps the real hierarchy.
         .compact_directories(changed_only && config.compact_dirs)
-        // Semantic change colors from the theme's git palette. The widget's own defaults are empty
-        // styles — it never reads `theme.git_status` itself — so without this every marker and diff
-        // stat renders in the plain row color. These cover the `M`/`A`/`D`/`R`/`?`/`!` markers and
-        // the `+N -M` stats, which take the added/deleted colors.
-        .git_style_modified(Style::new().fg(theme.git_status.modified))
-        .git_style_added(Style::new().fg(theme.git_status.added))
-        .git_style_deleted(Style::new().fg(theme.git_status.deleted))
-        .git_style_renamed(Style::new().fg(theme.git_status.renamed))
-        .git_style_untracked(Style::new().fg(theme.git_status.untracked))
-        .git_style_conflicted(Style::new().fg(theme.git_status.conflicted))
         .scrollbar_config(super::scrollbar_config())
         // On a narrow sidebar the change markers are the point of the Changes tab, so they survive
         // truncation there; browsing instead keeps the filename readable.

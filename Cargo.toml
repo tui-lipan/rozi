@@ -72,7 +72,8 @@ exclude = [
 # 0.27.2: runtime `Context::set_scroll_wheel_multiplier` updates and `TestBackend` parity.
 # 0.27.3: FileTree filesystem watching, hidden/ignored entry styles, compact directories, and
 # symlink target icons.
-tui-lipan = { version = "0.28.5", features = [
+# 0.29.0: consuming Kitty media relay policy and deferred named-media preparation.
+tui-lipan = { version = "0.29.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

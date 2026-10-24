@@ -239,6 +239,36 @@ fn parse_start_time(stat: &str) -> Option<u64> {
         .ok()
 }
 
+/// CPU time a process has consumed, tied to the start time that identifies it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessCpuTime {
+    /// Field 22 of `/proc/<pid>/stat`; a different value means the PID was reused.
+    pub start_ticks: u64,
+    /// User plus system time, fields 14 and 15, in [`clock_ticks_per_second`] units.
+    pub cpu_ticks: u64,
+}
+
+/// The user plus system CPU time `pid` has consumed so far.
+pub fn cpu_time(pid: u32) -> Option<ProcessCpuTime> {
+    parse_cpu_time(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// The unit of `/proc/<pid>/stat` time fields.
+pub fn clock_ticks_per_second() -> u64 {
+    // SAFETY: `sysconf` has no preconditions.
+    u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).unwrap_or(100)
+}
+
+fn parse_cpu_time(stat: &str) -> Option<ProcessCpuTime> {
+    let close = stat.rfind(')')?;
+    let fields: Vec<_> = stat.get(close + 2..)?.split_whitespace().collect();
+    let field = |number: usize| fields.get(number - 3)?.parse::<u64>().ok();
+    Some(ProcessCpuTime {
+        start_ticks: field(22)?,
+        cpu_ticks: field(14)?.checked_add(field(15)?)?,
+    })
+}
+
 fn read_bounded(path: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
@@ -305,6 +335,19 @@ mod tests {
         assert_eq!(observed, expected);
 
         drop(pty);
+    }
+
+    #[test]
+    fn cpu_time_parser_sums_user_and_system_ticks() {
+        let stat = "42 (a) b) S 1 42 42 0 -1 0 0 0 0 0 150 25 0 0 20 0 1 0 98765 0 0";
+        assert_eq!(
+            parse_cpu_time(stat),
+            Some(ProcessCpuTime {
+                start_ticks: 98765,
+                cpu_ticks: 175,
+            })
+        );
+        assert!(cpu_time(std::process::id()).is_some());
     }
 
     #[test]

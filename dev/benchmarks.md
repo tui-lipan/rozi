@@ -493,16 +493,20 @@ transmit limit. Corpus creation is outside timing. Local cases attach one client
 a draining read-only client with `shares_filesystem: false`. Consuming-media cases are reserved
 for the server support change.
 
-Pane A emits a short text line every 5 ms. Its timestamp immediately precedes its stdout write;
-receipt at the driver's frame drain gives output delay, including PTY, server and IPC scheduling.
-The two-second sample reports p50, p95 and maximum delay. It excludes an input round trip and host
-rendering. The driver polls every 250 microseconds. Both processes use the same machine clock;
-a wall-clock adjustment invalidates the run. Pending image commands drain before cleanup.
-No CI timing threshold is imposed.
+Before timing, the image pane submits one image and acknowledges it, and the probe waits until
+the server's PTY ingress and client outboxes are empty. The timed interval therefore starts with
+the image path warm; the corpus is also in the page cache because the probe has just written it.
 
-`ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux, set
-`ROZI_IMAGE_PROBE_CPU_SAMPLER` to the `kitty-rendering-validation` skill's
-`scripts/sample_processes.py` to collect bounded, identity-checked server CPU samples alongside
-each case. This requires Python 3. The reported weighted mean is percent of one core over two
-seconds, with sampler startup slightly after latency timing starts. Run without compilation or
-other heavy work, retain the exact binary revisions, and compare repeated runs on the same host.
+Pane A emits a short text line every 5 ms. Its timestamp immediately precedes its stdout write. The
+end is when the driver's frame-drain thread takes the decoded output frame from the session client,
+before any further queueing, so output delay includes PTY, server and IPC scheduling but not the
+probe's own consumer. The two-second sample reports p50, p95 and maximum delay. It excludes an input
+round trip and host rendering. Both processes use the same machine clock; a wall-clock adjustment
+invalidates the run. Pending image commands drain before cleanup. No CI timing threshold is imposed.
+
+`ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux the probe also reports server
+CPU over the timed interval: user plus system ticks from `/proc/<pid>/stat` at its start and end,
+checked against the process start time, as percent of one core. At the usual 100 ticks per
+second, a two-second interval resolves 0.5 percent. Other platforms report no CPU value. Run without
+compilation or other heavy work, retain the exact binary revisions, and compare repeated runs on the
+same host.

@@ -105,6 +105,8 @@ enum DrainEvent {
     Ack {
         pane_id: u32,
         key: String,
+        /// When the drain thread took the frame carrying this acknowledgement from the client.
+        received: SystemTime,
     },
 }
 
@@ -353,7 +355,7 @@ impl FairnessFixture {
                 .events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .expect("timed out waiting for helper acknowledgement");
-            if let DrainEvent::Ack { pane_id, key } = event
+            if let DrainEvent::Ack { pane_id, key, .. } = event
                 && pane_id == expected_pane
                 && key == expected
             {
@@ -693,6 +695,7 @@ fn spawn_drain(
                         bytes,
                         ..
                     } => {
+                        let received = SystemTime::now();
                         if pane_id == 2 {
                             image_output_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
                         }
@@ -714,7 +717,12 @@ fn spawn_drain(
                             let key =
                                 String::from_utf8_lossy(&tail[value_start..value_end]).into_owned();
                             tail.drain(..value_end + 2);
-                            if event_tx.send(DrainEvent::Ack { pane_id, key }).is_err() {
+                            let ack = DrainEvent::Ack {
+                                pane_id,
+                                key,
+                                received,
+                            };
+                            if event_tx.send(ack).is_err() {
                                 break;
                             }
                         }
@@ -1058,6 +1066,9 @@ fn image_relay_helper(path: &str, format: u32, height: u32) -> io::Result<()> {
             stdout,
             "\x1b_Ga=T,t=f,f={format},s=4096,v={height},i=51,p=1,c=1,r=1,q=2;{name}\x1b\\"
         )?;
+        if line == "WARM" {
+            stdout.write_all(b"__ROZI_ACK_WARM__\r\n")?;
+        }
         stdout.flush()?;
     }
     Ok(())
@@ -1107,6 +1118,16 @@ fn image_relay_probe() {
         }
     }
     eprintln!("image_relay_slots t=t pending_stage_4; t=s pending_stage_4");
+}
+
+fn unix_ms() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
 }
 
 fn attach_relay_observer(server: &ServerOwner) -> JoinHandle<io::Result<()>> {
@@ -1159,19 +1180,25 @@ impl ImageDelaySamples {
 
     fn record(&mut self, event: DrainEvent) {
         match event {
-            DrainEvent::Ack { pane_id: 1, key } => {
+            DrainEvent::Ack {
+                pane_id: 1,
+                key,
+                received,
+            } => {
                 let sent: u128 = key.parse().expect("text emission timestamp");
                 self.text_finished |= sent >= self.epoch_end;
                 if (self.epoch_start..self.epoch_end).contains(&sent) {
                     let at = UNIX_EPOCH + Duration::from_nanos(u64::try_from(sent).unwrap());
                     self.delays.push(
-                        SystemTime::now()
+                        received
                             .duration_since(at)
                             .expect("wall clock moved backwards"),
                     );
                 }
             }
-            DrainEvent::Ack { pane_id: 2, key } if key == "STOP" => self.stopped = true,
+            DrainEvent::Ack {
+                pane_id: 2, key, ..
+            } if key == "STOP" => self.stopped = true,
             _ => {}
         }
     }
@@ -1184,9 +1211,10 @@ fn sample_image_delays(fixture: &FairnessFixture, has_image: bool) -> (Vec<Durat
     let mut images = 0;
     let mut stop_requested = false;
     let mut next_image = start;
+    let end = start + Duration::from_secs(2);
     while !samples.stopped || !samples.text_finished {
         let now = Instant::now();
-        if start.elapsed() < Duration::from_secs(2) {
+        if now < end {
             if has_image && now >= next_image {
                 client.send_input(2, GENERATION, false, b"FRAME\n".to_vec());
                 images += 1;
@@ -1200,48 +1228,65 @@ fn sample_image_delays(fixture: &FairnessFixture, has_image: bool) -> (Vec<Durat
             }
             stop_requested = true;
         }
-        while let Ok(event) = fixture.events.try_recv() {
-            samples.record(event);
+        // Delays are stamped by the drain thread, so this wait only paces image submissions.
+        let wake = if now < end && has_image {
+            next_image.min(end)
+        } else {
+            end.max(now + Duration::from_millis(10))
+        };
+        match fixture
+            .events
+            .recv_timeout(wake.saturating_duration_since(Instant::now()))
+        {
+            Ok(event) => samples.record(event),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("frame drain stopped"),
         }
         assert!(
             start.elapsed() < Duration::from_secs(30),
             "image probe timed out"
         );
-        std::thread::sleep(Duration::from_micros(200));
     }
     samples.delays.sort_unstable();
     (samples.delays, images)
 }
 
-fn start_cpu_sampler(server: &ServerOwner) -> Option<Child> {
-    let script = std::env::var_os("ROZI_IMAGE_PROBE_CPU_SAMPLER")?;
-    Some(
-        Command::new("python3")
-            .arg(script)
-            .args(["--duration", "2", "--interval", "0.5"])
-            .arg(format!("server={}", server.child.as_ref().unwrap().id()))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("start optional CPU sampler"),
-    )
+/// Server CPU time at the start of the timed interval, read from `/proc` on Linux.
+#[cfg(target_os = "linux")]
+type CpuMark = (u32, rozi::platform::process::linux::ProcessCpuTime, Instant);
+#[cfg(not(target_os = "linux"))]
+type CpuMark = ();
+
+#[cfg(target_os = "linux")]
+fn start_cpu_sample(server: &ServerOwner) -> Option<CpuMark> {
+    let pid = server.child.as_ref().unwrap().id();
+    let cpu = rozi::platform::process::linux::cpu_time(pid)?;
+    Some((pid, cpu, Instant::now()))
 }
 
-fn finish_cpu_sampler(sampler: Option<Child>) -> Option<f64> {
-    let output = sampler?.wait_with_output().expect("wait for CPU sampler");
-    assert!(output.status.success(), "CPU sampler failed");
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("CPU report");
-    let mut weighted = 0.0;
-    let mut previous = 0.0;
-    for sample in report["samples"].as_array().expect("CPU samples") {
-        let elapsed = sample["elapsed_seconds"].as_f64().unwrap();
-        weighted += (elapsed - previous)
-            * sample["processes"]["server"]["cpu_percent_one_core"]
-                .as_f64()
-                .unwrap();
-        previous = elapsed;
-    }
-    Some(weighted / previous)
+#[cfg(not(target_os = "linux"))]
+fn start_cpu_sample(_server: &ServerOwner) -> Option<CpuMark> {
+    None
+}
+
+/// Mean server CPU over the interval, as percent of one core.
+#[cfg(target_os = "linux")]
+fn finish_cpu_sample(mark: Option<CpuMark>) -> Option<f64> {
+    use rozi::platform::process::linux::{clock_ticks_per_second, cpu_time};
+    let (pid, before, at) = mark?;
+    let after = cpu_time(pid).expect("server CPU time");
+    assert_eq!(
+        after.start_ticks, before.start_ticks,
+        "server PID was reused"
+    );
+    let elapsed = at.elapsed().as_secs_f64();
+    let busy = (after.cpu_ticks - before.cpu_ticks) as f64 / clock_ticks_per_second() as f64;
+    Some(100.0 * busy / elapsed)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn finish_cpu_sample(_mark: Option<CpuMark>) -> Option<f64> {
+    None
 }
 
 fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
@@ -1268,22 +1313,25 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
         metrics.client_outboxes.clients == (if relay { 2 } else { 1 })
             && metrics.attach_seed.active_clients == 0
     });
-    fixture.start_ingress(2);
-    // Warm parser and file pages before the timed interval.
-    std::thread::sleep(Duration::from_millis(100));
-    let cpu_sampler = start_cpu_sampler(&fixture.server);
+    if image.is_some() {
+        // Take the first image's acquisition, decoding and relay outside the timed interval.
+        client.send_input(2, GENERATION, false, b"WARM\n".to_vec());
+        fixture.wait_for_pane_ack(2, "WARM");
+        let warmed = unix_ms();
+        wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+            metrics.sampled_at_unix_ms > warmed
+                && metrics.client_outboxes.bytes.current_bytes == 0
+                && metrics.pty_ingress.bytes.current_bytes == 0
+        });
+        fixture.image_output_bytes.store(0, Ordering::Relaxed);
+    }
+    client.send_input(1, GENERATION, false, b"GO\n".to_vec());
+    let cpu_mark = start_cpu_sample(&fixture.server);
     let (samples, images) = sample_image_delays(&fixture, image.is_some());
-    let cpu = finish_cpu_sampler(cpu_sampler);
+    let cpu = finish_cpu_sample(cpu_mark);
+    let sampled = unix_ms().saturating_sub(1000);
     let metrics = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
-        metrics.sampled_at_unix_ms
-            >= u64::try_from(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-            )
-            .unwrap()
-            .saturating_sub(1000)
+        metrics.sampled_at_unix_ms >= sampled
     });
     assert_eq!(
         metrics.client_outboxes.clients,

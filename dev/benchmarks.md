@@ -505,8 +505,9 @@ round trip and host rendering. Both processes use the same machine clock; a wall
 invalidates the run. Pending image commands drain before cleanup. No CI timing threshold is imposed.
 
 `ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux the probe also reports server
-CPU over the timed interval: user plus system ticks from `/proc/<pid>/stat` at its start and end,
+CPU over the two seconds of offered load: user plus system ticks from `/proc/<pid>/stat` when text
+and image submission start and when they stop, before the STOP request and the backlog drain,
 checked against the process start time, as percent of one core. At the usual 100 ticks per
-second, a two-second interval resolves 0.5 percent. Other platforms report no CPU value. Run without
+second this resolves 0.5 percent. Other platforms report no CPU value. Run without
 compilation or other heavy work, retain the exact binary revisions, and compare repeated runs on the
 same host.

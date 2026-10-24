@@ -1204,9 +1204,16 @@ impl ImageDelaySamples {
     }
 }
 
-fn sample_image_delays(fixture: &FairnessFixture, has_image: bool) -> (Vec<Duration>, usize) {
+/// Returns sorted delays, submitted images, and server CPU over the two seconds of offered load.
+fn sample_image_delays(
+    fixture: &FairnessFixture,
+    has_image: bool,
+) -> (Vec<Duration>, usize, Option<f64>) {
     let client = fixture.client.as_ref().unwrap();
     let start = Instant::now();
+    // Both interval marks live here so CPU and latency share one boundary.
+    let mut cpu_mark = start_cpu_sample(&fixture.server);
+    let mut cpu = None;
     let mut samples = ImageDelaySamples::new();
     let mut images = 0;
     let mut stop_requested = false;
@@ -1221,6 +1228,8 @@ fn sample_image_delays(fixture: &FairnessFixture, has_image: bool) -> (Vec<Durat
                 next_image = now + Duration::from_millis(100);
             }
         } else if !stop_requested {
+            // Close the CPU interval before the backlog drains after STOP.
+            cpu = finish_cpu_sample(cpu_mark.take());
             if has_image {
                 client.send_input(2, GENERATION, false, b"STOP\n".to_vec());
             } else {
@@ -1248,10 +1257,10 @@ fn sample_image_delays(fixture: &FairnessFixture, has_image: bool) -> (Vec<Durat
         );
     }
     samples.delays.sort_unstable();
-    (samples.delays, images)
+    (samples.delays, images, cpu)
 }
 
-/// Server CPU time at the start of the timed interval, read from `/proc` on Linux.
+/// Server CPU time at the start of the offered-load interval, read from `/proc` on Linux.
 #[cfg(target_os = "linux")]
 type CpuMark = (u32, rozi::platform::process::linux::ProcessCpuTime, Instant);
 #[cfg(not(target_os = "linux"))]
@@ -1326,9 +1335,7 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
         fixture.image_output_bytes.store(0, Ordering::Relaxed);
     }
     client.send_input(1, GENERATION, false, b"GO\n".to_vec());
-    let cpu_mark = start_cpu_sample(&fixture.server);
-    let (samples, images) = sample_image_delays(&fixture, image.is_some());
-    let cpu = finish_cpu_sample(cpu_mark);
+    let (samples, images, cpu) = sample_image_delays(&fixture, image.is_some());
     let sampled = unix_ms().saturating_sub(1000);
     let metrics = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
         metrics.sampled_at_unix_ms >= sampled

@@ -474,3 +474,70 @@ fn split_media_event(event: ServerEvent, prefix: Option<usize>) -> MediaSplit {
         )),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    #[test]
+    fn worker_consumes_a_source_once_and_relays_owned_pixels_to_readers_and_replay() {
+        let server =
+            SessionServer::new_named_with_settings("media-worker", ServerSettings::default());
+        let policy = server.image_media();
+        let mut source = TerminalScreen::new(5, 20, 100);
+        source.set_output_transaction_recording(true);
+        policy.apply(&mut source);
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tty-graphics-protocol-worker");
+        let pixel = [255, 0, 0, 255];
+        fs::write(&path, pixel).unwrap();
+        let name =
+            base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
+        let bytes: Arc<[u8]> = format!("\x1b_Ga=T,t=t,f=32,s=1,v=1,i=7,p=1,C=1,q=2;{name}\x1b\\")
+            .into_bytes()
+            .into();
+        let work = source
+            .prepare_media_input(bytes)
+            .expect("named media preparation");
+        let key = (None, 7, 1);
+        let mut pipeline = MediaPipeline::default();
+        assert!(!pipeline.start(key, work));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while pipeline.ready_length(key).is_none() {
+            pipeline.poll(policy.relay);
+            assert!(Instant::now() < deadline, "worker did not finish");
+            std::thread::yield_now();
+        }
+        source
+            .process_prepared_media_input(pipeline.take_ready(key).unwrap())
+            .unwrap();
+        assert!(!path.exists(), "the worker must consume the source");
+        let mut transactions = source.take_output_transactions();
+        assert!(pipeline.stage_output(key, &mut transactions));
+        let mut wire = Vec::new();
+        while let Some((owner, batch, _)) = pipeline.output_batch() {
+            assert_eq!(owner, key);
+            for transaction in batch {
+                wire.extend_from_slice(&transaction.bytes);
+            }
+        }
+        assert!(!wire.windows(3).any(|medium| medium == b"t=t"));
+        // Readers cannot acquire any source, and both must receive the original owned pixels.
+        for _ in 0..2 {
+            let mut reader = TerminalScreen::new(5, 20, 100);
+            reader.set_image_media_policy(GraphicsMediaPolicy::NONE);
+            reader.process_bytes(&wire);
+            assert_eq!(&reader.capture_frame().images[0].rgba[..4], &pixel);
+        }
+        // Reusing the consumed name must not let a replay read or delete the new source.
+        let replacement = [0, 255, 0, 255];
+        fs::write(&path, replacement).unwrap();
+        let replay = source.export_replay_bytes();
+        let mut late = TerminalScreen::new(5, 20, 100);
+        late.set_image_media_policy(GraphicsMediaPolicy::NONE);
+        late.process_bytes(&replay);
+        assert_eq!(&late.capture_frame().images[0].rgba[..4], &pixel);
+        assert_eq!(fs::read(&path).unwrap(), replacement);
+    }
+}

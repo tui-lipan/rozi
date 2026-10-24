@@ -857,9 +857,9 @@ impl SessionServer {
     ///
     /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
     /// base64-ed copy of every pixel. While every attached client shares this machine's
-    /// filesystem, the name is forwarded as sent and each client opens the file itself; the
-    /// consuming media (`t=t`, `t=s`) always stay off. Enabling them for remote clients would let
-    /// a child choose a transport that local clients cannot read after the remote client leaves.
+    /// filesystem, reusable file names are forwarded and each client opens the file itself.
+    /// Consuming sources (`t=t`, `t=s`) are acquired once here and always relayed inline, so
+    /// clients and later replays never reopen a source the server has already removed.
     ///
     /// A client attached over SSH cannot open a path on this machine. The server then reads the
     /// file itself and forwards the pixels inline, so a child that chose files before that client

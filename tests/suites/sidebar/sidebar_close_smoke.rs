@@ -242,7 +242,7 @@ fn the_keyboard_cursor_reveals_the_close_affordance_while_focused() {
 }
 
 /// A short pane name must not cap its program badge at half the row. ListItem descriptions share
-/// leftover width with the label, held three cells off it, and the label keeps priority when both
+/// leftover width with the label, held two cells off it, and the label keeps priority when both
 /// cannot fit.
 #[test]
 fn pane_row_description_shares_leftover_width_with_the_label() {

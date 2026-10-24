@@ -345,8 +345,9 @@ fn non_empty(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }
 
+/// Enable VT interpretation for raw escape-sequence producers, independently of color policy.
 #[cfg(not(windows))]
-fn enable_virtual_terminal() -> bool {
+pub fn enable_virtual_terminal() -> bool {
     true
 }
 
@@ -356,7 +357,7 @@ fn enable_virtual_terminal() -> bool {
 /// (a redirected handle, say), which is exactly when styling must be skipped. The result is cached
 /// because the mode is process-wide and only needs setting once.
 #[cfg(windows)]
-fn enable_virtual_terminal() -> bool {
+pub fn enable_virtual_terminal() -> bool {
     use std::sync::OnceLock;
 
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;

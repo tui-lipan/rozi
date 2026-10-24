@@ -461,6 +461,9 @@ fn owned_media_child() {
     let command = base64::engine::general_purpose::STANDARD
         .decode(command)
         .unwrap();
+    // A raw stdout writer must opt into VT processing on Windows. Otherwise ConPTY treats
+    // the Kitty APC as console text rather than forwarding it as a control sequence.
+    assert!(rozi::platform::ansi::enable_virtual_terminal());
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
         if line.trim_end_matches('\r') == "emit" {

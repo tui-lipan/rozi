@@ -1,6 +1,5 @@
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::scrollable_viewport_anchor;
-use crate::layout::tiling::{append_tiled_window, remove_tiled_window};
 use crate::state::{LayoutKind, PaneId, State, Workspace};
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
@@ -98,37 +97,26 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
 /// The structural half of moving a pane. The interactive move follows it with focus; `pane move`
 /// leaves focus where it was.
 pub(crate) fn transfer_pane(state: &mut State, id: PaneId, source: usize, target: usize) -> bool {
-    let workspaces = &mut state.current_mut().workspaces;
-    if source == target || target >= workspaces.len() {
+    if source == target || target >= state.current().workspaces.len() {
         return false;
     }
-    let Some(position) = workspaces[source]
+    if !state.current().workspaces[source]
         .panes
         .iter()
-        .position(|pane| pane.id == id)
-    else {
+        .any(|pane| pane.id == id && !pane.closing)
+    {
         return false;
-    };
-    let mut pane = workspaces[source].panes.remove(position);
-    let tiled = !pane.floating;
-    if tiled {
-        remove_tiled_window(&mut workspaces[source], id);
     }
-    pane.opening = false;
-    pane.closing = false;
-    let destination = &mut workspaces[target];
-    if tiled {
-        destination.tile_tree = crate::layout::effective_tile_tree(destination, None);
-        append_tiled_window(destination, id);
+    let changed = crate::layout::shared::transfer_live_pane(state, id, target);
+    if changed
+        && let Some(pane) = state.current_mut().workspaces[target]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == id)
+    {
+        pane.opening = false;
     }
-    // One fullscreen pane per workspace: an arriving fullscreen pane takes over, as a spawned one
-    // does.
-    let fullscreen = pane.fullscreen;
-    destination.panes.push(pane);
-    if fullscreen {
-        crate::ops::resize_move::clear_other_fullscreen(destination, id);
-    }
-    true
+    changed
 }
 
 /// Move every pane from the active workspace into `target_index`, carry the source workspace

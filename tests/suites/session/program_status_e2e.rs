@@ -10,6 +10,14 @@ use tui_lipan::{ProgramStatusSnapshot, ProgramStatusState};
 fn spawn(client: &mut TestConnection, id: u32, command: &str, keep_open: bool) {
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            if id == 81 { 0 } else { 1 },
+            &if id == 81 {
+                vec![(81, 1)]
+            } else {
+                vec![(81, 1), (82, 1)]
+            },
+        )),
         local: false,
         pane_id: id,
         generation: 1,

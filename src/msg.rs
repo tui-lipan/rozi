@@ -741,6 +741,13 @@ pub enum Msg {
         epoch: u64,
         origin: session::origin::SessionOrigin,
     },
+    SessionPaneMetadata {
+        epoch: u64,
+        local: bool,
+        meta: crate::session::protocol::PaneMeta,
+        cell_width: u16,
+        cell_height: u16,
+    },
     SessionLayoutCommitted {
         epoch: u64,
         rev: u64,

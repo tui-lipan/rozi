@@ -743,6 +743,20 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             origin,
         ),
         Msg::SessionOriginSet { epoch, origin } => session::origin_set(ctx, epoch, origin),
+        Msg::SessionPaneMetadata {
+            epoch,
+            local,
+            meta,
+            cell_width,
+            cell_height,
+        } => session::control_replies::pane_metadata(
+            ctx,
+            epoch,
+            local,
+            meta,
+            cell_width,
+            cell_height,
+        ),
         Msg::SessionLayoutCommitted {
             epoch,
             rev,

@@ -1,4 +1,4 @@
-//! Server and client scrollback limits applied independently to one pane's history.
+//! Every client parses a pane with its server-owned history capacity.
 //!
 //! Unix-only, at file scope, for the same reason as `session_resurrect_e2e`: the pane is driven by
 //! a POSIX shell program - a `while` loop feeding `printf` - and on Windows the launch shell is cmd
@@ -21,7 +21,7 @@ const ROWS: u16 = 4;
 const FINAL_MARKER: &str = "scrollback-final-marker";
 
 #[test]
-fn server_and_clients_enforce_independent_scrollback_limits() {
+fn server_capacity_is_per_pane_and_independent_of_attaching_client_config() {
     let low_server = spawn_listener(ServerSettings {
         scrollback: 3,
         ..ServerSettings::default()
@@ -43,12 +43,14 @@ fn server_and_clients_enforce_independent_scrollback_limits() {
     populate_history(high_server.endpoint(), high_server.session());
     let locally_trimmed = attach_replay(high_server.endpoint(), high_server.session(), "small", 3);
     let fully_retained = attach_replay(high_server.endpoint(), high_server.session(), "large", 100);
-    assert!(locally_trimmed.total_scrollback_rows() <= 3);
+    assert_eq!(
+        locally_trimmed.total_scrollback_rows(),
+        fully_retained.total_scrollback_rows()
+    );
     assert!(fully_retained.total_scrollback_rows() > 3);
-    assert!(
-        !locally_trimmed
-            .capture_scrollback_text(None)
-            .contains("line-000")
+    assert_eq!(
+        locally_trimmed.capture_scrollback_text(None),
+        fully_retained.capture_scrollback_text(None)
     );
     assert!(
         fully_retained
@@ -61,6 +63,7 @@ fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) 
     let (mut client, _) = attach_client(endpoint, session, "producer");
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(0, &[(PANE_ID, GENERATION)])),
         local: false,
         pane_id: PANE_ID,
         generation: GENERATION,
@@ -97,7 +100,7 @@ fn attach_replay(
     endpoint: &rozi::platform::ipc::IpcEndpoint,
     session: &str,
     label: &str,
-    client_limit: usize,
+    _client_limit: usize,
 ) -> TerminalPane {
     let (mut client, attached) = attach_client(endpoint, session, label);
     let ServerMessage::Attached { panes, .. } = attached else {
@@ -107,7 +110,7 @@ fn attach_replay(
         .iter()
         .find(|pane| pane.pane_id == PANE_ID)
         .expect("pane metadata in attach replay");
-    let mut terminal = TerminalPane::new(client_limit);
+    let mut terminal = TerminalPane::new(meta.scrollback);
     terminal.apply_server_resize(meta.cols, meta.rows);
     terminal.bind_server_backend(PANE_ID, meta.generation);
     read_until(&mut client, |frame| {

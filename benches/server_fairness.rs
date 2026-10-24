@@ -17,6 +17,44 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tui_lipan::prelude::TerminalColorPalette;
 
+fn spawn_placement(last_pane: u32) -> protocol::SpawnPlacementCommit {
+    use rozi::layout::shared::*;
+    protocol::SpawnPlacementCommit {
+        base_rev: u64::from(last_pane - 1),
+        layout: SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: 250,
+            canvas_rows: 60,
+            pane_geometry: Default::default(),
+            workspaces: vec![SharedWorkspace {
+                index: 0,
+                name: None,
+                synchronized: false,
+                layout: SharedLayoutKind::Dwindle,
+                start_axis: SharedSplitAxis::Horizontal,
+                split_ratios: Vec::new(),
+                tree: None,
+                panes: (1..=last_pane)
+                    .map(|pane_id| SharedPane {
+                        pane_id,
+                        generation: GENERATION,
+                        title: None,
+                        profile_name: None,
+                        cwd: None,
+                        launch: None,
+                        replay: false,
+                        keep_open: false,
+                        floating: false,
+                        fullscreen: false,
+                        rect: None,
+                        scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                    })
+                    .collect(),
+            }],
+        },
+    }
+}
+
 const HELPER_ARG: &str = "--server-fairness-helper";
 const IDLE_HELPER_ARG: &str = "--idle-latency-helper";
 const SNAPSHOT_HELPER_ARG: &str = "--resurrection-snapshot-helper";
@@ -223,6 +261,7 @@ impl FairnessFixture {
             let mut shell = vec![helper.clone()];
             shell.extend(helper_args.iter().cloned());
             client.spawn_pane(SpawnPaneRequest {
+                placement: Some(spawn_placement(pane_id)),
                 pane_id,
                 local: false,
                 generation: GENERATION,
@@ -405,6 +444,7 @@ impl SnapshotFixture {
         for pane_index in 0..pane_count {
             let pane_id = pane_index as u32 + 1;
             client.spawn_pane(SpawnPaneRequest {
+                placement: Some(spawn_placement(pane_id)),
                 pane_id,
                 local: false,
                 generation: GENERATION,

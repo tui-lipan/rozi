@@ -314,6 +314,7 @@ impl Default for ServerSettings {
 }
 
 pub struct ServerPane {
+    pub scrollback: usize,
     graphics_pacer: graphics_pacer::GraphicsPacer,
     output_sequence: u64,
     output_coalesce_epoch: u64,

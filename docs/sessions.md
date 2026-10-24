@@ -408,7 +408,7 @@ checkouts from the **Worktrees** picker or `rozi worktrees`. See [Worktrees](wor
 ## Share a live session
 
 More than one client can attach to a session. One client controls the shared layout, while each
-client keeps its own focus, scrollback, overlays, theme, and sidebar. See
+client keeps its own focus, scrollback position, overlays, theme, and sidebar. See
 [Shared sessions](shared-sessions.md) for handing over control, read-only attachment, input lock,
 and removing collaborators.
 

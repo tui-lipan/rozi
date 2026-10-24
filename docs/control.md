@@ -395,6 +395,9 @@ answer. The schema names each payload separately — `PaneInfo`, `AgentInfo`, `P
 
 ## Open a pane
 
+A successful shared pane spawn includes its workspace placement. Closing the requesting client
+after success leaves the pane in that workspace for other clients and later attachments.
+
 `split` opens a pane. It leaves focus unchanged unless `--focus` is present.
 For a local endpoint, the directory defaults to the configured `cwd`, or the calling shell's
 directory when `cwd` is unset. Relative `--cwd` paths resolve from the calling shell's directory.
@@ -456,8 +459,7 @@ A session endpoint refuses `split` when:
 - **Another client holds layout control.** Detach it, or open the pane from that client. Reading
   and typing do not need layout control and keep working.
 - **`--focus` is given.** There is no focus to move.
-- **The session has panes but no layout.** This happens only if no client ever attached to place
-  them.
+- **The session has an invalid layout.** Restore a valid session snapshot before adding panes.
 
 A pane opened this way receives only `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM`, and
 `TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or

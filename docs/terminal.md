@@ -198,13 +198,15 @@ File URLs and other schemes need a configured handler. rozi shows an error for u
 Each pane keeps the last `scrollback` lines of output, 5000 by default. Typing returns the view to
 live output.
 
-The session server keeps history so you can reattach, and each attached client keeps its own copy.
+The session keeps each pane's history so you can reattach. Every attached client uses that pane's
+history limit, even when its own `scrollback` setting differs.
 Memory use grows with pane width, the amount of history, and the number of attached clients. Lower
 `scrollback` if memory matters more than deep history.
 
-The limit is fixed when a pane's terminal screen is created. After a config reload, a new
-`scrollback` value applies to new screens, such as new panes; existing ones keep their old limit.
-Restart a named session to rebuild its screens with the new limit.
+The limit is fixed when a pane is created. After a config reload, the session host's
+`scrollback` value applies to new panes; existing panes keep their old limit, including after
+reconnect or resurrection. Two panes in one session can have different limits.
+Open replacement panes to use the new limit.
 
 **Edit scrollback** saves the focused pane's history to a private file in the state directory and
 opens it in `$EDITOR`, then `$VISUAL`, then `vi`. rozi keeps about the 20 most recent files. These

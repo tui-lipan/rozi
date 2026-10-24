@@ -186,6 +186,10 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     let test_binary = std::env::current_exe().expect("session test binary");
     controller.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
@@ -234,7 +238,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
 
     let layout = pane_layout();
     controller.write_control(&ClientMessage::CommitLayout {
-        base_rev: 0,
+        base_rev: 1,
         layout: layout.clone(),
         live: false,
     });
@@ -247,7 +251,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         match frame {
             Frame::PaneOutput { bytes, .. } => second_output.extend_from_slice(bytes),
             Frame::Control(ServerMessage::LayoutCommitted {
-                rev: 1,
+                rev: 2,
                 author,
                 layout: received,
                 live: _,

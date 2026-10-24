@@ -30,7 +30,8 @@ controls the layout and `FOLLOW` while it follows.
 
 A joining client receives the pane list and layout first, then each pane's terminal contents. Output
 produced while a pane is being sent arrives after it, so the pane never shows live output in the
-middle of its history.
+middle of its history. Each pane keeps the [history limit](terminal.md#scrollback) set by the
+session host when that pane was created; attaching with another configuration does not change it.
 
 Joining a session with a lot of history takes a moment, but never slows down the clients already
 attached. If a client falls far behind a busy pane, rozi skips the output it missed and redraws the
@@ -41,6 +42,9 @@ pane from its current screen.
 One writable client controls the layout at a time. The controller can split, close, move, resize,
 float, or fullscreen panes, and edit workspaces. Followers receive those changes without losing
 their terminal screens or scrollback.
+
+Opening a pane publishes its placement together with the running pane. If the controller
+disconnects after opening it, collaborators can still find it in the same workspace.
 
 Followers can still:
 

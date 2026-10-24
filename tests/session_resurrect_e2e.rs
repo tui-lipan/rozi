@@ -83,6 +83,10 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     });
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
@@ -127,14 +131,14 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
 
     let layout = pane_layout();
     client.write_control(&ClientMessage::CommitLayout {
-        base_rev: 0,
+        base_rev: 1,
         layout: layout.clone(),
         live: false,
     });
     read_until(&mut client, |frame| {
         matches!(
             frame,
-            Frame::Control(ServerMessage::LayoutCommitted { rev: 1, .. })
+            Frame::Control(ServerMessage::LayoutCommitted { rev: 2, .. })
         )
     });
     client.write_control(&ClientMessage::Detach);
@@ -197,12 +201,13 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     assert_eq!(restored_layout.workspaces.len(), 1);
     assert!(panes.iter().any(|pane| pane.pane_id == PANE_ID));
 
-    let generation = panes
+    let meta = panes
         .iter()
         .find(|pane| pane.pane_id == PANE_ID)
-        .expect("restored pane metadata")
-        .generation;
-    let mut replay = TerminalPane::new(100);
+        .expect("restored pane metadata");
+    let generation = meta.generation;
+    assert_eq!(meta.scrollback, 100);
+    let mut replay = TerminalPane::new(meta.scrollback);
     replay.apply_server_resize(80, 24);
     replay.bind_server_backend(PANE_ID, generation);
     read_until(&mut restored, |frame| {
@@ -218,9 +223,9 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
             .capture_scrollback_text(None)
             .contains("rozi-resurrect-replay-marker")
     });
-    assert!(replay.total_scrollback_rows() <= 3);
+    assert!(replay.total_scrollback_rows() > 3);
     assert!(
-        !replay
+        replay
             .capture_scrollback_text(None)
             .contains("resurrect-line-000")
     );
@@ -356,6 +361,10 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
 
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PROBE_PANE, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PROBE_PANE,
         generation: PANE_GENERATION,

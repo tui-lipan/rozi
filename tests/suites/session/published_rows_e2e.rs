@@ -36,6 +36,10 @@ fn row(id: &str, status: &str, active: bool) -> PublishedRow {
 fn spawn_pane(controller: &mut crate::common::TestConnection) {
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     controller.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,

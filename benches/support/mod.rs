@@ -141,6 +141,7 @@ pub fn attached_message() -> ServerMessage {
             .iter()
             .flat_map(|workspace| workspace.panes.iter())
             .map(|pane| PaneMeta {
+                scrollback: 5000,
                 pane_id: pane.pane_id,
                 generation: pane.generation,
                 agents: Vec::new(),

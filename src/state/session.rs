@@ -364,9 +364,17 @@ impl OrphanOutputStore {
     }
 }
 
+/// One shared creation waiting for its authoritative publication or rejection.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SharedSpawnInFlight {
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub base_rev: u64,
+    pub failed: bool,
+}
+
 /// Client-side state for an attached shared session: the layout-control lease, revision
-/// bookkeeping for optimistic commits, the controller's canonical canvas, and the buffers the
-/// reconciler needs. Present whenever [`super::State::session_attached`] is true under protocol v6.
+/// bookkeeping, serialized shared creation, canonical canvas, and reconciliation buffers.
 pub struct SharedSessionState {
     /// This client's server-assigned id.
     pub client_id: crate::layout::shared::ClientId,
@@ -398,6 +406,8 @@ pub struct SharedSessionState {
     orphan_geometry: HashMap<PaneId, (u64, PaneGeometry)>,
     /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
     pub layout_commit_scheduled: bool,
+    pub pane_scrollback: HashMap<(PaneId, u64), usize>,
+    pub(crate) spawn_in_flight: Option<SharedSpawnInFlight>,
 }
 
 impl SharedSessionState {
@@ -416,6 +426,8 @@ impl SharedSessionState {
             orphan_output: OrphanOutputStore::default(),
             orphan_geometry: HashMap::new(),
             layout_commit_scheduled: false,
+            pane_scrollback: HashMap::new(),
+            spawn_in_flight: None,
         }
     }
 

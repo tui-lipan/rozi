@@ -460,3 +460,46 @@ pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         .windows(needle.len())
         .any(|window| window == needle)
 }
+
+/// Explicit resulting document for tests that do not care about placement policy.
+pub(crate) fn spawn_placement(
+    base_rev: u64,
+    panes: &[(u32, u64)],
+) -> rozi::session::protocol::SpawnPlacementCommit {
+    use rozi::layout::shared::*;
+    rozi::session::protocol::SpawnPlacementCommit {
+        base_rev,
+        layout: SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: 80,
+            canvas_rows: 24,
+            pane_geometry: Default::default(),
+            workspaces: vec![SharedWorkspace {
+                index: 0,
+                name: None,
+                synchronized: false,
+                layout: SharedLayoutKind::Dwindle,
+                start_axis: SharedSplitAxis::Horizontal,
+                split_ratios: Vec::new(),
+                tree: None,
+                panes: panes
+                    .iter()
+                    .map(|(id, generation)| SharedPane {
+                        pane_id: *id,
+                        generation: *generation,
+                        title: None,
+                        profile_name: None,
+                        cwd: None,
+                        launch: None,
+                        replay: false,
+                        keep_open: false,
+                        floating: false,
+                        fullscreen: false,
+                        rect: None,
+                        scrollable_width: 0.5,
+                    })
+                    .collect(),
+            }],
+        },
+    }
+}

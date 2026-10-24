@@ -313,7 +313,16 @@ pub(crate) fn close_pane_inner_with_focus(
     }
     // Plan before marking the pane closing, which removes it from Scrollable's visual order.
     let focus = plan_workspace_close_focus(&ctx.state, id, resolve_focus);
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let mut layout = crate::layout::shared::shared_layout_from_state(
+        &ctx.state,
+        (bounds.w.max(1.0) as u16, bounds.h.max(1.0) as u16),
+    );
+    layout.remove_pane(id);
     let generation = mark_workspace_pane_closing(ctx, id, kill_server_pane, namespace)?;
+    crate::layout::shared::reconcile_controller_layout(&mut ctx.state, &layout);
     ctx.state.begin_pane_event(GeometryAnimation::Close);
     if resolve_focus {
         repair_workspace_focus(ctx, focus);

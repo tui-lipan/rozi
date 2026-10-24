@@ -383,7 +383,7 @@ pub type SharedSplitAxis = SerializedSplitAxis;
 pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayout {
     let canvas_cols = canvas.0.max(1);
     let canvas_rows = canvas.1.max(1);
-    SharedLayout {
+    let mut layout = SharedLayout {
         version: SHARED_LAYOUT_VERSION,
         canvas_cols,
         canvas_rows,
@@ -397,6 +397,48 @@ pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayo
                 shared_workspace_from_state(index, workspace, canvas_cols, canvas_rows)
             })
             .collect(),
+    };
+    preserve_projected_rects(state, &mut layout);
+    layout
+}
+
+/// A projected float must retain its canonical fractions until its local cell rect changes.
+/// Otherwise a controller edit could publish a second revision just from a float round trip.
+fn preserve_projected_rects(state: &State, layout: &mut SharedLayout) {
+    let Some(previous) = state
+        .current()
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.last_committed_layout.as_ref())
+    else {
+        return;
+    };
+    if (previous.canvas_cols, previous.canvas_rows) != (layout.canvas_cols, layout.canvas_rows) {
+        return;
+    }
+    let rects: std::collections::HashMap<_, _> = previous
+        .workspaces
+        .iter()
+        .flat_map(|ws| &ws.panes)
+        .filter_map(|pane| {
+            pane.rect
+                .map(|rect| ((pane.pane_id, pane.generation), rect))
+        })
+        .collect();
+    for pane in layout.workspaces.iter_mut().flat_map(|ws| &mut ws.panes) {
+        if let Some(rect) = rects.get(&(pane.pane_id, pane.generation))
+            && let Some(local) = state
+                .current()
+                .workspaces
+                .iter()
+                .flat_map(|ws| &ws.panes)
+                .find(|local| local.id == pane.pane_id)
+            && local.floating
+            && local.floating_rect
+                == frac_rect_to_float(*rect, layout.canvas_cols, layout.canvas_rows)
+        {
+            pane.rect = Some(*rect);
+        }
     }
 }
 
@@ -740,6 +782,16 @@ impl SharedLayout {
         pane_id: PaneId,
         target: usize,
     ) -> std::result::Result<bool, SharedEditError> {
+        let changed = self.move_pane_fields(pane_id, target)?;
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(changed)
+    }
+
+    fn move_pane_fields(
+        &mut self,
+        pane_id: PaneId,
+        target: usize,
+    ) -> std::result::Result<bool, SharedEditError> {
         let source = self
             .workspace_position_of(pane_id)
             .ok_or(SharedEditError::PaneNotPlaced(pane_id))?;
@@ -780,12 +832,21 @@ impl SharedLayout {
         if fullscreen {
             clear_other_shared_fullscreen(&mut self.workspaces[destination], pane_id);
         }
-        self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(true)
     }
 
     /// Exchange the places of two tiled panes in one workspace.
     pub(crate) fn swap_panes(
+        &mut self,
+        pane_id: PaneId,
+        other: PaneId,
+    ) -> std::result::Result<bool, SharedEditError> {
+        let changed = self.swap_pane_fields(pane_id, other)?;
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(changed)
+    }
+
+    fn swap_pane_fields(
         &mut self,
         pane_id: PaneId,
         other: PaneId,
@@ -820,8 +881,19 @@ impl SharedLayout {
         };
         crate::layout::tiling::swap_tree_leaves(&mut tree, pane_id, other);
         self.workspaces[position].tree = from_dwindle(&tree, &|id| Some(id));
-        self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(true)
+    }
+
+    /// Restrict a startup publication to panes whose spawn has been submitted.
+    pub(crate) fn retain_panes(&mut self, known: &std::collections::HashSet<PaneId>) {
+        for position in 0..self.workspaces.len() {
+            let workspace = &mut self.workspaces[position];
+            let count = workspace.panes.len();
+            workspace.panes.retain(|pane| known.contains(&pane.pane_id));
+            if count != workspace.panes.len() {
+                self.settle_tree(position);
+            }
+        }
     }
 
     /// Drop `pane_id` from the document, re-tiling what it leaves behind. Returns the zero-based
@@ -835,6 +907,29 @@ impl SharedLayout {
         Some(self.workspaces[position].index)
     }
 
+    /// Set an explicit float placement, or append a returning pane to the tiling. Geometry
+    /// selection belongs to the caller, so this also serves interactive pointer operations.
+    pub(crate) fn set_float_placement(&mut self, id: PaneId, rect: Option<FloatRect>) -> bool {
+        let Some(position) = self.workspace_position_of(id) else {
+            return false;
+        };
+        let pane = self.workspaces[position]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == id)
+            .expect("located above");
+        let floating = rect.is_some();
+        let rect = rect.map(|rect| float_rect_to_frac(rect, self.canvas_cols, self.canvas_rows));
+        let changed = pane.floating != floating || pane.rect != rect;
+        let retile = pane.floating != floating;
+        pane.floating = floating;
+        pane.rect = rect;
+        if retile {
+            self.settle_tree(position);
+        }
+        changed
+    }
+
     /// Apply a validated `pane set` to the document. Returns whether it changed.
     ///
     /// Edits in place and validates afterwards, so a caller that must not be left holding a
@@ -845,6 +940,16 @@ impl SharedLayout {
     /// does for a pane the tree does not name, which is how a client applying the same edit to its
     /// live workspace arrives at the same tree.
     pub(crate) fn edit_pane(
+        &mut self,
+        pane_id: PaneId,
+        edit: crate::control::PaneEdit,
+    ) -> std::result::Result<bool, SharedEditError> {
+        let changed = self.edit_pane_fields(pane_id, edit)?;
+        self.validate().map_err(SharedEditError::InvalidDocument)?;
+        Ok(changed)
+    }
+
+    fn edit_pane_fields(
         &mut self,
         pane_id: PaneId,
         edit: crate::control::PaneEdit,
@@ -873,54 +978,27 @@ impl SharedLayout {
             None
         };
 
+        if !floats {
+            self.set_float_placement(pane_id, None);
+        } else if (edit.rect.is_some() || !floating_now)
+            && let Some(rect) = float_rect
+        {
+            self.set_float_placement(pane_id, Some(rect));
+        }
         let workspace = &mut self.workspaces[position];
         let pane = workspace
             .panes
             .iter_mut()
             .find(|pane| pane.pane_id == pane_id)
             .expect("located above");
-        pane.floating = floats;
-        if !floats {
-            pane.rect = None;
-        } else if edit.rect.is_some() || !floating_now {
-            // A float that stays put keeps its stored fractions: re-deriving them through cells
-            // would round, and report a change nobody made.
-            pane.rect = float_rect.map(|rect| float_rect_to_frac(rect, canvas.0, canvas.1));
-        }
         if let Some(fullscreen) = edit.fullscreen {
             pane.fullscreen = fullscreen;
         }
         if edit.fullscreen == Some(true) {
             clear_other_shared_fullscreen(workspace, pane_id);
         }
-        if floats != floating_now {
-            let tree =
-                crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
-                    .as_ref()
-                    .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
-            workspace.tree = tree;
-        }
-        if let Some(width) = edit.width_ratio
-            && let Some(pane) = workspace
-                .panes
-                .iter_mut()
-                .find(|pane| pane.pane_id == pane_id)
-        {
-            pane.scrollable_width = width;
-        }
-        if let Some(share) = edit.split_ratio {
-            let tree =
-                crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
-                    .map(|mut tree| {
-                        crate::layout::tiling::set_leaf_share(&mut tree, pane_id, share);
-                        tree
-                    });
-            workspace.tree = tree
-                .as_ref()
-                .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
-        }
+        apply_shared_pane_sizes(workspace, canvas, pane_id, edit);
         let changed = *workspace != before;
-        self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(changed)
     }
 
@@ -935,6 +1013,33 @@ impl SharedLayout {
             )
             .is_some_and(|tree| crate::layout::tiling::leaf_share(&tree, pane_id).is_some())
         })
+    }
+}
+
+fn apply_shared_pane_sizes(
+    workspace: &mut SharedWorkspace,
+    canvas: (u16, u16),
+    pane_id: PaneId,
+    edit: crate::control::PaneEdit,
+) {
+    if let Some(width) = edit.width_ratio
+        && let Some(pane) = workspace
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == pane_id)
+    {
+        pane.scrollable_width = width;
+    }
+    if let Some(share) = edit.split_ratio {
+        let tree =
+            crate::layout::effective_tile_tree(&SharedTileSource::new(workspace, canvas), None)
+                .map(|mut tree| {
+                    crate::layout::tiling::set_leaf_share(&mut tree, pane_id, share);
+                    tree
+                });
+        workspace.tree = tree
+            .as_ref()
+            .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
     }
 }
 
@@ -953,12 +1058,20 @@ fn clear_other_shared_fullscreen(workspace: &mut SharedWorkspace, keep: PaneId) 
 /// Set a workspace's master share, which `allocate_master` reads from the first split ratio. Shared
 /// by the document edit and the live one, so both store the same ratios.
 pub(crate) fn set_master_share(split_ratios: &mut Vec<f32>, ratio: f32) -> bool {
-    if split_ratios.is_empty() {
-        split_ratios.push(crate::state::DEFAULT_RATIO);
+    if split_ratios
+        .first()
+        .copied()
+        .unwrap_or(crate::state::DEFAULT_RATIO)
+        == ratio
+    {
+        return false;
     }
-    let changed = split_ratios[0] != ratio;
-    split_ratios[0] = ratio;
-    changed
+    if let Some(stored) = split_ratios.first_mut() {
+        *stored = ratio;
+    } else {
+        split_ratios.push(ratio);
+    }
+    true
 }
 
 /// Express a canvas-cell rect as the canvas fractions a [`SharedPane`] stores.
@@ -984,6 +1097,124 @@ pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: 
         w: rect.w * f32::from(canvas_cols.max(1)),
         h: rect.h * f32::from(canvas_rows.max(1)),
     }
+}
+
+/// Bridge for interactive operations on a workspace, including client-local scratch panes.
+/// Absolute edits share the document implementation; geometry selection and focus stay with the UI.
+pub(crate) fn edit_live_workspace(
+    workspace: &mut crate::state::Workspace,
+    edit: impl FnOnce(&mut SharedLayout) -> bool,
+) -> bool {
+    // Unit canvas preserves explicit cell rectangles exactly through the fractional representation.
+    let mut layout = SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 1,
+        canvas_rows: 1,
+        pane_geometry: Default::default(),
+        workspaces: vec![shared_workspace_from_state(0, workspace, 1, 1)],
+    };
+    let changed = edit(&mut layout);
+    let shared = &layout.workspaces[0];
+    workspace.layout_kind = shared.layout.into();
+    workspace.split_ratios.clone_from(&shared.split_ratios);
+    let known = shared.panes.iter().map(|pane| pane.pane_id).collect();
+    workspace.tile_tree = shared
+        .tree
+        .as_ref()
+        .and_then(|tree| dwindle_from_shared(tree, &known));
+    for placement in &shared.panes {
+        if let Some(pane) = workspace
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == placement.pane_id)
+        {
+            let rect = placement
+                .rect
+                .map(|rect| frac_rect_to_float(rect, 1, 1))
+                .unwrap_or(pane.floating_rect);
+            apply_shared_pane_fields(pane, placement, rect);
+        }
+    }
+    changed
+}
+
+pub(crate) fn edit_live_pane(
+    workspace: &mut crate::state::Workspace,
+    id: PaneId,
+    edit: crate::control::PaneEdit,
+) -> bool {
+    edit_live_workspace(workspace, |layout| {
+        layout.edit_pane_fields(id, edit).unwrap_or(false)
+    })
+}
+
+pub(crate) fn transfer_live_pane(state: &mut State, id: PaneId, target: usize) -> bool {
+    let mut layout = shared_layout_from_state(state, (1, 1));
+    let changed = layout.move_pane_fields(id, target).unwrap_or(false);
+    if changed {
+        reconcile_controller_layout(state, &layout);
+    }
+    changed
+}
+
+pub(crate) fn swap_live_panes(
+    workspace: &mut crate::state::Workspace,
+    a: PaneId,
+    b: PaneId,
+) -> bool {
+    edit_live_workspace(workspace, |layout| {
+        layout.swap_pane_fields(a, b).unwrap_or(false)
+    })
+}
+
+/// Apply an edit made by this controller without the follower lifecycle or lease machinery.
+/// The document owns placement; existing panes retain their parsers, gestures, focus, anchors,
+/// and animation state. The operation's caller handles its local presentation consequences.
+pub(crate) fn reconcile_controller_layout(state: &mut State, layout: &SharedLayout) {
+    let mut panes = std::collections::HashMap::new();
+    let mut closing = Vec::new();
+    for workspace in &mut state.current_mut().workspaces {
+        let mut retained = Vec::new();
+        for pane in std::mem::take(&mut workspace.panes) {
+            if pane.closing {
+                retained.push(pane);
+            } else {
+                panes.insert(pane.id, pane);
+            }
+        }
+        closing.push(retained);
+    }
+    for shared in &layout.workspaces {
+        let workspace = &mut state.current_mut().workspaces[shared.index];
+        workspace.layout_kind = shared.layout.into();
+        workspace.start_axis = shared.start_axis.into();
+        workspace.split_ratios = shared.split_ratios.clone();
+        workspace.name = shared.name.clone();
+        workspace.synchronized = shared.synchronized;
+        for placement in &shared.panes {
+            let mut pane = panes
+                .remove(&placement.pane_id)
+                .expect("controller edits preserve live pane identities");
+            let rect = placement
+                .rect
+                .map(|rect| frac_rect_to_float(rect, layout.canvas_cols, layout.canvas_rows))
+                .unwrap_or(pane.floating_rect);
+            apply_shared_pane_fields(&mut pane, placement, rect);
+            workspace.panes.push(pane);
+        }
+        let known = workspace.panes.iter().map(|pane| pane.id).collect();
+        workspace.tile_tree = shared
+            .tree
+            .as_ref()
+            .and_then(|tree| dwindle_from_shared(tree, &known));
+    }
+    for (workspace, closing) in state.current_mut().workspaces.iter_mut().zip(closing) {
+        workspace.panes.extend(closing);
+    }
+    assert!(
+        panes.is_empty(),
+        "controller removal must first run the close lifecycle"
+    );
 }
 
 struct DrainedPanes {
@@ -1087,6 +1318,43 @@ fn drain_existing_panes(
     }
 }
 
+fn bind_shared_generation(
+    state: &State,
+    existing: &mut crate::state::Pane,
+    shared_pane: &SharedPane,
+) {
+    if existing.pty_generation != shared_pane.generation {
+        if let Some(capacity) = state.current().shared.as_ref().and_then(|shared| {
+            shared
+                .pane_scrollback
+                .get(&(shared_pane.pane_id, shared_pane.generation))
+        }) {
+            existing.terminal.use_server_scrollback(*capacity);
+        }
+        existing.terminal.cols = existing.terminal.cols.max(1);
+        existing.terminal.rows = existing.terminal.rows.max(1);
+        existing
+            .terminal
+            .bind_server_backend(shared_pane.pane_id, shared_pane.generation);
+        existing.pty_generation = shared_pane.generation;
+    }
+}
+
+fn begin_shared_pane_open(
+    state: &State,
+    pane: &mut crate::state::Pane,
+    added: bool,
+    animate: bool,
+) -> Option<(PaneId, u64)> {
+    if !added || !animate {
+        return None;
+    }
+    pane.opening = true;
+    pane.terminal_active = false;
+    pane.begin_open_animation(state.config.animations);
+    Some((pane.id, pane.pty_generation))
+}
+
 fn rebuild_shared_workspaces(
     ctx: &mut Context<crate::AppRoot>,
     layout: &SharedLayout,
@@ -1100,7 +1368,6 @@ fn rebuild_shared_workspaces(
     let (canvas_cols, canvas_rows) = canonical_canvas;
     let mut next_pane_id = ctx.state.current().next_pane_id;
     let mut next_generation = ctx.state.current().next_pty_generation;
-    let scrollback = ctx.state.config.scrollback;
     let mut orphan_clipboard_events = Vec::new();
     let mut opened = Vec::new();
     let animate_additions = ctx
@@ -1138,14 +1405,7 @@ fn rebuild_shared_workspaces(
             let mut pane = match existing {
                 Some(mut existing) => {
                     // A new generation needs a fresh server backend, but keeps local dimensions.
-                    if existing.pty_generation != shared_pane.generation {
-                        existing.terminal.cols = existing.terminal.cols.max(1);
-                        existing.terminal.rows = existing.terminal.rows.max(1);
-                        existing
-                            .terminal
-                            .bind_server_backend(shared_pane.pane_id, shared_pane.generation);
-                        existing.pty_generation = shared_pane.generation;
-                    }
+                    bind_shared_generation(&ctx.state, &mut existing, shared_pane);
                     orphan_clipboard_events.extend(drain_orphan_output(
                         ctx_shared_mut(ctx),
                         &mut existing,
@@ -1154,6 +1414,18 @@ fn rebuild_shared_workspaces(
                     existing
                 }
                 None => {
+                    let scrollback = ctx
+                        .state
+                        .current()
+                        .shared
+                        .as_ref()
+                        .and_then(|shared| {
+                            shared
+                                .pane_scrollback
+                                .get(&(shared_pane.pane_id, shared_pane.generation))
+                        })
+                        .copied()
+                        .expect("server metadata must precede shared pane placement");
                     let mut pane = Pane::new(shared_pane.pane_id, scrollback, float_rect);
                     pane.pty_generation = shared_pane.generation;
                     pane.terminal
@@ -1171,11 +1443,10 @@ fn rebuild_shared_workspaces(
             };
 
             apply_shared_pane_fields(&mut pane, shared_pane, float_rect);
-            if added && animate_additions {
-                pane.opening = true;
-                pane.terminal_active = false;
-                pane.begin_open_animation(ctx.state.config.animations);
-                opened.push((pane.id, pane.pty_generation));
+            if let Some(opened_pane) =
+                begin_shared_pane_open(&ctx.state, &mut pane, added, animate_additions)
+            {
+                opened.push(opened_pane);
             }
             rebuilt.push(pane);
         }
@@ -2027,6 +2298,30 @@ mod tests {
     }
 
     #[test]
+    fn controller_projection_reemits_exact_canonical_float_fractions() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let canvas = (137, 53);
+        let rect = FracRect {
+            x: 0.12345679,
+            y: 0.2345679,
+            w: 0.43219876,
+            h: 0.32198766,
+        };
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.pty_generation = 1;
+        pane.floating = true;
+        pane.floating_rect = frac_rect_to_float(rect, canvas.0, canvas.1);
+        let mut canonical = shared_layout_from_state(&state, canvas);
+        canonical.workspaces[0].panes[0].rect = Some(rect);
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.last_committed_layout = Some(canonical.clone());
+        state.current_mut().shared = Some(shared);
+        assert_eq!(shared_layout_from_state(&state, canvas), canonical);
+        state.current_mut().workspaces[0].panes[0].floating_rect.x += 1.0;
+        assert_ne!(shared_layout_from_state(&state, canvas), canonical);
+    }
+
+    #[test]
     fn floating_rect_round_trips_through_fractions() {
         let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes[0].floating = true;
@@ -2121,6 +2416,61 @@ mod reconciler_tests {
     use crate::state::{Direction, DirectionalFocusHint, SharedSessionState};
     use tui_lipan::TestBackend;
 
+    // Seed capacity metadata for synthetic layout fixtures. Explicit resize/output fixtures keep
+    // their own message ordering; the metadata tests below drive the production handler.
+    trait ServerDispatch {
+        fn dispatch_server(&mut self, message: Msg) -> tui_lipan::Result<bool>;
+    }
+    impl ServerDispatch for TestBackend<AppRoot> {
+        fn dispatch_server(&mut self, mut message: Msg) -> tui_lipan::Result<bool> {
+            if let Msg::SessionAttached {
+                layout: Some(layout),
+                panes,
+                ..
+            } = &mut message
+            {
+                *panes = layout
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| &ws.panes)
+                    .map(|pane| {
+                        crate::session::protocol::PaneMeta::for_test(
+                            pane.pane_id,
+                            pane.generation,
+                            100,
+                        )
+                    })
+                    .collect();
+            }
+            if let Msg::SessionLayoutCommitted { layout, .. } = &message {
+                for pane in layout.workspaces.iter().flat_map(|ws| &ws.panes) {
+                    let capacity = self
+                        .state()
+                        .current()
+                        .shared
+                        .as_ref()
+                        .and_then(|shared| {
+                            shared.pane_scrollback.get(&(pane.pane_id, pane.generation))
+                        })
+                        .copied()
+                        .or_else(|| {
+                            find_pane(self.state(), pane.pane_id)
+                                .map(|pane| pane.terminal.scrollback_capacity())
+                        })
+                        .unwrap_or(100);
+                    self.state_mut()
+                        .current_mut()
+                        .shared
+                        .as_mut()
+                        .unwrap()
+                        .pane_scrollback
+                        .insert((pane.pane_id, pane.generation), capacity);
+                }
+            }
+            self.dispatch(message)
+        }
+    }
+
     const VIEWPORT: Rect = Rect {
         x: 0,
         y: 0,
@@ -2200,6 +2550,112 @@ mod reconciler_tests {
     }
 
     #[test]
+    fn server_metadata_controls_new_and_reconciled_parsers_across_clients_and_generations() {
+        in_stack(|| {
+            let mut histories = Vec::new();
+            for local_capacity in [2, 1000] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.state_mut().config.scrollback = local_capacity;
+                backend.set_viewport(VIEWPORT);
+                let (client, _rx) = SessionClient::test_channel();
+                attach_follower(&mut backend, client);
+                for (id, generation, capacity) in [(7, 1, 7), (8, 1, 19), (7, 2, 11)] {
+                    backend
+                        .dispatch(Msg::SessionPaneMetadata {
+                            cell_width: 9,
+                            cell_height: 18,
+                            epoch: 0,
+                            local: false,
+                            meta: crate::session::protocol::PaneMeta::for_test(
+                                id, generation, capacity,
+                            ),
+                        })
+                        .unwrap();
+                    let panes = if id == 8 {
+                        vec![(7, 1), (8, 1)]
+                    } else if generation == 2 {
+                        vec![(7, 2), (8, 1)]
+                    } else {
+                        vec![(7, 1)]
+                    };
+                    backend
+                        .dispatch(Msg::SessionLayoutCommitted {
+                            epoch: 0,
+                            rev: generation,
+                            author: 2,
+                            layout: layout_with_panes(&panes),
+                            live: false,
+                        })
+                        .unwrap();
+                    let pane = find_pane_mut(backend.state_mut(), id).unwrap();
+                    assert_eq!(pane.terminal.scrollback_capacity(), capacity);
+                    assert_eq!((pane.terminal.cols, pane.terminal.rows), (80, 24));
+                    assert_eq!(
+                        pane.terminal.cell_size(),
+                        tui_lipan::TerminalCellSize {
+                            width: 9,
+                            height: 18
+                        }
+                    );
+                    let output: String =
+                        (0..100).map(|line| format!("history-{line}\r\n")).collect();
+                    pane.terminal.process_server_output(output.as_bytes());
+                    assert!(pane.terminal.total_scrollback_rows() <= capacity);
+                }
+                assert_eq!(
+                    find_pane(backend.state(), 8)
+                        .unwrap()
+                        .terminal
+                        .scrollback_capacity(),
+                    19
+                );
+                histories.push(
+                    find_pane(backend.state(), 7)
+                        .unwrap()
+                        .terminal
+                        .capture_scrollback_text(None),
+                );
+            }
+            assert_eq!(histories[0], histories[1]);
+        });
+    }
+
+    #[test]
+    fn attach_and_reconnect_use_reported_capacity_instead_of_client_configuration() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            backend.state_mut().config.scrollback = 1;
+            for epoch in [1, 2] {
+                pend_attach(&mut backend, epoch, "history");
+                let mut message = attach_message(epoch, "history", &[(7, 1), (8, 1)]);
+                if let Msg::SessionAttached { panes, .. } = &mut message {
+                    *panes = vec![
+                        crate::session::protocol::PaneMeta::for_test(7, 1, 7),
+                        crate::session::protocol::PaneMeta::for_test(8, 1, 19),
+                    ];
+                }
+                backend.dispatch(message).unwrap();
+                assert_eq!(
+                    find_pane(backend.state(), 7)
+                        .unwrap()
+                        .terminal
+                        .scrollback_capacity(),
+                    7
+                );
+                assert_eq!(
+                    find_pane(backend.state(), 8)
+                        .unwrap()
+                        .terminal
+                        .scrollback_capacity(),
+                    19
+                );
+                backend.state_mut().config.scrollback = 999;
+            }
+        });
+    }
+
+    #[test]
     fn remote_removal_drops_pane_without_sending_kill() {
         in_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
@@ -2210,7 +2666,7 @@ mod reconciler_tests {
 
             // A commit with no panes removes the local seed pane.
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2257,7 +2713,7 @@ mod reconciler_tests {
             backend.render();
 
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2266,7 +2722,7 @@ mod reconciler_tests {
                 })
                 .expect("remove pane");
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 2,
                     author: 2,
@@ -2294,7 +2750,7 @@ mod reconciler_tests {
             let duplicate = layout.workspaces[0].panes[0].clone();
             layout.workspaces[0].panes.push(duplicate);
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2322,7 +2778,7 @@ mod reconciler_tests {
 
             // Keep the seed pane (id 1, generation 0) and add a brand-new pane (id 2).
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2387,7 +2843,7 @@ mod reconciler_tests {
                 })
                 .expect("dispatch early output");
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch,
                     rev: 1,
                     author: 2,
@@ -2421,7 +2877,7 @@ mod reconciler_tests {
             let epoch = backend.state().runtime_epoch;
             let commit = |backend: &mut TestBackend<AppRoot>, rev, generation| {
                 backend
-                    .dispatch(Msg::SessionLayoutCommitted {
+                    .dispatch_server(Msg::SessionLayoutCommitted {
                         epoch,
                         rev,
                         author: 2,
@@ -2504,7 +2960,7 @@ mod reconciler_tests {
             }
 
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2553,7 +3009,7 @@ mod reconciler_tests {
 
             let layout = layout_with_panes(&[(1, 0), (2, 0)]);
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2564,7 +3020,7 @@ mod reconciler_tests {
 
             backend.state_mut().current_mut().workspaces[0].scrollable_anchor = Some(2);
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 2,
                     author: 2,
@@ -2580,7 +3036,7 @@ mod reconciler_tests {
             let mut without_anchor = layout_with_panes(&[(1, 0)]);
             without_anchor.workspaces[0].layout = SharedLayoutKind::Scrollable;
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 3,
                     author: 2,
@@ -2607,7 +3063,7 @@ mod reconciler_tests {
             let mut layout = layout_with_panes(&[(1, 0), (2, 0), (3, 0), (4, 0)]);
             layout.workspaces[0].layout = SharedLayoutKind::Scrollable;
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2637,7 +3093,7 @@ mod reconciler_tests {
             let mut without_focus = layout_with_panes(&[(1, 0), (2, 0), (4, 0)]);
             without_focus.workspaces[0].layout = SharedLayoutKind::Scrollable;
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 2,
                     author: 2,
@@ -2771,7 +3227,7 @@ mod reconciler_tests {
                 ],
             };
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2810,7 +3266,7 @@ mod reconciler_tests {
             // reconcile does not sync reveal for ws1.
             layout.workspaces[1].panes.retain(|pane| pane.pane_id != 3);
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 2,
                     author: 2,
@@ -2901,7 +3357,7 @@ mod reconciler_tests {
             layout.workspaces[0].panes[0].scrollable_width = 0.62;
             layout.workspaces[0].panes[1].scrollable_width = 9.0; // sanitize to MAX
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2944,7 +3400,7 @@ mod reconciler_tests {
 
             let layout = layout_with_panes(&[(1, 0), (2, 0)]);
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -2961,7 +3417,7 @@ mod reconciler_tests {
             backend.state_mut().current_mut().workspaces[0].last_directional_focus = Some(hint);
 
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 2,
                     author: 2,
@@ -3004,7 +3460,7 @@ mod reconciler_tests {
                 }),
             });
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 1,
                     author: 2,
@@ -3021,7 +3477,7 @@ mod reconciler_tests {
                     .expect("focus left");
                 assert_eq!(backend.state().current().focused_pane, Some(expected));
                 backend
-                    .dispatch(Msg::SessionLayoutCommitted {
+                    .dispatch_server(Msg::SessionLayoutCommitted {
                         epoch: 0,
                         rev,
                         author: 2,
@@ -3054,7 +3510,7 @@ mod reconciler_tests {
                     .expect("focus right");
                 assert_eq!(backend.state().current().focused_pane, Some(expected));
                 backend
-                    .dispatch(Msg::SessionLayoutCommitted {
+                    .dispatch_server(Msg::SessionLayoutCommitted {
                         epoch: 0,
                         rev,
                         author: 2,
@@ -3068,7 +3524,7 @@ mod reconciler_tests {
 
     fn commit(backend: &mut TestBackend<AppRoot>, rev: u64, layout: SharedLayout) {
         backend
-            .dispatch(Msg::SessionLayoutCommitted {
+            .dispatch_server(Msg::SessionLayoutCommitted {
                 epoch: 0,
                 rev,
                 author: 2,
@@ -3256,7 +3712,7 @@ mod reconciler_tests {
             backend.render();
 
             backend
-                .dispatch(Msg::SessionAttached {
+                .dispatch_server(Msg::SessionAttached {
                     epoch: 1,
                     session_instance: crate::session::protocol::SessionInstanceId::for_test("live"),
                     session: "live".into(),
@@ -3339,7 +3795,7 @@ mod reconciler_tests {
             pend_attach(&mut backend, 1, "a");
             backend.render();
             backend
-                .dispatch(attach_message(1, "a", &[(1, 1), (2, 2)]))
+                .dispatch_server(attach_message(1, "a", &[(1, 1), (2, 2)]))
                 .expect("attach a");
             backend.state_mut().current_mut().workspaces[0].focused_pane = Some(2);
             backend.state_mut().current_mut().focused_pane = Some(2);
@@ -3355,7 +3811,7 @@ mod reconciler_tests {
             backend.advance(std::time::Duration::from_millis(300));
 
             backend
-                .dispatch(attach_message(2, "b", &[(1, 3), (2, 4)]))
+                .dispatch_server(attach_message(2, "b", &[(1, 3), (2, 4)]))
                 .expect("attach b");
             backend.render();
             let first = frame_colors(&backend);
@@ -3392,7 +3848,7 @@ mod reconciler_tests {
             pend_attach(&mut backend, 1, "a");
             backend.render();
             backend
-                .dispatch(attach_message(1, "a", &[(1, 1), (2, 2)]))
+                .dispatch_server(attach_message(1, "a", &[(1, 1), (2, 2)]))
                 .expect("attach a");
             backend.render();
             backend.advance(std::time::Duration::from_secs(1));
@@ -3459,7 +3915,7 @@ mod reconciler_tests {
 
             // An echo authored by us carries a layout with no panes; it must be ignored.
             backend
-                .dispatch(Msg::SessionLayoutCommitted {
+                .dispatch_server(Msg::SessionLayoutCommitted {
                     epoch: 0,
                     rev: 7,
                     author: 1,

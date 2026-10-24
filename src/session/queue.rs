@@ -307,6 +307,7 @@ impl<T> ByteQueue<T> {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn try_pop(&self) -> Option<T> {
         self.try_pop_with_bytes_and_more()
             .map(|(value, _, _)| value)
@@ -320,6 +321,57 @@ impl<T> ByteQueue<T> {
         let has_more = !state.entries.is_empty();
         self.changed.notify_all();
         Some((entry.value, entry.bytes, has_more))
+    }
+
+    /// Take the first ready entry while leaving blocked streams charged to the ingress budget.
+    /// A split tail stays in its original position ahead of that stream's later events.
+    pub(crate) fn try_pop_ready(
+        &self,
+        mut ready: impl FnMut(&T) -> bool,
+        split: impl FnOnce(T) -> (T, Option<(T, usize)>),
+    ) -> Option<T> {
+        let mut state = self.state.lock().expect("byte queue poisoned");
+        let index = state.entries.iter().position(|entry| ready(&entry.value))?;
+        let entry = state.entries.remove(index)?;
+        state.bytes -= entry.bytes;
+        if index == 0 {
+            state.base += 1;
+        }
+        let (value, tail) = split(entry.value);
+        if let Some((value, bytes)) = tail {
+            state.entries.insert(
+                index,
+                Entry {
+                    value,
+                    bytes,
+                    replacement: None,
+                },
+            );
+            state.bytes += bytes;
+        }
+        // Removing an entry from the middle shifts absolute coalescing indexes. Server ingress
+        // has no replacement keys, but keep this operation correct for every ByteQueue caller.
+        state.replacements = state
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                entry
+                    .replacement
+                    .map(|key| (key, state.base + index as u64))
+            })
+            .collect();
+        self.changed.notify_all();
+        Some(value)
+    }
+
+    /// Wait for activity even when every queued stream is blocked on deferred work.
+    pub(crate) fn wait_for_change(&self, timeout: Duration) {
+        let state = self.state.lock().expect("byte queue poisoned");
+        let _ = self
+            .changed
+            .wait_timeout(state, timeout)
+            .expect("byte queue poisoned");
     }
 
     pub(crate) fn pop_blocking(&self) -> Option<T> {

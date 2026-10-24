@@ -256,8 +256,8 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     let mut server = SessionServer::new_named("dev");
     let (_local, _stream) = attach_client(&mut server);
     let shared = ImageMedia {
-        policy: GraphicsMediaPolicy::SHARED,
-        relay_inline: false,
+        policy: GraphicsMediaPolicy::default(),
+        relay: tui_lipan::GraphicsRelayPolicy::Consuming,
     };
     assert_eq!(server.image_media(), shared);
 
@@ -278,8 +278,8 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     assert_eq!(
         server.image_media(),
         ImageMedia {
-            policy: GraphicsMediaPolicy::SHARED,
-            relay_inline: true,
+            policy: GraphicsMediaPolicy::default(),
+            relay: tui_lipan::GraphicsRelayPolicy::All,
         }
     );
 
@@ -306,9 +306,9 @@ fn attach_remote_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     (remote, stream)
 }
 
-/// A remote client must not offer consuming transports that disappear when it leaves.
+/// The server owns consuming transports as local and remote attachments change.
 #[test]
-fn consuming_temp_files_stay_unsupported_when_a_remote_client_leaves() {
+fn consuming_temp_files_are_accepted_with_and_without_remote_clients() {
     use base64::Engine as _;
 
     let mut server = SessionServer::new_named("graphics");
@@ -331,18 +331,26 @@ fn consuming_temp_files_stay_unsupported_when_a_remote_client_leaves() {
         let screen = server.panes.get_mut(&7).unwrap().screen_mut();
         screen.process_bytes(frame.as_bytes());
         assert!(
-            source.path().exists(),
-            "a refused temporary-file frame must not be consumed, remote attached: {remote_attached}"
+            !source.path().exists(),
+            "the server must consume temporary files, remote attached: {remote_attached}"
         );
         assert!(
-            screen.capture_frame().images.is_empty(),
-            "temporary-file frames must stay unsupported, remote attached: {remote_attached}"
+            !screen.capture_frame().images.is_empty(),
+            "temporary-file frames must be retained, remote attached: {remote_attached}"
         );
     }
 }
 
 /// The pane output the server has queued for a client, in order.
 fn sent_pane_output(server: &mut SessionServer, client: ClientId) -> Vec<u8> {
+    sent_pane_output_matching(server, client, |_| true)
+}
+
+fn sent_pane_output_matching(
+    server: &mut SessionServer,
+    client: ClientId,
+    include: impl Fn(PaneId) -> bool,
+) -> Vec<u8> {
     let client = server.client_mut(client).unwrap();
     let mut forwarded = Vec::new();
     while let Some(queued) = client.outbox.pop_front() {
@@ -351,7 +359,9 @@ fn sent_pane_output(server: &mut SessionServer, client: ClientId) -> Vec<u8> {
             .read_from_status(&mut queued.bytes.as_ref())
             .unwrap();
         while let Ok(Some(frame)) = decoder.next_frame::<ServerMessage>() {
-            if let Frame::PaneOutput { bytes, .. } = frame {
+            if let Frame::PaneOutput { pane_id, bytes, .. } = frame
+                && include(pane_id)
+            {
                 forwarded.extend_from_slice(&bytes);
             }
         }
@@ -6846,3 +6856,334 @@ fn the_server_names_itself_as_every_panes_terminal() {
 }
 
 mod transactions;
+
+fn media_test_server() -> SessionServer {
+    let mut server = SessionServer::new_named("graphics-owned");
+    let mut pane = test_pane(2);
+    pane.screen_mut().set_output_transaction_recording(true);
+    server.panes.insert(7, pane);
+    server
+}
+
+fn named_media_command(medium: char, name: &[u8], offset: usize, size: usize) -> Vec<u8> {
+    use base64::Engine as _;
+    let name = base64::engine::general_purpose::STANDARD.encode(name);
+    format!("\x1b_Ga=T,t={medium},f=32,s=1,v=1,i=7,p=1,C=1,q=2,O={offset},S={size};{name}\x1b\\")
+        .into_bytes()
+}
+
+fn queue_media_bytes(server: &SessionServer, pane: PaneId, bytes: Vec<u8>) {
+    let len = bytes.len();
+    server
+        .events
+        .try_push(
+            ServerEvent::Pty(None, pane, 2, TerminalPtyEvent::Output(bytes.into())),
+            len,
+        )
+        .unwrap_or_else(|_| panic!("queue media input"));
+}
+
+fn finish_media_events(server: &mut SessionServer) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        server.drain_pty_events();
+        server.pump_media_output();
+        if server.events.stats().len == 0 && !server.media.pending() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "media worker failed to complete");
+        std::thread::yield_now();
+    }
+}
+
+fn assert_inline_pixel(bytes: &[u8], expected: &[u8]) {
+    assert!(!bytes.windows(3).any(|key| key == b"t=t" || key == b"t=s"));
+    let mut receiver = TerminalScreen::new(5, 20, 100);
+    receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
+    receiver.process_bytes(bytes);
+    let capture = receiver.capture_frame();
+    assert_eq!(
+        &capture.images.first().expect("retained image").rgba[..4],
+        expected
+    );
+}
+
+#[test]
+fn the_server_consumes_a_temp_file_once_for_two_local_clients_and_late_attach() {
+    let mut server = media_test_server();
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    server.client_mut(first).unwrap().outbox.clear();
+    server.client_mut(second).unwrap().outbox.clear();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tty-graphics-protocol-once");
+    fs::write(&path, [1, 2, 3, 4, 255, 0, 0, 255, 5]).unwrap();
+    queue_media_bytes(
+        &server,
+        7,
+        named_media_command('t', path.as_os_str().as_encoded_bytes(), 4, 4),
+    );
+    finish_media_events(&mut server);
+    assert!(!path.exists());
+    // A later unlink or a downstream consuming reference would destroy this replacement.
+    fs::write(&path, [0, 255, 0, 255]).unwrap();
+    let bytes = sent_pane_output(&mut server, first);
+    assert_eq!(sent_pane_output(&mut server, second), bytes);
+    assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
+    let replay = server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_without_change()
+        .export_replay_bytes();
+    assert_inline_pixel(&replay, &[255, 0, 0, 255]);
+    let (late, _late_stream) = attach_remote_client(&mut server);
+    server.enqueue_attach_seeds(late);
+    while server.pump_attach_seeds() {}
+    assert_inline_pixel(&sent_pane_output(&mut server, late), &[255, 0, 0, 255]);
+    assert!(
+        path.exists(),
+        "clients/replay must not delete a replacement at the old name"
+    );
+}
+
+#[test]
+fn shared_memory_is_unlinked_once_and_retained_for_local_and_remote_readers() {
+    use crate::platform::media_fixture::SharedMemoryFixture;
+    let mut server = media_test_server();
+    let (local, _local_stream) = attach_client(&mut server);
+    let (remote, _remote_stream) = attach_remote_client(&mut server);
+    server.client_mut(local).unwrap().outbox.clear();
+    server.client_mut(remote).unwrap().outbox.clear();
+    let source = SharedMemoryFixture::new(&[1, 2, 3, 4, 255, 0, 0, 255, 5]).unwrap();
+    queue_media_bytes(&server, 7, named_media_command('s', source.name(), 4, 4));
+    finish_media_events(&mut server);
+    assert!(!source.exists());
+    source.recreate(&[0, 255, 0, 255]).unwrap();
+    let bytes = sent_pane_output(&mut server, local);
+    assert_eq!(sent_pane_output(&mut server, remote), bytes);
+    assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
+    let replay = server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_without_change()
+        .export_replay_bytes();
+    assert_inline_pixel(&replay, &[255, 0, 0, 255]);
+    assert!(
+        source.exists(),
+        "no second unlink may target the old source name"
+    );
+}
+
+#[test]
+fn a_remote_attaching_while_a_file_is_prepared_gets_the_acquired_pixels() {
+    let mut server = media_test_server();
+    let (local, _local_stream) = attach_client(&mut server);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("frame");
+    fs::write(&path, [255, 0, 0, 255]).unwrap();
+    let frame = named_media_command('f', path.as_os_str().as_encoded_bytes(), 0, 4);
+    queue_media_bytes(&server, 7, frame);
+    assert!(
+        server.next_ready_event().is_none(),
+        "named input waits for its worker"
+    );
+    let (remote, _remote_stream) = attach_remote_client(&mut server);
+    server.client_mut(local).unwrap().outbox.clear();
+    server.client_mut(remote).unwrap().outbox.clear();
+    finish_media_events(&mut server);
+    let bytes = sent_pane_output(&mut server, local);
+    assert!(!bytes.windows(3).any(|key| key == b"t=f"));
+    assert_eq!(sent_pane_output(&mut server, remote), bytes);
+    assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
+}
+
+#[test]
+fn failed_consuming_sources_emit_no_reference_and_leave_other_panes_live() {
+    let mut server = media_test_server();
+    server.panes.insert(8, test_pane(2));
+    let (local, _local_stream) = attach_client(&mut server);
+    server.client_mut(local).unwrap().outbox.clear();
+    let root = tempfile::tempdir().unwrap();
+    for exists in [true, false] {
+        let path = root.path().join("tty-graphics-protocol-empty");
+        if exists {
+            fs::write(&path, []).unwrap();
+        }
+        queue_media_bytes(
+            &server,
+            7,
+            named_media_command('t', path.as_os_str().as_encoded_bytes(), 0, 0),
+        );
+        queue_media_bytes(&server, 8, b"other pane continues".to_vec());
+        let ready = server
+            .next_ready_event()
+            .expect("unrelated text must be ready");
+        assert!(matches!(ready, ServerEvent::Pty(None, 8, 2, _)));
+        assert!(
+            server.events.stats().bytes > 0,
+            "pending input remains charged"
+        );
+        server.handle_event(ready);
+        finish_media_events(&mut server);
+        assert!(!path.exists());
+        assert!(
+            !server
+                .panes
+                .get_mut(&7)
+                .unwrap()
+                .screen_without_change()
+                .has_images()
+        );
+        let bytes = sent_pane_output(&mut server, local);
+        assert!(!bytes.windows(3).any(|key| key == b"t=t"));
+        assert!(String::from_utf8_lossy(&bytes).contains("other pane continues"));
+    }
+}
+
+#[test]
+fn deferred_image_and_its_input_tail_commit_before_a_resize_barrier() {
+    let mut server = media_test_server();
+    let (local, _local_stream) = attach_client(&mut server);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tty-graphics-protocol-resize");
+    fs::write(&path, [255, 0, 0, 255]).unwrap();
+    let mut frame = named_media_command('t', path.as_os_str().as_encoded_bytes(), 0, 4);
+    frame.extend_from_slice(b"before-resize");
+    queue_media_bytes(&server, 7, frame);
+    assert!(server.next_ready_event().is_none());
+    assert!(
+        server
+            .handle_message(local, resize_message(7, false, 2, 40, 10))
+            .is_empty()
+    );
+    assert_eq!(server.panes[&7].cols, 20, "resize must not overtake media");
+    queue_media_bytes(&server, 7, b"after-resize".to_vec());
+    finish_media_events(&mut server);
+    assert_eq!(server.panes[&7].cols, 40);
+    let screen = server.panes.get_mut(&7).unwrap().screen_without_change();
+    assert!(screen.has_images());
+    let text = screen.export_text(0, screen.total_text_lines());
+    assert!(text.contains("before-resize"));
+    assert!(text.contains("after-resize"));
+}
+
+#[test]
+fn a_remote_detaching_during_preparation_restores_only_reusable_file_references() {
+    for medium in ['f', 't'] {
+        let mut server = media_test_server();
+        let (local, _local_stream) = attach_client(&mut server);
+        let (remote, _remote_stream) = attach_remote_client(&mut server);
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tty-graphics-protocol-detach");
+        fs::write(&path, [255, 0, 0, 255]).unwrap();
+        let frame = named_media_command(medium, path.as_os_str().as_encoded_bytes(), 0, 4);
+        server.client_mut(local).unwrap().outbox.clear();
+        queue_media_bytes(&server, 7, frame.clone());
+        assert!(server.next_ready_event().is_none());
+        server.remove_client(remote);
+        finish_media_events(&mut server);
+        let bytes = sent_pane_output(&mut server, local);
+        if medium == 'f' {
+            assert_eq!(bytes, frame);
+            assert!(path.exists());
+        } else {
+            assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
+            assert!(!path.exists());
+        }
+    }
+}
+
+#[test]
+fn large_relay_emission_allows_text_between_its_chunks_and_keeps_the_next_source_unclaimed() {
+    let mut server = media_test_server();
+    server.panes.insert(8, test_pane(2));
+    let (local, _local_stream) = attach_client(&mut server);
+    server.client_mut(local).unwrap().outbox.clear();
+    let root = tempfile::tempdir().unwrap();
+    let first = root.path().join("tty-graphics-protocol-large");
+    let second = root.path().join("tty-graphics-protocol-next");
+    let mut pixels = vec![0; 1024 * 1024];
+    let mut state = 0x12345678_u32;
+    for pixel in pixels.chunks_exact_mut(4) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        pixel.copy_from_slice(&state.to_le_bytes());
+    }
+    fs::write(&first, pixels).unwrap();
+    fs::write(&second, [0, 255, 0, 255]).unwrap();
+    let frame = named_media_command('t', first.as_os_str().as_encoded_bytes(), 0, 0);
+    let frame = String::from_utf8(frame)
+        .unwrap()
+        .replace("s=1,v=1", "s=512,v=512");
+    queue_media_bytes(&server, 7, frame.into_bytes());
+    queue_media_bytes(
+        &server,
+        7,
+        named_media_command('t', second.as_os_str().as_encoded_bytes(), 0, 4),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_without_change()
+        .has_images()
+    {
+        server.drain_pty_events();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(!first.exists());
+    assert!(second.exists());
+    assert!(server.pump_media_output());
+    let first_chunk = sent_pane_output(&mut server, local);
+    assert!(first_chunk.len() <= 256 * 1024);
+    let mut receiver = TerminalScreen::new(5, 20, 100);
+    receiver.process_bytes(&first_chunk);
+    assert!(
+        !receiver.has_images(),
+        "the large image has not completed yet"
+    );
+    let (late, _late_stream) = attach_remote_client(&mut server);
+    server.enqueue_attach_seeds(late);
+    while server.pump_attach_seeds() {}
+    assert_eq!(
+        server
+            .client_mut(late)
+            .unwrap()
+            .seed
+            .as_ref()
+            .unwrap()
+            .manifest
+            .get(&PaneSeedKey {
+                pane_id: 7,
+                generation: 2
+            }),
+        Some(&PaneSeedState::Pending),
+        "a baseline must not start between image continuation chunks"
+    );
+    queue_media_bytes(&server, 8, b"__text_between_chunks__".to_vec());
+    let text = server
+        .next_ready_event()
+        .expect("unrelated text can bypass pending image output");
+    assert!(matches!(text, ServerEvent::Pty(None, 8, 2, _)));
+    server.handle_event(text);
+    assert!(
+        String::from_utf8_lossy(&sent_pane_output(&mut server, local))
+            .contains("__text_between_chunks__")
+    );
+    assert!(
+        second.exists(),
+        "a second expanded image must not accumulate while emitting the first"
+    );
+    finish_media_events(&mut server);
+    assert!(!second.exists());
+    while server.pump_attach_seeds() {}
+    assert_inline_pixel(
+        &sent_pane_output_matching(&mut server, late, |pane| pane == 7),
+        &[0, 255, 0, 255],
+    );
+}

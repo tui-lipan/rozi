@@ -490,15 +490,19 @@ The probe runs three repetitions of ordinary text alone and a second pane submit
 at 10 Hz. Both PNG and raw RGBA use deterministic opaque noise at 1, 8, 32 and 64 MiB of decoded
 pixels. PNG results report their compressed file size separately; raw files reach the 64 MiB
 transmit limit. Corpus creation is outside timing. Local cases attach one client; relay cases add
-a draining read-only client with `shares_filesystem: false`. Consuming-media cases are reserved
-for the server support change.
+a draining read-only client with `shares_filesystem: false`. The same matrix covers consuming
+temporary files and POSIX shared memory. Shared-memory cases are skipped where POSIX shared
+memory is unavailable. Temporary files are hard links to the immutable corpus; shared-memory
+sources are populated before each offer. Source creation is producer work, and its CPU is excluded
+from the server CPU sample. These consuming-medium cases have no stage-2 baseline.
 
 Pane A emits a short text line every 5 ms. Its timestamp immediately precedes its stdout write;
 receipt at the driver's frame drain gives output delay, including PTY, server and IPC scheduling.
 The two-second sample reports p50, p95 and maximum delay. It excludes an input round trip and host
 rendering. The driver polls every 250 microseconds. Both processes use the same machine clock;
 a wall-clock adjustment invalidates the run. Pending image commands drain before cleanup.
-No CI timing threshold is imposed.
+The row also reports elapsed time including draining pending images. CPU covers the initial
+two-second interval, not total CPU per completed frame. No CI timing threshold is imposed.
 
 `ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux, set
 `ROZI_IMAGE_PROBE_CPU_SAMPLER` to the `kitty-rendering-validation` skill's

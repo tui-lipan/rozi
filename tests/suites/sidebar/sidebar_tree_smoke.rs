@@ -515,6 +515,16 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                     "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
                 );
             }
+            backend.state_mut().theme = rozi::state::ThemePreset::Dracula.theme();
+            backend.render();
+            let changed = backend.state().theme.git_status.modified;
+            assert_ne!(changed, git.modified, "the palette must actually change");
+            assert!(
+                markers(&mut backend)
+                    .iter()
+                    .any(|(symbol, color)| { symbol == "" && *color == changed }),
+                "the mounted Rozi tree follows the active theme"
+            );
         })
         .expect("spawn color smoke thread")
         .join()

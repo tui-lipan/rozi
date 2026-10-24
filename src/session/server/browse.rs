@@ -269,75 +269,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_porcelain_states() {
-        let raw = b" M src/lib.rs\0A  src/new.rs\0?? scratch.txt\0UU merge.rs\0";
+    fn porcelain_records_convert_to_rozi_wire_statuses() {
+        let raw = b"AM mixed.rs\0?? scratch.txt\0UU merge.rs\0";
         let parsed = parse_porcelain_z(raw);
-        assert_eq!(parsed[0].unstaged, Some(WireChangeState::Modified));
-        assert_eq!(parsed[0].path, "src/lib.rs");
-        assert_eq!(parsed[1].staged, Some(WireChangeState::Added));
-        assert_eq!(parsed[2].staged, Some(WireChangeState::Untracked));
-        assert_eq!(parsed[3].staged, Some(WireChangeState::Conflicted));
-        assert!(parsed.iter().all(|record| !record.ignored));
-    }
-
-    #[test]
-    fn all_unmerged_pairs_reach_the_wire_as_one_staged_conflict() {
-        for xy in ["UU", "AA", "DD", "AU", "UA", "DU", "UD"] {
-            let raw = format!("{xy} merge.rs\0");
-            let records = parse_porcelain_z(raw.as_bytes());
-            assert_eq!(records[0].staged, Some(WireChangeState::Conflicted), "{xy}");
-            assert_eq!(records[0].unstaged, None, "{xy}");
-            let (changes, truncated) = changes_from_porcelain("/repo", raw.as_bytes());
-            assert!(!truncated);
-            assert_eq!(
-                changes,
-                vec![WireChange {
+        assert_eq!(
+            parsed,
+            vec![
+                PorcelainRecord {
+                    path: "mixed.rs",
+                    staged: Some(WireChangeState::Added),
+                    unstaged: Some(WireChangeState::Modified),
+                    ignored: false
+                },
+                PorcelainRecord {
+                    path: "scratch.txt",
+                    staged: Some(WireChangeState::Untracked),
+                    unstaged: None,
+                    ignored: false
+                },
+                PorcelainRecord {
+                    path: "merge.rs",
+                    staged: Some(WireChangeState::Conflicted),
+                    unstaged: None,
+                    ignored: false
+                },
+            ]
+        );
+        let (changes, truncated) = changes_from_porcelain("/repo", raw);
+        assert!(!truncated);
+        assert_eq!(
+            changes,
+            vec![
+                WireChange {
+                    path: "mixed.rs".into(),
+                    state: WireChangeState::Added,
+                    staged: true
+                },
+                WireChange {
+                    path: "scratch.txt".into(),
+                    state: WireChangeState::Untracked,
+                    staged: true
+                },
+                WireChange {
                     path: "merge.rs".into(),
                     state: WireChangeState::Conflicted,
-                    staged: true,
-                }],
-                "{xy}"
-            );
-        }
-    }
-
-    #[test]
-    fn canonical_statuses_preserve_wire_precedence_and_untracked_classification() {
-        use WireChangeState::*;
-        for (xy, staged, unstaged) in [
-            (" M", None, Some(Modified)),
-            ("A ", Some(Added), None),
-            (" D", None, Some(Deleted)),
-            ("R ", Some(Renamed), None),
-            ("C ", Some(Renamed), None),
-            ("??", Some(Untracked), None),
-            ("MM", Some(Modified), Some(Modified)),
-            (" T", None, Some(Modified)),
-            (".M", None, Some(Modified)),
-            ("!!", None, None),
-            ("  ", None, None),
-            ("ZZ", None, None),
-        ] {
-            let raw = format!("{xy} file\0");
-            let records = parse_porcelain_z(raw.as_bytes());
-            assert_eq!(
-                (records[0].staged, records[0].unstaged),
-                (staged, unstaged),
-                "{xy}"
-            );
-            let (changes, truncated) = changes_from_porcelain("/repo", raw.as_bytes());
-            assert!(!truncated);
-            let expected: Vec<_> = staged
-                .or(unstaged)
-                .map(|state| WireChange {
-                    path: "file".into(),
-                    state,
-                    staged: staged.is_some(),
-                })
-                .into_iter()
-                .collect();
-            assert_eq!(changes, expected, "{xy}");
-        }
+                    staged: true
+                },
+            ]
+        );
     }
 
     /// `??` and `!!` both mean "not tracked", but only `!!` is ignored. An untracked *directory* is

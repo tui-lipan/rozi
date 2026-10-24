@@ -137,13 +137,8 @@ mod tests {
         format!("opaque position {y}").into_bytes()
     }
 
-    fn admit(
-        flow: &mut PointerFlow,
-        kind: MouseKind,
-        bytes: Vec<u8>,
-        interval: Duration,
-    ) -> Option<Vec<u8>> {
-        flow.admit(crate::test_support::forwarded_mouse(kind, bytes), interval)
+    fn motion(y: u16) -> ForwardedMouseEvent {
+        crate::test_support::forwarded_mouse(MouseKind::Drag(MouseButton::Left), drag(y))
     }
 
     #[test]
@@ -164,12 +159,24 @@ mod tests {
             MouseKind::ScrollDown,
         ] {
             let mut flow = PointerFlow::default();
-            admit(&mut flow, MouseKind::Moved, drag(1), FRAME);
-            assert_eq!(admit(&mut flow, MouseKind::Moved, drag(2), FRAME), None);
+            flow.admit(
+                crate::test_support::forwarded_mouse(MouseKind::Moved, drag(1)),
+                FRAME,
+            );
+            assert_eq!(
+                flow.admit(
+                    crate::test_support::forwarded_mouse(MouseKind::Moved, drag(2)),
+                    FRAME
+                ),
+                None
+            );
             let bytes = b"opaque state change".to_vec();
             let mut expected = drag(2);
             expected.extend_from_slice(&bytes);
-            assert_eq!(admit(&mut flow, kind, bytes, FRAME), Some(expected));
+            assert_eq!(
+                flow.admit(crate::test_support::forwarded_mouse(kind, bytes), FRAME),
+                Some(expected)
+            );
         }
     }
 
@@ -177,32 +184,13 @@ mod tests {
     fn motion_is_capped_to_one_position_per_frame_and_the_newest_waits() {
         let mut flow = PointerFlow::default();
         assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(1),
-                FRAME
-            ),
+            flow.admit(motion(1), FRAME),
             Some(drag(1)),
             "first position is immediate"
         );
+        assert_eq!(flow.admit(motion(2), FRAME), None, "held until next frame");
         assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(2),
-                FRAME
-            ),
-            None,
-            "held until next frame"
-        );
-        assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(3),
-                FRAME
-            ),
+            flow.admit(motion(3), FRAME),
             None,
             "supersedes the held one"
         );
@@ -214,26 +202,16 @@ mod tests {
     #[test]
     fn a_button_report_goes_immediately_and_carries_held_motion_with_it() {
         let mut flow = PointerFlow::default();
-        admit(
-            &mut flow,
-            MouseKind::Drag(MouseButton::Left),
-            drag(1),
-            FRAME,
-        );
-        assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(2),
-                FRAME
-            ),
-            None
-        );
+        flow.admit(motion(1), FRAME);
+        assert_eq!(flow.admit(motion(2), FRAME), None);
         let release = b"opaque release".to_vec();
         let mut expected = drag(2);
         expected.extend_from_slice(&release);
         assert_eq!(
-            admit(&mut flow, MouseKind::Up(MouseButton::Left), release, FRAME),
+            flow.admit(
+                crate::test_support::forwarded_mouse(MouseKind::Up(MouseButton::Left), release),
+                FRAME
+            ),
             Some(expected),
             "the release must not overtake the position it happened at"
         );
@@ -243,25 +221,8 @@ mod tests {
     #[test]
     fn the_last_position_is_delivered_on_the_next_frame_interval() {
         let mut flow = PointerFlow::default();
-        assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(1),
-                FRAME
-            ),
-            Some(drag(1))
-        );
-        assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(2),
-                FRAME
-            ),
-            None,
-            "held behind first"
-        );
+        assert_eq!(flow.admit(motion(1), FRAME), Some(drag(1)));
+        assert_eq!(flow.admit(motion(2), FRAME), None, "held behind first");
         assert!(
             flow.arm(FRAME).is_some_and(|after| after <= FRAME),
             "the hold asks for a wakeup within one frame"
@@ -282,30 +243,12 @@ mod tests {
     #[test]
     fn a_wakeup_overtaken_by_a_new_frame_interval_does_nothing() {
         let mut flow = PointerFlow::default();
-        admit(
-            &mut flow,
-            MouseKind::Drag(MouseButton::Left),
-            drag(1),
-            FRAME,
-        );
-        assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(2),
-                FRAME
-            ),
-            None
-        );
+        flow.admit(motion(1), FRAME);
+        assert_eq!(flow.admit(motion(2), FRAME), None);
         assert!(flow.arm(FRAME).is_some());
         flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
         assert_eq!(
-            admit(
-                &mut flow,
-                MouseKind::Drag(MouseButton::Left),
-                drag(3),
-                FRAME
-            ),
+            flow.admit(motion(3), FRAME),
             Some(drag(3)),
             "new arrival opens the interval first"
         );

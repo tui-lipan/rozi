@@ -1050,7 +1050,7 @@ fn inbound_event_update(
 
 fn merge_handled_updates(left: HandledUpdate, right: HandledUpdate) -> HandledUpdate {
     HandledUpdate {
-        update: merge_updates(left.update, right.update),
+        update: left.update.merge(right.update),
         post_update: if left.post_update == PostUpdateKind::SessionOutputOnly
             && right.post_update == PostUpdateKind::SessionOutputOnly
         {
@@ -1059,21 +1059,6 @@ fn merge_handled_updates(left: HandledUpdate, right: HandledUpdate) -> HandledUp
             PostUpdateKind::Full
         },
     }
-}
-
-fn merge_updates(aggregate: Update, next: Update) -> Update {
-    let level = aggregate.level().max(next.level());
-    let mut merged = aggregate.merge(next);
-    // Rozi retains a root refresh when arbitrary work accompanies terminal-only damage.
-    // There is no terminal-paint-with-command contract.
-    if matches!(
-        level,
-        UpdateLevel::TerminalPaint | UpdateLevel::TerminalGraphics
-    ) && merged.command.is_some()
-    {
-        return Update::with_command(merged.command.take());
-    }
-    merged
 }
 
 /// Physical modifier reports enable left-Alt picker navigation and shortcut recording.
@@ -1436,137 +1421,43 @@ mod tests {
     #[test]
     fn inbound_drain_stops_after_command_and_keeps_earlier_stronger_level() {
         run_drain_test(|| {
-            let (_backend, mailbox) = mailbox_with_frames(3);
-            let mut handled = 0usize;
+            for (first_update, expected_level) in [
+                (Update::layout(), UpdateLevel::Layout),
+                (Update::terminal_paint(), UpdateLevel::Paint),
+            ] {
+                let mut first_update = Some(first_update);
+                let (_backend, mailbox) = mailbox_with_frames(3);
+                let mut handled = 0usize;
 
-            let handled_update = drain_inbound_events(
-                &mailbox,
-                || std::time::Duration::ZERO,
-                |_| {
-                    handled += 1;
-                    match handled {
-                        1 => classified(Update::layout(), PostUpdateKind::Full),
-                        2 => classified(
-                            Update::command_only(Command::after(
-                                std::time::Duration::ZERO,
-                                |_link: CommandLink<Msg>| {},
-                            )),
-                            PostUpdateKind::SessionOutputOnly,
-                        ),
-                        _ => panic!("the event after a command must not be consumed"),
-                    }
-                },
-            );
+                let handled_update = drain_inbound_events(
+                    &mailbox,
+                    || std::time::Duration::ZERO,
+                    |_| {
+                        handled += 1;
+                        match handled {
+                            1 => classified(first_update.take().unwrap(), PostUpdateKind::Full),
+                            2 => classified(
+                                Update::command_only(Command::after(
+                                    std::time::Duration::ZERO,
+                                    |_link: CommandLink<Msg>| {},
+                                )),
+                                PostUpdateKind::SessionOutputOnly,
+                            ),
+                            _ => panic!("the event after a command must not be consumed"),
+                        }
+                    },
+                );
 
-            assert_eq!(handled, 2);
-            assert_eq!(handled_update.update.level(), UpdateLevel::Layout);
-            assert!(handled_update.update.command.is_some());
-            assert_eq!(handled_update.post_update, PostUpdateKind::Full);
-            assert!(
-                mailbox.pop().is_some(),
-                "the following event must remain queued"
-            );
-            assert!(mailbox.pop().is_none());
+                assert_eq!(handled, 2);
+                assert_eq!(handled_update.update.level(), expected_level);
+                assert!(handled_update.update.command.is_some());
+                assert_eq!(handled_update.post_update, PostUpdateKind::Full);
+                assert!(
+                    mailbox.pop().is_some(),
+                    "the following event must remain queued"
+                );
+                assert!(mailbox.pop().is_none());
+            }
         });
-    }
-
-    #[test]
-    fn merging_commands_preserves_the_required_invalidation() {
-        let levels = [
-            UpdateLevel::None,
-            UpdateLevel::TerminalGraphics,
-            UpdateLevel::TerminalPaint,
-            UpdateLevel::Paint,
-            UpdateLevel::Layout,
-            UpdateLevel::Full,
-        ];
-        let update = |level| match level {
-            UpdateLevel::None => Update::none(),
-            UpdateLevel::TerminalGraphics => Update::terminal_graphics(),
-            UpdateLevel::TerminalPaint => Update::terminal_paint(),
-            UpdateLevel::Paint => Update::paint(),
-            UpdateLevel::Layout => Update::layout(),
-            UpdateLevel::Full => Update::full(),
-        };
-        let command = || {
-            Update::command_only(Command::after(
-                std::time::Duration::ZERO,
-                |_link: CommandLink<Msg>| {},
-            ))
-        };
-        for left in levels {
-            for right in levels {
-                let level = left.max(right);
-                assert_eq!(merge_updates(update(left), update(right)).level(), level);
-                let expected = match level {
-                    UpdateLevel::TerminalGraphics | UpdateLevel::TerminalPaint => UpdateLevel::Full,
-                    other => other,
-                };
-                for commands_on_left in [false, true] {
-                    let merged = if commands_on_left {
-                        merge_updates(command(), merge_updates(update(left), update(right)))
-                    } else {
-                        merge_updates(merge_updates(update(left), update(right)), command())
-                    };
-                    assert_eq!(merged.level(), expected, "{left:?} + {right:?}");
-                    assert!(merged.command.is_some());
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn both_merged_commands_are_executed() {
-        struct Probe;
-        impl Component for Probe {
-            type State = Vec<u8>;
-            type Properties = ();
-            type Message = u8;
-            fn create_state(&self, _: &()) -> Vec<u8> {
-                Vec::new()
-            }
-            fn update(&mut self, msg: u8, ctx: &mut Context<Self>) -> Update {
-                if msg != 0 {
-                    ctx.state.push(msg);
-                    return Update::none();
-                }
-                let command = |value| {
-                    Command::after(std::time::Duration::ZERO, move |link: CommandLink<u8>| {
-                        link.send(value);
-                    })
-                };
-                merge_updates(
-                    Update::paint_with_command(command(1)),
-                    Update::command_only(command(2)),
-                )
-            }
-            fn view(&self, _: &Context<Self>) -> Element {
-                Element::default()
-            }
-        }
-        let mut backend = TestBackend::new(Probe);
-        backend.dispatch(0).expect("start commands");
-        backend.advance(std::time::Duration::from_millis(1));
-        backend.pump().expect("finish commands");
-        assert_eq!(backend.state(), &[1, 2]);
-    }
-
-    #[test]
-    fn update_levels_merge_to_the_strongest_request() {
-        use UpdateLevel::{Full, Layout, Paint};
-
-        assert_eq!(
-            merge_updates(Update::none(), Update::paint()).level(),
-            Paint
-        );
-        assert_eq!(
-            merge_updates(Update::paint(), Update::layout()).level(),
-            Layout
-        );
-        assert_eq!(
-            merge_updates(Update::layout(), Update::full()).level(),
-            Full
-        );
-        assert_eq!(merge_updates(Update::full(), Update::none()).level(), Full);
     }
 }

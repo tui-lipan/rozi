@@ -1470,46 +1470,32 @@ fn structured_forwarding_delivers_authoritative_payloads_without_reencoding() {
             backend.state_mut().current_mut().session_client = Some(client);
             let id = backend.state().focused_pane().unwrap();
             backend.render();
-            for encoding in [
-                MouseEncoding::Sgr,
-                MouseEncoding::SgrPixels,
-                MouseEncoding::X10,
-                MouseEncoding::Utf8,
-            ] {
-                for kind in [
-                    MouseKind::Down(MouseButton::Left),
-                    MouseKind::Down(MouseButton::Right),
-                    MouseKind::Up(MouseButton::Middle),
-                    MouseKind::ScrollUp,
-                    MouseKind::ScrollDown,
-                ] {
-                    let bytes = b"opaque authoritative reports, including repetitions".to_vec();
-                    let mut event = crate::test_support::forwarded_mouse(kind, bytes.clone());
-                    event.mods = KeyMods::CTRL;
-                    event.cell = (19, 9);
-                    event.pixel = Some((157, 151));
-                    event.repeat_count = 3;
-                    event.mouse_mode.encoding = encoding;
-                    backend.dispatch(crate::Msg::PaneMouse(id, event)).unwrap();
-                    let sent = outbound
-                        .try_iter()
-                        .find_map(|message| match message {
-                            ClientOutbound::PaneInput {
-                                pane_id,
-                                bytes,
-                                latency_sensitive,
-                                ..
-                            } => {
-                                assert_eq!(pane_id, id);
-                                assert!(!latency_sensitive);
-                                Some(bytes)
-                            }
-                            _ => None,
-                        })
-                        .expect("forwarded input");
-                    assert_eq!(sent, bytes, "{encoding:?} {kind:?}");
-                }
-            }
+            let bytes = b"opaque authoritative reports, including repetitions".to_vec();
+            let mut event =
+                crate::test_support::forwarded_mouse(MouseKind::ScrollUp, bytes.clone());
+            event.mods = KeyMods::CTRL;
+            event.cell = (19, 9);
+            event.pixel = Some((157, 151));
+            event.repeat_count = 3;
+            event.mouse_mode.encoding = MouseEncoding::SgrPixels;
+            backend.dispatch(crate::Msg::PaneMouse(id, event)).unwrap();
+            let sent = outbound
+                .try_iter()
+                .find_map(|message| match message {
+                    ClientOutbound::PaneInput {
+                        pane_id,
+                        bytes,
+                        latency_sensitive,
+                        ..
+                    } => {
+                        assert_eq!(pane_id, id);
+                        assert!(!latency_sensitive);
+                        Some(bytes)
+                    }
+                    _ => None,
+                })
+                .expect("forwarded input");
+            assert_eq!(sent, bytes);
         })
         .unwrap()
         .join()

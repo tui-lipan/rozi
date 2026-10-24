@@ -658,25 +658,34 @@ fn step_focus_in_tiled_order(state: &mut State, forward: bool, wrap: bool) -> Op
     Some(id)
 }
 
+/// The focused pane and the master it would swap with, or `None` when promoting cannot act:
+/// nothing is focused, the focus is fullscreen or not tiled, or it already is the master.
+fn promote_target(state: &State) -> Option<(PaneId, PaneId)> {
+    let focused = state.focused_pane()?;
+    if active_pane_is_fullscreen(state, focused) {
+        return None;
+    }
+    let ids = state.active_workspace_ref().tiled_ids();
+    let &master = ids.first()?;
+    (master != focused && ids.contains(&focused)).then_some((focused, master))
+}
+
+/// Whether [`promote_focused_to_master`] would visibly move the focused pane. Monocle shows one
+/// pane at a time, so a swap there only reorders the cycle.
+pub(crate) fn can_promote_focused_to_master(state: &State) -> bool {
+    state.active_workspace_ref().layout_kind != LayoutKind::Monocle
+        && promote_target(state).is_some()
+}
+
 /// Swap the focused pane into the master slot (the first tiled pane), exchanging positions
 /// with whatever pane is there. No-op for a floating/fullscreen focus, when the focused pane
 /// is not tiled, or when it is already the master. Returns `true` when a swap happened.
 pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
-    let Some(focused) = state.focused_pane() else {
+    let Some((focused, master)) = promote_target(state) else {
         return false;
     };
-    if active_pane_is_fullscreen(state, focused) {
-        return false;
-    }
     let swapped = {
         let workspace = state.active_workspace_mut();
-        let ids = workspace.tiled_ids();
-        let Some(&master) = ids.first() else {
-            return false;
-        };
-        if master == focused || !ids.contains(&focused) {
-            return false;
-        }
         if workspace.tile_tree.is_none() {
             workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
         }

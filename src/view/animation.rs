@@ -721,10 +721,7 @@ fn workspace_offset(ctx: &Context<AppRoot>, index: usize, active: usize, animate
     };
     let key = format!("rozi-workspace-slide-{}-{index}", ctx.state.runtime_epoch);
     if !animate {
-        // tui-lipan 0.9.3 only applies a new duration when the target changes and has no
-        // transition-reset API. Seed a distinct instant target, then the real target, so an
-        // in-flight slide also stops on resize, disable, or attachment replacement.
-        ctx.transition(key.clone(), target + 2.0, anim::instant_transition());
+        ctx.snap_transition(key.clone(), target);
     }
     ctx.transition(key, target, config)
 }

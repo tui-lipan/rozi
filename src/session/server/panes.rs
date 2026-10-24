@@ -1213,6 +1213,10 @@ pub(super) struct ImageMedia {
 impl ImageMedia {
     pub(super) fn apply(self, screen: &mut TerminalScreen) {
         screen.set_image_media_policy(self.policy);
-        screen.set_image_inline_relay(self.relay_inline);
+        screen.set_image_relay_policy(if self.relay_inline {
+            GraphicsRelayPolicy::All
+        } else {
+            GraphicsRelayPolicy::None
+        });
     }
 }

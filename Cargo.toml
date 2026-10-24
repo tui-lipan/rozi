@@ -72,7 +72,8 @@ exclude = [
 # 0.27.2: runtime `Context::set_scroll_wheel_multiplier` updates and `TestBackend` parity.
 # 0.27.3: FileTree filesystem watching, hidden/ignored entry styles, compact directories, and
 # symlink target icons.
-tui-lipan = { version = "0.28.4", features = [
+# 0.29.0: runtime `Context::set_title`, `TestBackend::host_title`, and the graphics relay policy.
+tui-lipan = { version = "0.29.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -254,9 +255,3 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
-
-# Temporary: `Context::set_title` (tui-lipan#367) and `TestBackend::host_title` (#368), unreleased.
-# Replace with the released version requirement and remove this patch (and `allow-git` in
-# deny.toml) before merging.
-[patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "8a385ed8cdbf77ffa35b142a9e982d74f84bf888" }

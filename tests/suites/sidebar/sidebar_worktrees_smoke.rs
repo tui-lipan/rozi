@@ -203,7 +203,7 @@ fn work_status_uses_the_detail_line_and_keeps_session_state_on_the_rail() {
 }
 
 /// The right edge is what a checkout row is for — its state at rest, what Enter does under the
-/// pointer — so a long branch name truncates before either does, and never closer than three cells.
+/// pointer — so a long branch name truncates before either does, and never closer than two cells.
 #[test]
 fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
     const BRANCH: &str = "feat/show-working-directory-in-the-sidebar";
@@ -222,11 +222,11 @@ fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
     on_large_stack(move || {
         let resting = render(false);
         assert!(resting.contains('…'), "{resting:?}");
-        assert!(resting.contains("…   Primary ○"), "{resting:?}");
+        assert!(resting.contains("…  Primary ○"), "{resting:?}");
 
         let hovered = render(true);
         assert!(hovered.contains('…'), "{hovered:?}");
-        assert!(hovered.contains("…   attach"), "{hovered:?}");
+        assert!(hovered.contains("…  attach"), "{hovered:?}");
     });
 }
 

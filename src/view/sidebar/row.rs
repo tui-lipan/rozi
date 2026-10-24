@@ -191,7 +191,7 @@ pub(super) enum Priority {
 
 /// The least blank space between a label and its description, so the two read as separate things
 /// rather than as one run of text when the row is crowded.
-const DESCRIPTION_GAP: u16 = 3;
+const DESCRIPTION_GAP: u16 = 2;
 
 /// The row shape shared by every sidebar tab: an accent marker gutter that fills for the current
 /// row, an optional glyph column, then a title over an optional dimmed detail line. One builder is

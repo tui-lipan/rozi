@@ -335,7 +335,6 @@ pub fn run() -> Result<()> {
     };
 
     let app = App::new()
-        .title("rozi")
         .theme(theme.clone())
         .terminal_bg(terminal_bg)
         .live_host_terminal_colors(true)

@@ -1,4 +1,5 @@
 mod attach;
+pub(crate) mod host_title;
 mod hosts;
 mod local_agents;
 pub(crate) use attach::spawn_state_panes_on_session;
@@ -1178,6 +1179,7 @@ fn post_update_sync(
         ctx.request_focus(crate::view::help_filter_key());
     }
     sync_modifier_key_reporting(ctx);
+    host_title::sync(ctx);
 
     // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The
     // flush message itself is excluded so an idle client does not perpetually re-arm the timer.

@@ -567,6 +567,40 @@ pub fn active_agent_row(rows: &[PublishedRow]) -> Option<&PublishedRow> {
     rows.iter().find(|row| row.is_agent() && row.active)
 }
 
+/// Why `agents read` and `agents prompt` refuse the published row `slot` names, or `None` when
+/// that row is on screen.
+///
+/// Typing into a conversation the client does not show would land in the one it does, so a row is
+/// reachable only while its publisher marks it active. A publisher that marks none of its rows has
+/// not said the row is hidden, only that it cannot tell, and the refusal says which of the two it
+/// is.
+pub fn slot_input_refusal(rows: &[PublishedRow], slot: &RowKey) -> Option<String> {
+    let id = &slot.id;
+    let row = rows.iter().find(|row| row.has_key(slot));
+    if row.is_some_and(|row| row.active) {
+        return None;
+    }
+    if row.is_none() {
+        return Some(format!(
+            "published agent slot `{id}` is no longer published"
+        ));
+    }
+    let shown = rows
+        .iter()
+        .find(|row| row.publisher == slot.publisher && row.active);
+    Some(match shown {
+        Some(shown) => format!(
+            "published agent slot `{id}` is not on screen; `{}` is, and read and prompt only \
+             target the conversation on screen",
+            display_row_label(shown)
+        ),
+        None => format!(
+            "the client does not say which of its conversations is on screen, so read and prompt \
+             cannot tell whether `{id}` is; check the pane before typing into it"
+        ),
+    })
+}
+
 fn display_row_label(row: &PublishedRow) -> &str {
     if row.title.is_empty() {
         &row.id
@@ -713,6 +747,28 @@ mod tests {
         assert!(AgentState::Error.is_stopped());
         assert_eq!(ActivityState::from_status("custom"), ActivityState::Custom);
         assert!(!ActivityState::Custom.is_terminal());
+    }
+
+    #[test]
+    fn input_refusal_tells_a_hidden_row_from_one_no_publisher_placed() {
+        let shown = [listed("visible", true), listed("hidden", false)];
+        assert_eq!(slot_input_refusal(&shown, &key("visible")), None);
+        let hidden = slot_input_refusal(&shown, &key("hidden")).unwrap();
+        assert!(hidden.contains("`visible` is"), "{hidden}");
+
+        let unplaced = [listed("first", false), listed("second", false)];
+        let unknown = slot_input_refusal(&unplaced, &key("second")).unwrap();
+        assert!(unknown.contains("does not say which"), "{unknown}");
+
+        // Another publisher's row on screen says nothing about this publisher's.
+        let mut other = listed("other", true);
+        other.publisher = "watcher".into();
+        let mixed = [other, listed("second", false)];
+        let unknown = slot_input_refusal(&mixed, &key("second")).unwrap();
+        assert!(unknown.contains("does not say which"), "{unknown}");
+
+        let gone = slot_input_refusal(&shown, &key("gone")).unwrap();
+        assert!(gone.contains("no longer published"), "{gone}");
     }
 
     #[test]

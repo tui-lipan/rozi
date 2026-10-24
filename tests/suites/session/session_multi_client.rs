@@ -464,6 +464,8 @@ fn owned_media_child() {
     // A raw stdout writer must opt into VT processing on Windows. Otherwise ConPTY treats
     // the Kitty APC as console text rather than forwarding it as a control sequence.
     assert!(rozi::platform::ansi::enable_virtual_terminal());
+    println!("owned-media-ready");
+    std::io::stdout().flush().unwrap();
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
         if line.trim_end_matches('\r') == "emit" {
@@ -533,6 +535,20 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
             })
         )
     });
+    // SpawnResult means the PTY exists, not that the child and ConPTY's initial screen are
+    // ready. Finish the initial console repaint before transmitting a retained image.
+    let mut ready = Vec::new();
+    read_until(&mut controller, |frame| {
+        if let Frame::PaneOutput {
+            pane_id: PANE_ID,
+            bytes,
+            ..
+        } = frame
+        {
+            ready.extend_from_slice(bytes);
+        }
+        contains(&ready, b"owned-media-ready")
+    });
     controller.write_pane_input(PANE_ID, PANE_GENERATION, b"emit\r");
     for client in [&mut controller, &mut follower] {
         let mut wire = Vec::new();
@@ -554,7 +570,12 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
         let mut receiver = TerminalScreen::new(24, 80, 100);
         receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
         receiver.process_bytes(&wire);
-        assert!(receiver.has_images());
+        assert!(
+            receiver.has_images(),
+            "source_consumed={} wire={:?}",
+            !path.exists(),
+            String::from_utf8_lossy(&wire)
+        );
     }
     assert!(!path.exists());
     let mut remote = crate::common::TestConnection::connect(server.endpoint());

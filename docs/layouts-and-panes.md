@@ -78,6 +78,10 @@ or drag a split boundary.
 The first tiled pane is the master. Press `.` to promote the focused pane. To change the master
 width, use `=` and `-`, resize mode, or drag the master boundary.
 
+Promoting works in every layout: it swaps the focused pane into the first tiled position. The
+command palette lists **Promote to master** only when that would move the focused pane, so not
+for the master itself, a floating or fullscreen pane, or the monocle layout.
+
 ### Grid, columns, and rows
 
 These layouts size panes from their count and order. Grid fills rows, Columns gives every pane the

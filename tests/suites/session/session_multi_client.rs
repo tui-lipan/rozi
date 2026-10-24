@@ -451,3 +451,138 @@ fn pane_layout() -> SharedLayout {
         }],
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn owned_media_child() {
+    use base64::Engine as _;
+    let Ok(command) = std::env::var("ROZI_TEST_OWNED_MEDIA_COMMAND") else {
+        return;
+    };
+    let command = base64::engine::general_purpose::STANDARD
+        .decode(command)
+        .unwrap();
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        if line.trim_end_matches('\r') == "emit" {
+            std::io::stdout().write_all(&command).unwrap();
+            println!("owned-media-emitted");
+            std::io::stdout().flush().unwrap();
+        }
+    }
+}
+
+// This fixture needs a PTY that preserves Kitty APC bytes. The Windows 26100 ConPTY on CI
+// drops the APC before it reaches the server, even with console VT processing enabled.
+// The media module's platform-neutral worker/relay/replay test covers that path on Windows.
+#[cfg(unix)]
+#[test]
+fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol() {
+    use base64::Engine as _;
+    use tui_lipan::prelude::{GraphicsMediaPolicy, TerminalScreen};
+    let server = spawn_listener(ServerSettings::default());
+    let (mut controller, _) =
+        attach_client(server.endpoint(), server.session(), "media-controller");
+    let (mut follower, _) = attach_client(server.endpoint(), server.session(), "media-local");
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tty-graphics-protocol-owned");
+    std::fs::write(&path, [255, 0, 0, 255]).unwrap();
+    let name =
+        base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
+    let command = format!("\x1b_Ga=T,t=t,f=32,s=1,v=1,i=7,p=1,C=1,q=2;{name}\x1b\\");
+    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    controller.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
+        local: false,
+        pane_id: PANE_ID,
+        generation: PANE_GENERATION,
+        launch: Some(PaneLaunch::Direct {
+            argv: vec![
+                std::env::current_exe()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                "--exact".into(),
+                "session_multi_client::owned_media_child".into(),
+                "--nocapture".into(),
+            ],
+        }),
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        keep_open: false,
+        env: vec![(
+            "ROZI_TEST_OWNED_MEDIA_COMMAND".into(),
+            base64::engine::general_purpose::STANDARD.encode(command),
+        )],
+        title: None,
+        palette: WirePalette::from(TerminalColorPalette::default()),
+        shell,
+        command_shell,
+        cell_width: 0,
+        cell_height: 0,
+    });
+    read_until(&mut controller, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::SpawnResult {
+                pane_id: PANE_ID,
+                ok: true,
+                ..
+            })
+        )
+    });
+    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"emit\r");
+    for client in [&mut controller, &mut follower] {
+        let mut wire = Vec::new();
+        read_until(client, |frame| {
+            if let Frame::PaneOutput {
+                pane_id: PANE_ID,
+                bytes,
+                ..
+            } = frame
+            {
+                wire.extend_from_slice(bytes);
+            }
+            contains(&wire, b"owned-media-emitted")
+        });
+        assert!(
+            !contains(&wire, b"t=t"),
+            "a consuming source reached a client"
+        );
+        let mut receiver = TerminalScreen::new(24, 80, 100);
+        receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
+        receiver.process_bytes(&wire);
+        assert!(receiver.has_images());
+    }
+    assert!(!path.exists());
+    let mut remote = crate::common::TestConnection::connect(server.endpoint());
+    let mut attach = crate::common::attach_message(server.session(), "late-media-remote");
+    if let ClientMessage::Attach {
+        shares_filesystem,
+        read_only,
+        ..
+    } = &mut attach
+    {
+        *shares_filesystem = false;
+        *read_only = true;
+    }
+    remote.write_control(&attach);
+    let mut receiver = TerminalScreen::new(24, 80, 100);
+    receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
+    read_until(&mut remote, |frame| {
+        if let Frame::PaneOutput {
+            pane_id: PANE_ID,
+            bytes,
+            ..
+        } = frame
+        {
+            assert!(!contains(bytes, b"t=t"));
+            receiver.process_bytes(bytes);
+        }
+        receiver.has_images()
+    });
+}

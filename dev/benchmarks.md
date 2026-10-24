@@ -490,8 +490,11 @@ The probe runs three repetitions of ordinary text alone and a second pane submit
 at 10 Hz. Both PNG and raw RGBA use deterministic opaque noise at 1, 8, 32 and 64 MiB of decoded
 pixels. PNG results report their compressed file size separately; raw files reach the 64 MiB
 transmit limit. Corpus creation is outside timing. Local cases attach one client; relay cases add
-a draining read-only client with `shares_filesystem: false`. Consuming-media cases are reserved
-for the server support change.
+a draining read-only client with `shares_filesystem: false`. The same matrix covers consuming
+temporary files and POSIX shared memory. Shared-memory cases are skipped where POSIX shared
+memory is unavailable. Temporary files are hard links to the immutable corpus; shared-memory
+sources are populated before each offer. Source creation is producer work, and its CPU is excluded
+from the server CPU sample. These consuming-medium cases have no stage-2 baseline.
 
 Before timing, the image pane submits one image and acknowledges it, and the probe waits until
 the server's PTY ingress and client outboxes are empty. The timed interval therefore starts with
@@ -502,7 +505,9 @@ end is when the driver's frame-drain thread takes the decoded output frame from 
 before any further queueing, so output delay includes PTY, server and IPC scheduling but not the
 probe's own consumer. The two-second sample reports p50, p95 and maximum delay. It excludes an input
 round trip and host rendering. Both processes use the same machine clock; a wall-clock adjustment
-invalidates the run. Pending image commands drain before cleanup. No CI timing threshold is imposed.
+invalidates the run. Pending image commands drain before cleanup. The row also reports elapsed
+time including draining pending images. CPU covers the initial two-second interval, not total CPU
+per completed frame. No CI timing threshold is imposed.
 
 `ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux the probe also reports server
 CPU over the two seconds of offered load: user plus system ticks from `/proc/<pid>/stat` when text

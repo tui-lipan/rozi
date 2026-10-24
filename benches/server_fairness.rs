@@ -1044,10 +1044,13 @@ fn image_text_helper() -> io::Result<()> {
     }
 }
 
-fn image_relay_helper(path: &str, format: u32, height: u32) -> io::Result<()> {
+fn image_relay_helper(path: &str, format: u32, height: u32, medium: u8) -> io::Result<()> {
     use base64::Engine as _;
     disable_stdin_echo()?;
-    let name = base64::engine::general_purpose::STANDARD.encode(path);
+    let shared_pixels = (medium == b's').then(|| std::fs::read(path).expect("shared image corpus"));
+    let size = std::fs::metadata(path)?.len();
+    let mut sources = Vec::new();
+    let mut sequence = 0;
     let mut stdout = io::stdout().lock();
     stdout.write_all(READY)?;
     stdout.write_all(b"\r\n")?;
@@ -1062,9 +1065,24 @@ fn image_relay_helper(path: &str, format: u32, height: u32) -> io::Result<()> {
             stdout.flush()?;
             continue;
         }
+        let name = image_source_name(
+            path,
+            medium,
+            sequence,
+            shared_pixels.as_deref(),
+            &mut sources,
+        )?;
+        sequence += 1;
+        let name = base64::engine::general_purpose::STANDARD.encode(name);
+        let window = if medium == b's' {
+            format!(",S={size}")
+        } else {
+            String::new()
+        };
+        let medium = char::from(medium);
         write!(
             stdout,
-            "\x1b_Ga=T,t=f,f={format},s=4096,v={height},i=51,p=1,c=1,r=1,q=2;{name}\x1b\\"
+            "\x1b_Ga=T,t={medium},f={format},s=4096,v={height},i=51,p=1,c=1,r=1,q=2{window};{name}\x1b\\"
         )?;
         if line == "WARM" {
             stdout.write_all(b"__ROZI_ACK_WARM__\r\n")?;
@@ -1072,6 +1090,61 @@ fn image_relay_helper(path: &str, format: u32, height: u32) -> io::Result<()> {
         stdout.flush()?;
     }
     Ok(())
+}
+
+fn image_source_name(
+    path: &str,
+    medium: u8,
+    sequence: usize,
+    shared_pixels: Option<&[u8]>,
+    sources: &mut Vec<rozi::platform::media_fixture::SharedMemoryFixture>,
+) -> io::Result<Vec<u8>> {
+    match medium {
+        b't' => {
+            let name = std::path::Path::new(path).with_file_name(format!(
+                "tty-graphics-protocol-{}-{sequence}",
+                std::process::id()
+            ));
+            std::fs::hard_link(path, &name)?;
+            Ok(name.as_os_str().as_encoded_bytes().to_vec())
+        }
+        b's' => {
+            let source = rozi::platform::media_fixture::SharedMemoryFixture::new(
+                shared_pixels.expect("shared corpus"),
+            )?;
+            let name = source.name().to_vec();
+            let registry = std::path::Path::new(path).with_extension("shm-names");
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(registry)?;
+            file.write_all(&name)?;
+            file.write_all(b"\n")?;
+            sources.push(source);
+            Ok(name)
+        }
+        _ => Ok(path.as_bytes().to_vec()),
+    }
+}
+
+struct SharedCorpusCleanup(PathBuf);
+impl Drop for SharedCorpusCleanup {
+    fn drop(&mut self) {
+        cleanup_shared_corpus(&self.0);
+    }
+}
+
+fn cleanup_shared_corpus(path: &std::path::Path) {
+    let registry = path.with_extension("shm-names");
+    if let Ok(names) = std::fs::read(&registry) {
+        for name in names
+            .split(|byte| *byte == b'\n')
+            .filter(|name| !name.is_empty())
+        {
+            rozi::platform::media_fixture::SharedMemoryFixture::cleanup(name)
+                .expect("cleanup unclaimed benchmark source");
+        }
+    }
 }
 
 fn image_corpus(path: &std::path::Path, mib: usize, format: u32) -> u32 {
@@ -1108,16 +1181,22 @@ fn image_relay_probe() {
         .map(|value| value.parse::<usize>().expect("repeat count"))
         .unwrap_or(3);
     for repeat in 0..repeats {
-        image_relay_case(repeat, None, false);
+        image_relay_case(repeat, None, false, b'f');
         for format in [100, 32] {
             for mib in IMAGE_SIZES {
                 for relay in [false, true] {
-                    image_relay_case(repeat, Some((format, mib)), relay);
+                    for medium in [b'f', b't', b's'] {
+                        if medium == b's'
+                            && !rozi::platform::media_fixture::SharedMemoryFixture::supported()
+                        {
+                            continue;
+                        }
+                        image_relay_case(repeat, Some((format, mib)), relay, medium);
+                    }
                 }
             }
         }
     }
-    eprintln!("image_relay_slots t=t pending_stage_4; t=s pending_stage_4");
 }
 
 fn unix_ms() -> u64 {
@@ -1204,11 +1283,11 @@ impl ImageDelaySamples {
     }
 }
 
-/// Returns sorted delays, submitted images, and server CPU over the two seconds of offered load.
+/// Returns sorted delays, submitted images, offered-load CPU, and elapsed time including drain.
 fn sample_image_delays(
     fixture: &FairnessFixture,
     has_image: bool,
-) -> (Vec<Duration>, usize, Option<f64>) {
+) -> (Vec<Duration>, usize, Option<f64>, Duration) {
     let client = fixture.client.as_ref().unwrap();
     let start = Instant::now();
     // Both interval marks live here so CPU and latency share one boundary.
@@ -1257,7 +1336,7 @@ fn sample_image_delays(
         );
     }
     samples.delays.sort_unstable();
-    (samples.delays, images, cpu)
+    (samples.delays, images, cpu, start.elapsed())
 }
 
 /// Server CPU time at the start of the offered-load interval, read from `/proc` on Linux.
@@ -1298,12 +1377,13 @@ fn finish_cpu_sample(_mark: Option<CpuMark>) -> Option<f64> {
     None
 }
 
-fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
+fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool, medium: u8) {
     let corpus_dir = tempfile::Builder::new()
         .prefix("rozi-relay-")
         .tempdir()
         .expect("private image corpus");
     let corpus = corpus_dir.path().join("frame");
+    let _cleanup = SharedCorpusCleanup(corpus.clone());
     let height = image.map(|(format, mib)| image_corpus(&corpus, mib, format));
     let helper = match image {
         Some((format, _)) => vec![
@@ -1311,6 +1391,7 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
             corpus.to_string_lossy().into_owned(),
             format.to_string(),
             height.unwrap().to_string(),
+            medium.to_string(),
         ],
         None => vec![IDLE_HELPER_ARG.to_string()],
     };
@@ -1335,7 +1416,7 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
         fixture.image_output_bytes.store(0, Ordering::Relaxed);
     }
     client.send_input(1, GENERATION, false, b"GO\n".to_vec());
-    let (samples, images, cpu) = sample_image_delays(&fixture, image.is_some());
+    let (samples, images, cpu, elapsed) = sample_image_delays(&fixture, image.is_some());
     let sampled = unix_ms().saturating_sub(1000);
     let metrics = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
         metrics.sampled_at_unix_ms >= sampled
@@ -1347,7 +1428,7 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
     );
     let image_output_bytes = fixture.image_output_bytes.load(Ordering::Relaxed);
     if image.is_some() {
-        let minimum = if relay {
+        let minimum = if relay || medium != b'f' {
             std::fs::metadata(&corpus).unwrap().len()
         } else {
             100
@@ -1358,14 +1439,16 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
         );
     }
     eprintln!(
-        "image_relay_probe repeat={repeat} format={} mib={} file_bytes={} relay={relay} samples={} images={images} p50_us={} p95_us={} max_us={} server_cpu_percent={cpu:?} image_output_bytes={image_output_bytes}",
+        "image_relay_probe repeat={repeat} format={} mib={} file_bytes={} relay={relay} samples={} images={images} p50_us={} p95_us={} max_us={} server_cpu_percent={cpu:?} image_output_bytes={image_output_bytes} medium={} elapsed_ms={}",
         image.map_or(0, |x| x.0),
         image.map_or(0, |x| x.1),
         image.map_or(0, |_| std::fs::metadata(&corpus).unwrap().len()),
         samples.len(),
         percentile(&samples, 50).as_micros(),
         percentile(&samples, 95).as_micros(),
-        samples.last().unwrap().as_micros()
+        samples.last().unwrap().as_micros(),
+        char::from(medium),
+        elapsed.as_millis()
     );
     fixture.server.stop(fixture.client.as_ref());
     if let Some(remote) = remote {
@@ -1646,7 +1729,8 @@ fn main() {
         let path = args.next().expect("image path");
         let format = args.next().expect("image format").parse().unwrap();
         let height = args.next().expect("image height").parse().unwrap();
-        image_relay_helper(&path, format, height).expect("image helper");
+        let medium = args.next().expect("image medium").parse().unwrap();
+        image_relay_helper(&path, format, height, medium).expect("image helper");
         return;
     }
     if mode.as_deref() == Some(IDLE_LATENCY_PROBE_ARG) {

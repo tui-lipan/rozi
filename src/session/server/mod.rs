@@ -30,6 +30,7 @@ mod connection;
 mod graphics;
 mod graphics_pacer;
 mod headless;
+mod media;
 pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
 mod pane_log;
@@ -204,6 +205,7 @@ pub struct SessionServer {
     browse_in_flight: HashMap<BrowseRequestKey, BrowseState>,
     browse_worker: Option<BrowseWorker>,
     worktree_worker: Option<WorktreeWorker>,
+    media: media::MediaPipeline,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -865,6 +867,8 @@ struct ClientConn {
     /// Bytes of `outbox.front()` already written (non-blocking writes can be partial).
     front_offset: usize,
     attached: bool,
+    /// The transport is closed, but already-decoded controls may still be behind a media fence.
+    transport_closed: bool,
     label: Option<String>,
     read_only: bool,
     /// Whether this client can open the paths this server's children write, which is what decides
@@ -919,6 +923,7 @@ impl ClientConn {
             seed_catch_up_queued_bytes: 0,
             front_offset: 0,
             attached: false,
+            transport_closed: false,
             label: None,
             read_only: false,
             shares_filesystem: false,
@@ -1022,6 +1027,9 @@ impl ClientConn {
         class: OutboxClass,
         pane: Option<PaneSeedKey>,
     ) -> bool {
+        if self.transport_closed {
+            return true;
+        }
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
             return false;
         }
@@ -1052,6 +1060,9 @@ impl ClientConn {
         default_cap: usize,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
+        if self.transport_closed {
+            return ClientFrameResult::Ignored;
+        }
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
             return self.push_live(bytes, delta, default_cap, replacement);
         };
@@ -1295,6 +1306,10 @@ impl ClientConn {
 
 #[derive(Debug)]
 enum ServerEvent {
+    MediaBarrier {
+        client_id: ClientId,
+        message: Box<ClientMessage>,
+    },
     Pty(Option<ClientId>, PaneId, u64, TerminalPtyEvent),
     DirectoryListing {
         client_id: ClientId,
@@ -1472,6 +1487,9 @@ fn push_browse_event(events: &ByteQueue<ServerEvent>, event: ServerEvent) {
 impl ServerEvent {
     fn payload_bytes(&self) -> usize {
         match self {
+            Self::MediaBarrier { message, .. } => {
+                serde_json::to_vec(message).map_or(MAX_PTY_INGRESS_BYTES, |bytes| bytes.len())
+            }
             Self::Pty(_, _, _, TerminalPtyEvent::Output(bytes)) => bytes.len(),
             Self::Pty(_, _, _, TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_)) => 0,
             Self::DirectoryListing {
@@ -1668,6 +1686,7 @@ impl SessionServer {
             browse_in_flight: HashMap::new(),
             browse_worker: None,
             worktree_worker: None,
+            media: media::MediaPipeline::default(),
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -1706,7 +1725,11 @@ impl SessionServer {
             let activity = self.pump_iteration(&mut listener, &mut no_client_since)?;
             let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
             let timeout = self.graphics_pacing_timeout(timeout);
-            self.events.wait_for_item(timeout);
+            if self.media.pending() {
+                self.events.wait_for_change(timeout);
+            } else {
+                self.events.wait_for_item(timeout);
+            }
         }
         self.shutdown_listener()
     }
@@ -1720,10 +1743,18 @@ impl SessionServer {
         }
     }
 
+    #[cfg(all(test, unix))]
     fn drain_pty_events(&mut self) -> bool {
+        self.drain_pty_events_phase(MAX_PTY_EVENTS_PER_TICK, true)
+    }
+
+    fn drain_pty_events_phase(&mut self, limit: usize, commit_media: bool) -> bool {
         let mut activity = false;
-        for _ in 0..MAX_PTY_EVENTS_PER_TICK {
-            let Some(event) = self.events.try_pop() else {
+        if commit_media {
+            self.poll_media();
+        }
+        for _ in 0..limit {
+            let Some(event) = self.next_ready_event_phase(commit_media) else {
                 break;
             };
             activity = true;
@@ -1754,9 +1785,13 @@ impl SessionServer {
     ) -> io::Result<bool> {
         let iteration_started = Instant::now();
         let mut activity = self.accept_new(listener)?;
-        activity |= self.drain_pty_events();
+        // Ordinary PTY output keeps its existing precedence. Commit completed media only after
+        // attachments have been handled, then begin emitting it in this same iteration. A new
+        // remote reader therefore cannot slip between choosing a file reference and its emission.
+        activity |= self.drain_pty_events_phase(MAX_PTY_EVENTS_PER_TICK / 2, false);
         self.retry_browse_requests();
         activity |= self.pump_clients();
+        activity |= self.drain_pty_events_phase(MAX_PTY_EVENTS_PER_TICK / 2, true);
         self.retry_browse_requests();
         self.drain_worktree_results();
         self.poll_pane_runtime();
@@ -1774,6 +1809,7 @@ impl SessionServer {
         self.credit_server_stall(iteration_started.elapsed());
         self.heartbeat();
         activity |= self.pump_attach_seeds();
+        activity |= self.pump_media_output();
         activity |= self.flush_clients();
         self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);
@@ -1781,6 +1817,7 @@ impl SessionServer {
     }
 
     fn shutdown_listener(&mut self) -> io::Result<()> {
+        self.finish_pending_media();
         // A signal-driven stop must capture the final screen generation before killing PTYs. An
         // explicit session deletion only waits for an already-started write, then removes it.
         if self.forget_snapshot {

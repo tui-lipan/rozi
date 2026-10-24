@@ -475,6 +475,7 @@ impl SessionServer {
         id: ClientId,
         promotion_reason: ControllerChangeReason,
     ) {
+        self.forget_media_barriers(id);
         self.clear_browse_requests(id);
         self.remove_agent_waits(id);
         self.capture_waits.remove(&id);
@@ -595,6 +596,11 @@ impl SessionServer {
             if !client.attached {
                 continue;
             }
+            // A closed transport cannot answer pings while its decoded controls drain behind a
+            // media fence. Releasing the fence removes the client.
+            if client.transport_closed && self.media.client_fenced(client.id) {
+                continue;
+            }
             // A ping queued behind a replay cannot be answered yet. Start the heartbeat clock once
             // the baseline and its catch-up have reached the socket. A resync is different: a pane
             // that keeps flooding can hold one open indefinitely, so its pings skip the barrier
@@ -646,6 +652,9 @@ impl SessionServer {
         let mut completed_seeds = Vec::new();
         let now = Instant::now();
         for client in &mut self.clients {
+            if client.transport_closed {
+                continue;
+            }
             let (client_activity, mut disconnect) = Self::flush_client_outbox(client);
             activity |= client_activity;
             if let Some(seed) = Self::take_completed_seed(client, now) {
@@ -662,7 +671,7 @@ impl SessionServer {
             self.finish_attach_seed(seed, false);
         }
         for id in dead {
-            self.remove_client(id);
+            self.disconnect_after_controls(id);
         }
         activity
     }
@@ -1038,6 +1047,12 @@ impl SessionServer {
             }
             AttachSeedWork::ReplayChunk => self.pump_replay_chunk(id, remaining),
             AttachSeedWork::BeginPane(key) => {
+                // The retained screen already includes the complete prepared image. Wait for its
+                // live emission to finish, so a fresh baseline cannot be followed by orphaned
+                // continuation chunks from a transmission that started before that baseline.
+                if self.media.blocks_replay(key) {
+                    return false;
+                }
                 if !*export_available {
                     return false;
                 }

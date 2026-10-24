@@ -81,3 +81,6 @@ pub mod sound;
 pub fn open_file(path: &std::path::Path) -> std::io::Result<()> {
     open::that_detached(path)
 }
+
+#[doc(hidden)]
+pub mod media_fixture;

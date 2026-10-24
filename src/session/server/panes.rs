@@ -435,7 +435,15 @@ impl SessionServer {
                 self.retry_browse_requests();
                 None
             }
+            ServerEvent::MediaBarrier { client_id, message } => {
+                if self.client_attached(client_id) {
+                    self.process_client_control_now(client_id, *message);
+                }
+                self.release_media_barrier(client_id);
+                None
+            }
             ServerEvent::Pty(owner, id, generation, event) => {
+                let prepared = self.media.take_ready((owner, id, generation));
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {
                     return None;
@@ -448,7 +456,18 @@ impl SessionServer {
                             pane.log = None;
                         }
                         pane.output_seen = true;
-                        pane.screen_mut().process_bytes(&bytes);
+                        if let Some(prepared) = prepared {
+                            if pane
+                                .screen_mut()
+                                .process_prepared_media_input(prepared)
+                                .is_err()
+                            {
+                                self.media.discard_completed((owner, id, generation));
+                                return None;
+                            }
+                        } else {
+                            pane.screen_mut().process_bytes(&bytes);
+                        }
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the
                         // borrow checker accepts here.
@@ -838,9 +857,9 @@ impl SessionServer {
     ///
     /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
     /// base64-ed copy of every pixel. While every attached client shares this machine's
-    /// filesystem, the name is forwarded as sent and each client opens the file itself; the
-    /// consuming media (`t=t`, `t=s`) always stay off. Enabling them for remote clients would let
-    /// a child choose a transport that local clients cannot read after the remote client leaves.
+    /// filesystem, reusable file names are forwarded and each client opens the file itself.
+    /// Consuming sources (`t=t`, `t=s`) are acquired once here and always relayed inline, so
+    /// clients and later replays never reopen a source the server has already removed.
     ///
     /// A client attached over SSH cannot open a path on this machine. The server then reads the
     /// file itself and forwards the pixels inline, so a child that chose files before that client
@@ -851,8 +870,12 @@ impl SessionServer {
             .iter()
             .all(|client| !client.attached || client.shares_filesystem);
         ImageMedia {
-            policy: GraphicsMediaPolicy::SHARED,
-            relay_inline: !reachable,
+            policy: GraphicsMediaPolicy::default(),
+            relay: if reachable {
+                tui_lipan::GraphicsRelayPolicy::Consuming
+            } else {
+                tui_lipan::GraphicsRelayPolicy::All
+            },
         }
     }
 
@@ -1231,16 +1254,12 @@ mod tests {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ImageMedia {
     pub(super) policy: GraphicsMediaPolicy,
-    pub(super) relay_inline: bool,
+    pub(super) relay: tui_lipan::GraphicsRelayPolicy,
 }
 
 impl ImageMedia {
     pub(super) fn apply(self, screen: &mut TerminalScreen) {
         screen.set_image_media_policy(self.policy);
-        screen.set_image_relay_policy(if self.relay_inline {
-            GraphicsRelayPolicy::All
-        } else {
-            GraphicsRelayPolicy::None
-        });
+        screen.set_image_relay_policy(self.relay);
     }
 }

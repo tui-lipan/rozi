@@ -244,9 +244,10 @@ Limits:
   animate it.
 - Each pane keeps up to 200 MiB of image data, and evicts the oldest images beyond that. A client
   that attaches to a running session receives the images still on screen.
-- A single image upload is limited to 64 MiB; larger images must be sent in chunks.
-- Programs can also hand images over in regular files. Images keep updating when someone attaches
-  over SSH or disconnects. Temporary-file and shared-memory transfers are not supported.
+- A single image upload is limited to 64 MiB.
+- Programs can also hand images over in regular files, temporary files, or POSIX shared memory.
+  Images keep updating when local and SSH clients share a session, including after a source is
+  consumed or someone reconnects.
 
 If images draw incorrectly in a Kitty-protocol terminal such as Ghostty, start rozi with
 `TUI_LIPAN_TERMINAL_IMAGES=composed`. rozi then draws every image itself instead of handing

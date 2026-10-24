@@ -258,4 +258,4 @@ opt-level = 3
 # Temporary: `Context::set_title` from tui-lipan#367, unreleased. Replace with the released version
 # requirement and remove this patch (and `allow-git` in deny.toml) before merging.
 [patch.crates-io]
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "ca5326db07803490e62cb831f4cc1403752a896a" }
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "a4165d502560728d67df7b6f501ac1f580770398" }

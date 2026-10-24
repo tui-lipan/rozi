@@ -973,8 +973,8 @@ fn drain_inbound_events_from_first(
         let next = handle(event);
         let has_command = next.update.command.is_some();
         aggregate = merge_handled_updates(aggregate, next);
-        // An Update can carry only one command. Yield immediately rather than dropping a later
-        // command or inventing ordering between unrelated asynchronous work.
+        // Yield at the first command so subsequent inbound events are not coalesced across
+        // an asynchronous-work boundary.
         if has_command {
             break;
         }

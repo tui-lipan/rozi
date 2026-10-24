@@ -14,7 +14,6 @@ pub(super) struct MediaPipeline {
     stage_key: Option<MediaKey>,
     output: Option<PendingMediaOutput>,
     client_barriers: HashMap<ClientId, usize>,
-    disconnected_clients: HashSet<ClientId>,
 }
 
 const MEDIA_OUTPUT_BYTES_PER_TICK: usize = 256 * 1024;
@@ -104,14 +103,6 @@ impl Drop for MediaWorker {
 impl MediaPipeline {
     pub(super) fn client_fenced(&self, client_id: ClientId) -> bool {
         self.client_barriers.contains_key(&client_id)
-    }
-
-    pub(super) fn client_disconnected(&self, client_id: ClientId) -> bool {
-        self.disconnected_clients.contains(&client_id)
-    }
-
-    pub(super) fn defer_disconnect(&mut self, client_id: ClientId) {
-        self.disconnected_clients.insert(client_id);
     }
 
     pub(super) fn pending(&self) -> bool {
@@ -410,14 +401,17 @@ impl SessionServer {
                 self.media.client_barriers.remove(&client_id);
             }
         }
-        if !self.media.client_fenced(client_id) && self.media.client_disconnected(client_id) {
+        if !self.media.client_fenced(client_id)
+            && self
+                .client_mut(client_id)
+                .is_some_and(|client| client.transport_closed)
+        {
             self.remove_client(client_id);
         }
     }
 
     pub(super) fn forget_media_barriers(&mut self, client_id: ClientId) {
         self.media.client_barriers.remove(&client_id);
-        self.media.disconnected_clients.remove(&client_id);
     }
 
     pub(super) fn defer_media_barrier(

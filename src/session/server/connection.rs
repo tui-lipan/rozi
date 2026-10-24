@@ -60,7 +60,7 @@ impl SessionServer {
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
-            if self.media.client_disconnected(client.id) {
+            if client.transport_closed {
                 continue;
             }
             for _ in 0..16 {
@@ -94,16 +94,18 @@ impl SessionServer {
             self.process_client_frame(id, frame);
         }
         for id in dead {
-            self.finish_client_read(id);
+            self.disconnect_after_controls(id);
         }
         activity
     }
 
-    fn finish_client_read(&mut self, id: ClientId) {
+    pub(super) fn disconnect_after_controls(&mut self, id: ClientId) {
         // EOF can arrive in the same read as a final layout commit and Detach. Keep the
         // attached identity until its already-decoded control stream has drained.
         if self.media.client_fenced(id) {
-            self.media.defer_disconnect(id);
+            if let Some(client) = self.client_mut(id) {
+                client.transport_closed = true;
+            }
         } else {
             self.remove_client(id);
         }

@@ -647,6 +647,9 @@ impl SessionServer {
         let mut completed_seeds = Vec::new();
         let now = Instant::now();
         for client in &mut self.clients {
+            if client.transport_closed {
+                continue;
+            }
             let (client_activity, mut disconnect) = Self::flush_client_outbox(client);
             activity |= client_activity;
             if let Some(seed) = Self::take_completed_seed(client, now) {
@@ -663,7 +666,7 @@ impl SessionServer {
             self.finish_attach_seed(seed, false);
         }
         for id in dead {
-            self.remove_client(id);
+            self.disconnect_after_controls(id);
         }
         activity
     }

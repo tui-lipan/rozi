@@ -867,6 +867,8 @@ struct ClientConn {
     /// Bytes of `outbox.front()` already written (non-blocking writes can be partial).
     front_offset: usize,
     attached: bool,
+    /// The transport is closed, but already-decoded controls may still be behind a media fence.
+    transport_closed: bool,
     label: Option<String>,
     read_only: bool,
     /// Whether this client can open the paths this server's children write, which is what decides
@@ -921,6 +923,7 @@ impl ClientConn {
             seed_catch_up_queued_bytes: 0,
             front_offset: 0,
             attached: false,
+            transport_closed: false,
             label: None,
             read_only: false,
             shares_filesystem: false,
@@ -1024,6 +1027,9 @@ impl ClientConn {
         class: OutboxClass,
         pane: Option<PaneSeedKey>,
     ) -> bool {
+        if self.transport_closed {
+            return true;
+        }
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
             return false;
         }
@@ -1054,6 +1060,9 @@ impl ClientConn {
         default_cap: usize,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
+        if self.transport_closed {
+            return ClientFrameResult::Ignored;
+        }
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
             return self.push_live(bytes, delta, default_cap, replacement);
         };

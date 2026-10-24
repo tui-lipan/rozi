@@ -7257,10 +7257,19 @@ fn media_fence_drains_final_controls_even_when_the_connection_has_closed() {
     ] {
         protocol::write_frame(&mut stream, &message).unwrap();
     }
+    server.enqueue(
+        controller,
+        Target::Sender,
+        ServerMessage::LayoutRejected {
+            current_rev: 0,
+            layout: None,
+        },
+    );
     drop(stream);
     server.pump_clients();
+    server.flush_clients();
     assert!(server.client_attached(controller));
-    assert!(server.media.client_disconnected(controller));
+    assert!(server.client_mut(controller).unwrap().transport_closed);
     finish_media_events(&mut server);
     assert_eq!(server.layout_rev, 1);
     assert!(!server.client_attached(controller));

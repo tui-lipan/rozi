@@ -13,6 +13,8 @@ pub(super) struct MediaPipeline {
     ready: Option<TerminalPreparedInput>,
     stage_key: Option<MediaKey>,
     output: Option<PendingMediaOutput>,
+    client_barriers: HashMap<ClientId, usize>,
+    disconnected_clients: HashSet<ClientId>,
 }
 
 const MEDIA_OUTPUT_BYTES_PER_TICK: usize = 256 * 1024;
@@ -100,6 +102,18 @@ impl Drop for MediaWorker {
 }
 
 impl MediaPipeline {
+    pub(super) fn client_fenced(&self, client_id: ClientId) -> bool {
+        self.client_barriers.contains_key(&client_id)
+    }
+
+    pub(super) fn client_disconnected(&self, client_id: ClientId) -> bool {
+        self.disconnected_clients.contains(&client_id)
+    }
+
+    pub(super) fn defer_disconnect(&mut self, client_id: ClientId) {
+        self.disconnected_clients.insert(client_id);
+    }
+
     pub(super) fn pending(&self) -> bool {
         self.active.is_some()
     }
@@ -280,16 +294,20 @@ impl SessionServer {
     pub(super) fn next_ready_event_phase(&mut self, commit_media: bool) -> Option<ServerEvent> {
         let events = Arc::clone(&self.events);
         let mut blocked = HashSet::new();
-        let mut barrier_blocked = false;
+        let mut blocked_clients = HashSet::new();
         let selected_prefix = std::cell::Cell::new(None);
         events.try_pop_ready(
             |event| {
-                if barrier_blocked {
-                    return false;
-                }
-                if matches!(event, ServerEvent::MediaBarrier { .. }) {
-                    barrier_blocked = self.media.pending();
-                    return !barrier_blocked;
+                if let ServerEvent::MediaBarrier { client_id, message } = event {
+                    if blocked_clients.contains(client_id) {
+                        return false;
+                    }
+                    if let Some(key) = self.media_barrier_key(*client_id, message) {
+                        blocked_clients.insert(*client_id);
+                        blocked.insert(key);
+                        return false;
+                    }
+                    return true;
                 }
                 self.media_event_ready(event, &mut blocked, &selected_prefix, commit_media)
             },
@@ -349,20 +367,66 @@ impl SessionServer {
         self.media.start(key, work)
     }
 
+    /// Parser mutations wait only for the exact screen being prepared/emitted. Layout commits
+    /// publish metadata without touching screens; a new pane also has no media dependency.
+    /// Spawning over an existing pane must wait for that pane's current generation instead.
+    fn media_barrier_key(&self, client_id: ClientId, message: &ClientMessage) -> Option<MediaKey> {
+        if !self.client_attached(client_id) {
+            return None;
+        }
+        let active = self.media.active?;
+        let key = match message {
+            ClientMessage::Resize {
+                pane_id,
+                local,
+                generation,
+                ..
+            }
+            | ClientMessage::SetPalette {
+                pane_id,
+                local,
+                generation,
+                ..
+            }
+            | ClientMessage::ConfigurePane {
+                pane_id,
+                local,
+                generation,
+                ..
+            } => (local.then_some(client_id), *pane_id, *generation),
+            ClientMessage::SpawnPane { pane_id, local, .. } => {
+                let owner = local.then_some(client_id);
+                (owner, *pane_id, self.pane(owner, *pane_id)?.generation)
+            }
+            _ => return None,
+        };
+        (key == active).then_some(key)
+    }
+
+    pub(super) fn release_media_barrier(&mut self, client_id: ClientId) {
+        if let Some(remaining) = self.media.client_barriers.get_mut(&client_id) {
+            *remaining -= 1;
+            if *remaining == 0 {
+                self.media.client_barriers.remove(&client_id);
+            }
+        }
+        if !self.media.client_fenced(client_id) && self.media.client_disconnected(client_id) {
+            self.remove_client(client_id);
+        }
+    }
+
+    pub(super) fn forget_media_barriers(&mut self, client_id: ClientId) {
+        self.media.client_barriers.remove(&client_id);
+        self.media.disconnected_clients.remove(&client_id);
+    }
+
     pub(super) fn defer_media_barrier(
         &mut self,
         client_id: ClientId,
         message: ClientMessage,
     ) -> std::result::Result<ClientMessage, Vec<(Target, ServerMessage)>> {
-        if !self.media.pending()
-            || !matches!(
-                message,
-                ClientMessage::Resize { .. }
-                    | ClientMessage::SetPalette { .. }
-                    | ClientMessage::ConfigurePane { .. }
-                    | ClientMessage::CommitLayout { .. }
-                    | ClientMessage::SpawnPane { .. }
-            )
+        if !self.media.client_barriers.contains_key(&client_id)
+            && self.media_barrier_key(client_id, &message).is_none()
         {
             return Ok(message);
         }
@@ -372,6 +436,7 @@ impl SessionServer {
             message: Box::new(message),
         };
         let responses = if self.events.try_push(event, bytes).is_ok() {
+            *self.media.client_barriers.entry(client_id).or_default() += 1;
             Vec::new()
         } else {
             vec![(

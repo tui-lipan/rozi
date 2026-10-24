@@ -60,6 +60,9 @@ impl SessionServer {
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
+            if self.media.client_disconnected(client.id) {
+                continue;
+            }
             for _ in 0..16 {
                 match client.decoder.read_from_status(&mut client.stream) {
                     Ok(protocol::FrameReadStatus::Read(_)) => activity = true,
@@ -91,9 +94,19 @@ impl SessionServer {
             self.process_client_frame(id, frame);
         }
         for id in dead {
-            self.remove_client(id);
+            self.finish_client_read(id);
         }
         activity
+    }
+
+    fn finish_client_read(&mut self, id: ClientId) {
+        // EOF can arrive in the same read as a final layout commit and Detach. Keep the
+        // attached identity until its already-decoded control stream has drained.
+        if self.media.client_fenced(id) {
+            self.media.defer_disconnect(id);
+        } else {
+            self.remove_client(id);
+        }
     }
 
     /// Write a client's pane input, if that client may type into the pane.
@@ -248,50 +261,78 @@ impl SessionServer {
                 bytes,
             } => self.accept_pane_input(id, pane_id, local, generation, &bytes, latency_sensitive),
             Frame::Control(message) => {
-                let is_attach = matches!(message, ClientMessage::Attach { .. });
-                // Both answer one question and hang up: neither ever becomes a client, so both
-                // skip the attach requirement below and close once the reply has flushed.
-                let is_query = matches!(
-                    message,
-                    ClientMessage::Query { .. } | ClientMessage::SessionControl { .. }
-                );
-                if !is_attach && !is_query && !self.client_attached(id) {
-                    self.enqueue(
-                        id,
-                        Target::Sender,
-                        ServerMessage::Error {
-                            code: "attach-required".to_string(),
-                            message: "first client message must be attach".to_string(),
-                        },
-                    );
-                    self.set_close_after_flush(id);
-                    return;
-                }
-                let detach = matches!(message, ClientMessage::Detach);
-                let responses = self.handle_message(id, message);
-                for (target, msg) in responses {
-                    self.enqueue(id, target, msg);
-                }
-                if is_attach {
-                    if self.client_attached(id) {
-                        self.enqueue_attach_seeds(id);
-                    } else {
-                        // A failed attach (protocol/session mismatch) sent an error; close it.
-                        self.set_close_after_flush(id);
+                let message = match self.defer_media_barrier(id, message) {
+                    Ok(message) => message,
+                    Err(responses) => {
+                        for (target, message) in responses {
+                            self.enqueue(id, target, message);
+                        }
+                        return;
                     }
-                }
-                if is_query
-                    && !self.holds_agent_wait(id)
-                    && !self.capture_waits.contains_key(&id)
-                    && !self.holds_recording_reply(id)
-                {
-                    self.set_close_after_flush(id);
-                }
-                if detach {
-                    self.remove_client(id);
-                }
+                };
+                self.process_client_control_now(id, message);
             }
         }
+    }
+
+    /// Execute a control only after its client stream fence has released it. Lifecycle effects
+    /// such as Detach must run here too, not when the deferred frame was first received.
+    pub(super) fn process_client_control_now(&mut self, id: ClientId, message: ClientMessage) {
+        let is_attach = matches!(message, ClientMessage::Attach { .. });
+        // Both answer one question and hang up: neither ever becomes a client, so both
+        // skip the attach requirement below and close once the reply has flushed.
+        let is_query = matches!(
+            message,
+            ClientMessage::Query { .. } | ClientMessage::SessionControl { .. }
+        );
+        if !self.accepts_client_control(id, &message) {
+            return;
+        }
+        let detach = matches!(message, ClientMessage::Detach);
+        let responses = self.handle_message(id, message);
+        for (target, msg) in responses {
+            self.enqueue(id, target, msg);
+        }
+        if is_attach {
+            if self.client_attached(id) {
+                self.enqueue_attach_seeds(id);
+            } else {
+                // A failed attach (protocol/session mismatch) sent an error; close it.
+                self.set_close_after_flush(id);
+            }
+        }
+        if is_query
+            && !self.holds_agent_wait(id)
+            && !self.capture_waits.contains_key(&id)
+            && !self.holds_recording_reply(id)
+        {
+            self.set_close_after_flush(id);
+        }
+        if detach {
+            self.remove_client(id);
+        }
+    }
+
+    fn accepts_client_control(&mut self, id: ClientId, message: &ClientMessage) -> bool {
+        if matches!(
+            message,
+            ClientMessage::Attach { .. }
+                | ClientMessage::Query { .. }
+                | ClientMessage::SessionControl { .. }
+        ) || self.client_attached(id)
+        {
+            return true;
+        }
+        self.enqueue(
+            id,
+            Target::Sender,
+            ServerMessage::Error {
+                code: "attach-required".to_string(),
+                message: "first client message must be attach".to_string(),
+            },
+        );
+        self.set_close_after_flush(id);
+        false
     }
 
     /// Spawn policy describes the *next* pane and `[recording]` the next recording, so a request
@@ -422,10 +463,6 @@ impl SessionServer {
         client_id: ClientId,
         message: ClientMessage,
     ) -> Vec<(Target, ServerMessage)> {
-        let message = match self.defer_media_barrier(client_id, message) {
-            Ok(message) => message,
-            Err(responses) => return responses,
-        };
         match message {
             ClientMessage::Attach {
                 capabilities,

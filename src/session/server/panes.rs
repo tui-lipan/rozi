@@ -437,10 +437,9 @@ impl SessionServer {
             }
             ServerEvent::MediaBarrier { client_id, message } => {
                 if self.client_attached(client_id) {
-                    for (target, message) in self.handle_message(client_id, *message) {
-                        self.enqueue(client_id, target, message);
-                    }
+                    self.process_client_control_now(client_id, *message);
                 }
+                self.release_media_barrier(client_id);
                 None
             }
             ServerEvent::Pty(owner, id, generation, event) => {

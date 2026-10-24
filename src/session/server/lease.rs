@@ -475,6 +475,7 @@ impl SessionServer {
         id: ClientId,
         promotion_reason: ControllerChangeReason,
     ) {
+        self.forget_media_barriers(id);
         self.clear_browse_requests(id);
         self.remove_agent_waits(id);
         self.capture_waits.remove(&id);

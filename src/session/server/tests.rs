@@ -7053,11 +7053,7 @@ fn deferred_image_and_its_input_tail_commit_before_a_resize_barrier() {
     frame.extend_from_slice(b"before-resize");
     queue_media_bytes(&server, 7, frame);
     assert!(server.next_ready_event().is_none());
-    assert!(
-        server
-            .handle_message(local, resize_message(7, false, 2, 40, 10))
-            .is_empty()
-    );
+    server.process_client_frame(local, Frame::Control(resize_message(7, false, 2, 40, 10)));
     assert_eq!(server.panes[&7].cols, 20, "resize must not overtake media");
     queue_media_bytes(&server, 7, b"after-resize".to_vec());
     finish_media_events(&mut server);
@@ -7186,4 +7182,189 @@ fn large_relay_emission_allows_text_between_its_chunks_and_keeps_the_next_source
         &sent_pane_output_matching(&mut server, late, |pane| pane == 7),
         &[0, 255, 0, 255],
     );
+}
+
+fn start_barrier_test_media(server: &mut SessionServer) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tty-graphics-protocol-barrier");
+    fs::write(&path, [255, 0, 0, 255]).unwrap();
+    queue_media_bytes(
+        server,
+        7,
+        named_media_command('t', path.as_os_str().as_encoded_bytes(), 0, 4),
+    );
+    assert!(server.next_ready_event().is_none());
+    assert!(server.media.pending());
+    root
+}
+
+#[test]
+fn media_fence_keeps_layout_drag_end_and_detach_in_client_order() {
+    let mut server = media_test_server();
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let _source = start_barrier_test_media(&mut server);
+    for message in [
+        resize_message(7, false, 2, 40, 10),
+        ClientMessage::CommitLayout {
+            base_rev: 0,
+            layout: shared_layout_for_panes(&[(7, 2)]),
+            live: false,
+        },
+        ClientMessage::DragEnd,
+        ClientMessage::Detach,
+    ] {
+        server.process_client_frame(controller, Frame::Control(message));
+    }
+    assert!(
+        server.client_attached(controller),
+        "Detach overtook the fence"
+    );
+    assert_eq!(server.layout_rev, 0);
+    assert!(
+        !decode_outbox_controls(server.client_mut(follower).unwrap())
+            .iter()
+            .any(|message| matches!(message, ServerMessage::DragChanged { .. }))
+    );
+    finish_media_events(&mut server);
+    assert_eq!(server.panes[&7].cols, 40);
+    assert_eq!(server.layout_rev, 1, "the final commit must survive Detach");
+    assert!(!server.client_attached(controller));
+    let messages = decode_outbox_controls(server.client_mut(follower).unwrap());
+    let commit = messages
+        .iter()
+        .position(|message| matches!(message, ServerMessage::LayoutCommitted { .. }))
+        .unwrap();
+    let drag_end = messages
+        .iter()
+        .position(|message| matches!(message, ServerMessage::DragChanged { drag: None, .. }))
+        .unwrap();
+    assert!(commit < drag_end, "layout must precede DragEnd");
+}
+
+#[test]
+fn media_fence_drains_final_controls_even_when_the_connection_has_closed() {
+    let mut server = media_test_server();
+    let (controller, mut stream) = attach_client(&mut server);
+    let _source = start_barrier_test_media(&mut server);
+    for message in [
+        resize_message(7, false, 2, 40, 10),
+        ClientMessage::CommitLayout {
+            base_rev: 0,
+            layout: shared_layout_for_panes(&[(7, 2)]),
+            live: false,
+        },
+    ] {
+        protocol::write_frame(&mut stream, &message).unwrap();
+    }
+    drop(stream);
+    server.pump_clients();
+    assert!(server.client_attached(controller));
+    assert!(server.media.client_disconnected(controller));
+    finish_media_events(&mut server);
+    assert_eq!(server.layout_rev, 1);
+    assert!(!server.client_attached(controller));
+}
+
+#[test]
+fn media_in_one_pane_does_not_fence_other_panes_or_layout_metadata() {
+    let mut server = media_test_server();
+    server.panes.insert(8, test_pane(2));
+    let (controller, _stream) = attach_client(&mut server);
+    let _source = start_barrier_test_media(&mut server);
+    server.process_client_frame(
+        controller,
+        Frame::Control(resize_message(8, false, 2, 40, 10)),
+    );
+    let mut palette = test_palette();
+    palette.background = Some(Color::Red);
+    server.process_client_frame(
+        controller,
+        Frame::Control(ClientMessage::SetPalette {
+            pane_id: 8,
+            local: false,
+            generation: 2,
+            palette,
+        }),
+    );
+    assert_eq!(
+        server
+            .panes
+            .get_mut(&8)
+            .unwrap()
+            .screen_without_change()
+            .palette()
+            .background,
+        Some(Color::Red)
+    );
+    palette.background = Some(Color::Blue);
+    server.process_client_frame(
+        controller,
+        Frame::Control(ClientMessage::ConfigurePane {
+            pane_id: 8,
+            local: false,
+            generation: 2,
+            palette: Some(palette),
+            title: Some("other pane".into()),
+            cwd: None,
+        }),
+    );
+    assert_eq!(server.panes[&8].cols, 40);
+    assert_eq!(server.panes[&8].title.as_deref(), Some("other pane"));
+    assert_eq!(
+        server
+            .panes
+            .get_mut(&8)
+            .unwrap()
+            .screen_without_change()
+            .palette()
+            .background,
+        Some(Color::Blue)
+    );
+    server.process_client_frame(
+        controller,
+        Frame::Control(ClientMessage::CommitLayout {
+            base_rev: 0,
+            layout: shared_layout_for_panes(&[(7, 2), (8, 2)]),
+            live: false,
+        }),
+    );
+    assert_eq!(server.layout_rev, 1, "metadata does not mutate a screen");
+    assert!(server.media.pending());
+    assert!(!server.media.client_fenced(controller));
+    finish_media_events(&mut server);
+}
+
+#[test]
+fn media_fences_are_per_client_and_match_the_screen_owner_and_generation() {
+    let mut server = media_test_server();
+    let (controller, _controller_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    server.local_panes.insert((follower, 7), test_pane(2));
+    let _source = start_barrier_test_media(&mut server);
+    // A stale resize does not depend on the current screen.
+    server.process_client_frame(
+        controller,
+        Frame::Control(resize_message(7, false, 3, 60, 10)),
+    );
+    assert!(!server.media.client_fenced(controller));
+    server.process_client_frame(
+        controller,
+        Frame::Control(resize_message(7, false, 2, 40, 10)),
+    );
+    assert!(server.media.client_fenced(controller));
+    server.process_client_frame(follower, Frame::Control(resize_message(7, true, 2, 50, 10)));
+    assert_eq!(server.local_panes[&(follower, 7)].cols, 50);
+    assert_eq!(server.panes[&7].cols, 20);
+    // An event following the blocked barrier may still update another screen.
+    server.panes.insert(8, test_pane(2));
+    queue_media_bytes(&server, 8, b"independent output".to_vec());
+    let event = server
+        .next_ready_event()
+        .expect("other pane can bypass the fence");
+    assert!(matches!(event, ServerEvent::Pty(None, 8, 2, _)));
+    server.handle_event(event);
+    finish_media_events(&mut server);
+    assert_eq!(server.panes[&7].cols, 40);
+    assert!(!server.media.client_fenced(controller));
 }

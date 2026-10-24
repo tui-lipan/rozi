@@ -11,6 +11,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use tui_lipan::prelude::{GitChangeState, GitFileStatus};
+
 use crate::git::command::{self, BROWSE_TIMEOUT};
 use crate::session::protocol::{WireChange, WireChangeState, WireDirEntry};
 
@@ -225,49 +227,40 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<PorcelainRecord<'_>> {
         if path.is_empty() {
             continue;
         }
-        let record = if x == '!' && y == '!' {
-            PorcelainRecord {
+        let ignored = (x, y) == ('!', '!');
+        let status = GitFileStatus::from_porcelain_xy(x, y);
+        // Preserve Rozi's existing wire classification of untracked entries as staged.
+        // The framework decoder owns XY semantics; this is a domain-boundary conversion.
+        let (staged, unstaged) = match status {
+            Some(GitFileStatus {
                 staged: None,
-                unstaged: None,
-                ignored: true,
-                path,
-            }
-        } else if x == '?' && y == '?' {
-            PorcelainRecord {
-                staged: Some(WireChangeState::Untracked),
-                unstaged: None,
-                ignored: false,
-                path,
-            }
-        } else if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
-            PorcelainRecord {
-                staged: Some(WireChangeState::Conflicted),
-                unstaged: None,
-                ignored: false,
-                path,
-            }
-        } else {
-            PorcelainRecord {
-                staged: state_from_code(x),
-                unstaged: state_from_code(y),
-                ignored: false,
-                path,
-            }
+                unstaged: Some(GitChangeState::Untracked),
+            }) => (Some(WireChangeState::Untracked), None),
+            Some(status) => (
+                status.staged.map(state_to_wire),
+                status.unstaged.map(state_to_wire),
+            ),
+            None => (None, None),
+        };
+        let record = PorcelainRecord {
+            staged,
+            unstaged,
+            ignored,
+            path,
         };
         out.push(record);
     }
     out
 }
 
-fn state_from_code(code: char) -> Option<WireChangeState> {
-    match code {
-        'A' => Some(WireChangeState::Added),
-        'M' => Some(WireChangeState::Modified),
-        'D' => Some(WireChangeState::Deleted),
-        'R' | 'C' => Some(WireChangeState::Renamed),
-        '?' => Some(WireChangeState::Untracked),
-        'U' => Some(WireChangeState::Conflicted),
-        _ => None,
+fn state_to_wire(state: GitChangeState) -> WireChangeState {
+    match state {
+        GitChangeState::Added => WireChangeState::Added,
+        GitChangeState::Modified => WireChangeState::Modified,
+        GitChangeState::Deleted => WireChangeState::Deleted,
+        GitChangeState::Renamed => WireChangeState::Renamed,
+        GitChangeState::Untracked => WireChangeState::Untracked,
+        GitChangeState::Conflicted => WireChangeState::Conflicted,
     }
 }
 
@@ -276,15 +269,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_porcelain_states() {
-        let raw = b" M src/lib.rs\0A  src/new.rs\0?? scratch.txt\0UU merge.rs\0";
+    fn porcelain_records_convert_to_rozi_wire_statuses() {
+        let raw = b"AM mixed.rs\0?? scratch.txt\0UU merge.rs\0";
         let parsed = parse_porcelain_z(raw);
-        assert_eq!(parsed[0].unstaged, Some(WireChangeState::Modified));
-        assert_eq!(parsed[0].path, "src/lib.rs");
-        assert_eq!(parsed[1].staged, Some(WireChangeState::Added));
-        assert_eq!(parsed[2].staged, Some(WireChangeState::Untracked));
-        assert_eq!(parsed[3].staged, Some(WireChangeState::Conflicted));
-        assert!(parsed.iter().all(|record| !record.ignored));
+        assert_eq!(
+            parsed,
+            vec![
+                PorcelainRecord {
+                    path: "mixed.rs",
+                    staged: Some(WireChangeState::Added),
+                    unstaged: Some(WireChangeState::Modified),
+                    ignored: false
+                },
+                PorcelainRecord {
+                    path: "scratch.txt",
+                    staged: Some(WireChangeState::Untracked),
+                    unstaged: None,
+                    ignored: false
+                },
+                PorcelainRecord {
+                    path: "merge.rs",
+                    staged: Some(WireChangeState::Conflicted),
+                    unstaged: None,
+                    ignored: false
+                },
+            ]
+        );
+        let (changes, truncated) = changes_from_porcelain("/repo", raw);
+        assert!(!truncated);
+        assert_eq!(
+            changes,
+            vec![
+                WireChange {
+                    path: "mixed.rs".into(),
+                    state: WireChangeState::Added,
+                    staged: true
+                },
+                WireChange {
+                    path: "scratch.txt".into(),
+                    state: WireChangeState::Untracked,
+                    staged: true
+                },
+                WireChange {
+                    path: "merge.rs".into(),
+                    state: WireChangeState::Conflicted,
+                    staged: true
+                },
+            ]
+        );
     }
 
     /// `??` and `!!` both mean "not tracked", but only `!!` is ignored. An untracked *directory* is
@@ -310,6 +342,113 @@ mod tests {
         let parsed = parse_porcelain_z(raw);
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].path, "we\nird.txt");
+    }
+
+    #[test]
+    fn server_git_execution_produces_directory_and_change_wire_statuses() {
+        let dir = tempfile::tempdir().expect("scratch repository");
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .expect("git is installed");
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        for name in ["modified", "deleted", "renamed", "conflict"] {
+            std::fs::write(dir.path().join(name), "base\n").unwrap();
+        }
+        std::fs::write(dir.path().join(".gitignore"), "ignored\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        std::fs::write(dir.path().join("modified"), "edited\n").unwrap();
+        std::fs::remove_file(dir.path().join("deleted")).unwrap();
+        git(&["mv", "renamed", "destination"]);
+        std::fs::write(dir.path().join("added"), "added\n").unwrap();
+        git(&["add", "added"]);
+        std::fs::write(dir.path().join("untracked"), "new\n").unwrap();
+        std::fs::write(dir.path().join("ignored"), "ignored\n").unwrap();
+        // Put all three merge stages into the real index. This generates UU without branches,
+        // merge drivers, user identity, or machine Git configuration affecting the fixture.
+        let hash = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["rev-parse", "HEAD:conflict"])
+            .output()
+            .unwrap();
+        let hash = String::from_utf8(hash.stdout).unwrap();
+        let hash = hash.trim();
+        let mut process = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["update-index", "--index-info"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        write!(process.stdin.take().unwrap(), "0 {hash}\tconflict\n100644 {hash} 1\tconflict\n100644 {hash} 2\tconflict\n100644 {hash} 3\tconflict\n").unwrap();
+        assert!(process.wait().unwrap().success());
+
+        let root = dir.path().to_str().unwrap();
+        let (changes, error) = list_changes(root);
+        assert_eq!(error, None);
+        for (name, state, staged) in [
+            ("modified", WireChangeState::Modified, false),
+            ("deleted", WireChangeState::Deleted, false),
+            ("added", WireChangeState::Added, true),
+            ("untracked", WireChangeState::Untracked, true),
+            ("conflict", WireChangeState::Conflicted, true),
+        ] {
+            assert!(
+                changes.iter().any(|entry| entry.path == name
+                    && entry.state == state
+                    && entry.staged == staged),
+                "{name}: {changes:?}"
+            );
+        }
+        // The browse command intentionally disables rename detection, retaining delete/add wire
+        // entries even though the canonical decoder also supports R and C statuses.
+        assert!(
+            changes
+                .iter()
+                .any(|entry| entry.path == "destination" && entry.state == WireChangeState::Added)
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|entry| entry.path == "renamed" && entry.state == WireChangeState::Deleted)
+        );
+        assert!(!changes.iter().any(|entry| entry.path == "ignored"));
+        let (entries, error) = list_directory(root, true);
+        assert_eq!(error, None);
+        for (name, staged, unstaged, ignored) in [
+            ("modified", None, Some(WireChangeState::Modified), false),
+            ("added", Some(WireChangeState::Added), None, false),
+            ("untracked", Some(WireChangeState::Untracked), None, false),
+            ("conflict", Some(WireChangeState::Conflicted), None, false),
+            ("ignored", None, None, true),
+        ] {
+            let entry = entries.iter().find(|entry| entry.name == name).unwrap();
+            assert_eq!(
+                (entry.git_staged, entry.git_unstaged, entry.ignored),
+                (staged, unstaged, ignored),
+                "{name}"
+            );
+        }
     }
 
     #[test]

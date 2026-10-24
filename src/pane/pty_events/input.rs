@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use tui_lipan::core::event::MouseKind;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -190,7 +191,11 @@ pub(crate) fn paste_pane_bytes(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Ve
     }
 }
 
-pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
+pub(crate) fn handle_pane_mouse(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    event: ForwardedMouseEvent,
+) -> Update {
     // A pane running mouse tracking consumes forwarded events before this pane's `MouseRegion`.
     // The framework bubbles a left press that only focuses the terminal, but other focus-bearing
     // reports (right press, drag, scroll) arrive here after it has moved its own focus. Reconciling
@@ -204,15 +209,12 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
     // Clicking or scrolling a pane answers its mark. A mouse-tracking child consumes these
     // interactions, so the forwarded report is the only sign of them. Pointer motion and button
     // releases leave marks intact.
-    let acknowledged = (crate::pane::pty_events::pointer_flow::is_press_report(&bytes)
-        || crate::pane::pty_events::pointer_flow::is_scroll_report(&bytes))
-        && crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
+    let acknowledged = matches!(
+        event.kind,
+        MouseKind::Down(_) | MouseKind::ScrollUp | MouseKind::ScrollDown
+    ) && crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
-    let hover = crate::ops::focus::hover_focus_pane(
-        ctx,
-        id,
-        crate::pane::pty_events::pointer_flow::mouse_report_mods(&bytes),
-    );
+    let hover = crate::ops::focus::hover_focus_pane(ctx, id, event.mods);
     let hover = if acknowledged { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
         // Pointer motion arrives continuously; a renewed rejection draws nothing new, so fall back
@@ -233,7 +235,7 @@ pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: V
         if let Some(client) = client {
             // Motion is sampled at the active client frame cadence; state changes always go. See
             // `pty_events::pointer_flow`.
-            if let Some(bytes) = pane.terminal.pointer_flow.admit(bytes, interval) {
+            if let Some(bytes) = pane.terminal.pointer_flow.admit(event, interval) {
                 client.send_continuous_input(id, pane.pty_generation, local, bytes);
             } else {
                 hold = pane.terminal.pointer_flow.arm(interval);

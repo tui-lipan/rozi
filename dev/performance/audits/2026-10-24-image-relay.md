@@ -3,6 +3,70 @@
 ## Baseline
 
 Measured on 2026-10-24 with Rozi `2518aa26` plus the stage-2 benchmark extension, registry
+tui-lipan 0.28.5, Rust 1.96.1, Linux 7.2.8-9-omarchy, and an AMD Ryzen 7 9700X. The source SHA-256
+was `5ab7edcc21ba27275a8414308d296dbccf9f92487f72e2751bf715f62abf84e2` for
+`benches/server_fairness.rs` and
+`9e9a77bec8dbd64aab480912bf2d26b6d0d4f0a370339401486c50436292412b` for
+`src/platform/process/linux.rs`, which supplies the CPU sample.
+The shipping bench profile uses optimization level 3, thin LTO and one codegen unit.
+Each pane is 250 columns by 60 rows with 5,000 scrollback lines. There is no graphical host.
+The ordinary desktop remained running; no compiler was running when the matrix started.
+
+Build once with `cargo bench --bench server_fairness --no-run`, then run:
+
+```sh
+target/release/deps/server_fairness-c3bde5a23ebcbf9b --image-relay-probe
+```
+
+Three repetitions, two seconds of text emissions per case, 5 ms between text lines, and image
+submissions at 10 Hz. Before timing, each image case submits one image, waits for its
+acknowledgement and for empty PTY ingress and client outboxes, then resets its counters, so the
+first timed image is not cold. Latency runs from immediately before the text helper's stdout write
+to the driver's frame-drain thread taking the decoded frame from the session client. Pending images
+drain after the interval. It excludes host rendering and input latency. PNG and raw data contain
+deterministic opaque noise. The MiB column is decoded RGBA size; PNG file sizes for 1/8/32/64 MiB
+were 900,445 / 7,203,203 / 28,813,213 / 57,626,047 bytes. Raw files reach 67,108,864 bytes, the
+transmit limit. Generated fixture preparation is outside timing.
+
+CPU is the server's user plus system time from `/proc/<pid>/stat` over the two seconds of offered
+load, ending when submission stops and before the STOP request and backlog drain. It is
+identity-checked by process start time and normalized to one core; at 100 ticks per second the
+resolution is 0.5 percent. The table reports medians of each run's p50, p95 and CPU, and the
+largest maximum across runs. It is not a pooled latency distribution. Raw 64 MiB relayed p95 varied
+from 4275.8 to 4300.1 ms. No CI threshold is justified by this short local sample.
+
+| Format | MiB | Relay | p50 ms | p95 ms | Worst ms | Server CPU % |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Text only | 0 | false | 0.020 | 0.039 | 0.940 | 0.0 |
+| PNG | 1 | false | 0.020 | 0.036 | 2.080 | 2.5 |
+| PNG | 1 | true | 0.026 | 0.544 | 5.645 | 3.0 |
+| PNG | 8 | false | 0.021 | 9.927 | 15.268 | 15.0 |
+| PNG | 8 | true | 8.403 | 40.565 | 46.713 | 28.5 |
+| PNG | 32 | false | 8.785 | 54.227 | 59.447 | 59.5 |
+| PNG | 32 | true | 1096.811 | 2001.391 | 2106.606 | 98.0 |
+| PNG | 64 | false | 99.849 | 307.158 | 355.893 | 99.5 |
+| PNG | 64 | true | 2551.568 | 3456.459 | 3562.370 | 99.5 |
+| Raw RGBA | 1 | false | 0.021 | 0.034 | 2.230 | 0.0 |
+| Raw RGBA | 1 | true | 0.026 | 0.703 | 5.982 | 4.0 |
+| Raw RGBA | 8 | false | 0.026 | 0.043 | 1.986 | 1.0 |
+| Raw RGBA | 8 | true | 11.430 | 40.546 | 48.962 | 35.0 |
+| Raw RGBA | 32 | false | 0.021 | 0.044 | 2.752 | 4.0 |
+| Raw RGBA | 32 | true | 1304.701 | 2209.384 | 2325.335 | 100.0 |
+| Raw RGBA | 64 | false | 0.027 | 7.279 | 13.101 | 12.5 |
+| Raw RGBA | 64 | true | 3383.738 | 4288.116 | 4396.121 | 100.0 |
+
+The baseline justifies deferred media work. A full raw relay monopolizes the caller through
+compression, base64 and chunk construction; PNG acquisition/decoding also stalls unrelated text
+without relay. Move acquisition, validation/decoding and construction of relayed output to bounded
+workers, then commit results through the original retained parser and transaction classifier.
+
+Consuming-media results are recorded separately below. The baseline above uses the reviewed
+probe from PR #240.
+
+
+## Historical pre-review baseline
+
+Measured on 2026-10-24 with Rozi `2518aa26` plus the stage-2 benchmark extension, registry
 tui-lipan 0.28.5, Rust 1.96.1, Linux 7.2.8-9-omarchy, and an AMD Ryzen 7 9700X. The benchmark
 source SHA-256 was `27a4da2cfd9bc4c1de5c75f1c63491fffac5154f696edd435dff237a6ede6b0e`.
 The shipping bench profile uses optimization level 3, thin LTO and one codegen unit.
@@ -50,16 +114,12 @@ No CI threshold is justified by this short local sample.
 | Raw RGBA | 64 | false | 0.163 | 6.901 | 13.684 | 11.5 |
 | Raw RGBA | 64 | true | 4196.272 | 5094.558 | 5427.556 | 100.0 |
 
-The baseline justifies deferred media work. A full raw relay monopolizes the caller through
-compression, base64 and chunk construction; PNG acquisition/decoding also stalls unrelated text
-without relay. Move acquisition, validation/decoding and construction of relayed output to bounded
-workers, then commit results through the original retained parser and transaction classifier.
 
-The following implementation measurements fill the consuming-media slots. The baseline above
-remains the stage-2 result before relay mechanics changed.
+## Historical pre-review preparation and emission measurements
 
-
-## Deferred preparation and bounded emission
+These historical measurements used the original, pre-review probe. They must be compared only
+with the historical baseline below, not the reviewed baseline above. The drain timestamps, warmup
+and CPU boundaries differ. They are retained with their original source labels.
 
 Remeasured on the same machine and profile with Rozi `62f96de5` and tui-lipan
 `294220b137d330916f332f794ddc883469efba5a`. This includes the reviewed Apple-only mmap
@@ -75,8 +135,7 @@ env -u LD_PRELOAD \
   target/release/deps/server_fairness-ea92c1dad8642605 --image-relay-probe
 ```
 
-All 147 runs completed, three repetitions of 49 cases. The same latency definition and
-aggregation apply. `f`, `t`, and `s` mean regular file, consuming temporary file, and consuming
+All 147 runs completed, three repetitions of 49 cases. The historical baseline latency definition and aggregation apply. `f`, `t`, and `s` mean regular file, consuming temporary file, and consuming
 POSIX shared memory. A remote reader is a real draining attachment with
 `shares_filesystem: false`. All attachments receive one shared pane output representation.
 Consuming media is inline even without a remote reader. Each image case offers 20 images.
@@ -213,22 +272,3 @@ changes during preparation, source failure, offset/size ranges, one-time consump
 replay and late attachment during emitted chunks. CI on the stage-1 and stage-3 framework PRs
 is green, including the macOS acquisition fixtures. No macOS runtime was available locally;
 Windows was cross-checked, not run locally. NetBSD stage-4 runtime was not exercised.
-
-Stage 1 is tui-lipan PR #369, stage 2 is Rozi PR #240, and stage 3 is tui-lipan PR #370.
-Stage 4 remains the local `feat/server-consuming-media` branch in `rozi-consuming-media`,
-stacked on the benchmark branch. Per the maintainer's request, none of these PRs was merged
-and no framework version was released. The reviewed stage-1 platform split was kept:
-descriptor acquisition outside Apple avoids a sender-truncation mmap SIGBUS hazard; Apple
-uses mmap because shm descriptors cannot be read or sought there. The Apple mapping covers
-only the needed page-aligned window. An opened object is unlinked once after the acquisition
-attempt, including failures, so abandoned transfers do not leak.
-
-The ignored local Cargo patch points at `../tui-lipan-image-relay`. Its lockfile rewrites are
-not committed. After manually merging and releasing the framework, update Rozi's `tui-lipan`
-version requirement to that published breaking release, remove the ignored override, resolve
-the registry lockfile with Cargo, rerun baseline and dependency checks, then open the stage-4
-PR. The branch intentionally cannot build against its old registry dependency without the
-local override. The unrelated existing framework shared-frame producer's Darwin descriptor
-writer limitation remains outside the acquisition change; the macOS reader fixtures use an
-independent mmap writer. No CI performance threshold was added because these are short local
-samples. No speculative asynchronous parser work beyond the measured named-media path was added.

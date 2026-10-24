@@ -207,3 +207,35 @@ fn workspace_slide_handles_empty_pages_zero_duration_and_attachment_changes() {
         assert!(!grid(&backend).contains("SECOND"));
     });
 }
+
+#[test]
+fn workspace_slide_keeps_same_target_timing_and_can_animate_after_a_snap() {
+    run(|| {
+        let mut backend = backend();
+        switch(&mut backend, 1);
+        backend.advance(Duration::from_millis(400));
+        // Ordinary reads of the same target retain the duration they started with.
+        backend.state_mut().config.animations.workspace_duration = Duration::from_secs(20);
+        backend.render();
+        backend.advance(Duration::from_millis(1700));
+        let frame = grid(&backend);
+        assert!(frame.contains("SECOND"), "{frame}");
+        assert!(
+            !frame.contains("FIRST"),
+            "same-target config did not restart: {frame}"
+        );
+
+        switch(&mut backend, 0);
+        backend.advance(Duration::from_millis(100));
+        backend.state_mut().config.animations.workspace = false;
+        backend.render();
+        assert!(!grid(&backend).contains("SECOND"));
+        backend.state_mut().config.animations.workspace = true;
+        backend.state_mut().config.animations.workspace_duration = Duration::from_secs(2);
+        switch(&mut backend, 1);
+        backend.advance(Duration::from_millis(500));
+        assert!(grid(&backend).contains("SECOND"));
+        backend.advance(Duration::from_secs(2));
+        assert!(!grid(&backend).contains("FIRST"));
+    });
+}

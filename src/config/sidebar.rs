@@ -886,13 +886,13 @@ mod tests {
     #[test]
     fn a_builtin_tab_table_points_at_its_settings_table() {
         let (config, warnings) = parse(
-            r#"tabs = [{ name = "files", explorer = true }, { name = "panes", label = "Mine", command = "ls" }]"#,
+            r#"tabs = [{ name = "files", explorer = false }, { name = "panes", label = "Mine", command = "ls" }]"#,
         );
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             [SidebarTabId::new("files"), SidebarTabId::new("panes")]
         );
-        assert!(!tree(&config, "files").explorer);
+        assert!(tree(&config, "files").explorer);
         assert!(
             warnings
                 .iter()
@@ -1061,7 +1061,7 @@ mod tests {
             tabs = ["files", "git"]
             [settings.files]
             show_hidden = false
-            explorer = true
+            explorer = false
             diff_stats = true
             max_entries = 50
             root = "repo"
@@ -1074,7 +1074,7 @@ mod tests {
         let files = tree(&config, "files");
         assert_eq!(files.root, SidebarTreeRoot::Repo);
         assert!(!files.show_hidden);
-        assert!(files.explorer && files.diff_stats);
+        assert!(!files.explorer && files.diff_stats);
         assert_eq!(files.max_entries, 50);
         assert_eq!(
             files.on_click,
@@ -1117,7 +1117,7 @@ mod tests {
         );
         assert_eq!(tree(&config, "files").root, SidebarTreeRoot::Cwd);
         assert_eq!(tree(&config, "files").max_entries, 1);
-        assert!(!tree(&config, "files").explorer);
+        assert!(tree(&config, "files").explorer);
         for expected in [
             "`elsewhere` is unknown",
             "max_entries` 0 is out of range; clamped to 1",

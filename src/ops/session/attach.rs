@@ -223,6 +223,14 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
             .is_some_and(|pane| pane.pty_generation == generation)
         {
             crate::pane::lifecycle::remove_pane_after_exit(ctx, pane_id, false);
+            // The pane disappeared off screen. Run normal focus/viewport teardown above, then
+            // prune before revealing this attachment rather than retaining an unseen exit effect.
+            // Sending the lifecycle message also preserves the retired-screen expiry command.
+            ctx.link().send(crate::Msg::PruneClosed(
+                ctx.state.runtime_epoch,
+                pane_id,
+                generation,
+            ));
         }
     }
 }

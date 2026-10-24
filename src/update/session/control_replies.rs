@@ -663,10 +663,16 @@ fn background_spawn_result(
             return Update::none();
         }
         live = reply.ok;
-        // A rejected transaction never created this placeholder on the server. It cannot become
-        // shared merely because its owner has since parked or lost control.
-        if failed_transaction {
-            pane.closing = true;
+        // Keep the placeholder open until the deferred close can repair focus, Scrollable
+        // state, and pane retention when this attachment returns to the foreground in control.
+        if failed_transaction
+            && !attachment
+                .pending_background_closes
+                .contains(&(reply.pane_id, reply.generation))
+        {
+            attachment
+                .pending_background_closes
+                .push((reply.pane_id, reply.generation));
         }
     }
     if !reply.ok && attachment.is_controller() {

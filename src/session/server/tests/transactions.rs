@@ -600,3 +600,131 @@ fn attaching_to_a_layout_with_a_retained_exit_preserves_its_status() {
         );
     });
 }
+
+#[test]
+fn a_parked_failed_spawn_is_removed_and_repairs_scrollable_focus_on_return() {
+    startup_test(|| {
+        use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
+        let activate = |ui: &mut tui_lipan::TestBackend<crate::AppRoot>, name: &str| {
+            ui.dispatch(crate::Msg::SidebarSessionActivate(DiscoveredSession {
+                name: name.into(),
+                status: DiscoveredSessionStatus::Running {
+                    panes: 1,
+                    clients: 1,
+                    has_layout: true,
+                },
+                origin: Default::default(),
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            }))
+            .unwrap();
+        };
+        for grant_before_return in [true, false] {
+            let mut test = StartupSpawns::new(true);
+            test.step(); // First pane starts; the failing second transaction is now in flight.
+            test.ui.state_mut().current_mut().pending_spawns.clear();
+            let generation = {
+                let ws = &mut test.ui.state_mut().current_mut().workspaces[0];
+                ws.panes.retain(|pane| pane.id != 3); // This case needs only a survivor and a failure.
+                ws.tile_tree = crate::layout::effective_tile_tree(ws, None);
+                ws.layout_kind = crate::state::LayoutKind::Scrollable;
+                ws.set_scrollable_viewport(Some(2), crate::state::ScrollableRevealEdge::Right);
+                ws.panes
+                    .iter()
+                    .find(|pane| pane.id == 2)
+                    .unwrap()
+                    .pty_generation
+            };
+            crate::ops::focus::focus_pane(test.ui.state_mut(), 2);
+            let request = test
+                .outbound
+                .try_iter()
+                .find_map(|frame| match frame {
+                    crate::session::client::ClientOutbound::Control(
+                        message @ ClientMessage::SpawnPane { pane_id: 2, .. },
+                    ) => Some(message),
+                    _ => None,
+                })
+                .expect("the second spawn was submitted");
+            let failure = test.server.handle_message(test.controller, request);
+            assert!(!accepted(&failure));
+
+            let mut other = crate::state::Attachment::new();
+            other.epoch = 9;
+            other.session_name = Some("other".into());
+            other.session_attached = true;
+            other.connection = crate::state::ConnectionState::Connected;
+            let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+            other.session_client = Some(client);
+            let mut shared = crate::state::SharedSessionState::new(99);
+            shared.controller = Some(99);
+            other.shared = Some(shared);
+            test.ui.state_mut().background.insert(9, other);
+            activate(&mut test.ui, "other");
+            assert_eq!(test.ui.state().runtime_epoch, 9);
+            assert!(
+                test.ui.state().background[&0]
+                    .shared
+                    .as_ref()
+                    .unwrap()
+                    .spawn_in_flight
+                    .is_some()
+            );
+
+            for (_, message) in failure {
+                test.ui
+                    .dispatch(crate::session::bootstrap::server_message_to_msg(
+                        0,
+                        Frame::Control(message),
+                    ))
+                    .unwrap();
+            }
+            let parked = &test.ui.state().background[&0];
+            assert!(parked.shared.as_ref().unwrap().spawn_in_flight.is_none());
+            assert_eq!(parked.pending_background_closes, [(2, generation)]);
+            assert!(
+                !parked.workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == 2)
+                    .unwrap()
+                    .closing,
+                "the foreground close lifecycle must still be able to run"
+            );
+
+            let grant = crate::Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: Some(test.controller),
+                reason: protocol::ControllerChangeReason::Granted,
+            };
+            if grant_before_return {
+                test.ui.dispatch(grant.clone()).unwrap();
+            }
+            activate(&mut test.ui, "startup");
+            if !grant_before_return {
+                assert_eq!(
+                    test.ui.state().current().pending_background_closes,
+                    [(2, generation)]
+                );
+                test.ui.dispatch(grant).unwrap();
+            }
+            let state = test.ui.state();
+            assert_eq!(state.runtime_epoch, 0);
+            assert!(state.current().pending_background_closes.is_empty());
+            assert!(
+                crate::pane::lifecycle::find_pane(state, 2).is_none(),
+                "failed pane must actually be pruned"
+            );
+            assert_eq!(state.current().focused_pane, Some(1));
+            assert_eq!(state.current().workspaces[0].focused_pane, Some(1));
+            assert_ne!(state.current().workspaces[0].scrollable_anchor, Some(2));
+            test.ui.render();
+            assert_eq!(
+                test.ui.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::pane_terminal_key(1).as_str()),
+                "the surviving pane must own keyboard focus without a click"
+            );
+        }
+    });
+}

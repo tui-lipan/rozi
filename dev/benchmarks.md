@@ -475,3 +475,34 @@ placement changes. The server's snapshot counts its authoritative parser mutatio
 includes native-scene operations, graphics command bytes, region merging and host-frame interval
 percentiles. Percentiles retain the newest 1024 successful intervals; measure during sustained
 output, since an idle gap is a real interval too. Composed and native host frames both participate.
+
+## Named-image relay fairness
+
+Build `server_fairness` once, then run its opt-in probe without Criterion sampling:
+
+```sh
+cargo bench --bench server_fairness --no-run
+# Use the executable path printed by Cargo:
+/path/to/server_fairness --image-relay-probe
+```
+
+The probe runs three repetitions of ordinary text alone and a second pane submitting named files
+at 10 Hz. Both PNG and raw RGBA use deterministic opaque noise at 1, 8, 32 and 64 MiB of decoded
+pixels. PNG results report their compressed file size separately; raw files reach the 64 MiB
+transmit limit. Corpus creation is outside timing. Local cases attach one client; relay cases add
+a draining read-only client with `shares_filesystem: false`. Consuming-media cases are reserved
+for the server support change.
+
+Pane A emits a short text line every 5 ms. Its timestamp immediately precedes its stdout write;
+receipt at the driver's frame drain gives output delay, including PTY, server and IPC scheduling.
+The two-second sample reports p50, p95 and maximum delay. It excludes an input round trip and host
+rendering. The driver polls every 250 microseconds. Both processes use the same machine clock;
+a wall-clock adjustment invalidates the run. Pending image commands drain before cleanup.
+No CI timing threshold is imposed.
+
+`ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux, set
+`ROZI_IMAGE_PROBE_CPU_SAMPLER` to the `kitty-rendering-validation` skill's
+`scripts/sample_processes.py` to collect bounded, identity-checked server CPU samples alongside
+each case. This requires Python 3. The reported weighted mean is percent of one core over two
+seconds, with sampler startup slightly after latency timing starts. Run without compilation or
+other heavy work, retain the exact binary revisions, and compare repeated runs on the same host.

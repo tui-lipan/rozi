@@ -140,12 +140,13 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
             "{grid}"
         );
 
-        // A toggle flips on Enter.
-        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        // A toggle flips on Enter. Files has its search bar on by default.
         assert!(files(&b).explorer);
+        b.send_key(key(KeyCode::Enter, KeyMods::NONE)).unwrap();
+        assert!(!files(&b).explorer);
         assert_eq!(
             saved_files_setting("explorer").and_then(|v| v.as_bool()),
-            Some(true)
+            Some(false)
         );
         assert!(b.state().tab_settings.is_some(), "the picker stays open");
 
@@ -219,7 +220,7 @@ fn a_tabs_settings_are_edited_from_sidebar_tabs_and_saved() {
         b.send_key(key(KeyCode::Char('r'), KeyMods::CTRL)).unwrap();
         assert_eq!(files(&b).max_entries, 2000);
         assert!(saved_files_setting("max_entries").is_none());
-        assert!(files(&b).explorer, "other settings are untouched");
+        assert!(!files(&b).explorer, "other settings are untouched");
 
         // Esc leads back to Sidebar tabs on the same row, then to Settings.
         b.send_key(key(KeyCode::Esc, KeyMods::NONE)).unwrap();

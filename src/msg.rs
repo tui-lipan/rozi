@@ -579,7 +579,7 @@ pub enum Msg {
     PaneLinkActivate(PaneId, std::sync::Arc<str>),
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
     ForwardPrefix(KeyEvent),
-    PaneMouse(PaneId, Vec<u8>),
+    PaneMouse(PaneId, ForwardedMouseEvent),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
@@ -740,6 +740,13 @@ pub enum Msg {
     SessionOriginSet {
         epoch: u64,
         origin: session::origin::SessionOrigin,
+    },
+    SessionPaneMetadata {
+        epoch: u64,
+        local: bool,
+        meta: crate::session::protocol::PaneMeta,
+        cell_width: u16,
+        cell_height: u16,
     },
     SessionLayoutCommitted {
         epoch: u64,

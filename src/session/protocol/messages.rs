@@ -103,6 +103,8 @@ pub enum ClientMessage {
         min_protocol_version: u32,
     },
     SpawnPane {
+        /// Required for shared panes; forbidden for owner-local panes.
+        placement: Option<SpawnPlacementCommit>,
         pane_id: PaneId,
         /// Owner-scoped transient pane. Local panes may reuse another client's pane id, are
         /// operable by their owner without the layout lease, and die with that client.
@@ -227,6 +229,8 @@ pub enum ClientMessage {
     /// than a per-client view. Sent after a config reload; a session that never reloads gets its
     /// definitions from the same load at startup.
     ReloadAgents,
+    /// Reload the server's spawn policy and capacity for future panes.
+    ReloadSpawnPolicy,
     /// Controller-only: re-read the host config for its agent sleep policy. No client payload.
     ReloadSleepPolicy,
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
@@ -503,6 +507,13 @@ pub enum ControllerChangeReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMessage {
+    /// Sent before a new pane's layout or output, including to the spawning client.
+    PaneMetadata {
+        local: bool,
+        meta: super::PaneMeta,
+        cell_width: u16,
+        cell_height: u16,
+    },
     /// Acknowledges one upload step. The final acknowledgement follows path insertion.
     AttachmentAck {
         transfer_id: u64,
@@ -757,4 +768,11 @@ pub enum AttachmentOperation {
     },
     Finish,
     Cancel,
+}
+
+/// An optimistic document publication committed atomically with a shared pane spawn.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpawnPlacementCommit {
+    pub base_rev: u64,
+    pub layout: crate::layout::shared::SharedLayout,
 }

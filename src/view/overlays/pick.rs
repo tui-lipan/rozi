@@ -4,7 +4,7 @@ use super::*;
 const PICK_ROW_CHROME: usize = 4;
 /// Blank cells kept between a label and the description right-aligned after it. The description is
 /// right-aligned, so this is what the reader actually sees between the two.
-const PICK_DESCRIPTION_GAP: usize = 3;
+const PICK_DESCRIPTION_GAP: usize = 2;
 /// A description shorter than this says nothing worth crowding the label for.
 const PICK_MIN_DESCRIPTION: usize = 8;
 

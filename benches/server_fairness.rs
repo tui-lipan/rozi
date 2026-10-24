@@ -12,10 +12,50 @@ use std::hint::black_box;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tui_lipan::prelude::TerminalColorPalette;
+
+fn spawn_placement(last_pane: u32) -> protocol::SpawnPlacementCommit {
+    use rozi::layout::shared::*;
+    protocol::SpawnPlacementCommit {
+        base_rev: u64::from(last_pane - 1),
+        layout: SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: 250,
+            canvas_rows: 60,
+            pane_geometry: Default::default(),
+            workspaces: vec![SharedWorkspace {
+                index: 0,
+                name: None,
+                synchronized: false,
+                layout: SharedLayoutKind::Dwindle,
+                start_axis: SharedSplitAxis::Horizontal,
+                split_ratios: Vec::new(),
+                tree: None,
+                panes: (1..=last_pane)
+                    .map(|pane_id| SharedPane {
+                        pane_id,
+                        generation: GENERATION,
+                        title: None,
+                        profile_name: None,
+                        cwd: None,
+                        launch: None,
+                        replay: false,
+                        keep_open: false,
+                        floating: false,
+                        fullscreen: false,
+                        rect: None,
+                        scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                    })
+                    .collect(),
+            }],
+        },
+    }
+}
 
 const HELPER_ARG: &str = "--server-fairness-helper";
 const IDLE_HELPER_ARG: &str = "--idle-latency-helper";
@@ -65,6 +105,8 @@ enum DrainEvent {
     Ack {
         pane_id: u32,
         key: String,
+        /// When the drain thread took the frame carrying this acknowledgement from the client.
+        received: SystemTime,
     },
 }
 
@@ -163,6 +205,7 @@ impl Drop for ServerOwner {
 }
 
 struct FairnessFixture {
+    image_output_bytes: Arc<AtomicU64>,
     client: Option<SessionClient>,
     events: mpsc::Receiver<DrainEvent>,
     drain_done: mpsc::Receiver<()>,
@@ -187,6 +230,11 @@ impl FairnessFixture {
     }
 
     fn new_with_helper(pane_count: u32, helper_args: Vec<String>) -> Self {
+        Self::with_helpers(vec![helper_args; pane_count as usize])
+    }
+
+    fn with_helpers(helpers: Vec<Vec<String>>) -> Self {
+        let pane_count = helpers.len() as u32;
         let mut server = ServerOwner::start(ServerLaunch::default());
         let session = server.session.clone();
         let endpoint = server.endpoint.clone();
@@ -216,13 +264,15 @@ impl FairnessFixture {
             }
         };
         assert!(matches!(attached, ServerMessage::Attached { .. }));
-        let (events, drain_done, drain) = spawn_drain(inbound);
+        let image_output_bytes = Arc::new(AtomicU64::new(0));
+        let (events, drain_done, drain) = spawn_drain(inbound, Arc::clone(&image_output_bytes));
 
         let helper = executable.to_string_lossy().into_owned();
         for pane_id in 1..=pane_count {
             let mut shell = vec![helper.clone()];
-            shell.extend(helper_args.iter().cloned());
+            shell.extend(helpers[pane_id as usize - 1].iter().cloned());
             client.spawn_pane(SpawnPaneRequest {
+                placement: Some(spawn_placement(pane_id)),
                 pane_id,
                 local: false,
                 generation: GENERATION,
@@ -240,6 +290,7 @@ impl FairnessFixture {
             wait_for_fairness_pane(&events, pane_id);
         }
         Self {
+            image_output_bytes,
             client: Some(client),
             events,
             drain_done,
@@ -304,7 +355,7 @@ impl FairnessFixture {
                 .events
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .expect("timed out waiting for helper acknowledgement");
-            if let DrainEvent::Ack { pane_id, key } = event
+            if let DrainEvent::Ack { pane_id, key, .. } = event
                 && pane_id == expected_pane
                 && key == expected
             {
@@ -405,6 +456,7 @@ impl SnapshotFixture {
         for pane_index in 0..pane_count {
             let pane_id = pane_index as u32 + 1;
             client.spawn_pane(SpawnPaneRequest {
+                placement: Some(spawn_placement(pane_id)),
                 pane_id,
                 local: false,
                 generation: GENERATION,
@@ -512,7 +564,12 @@ fn wait_for_server_metrics(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for the requested server metrics"
+            "timed out waiting for server metrics: {:?}",
+            client.runtime_stats().server.map(|server| (
+                server.sample.client_outboxes.clients,
+                server.sample.attach_seed.active_clients,
+                server.sample.graphics.graphics_transactions
+            ))
         );
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -603,6 +660,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn spawn_drain(
     inbound: mpsc::Receiver<Frame<ServerMessage>>,
+    image_output_bytes: Arc<AtomicU64>,
 ) -> (
     mpsc::Receiver<DrainEvent>,
     mpsc::Receiver<()>,
@@ -637,6 +695,10 @@ fn spawn_drain(
                         bytes,
                         ..
                     } => {
+                        let received = SystemTime::now();
+                        if pane_id == 2 {
+                            image_output_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                        }
                         let tail = tails.entry(pane_id).or_default();
                         tail.extend_from_slice(&bytes);
                         if !ready.get(&pane_id).copied().unwrap_or(false) && contains(tail, READY) {
@@ -655,7 +717,12 @@ fn spawn_drain(
                             let key =
                                 String::from_utf8_lossy(&tail[value_start..value_end]).into_owned();
                             tail.drain(..value_end + 2);
-                            if event_tx.send(DrainEvent::Ack { pane_id, key }).is_err() {
+                            let ack = DrainEvent::Ack {
+                                pane_id,
+                                key,
+                                received,
+                            };
+                            if event_tx.send(ack).is_err() {
                                 break;
                             }
                         }
@@ -946,6 +1013,372 @@ fn percentile(samples: &[Duration], percentile: usize) -> Duration {
     samples[rank.min(samples.len().saturating_sub(1))]
 }
 
+// Consuming-media slots are enabled after the server accepts them. Keep the same fixture and
+// timing boundary when filling them, so comparisons include acquisition, retention and relay.
+const IMAGE_PROBE_ARG: &str = "--image-relay-probe";
+const IMAGE_HELPER_ARG: &str = "--image-relay-helper";
+const IMAGE_TEXT_HELPER_ARG: &str = "--image-text-helper";
+const IMAGE_SIZES: [usize; 4] = [1, 8, 32, 64];
+
+fn image_text_helper() -> io::Result<()> {
+    disable_stdin_echo()?;
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(READY)?;
+    stdout.write_all(b"\r\n")?;
+    stdout.flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    loop {
+        // Cross-process output-only boundary. Wall-clock discontinuities invalidate this probe;
+        // the driver rejects negative delays. No input round trip is included in a sample.
+        let sent = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        writeln!(
+            stdout,
+            "ordinary text output 0123456789abcdef __ROZI_ACK_{sent}__\r"
+        )?;
+        stdout.flush()?;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn image_relay_helper(path: &str, format: u32, height: u32) -> io::Result<()> {
+    use base64::Engine as _;
+    disable_stdin_echo()?;
+    let name = base64::engine::general_purpose::STANDARD.encode(path);
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(READY)?;
+    stdout.write_all(b"\r\n")?;
+    stdout.flush()?;
+    for line in io::stdin().lock().lines() {
+        let line = line?;
+        if line == "GO" {
+            continue;
+        }
+        if line == "STOP" {
+            stdout.write_all(b"__ROZI_ACK_STOP__\r\n")?;
+            stdout.flush()?;
+            continue;
+        }
+        write!(
+            stdout,
+            "\x1b_Ga=T,t=f,f={format},s=4096,v={height},i=51,p=1,c=1,r=1,q=2;{name}\x1b\\"
+        )?;
+        if line == "WARM" {
+            stdout.write_all(b"__ROZI_ACK_WARM__\r\n")?;
+        }
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn image_corpus(path: &std::path::Path, mib: usize, format: u32) -> u32 {
+    let height = mib * 1024 * 1024 / (4096 * 4);
+    let mut pixels = vec![0; height * 4096 * 4];
+    let mut state = 0x12345678_u32;
+    for pixel in pixels.chunks_exact_mut(4) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        pixel.copy_from_slice(&state.to_le_bytes());
+        pixel[3] = 255;
+    }
+    if format == 32 {
+        std::fs::write(path, pixels).expect("write raw image corpus");
+    } else {
+        let file = std::fs::File::create(path).expect("create PNG corpus");
+        let mut encoder = png::Encoder::new(file, 4096, height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .expect("PNG header")
+            .write_image_data(&pixels)
+            .expect("PNG pixels");
+    }
+    assert!(std::fs::metadata(path).unwrap().len() <= 64 * 1024 * 1024);
+    height as u32
+}
+
+fn image_relay_probe() {
+    let repeats = std::env::var("ROZI_IMAGE_PROBE_REPEATS")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("repeat count"))
+        .unwrap_or(3);
+    for repeat in 0..repeats {
+        image_relay_case(repeat, None, false);
+        for format in [100, 32] {
+            for mib in IMAGE_SIZES {
+                for relay in [false, true] {
+                    image_relay_case(repeat, Some((format, mib)), relay);
+                }
+            }
+        }
+    }
+    eprintln!("image_relay_slots t=t pending_stage_4; t=s pending_stage_4");
+}
+
+fn unix_ms() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+
+fn attach_relay_observer(server: &ServerOwner) -> JoinHandle<io::Result<()>> {
+    let mut stream = server.endpoint.connect().expect("connect remote observer");
+    stream.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
+    protocol::write_control_frame(
+        &mut stream,
+        &ClientMessage::Attach {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: server.session.clone(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            label: "image-relay-remote".to_string(),
+            read_only: true,
+            shares_filesystem: false,
+            expected_server_nonce: None,
+        },
+    )
+    .expect("attach remote observer");
+    let attached: ServerMessage = protocol::read_frame(&mut stream).unwrap();
+    assert!(matches!(attached, ServerMessage::Attached { .. }));
+    let (reset, _) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        drain_saturation_peer(stream, protocol::FrameDecoder::default(), reset)
+    })
+}
+
+struct ImageDelaySamples {
+    epoch_start: u128,
+    epoch_end: u128,
+    delays: Vec<Duration>,
+    stopped: bool,
+    text_finished: bool,
+}
+
+impl ImageDelaySamples {
+    fn new() -> Self {
+        let epoch_start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        Self {
+            epoch_start,
+            epoch_end: epoch_start + Duration::from_secs(2).as_nanos(),
+            delays: Vec::new(),
+            stopped: false,
+            text_finished: false,
+        }
+    }
+
+    fn record(&mut self, event: DrainEvent) {
+        match event {
+            DrainEvent::Ack {
+                pane_id: 1,
+                key,
+                received,
+            } => {
+                let sent: u128 = key.parse().expect("text emission timestamp");
+                self.text_finished |= sent >= self.epoch_end;
+                if (self.epoch_start..self.epoch_end).contains(&sent) {
+                    let at = UNIX_EPOCH + Duration::from_nanos(u64::try_from(sent).unwrap());
+                    self.delays.push(
+                        received
+                            .duration_since(at)
+                            .expect("wall clock moved backwards"),
+                    );
+                }
+            }
+            DrainEvent::Ack {
+                pane_id: 2, key, ..
+            } if key == "STOP" => self.stopped = true,
+            _ => {}
+        }
+    }
+}
+
+/// Returns sorted delays, submitted images, and server CPU over the two seconds of offered load.
+fn sample_image_delays(
+    fixture: &FairnessFixture,
+    has_image: bool,
+) -> (Vec<Duration>, usize, Option<f64>) {
+    let client = fixture.client.as_ref().unwrap();
+    let start = Instant::now();
+    // Both interval marks live here so CPU and latency share one boundary.
+    let mut cpu_mark = start_cpu_sample(&fixture.server);
+    let mut cpu = None;
+    let mut samples = ImageDelaySamples::new();
+    let mut images = 0;
+    let mut stop_requested = false;
+    let mut next_image = start;
+    let end = start + Duration::from_secs(2);
+    while !samples.stopped || !samples.text_finished {
+        let now = Instant::now();
+        if now < end {
+            if has_image && now >= next_image {
+                client.send_input(2, GENERATION, false, b"FRAME\n".to_vec());
+                images += 1;
+                next_image = now + Duration::from_millis(100);
+            }
+        } else if !stop_requested {
+            // Close the CPU interval before the backlog drains after STOP.
+            cpu = finish_cpu_sample(cpu_mark.take());
+            if has_image {
+                client.send_input(2, GENERATION, false, b"STOP\n".to_vec());
+            } else {
+                samples.stopped = true;
+            }
+            stop_requested = true;
+        }
+        // Delays are stamped by the drain thread, so this wait only paces image submissions.
+        let wake = if now < end && has_image {
+            next_image.min(end)
+        } else {
+            end.max(now + Duration::from_millis(10))
+        };
+        match fixture
+            .events
+            .recv_timeout(wake.saturating_duration_since(Instant::now()))
+        {
+            Ok(event) => samples.record(event),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("frame drain stopped"),
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "image probe timed out"
+        );
+    }
+    samples.delays.sort_unstable();
+    (samples.delays, images, cpu)
+}
+
+/// Server CPU time at the start of the offered-load interval, read from `/proc` on Linux.
+#[cfg(target_os = "linux")]
+type CpuMark = (u32, rozi::platform::process::linux::ProcessCpuTime, Instant);
+#[cfg(not(target_os = "linux"))]
+type CpuMark = ();
+
+#[cfg(target_os = "linux")]
+fn start_cpu_sample(server: &ServerOwner) -> Option<CpuMark> {
+    let pid = server.child.as_ref().unwrap().id();
+    let cpu = rozi::platform::process::linux::cpu_time(pid)?;
+    Some((pid, cpu, Instant::now()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_cpu_sample(_server: &ServerOwner) -> Option<CpuMark> {
+    None
+}
+
+/// Mean server CPU over the interval, as percent of one core.
+#[cfg(target_os = "linux")]
+fn finish_cpu_sample(mark: Option<CpuMark>) -> Option<f64> {
+    use rozi::platform::process::linux::{clock_ticks_per_second, cpu_time};
+    let (pid, before, at) = mark?;
+    let after = cpu_time(pid).expect("server CPU time");
+    assert_eq!(
+        after.start_ticks, before.start_ticks,
+        "server PID was reused"
+    );
+    let elapsed = at.elapsed().as_secs_f64();
+    let busy = (after.cpu_ticks - before.cpu_ticks) as f64 / clock_ticks_per_second() as f64;
+    Some(100.0 * busy / elapsed)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn finish_cpu_sample(_mark: Option<CpuMark>) -> Option<f64> {
+    None
+}
+
+fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool) {
+    let corpus_dir = tempfile::Builder::new()
+        .prefix("rozi-relay-")
+        .tempdir()
+        .expect("private image corpus");
+    let corpus = corpus_dir.path().join("frame");
+    let height = image.map(|(format, mib)| image_corpus(&corpus, mib, format));
+    let helper = match image {
+        Some((format, _)) => vec![
+            IMAGE_HELPER_ARG.to_string(),
+            corpus.to_string_lossy().into_owned(),
+            format.to_string(),
+            height.unwrap().to_string(),
+        ],
+        None => vec![IDLE_HELPER_ARG.to_string()],
+    };
+    let mut fixture =
+        FairnessFixture::with_helpers(vec![vec![IMAGE_TEXT_HELPER_ARG.to_string()], helper]);
+    let remote = relay.then(|| attach_relay_observer(&fixture.server));
+    let client = fixture.client.as_ref().unwrap();
+    wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.client_outboxes.clients == (if relay { 2 } else { 1 })
+            && metrics.attach_seed.active_clients == 0
+    });
+    if image.is_some() {
+        // Take the first image's acquisition, decoding and relay outside the timed interval.
+        client.send_input(2, GENERATION, false, b"WARM\n".to_vec());
+        fixture.wait_for_pane_ack(2, "WARM");
+        let warmed = unix_ms();
+        wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+            metrics.sampled_at_unix_ms > warmed
+                && metrics.client_outboxes.bytes.current_bytes == 0
+                && metrics.pty_ingress.bytes.current_bytes == 0
+        });
+        fixture.image_output_bytes.store(0, Ordering::Relaxed);
+    }
+    client.send_input(1, GENERATION, false, b"GO\n".to_vec());
+    let (samples, images, cpu) = sample_image_delays(&fixture, image.is_some());
+    let sampled = unix_ms().saturating_sub(1000);
+    let metrics = wait_for_server_metrics(client, IO_TIMEOUT, |metrics| {
+        metrics.sampled_at_unix_ms >= sampled
+    });
+    assert_eq!(
+        metrics.client_outboxes.clients,
+        if relay { 2 } else { 1 },
+        "an observer disconnected during the sample"
+    );
+    let image_output_bytes = fixture.image_output_bytes.load(Ordering::Relaxed);
+    if image.is_some() {
+        let minimum = if relay {
+            std::fs::metadata(&corpus).unwrap().len()
+        } else {
+            100
+        };
+        assert!(
+            image_output_bytes > minimum,
+            "image output did not reach the observer"
+        );
+    }
+    eprintln!(
+        "image_relay_probe repeat={repeat} format={} mib={} file_bytes={} relay={relay} samples={} images={images} p50_us={} p95_us={} max_us={} server_cpu_percent={cpu:?} image_output_bytes={image_output_bytes}",
+        image.map_or(0, |x| x.0),
+        image.map_or(0, |x| x.1),
+        image.map_or(0, |_| std::fs::metadata(&corpus).unwrap().len()),
+        samples.len(),
+        percentile(&samples, 50).as_micros(),
+        percentile(&samples, 95).as_micros(),
+        samples.last().unwrap().as_micros()
+    );
+    fixture.server.stop(fixture.client.as_ref());
+    if let Some(remote) = remote {
+        remote
+            .join()
+            .expect("join remote observer")
+            .expect("drain remote observer");
+    }
+    if image.is_some() {
+        std::fs::remove_file(corpus).unwrap();
+    }
+}
+
 fn server_fairness(c: &mut Criterion) {
     let mut group = c.benchmark_group("server_fairness");
     group.throughput(Throughput::Elements(1));
@@ -1201,6 +1634,21 @@ fn run_server(
 fn main() {
     let mut args = std::env::args().skip(1);
     let mode = args.next();
+    if mode.as_deref() == Some(IMAGE_PROBE_ARG) {
+        image_relay_probe();
+        return;
+    }
+    if mode.as_deref() == Some(IMAGE_TEXT_HELPER_ARG) {
+        image_text_helper().expect("text helper");
+        return;
+    }
+    if mode.as_deref() == Some(IMAGE_HELPER_ARG) {
+        let path = args.next().expect("image path");
+        let format = args.next().expect("image format").parse().unwrap();
+        let height = args.next().expect("image height").parse().unwrap();
+        image_relay_helper(&path, format, height).expect("image helper");
+        return;
+    }
     if mode.as_deref() == Some(IDLE_LATENCY_PROBE_ARG) {
         idle_latency_probe();
         return;

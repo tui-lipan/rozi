@@ -762,6 +762,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 response,
             },
             ServerMessage::SessionOriginSet { origin } => Msg::SessionOriginSet { epoch, origin },
+            ServerMessage::PaneMetadata {
+                local,
+                meta,
+                cell_width,
+                cell_height,
+            } => Msg::SessionPaneMetadata {
+                epoch,
+                local,
+                meta,
+                cell_width,
+                cell_height,
+            },
             ServerMessage::LayoutCommitted {
                 rev,
                 author,

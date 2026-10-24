@@ -1853,8 +1853,9 @@ pub struct SidebarTreeConfig {
 }
 
 impl SidebarTreeConfig {
-    /// Defaults per view: browsing wants the pane's directory and no change noise, while the
-    /// changes view is only useful repo-wide and with diff stats on.
+    /// Defaults per view: browsing wants the pane's directory, a search bar, and no change noise,
+    /// while the changes view is only useful repo-wide and with diff stats on, and lists too few
+    /// files to need searching.
     pub fn for_view(view: SidebarTreeView) -> Self {
         Self {
             root: match view {
@@ -1862,7 +1863,7 @@ impl SidebarTreeConfig {
                 SidebarTreeView::Changes => SidebarTreeRoot::Repo,
             },
             show_hidden: true,
-            explorer: false,
+            explorer: view == SidebarTreeView::Files,
             diff_stats: view == SidebarTreeView::Changes,
             compact_dirs: true,
             max_entries: 2_000,

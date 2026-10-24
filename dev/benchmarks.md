@@ -475,3 +475,39 @@ placement changes. The server's snapshot counts its authoritative parser mutatio
 includes native-scene operations, graphics command bytes, region merging and host-frame interval
 percentiles. Percentiles retain the newest 1024 successful intervals; measure during sustained
 output, since an idle gap is a real interval too. Composed and native host frames both participate.
+
+## Named-image relay fairness
+
+Build `server_fairness` once, then run its opt-in probe without Criterion sampling:
+
+```sh
+cargo bench --bench server_fairness --no-run
+# Use the executable path printed by Cargo:
+/path/to/server_fairness --image-relay-probe
+```
+
+The probe runs three repetitions of ordinary text alone and a second pane submitting named files
+at 10 Hz. Both PNG and raw RGBA use deterministic opaque noise at 1, 8, 32 and 64 MiB of decoded
+pixels. PNG results report their compressed file size separately; raw files reach the 64 MiB
+transmit limit. Corpus creation is outside timing. Local cases attach one client; relay cases add
+a draining read-only client with `shares_filesystem: false`. Consuming-media cases are reserved
+for the server support change.
+
+Before timing, the image pane submits one image and acknowledges it, and the probe waits until
+the server's PTY ingress and client outboxes are empty. The timed interval therefore starts with
+the image path warm; the corpus is also in the page cache because the probe has just written it.
+
+Pane A emits a short text line every 5 ms. Its timestamp immediately precedes its stdout write. The
+end is when the driver's frame-drain thread takes the decoded output frame from the session client,
+before any further queueing, so output delay includes PTY, server and IPC scheduling but not the
+probe's own consumer. The two-second sample reports p50, p95 and maximum delay. It excludes an input
+round trip and host rendering. Both processes use the same machine clock; a wall-clock adjustment
+invalidates the run. Pending image commands drain before cleanup. No CI timing threshold is imposed.
+
+`ROZI_IMAGE_PROBE_REPEATS` overrides the repetition count. On Linux the probe also reports server
+CPU over the two seconds of offered load: user plus system ticks from `/proc/<pid>/stat` when text
+and image submission start and when they stop, before the STOP request and the backlog drain,
+checked against the process start time, as percent of one core. At the usual 100 ticks per
+second this resolves 0.5 percent. Other platforms report no CPU value. Run without
+compilation or other heavy work, retain the exact binary revisions, and compare repeated runs on the
+same host.

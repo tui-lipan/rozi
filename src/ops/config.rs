@@ -192,9 +192,11 @@ fn reload(ctx: &mut Context<AppRoot>, success_message: Option<&'static str>) -> 
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
         client.reload_agents();
+        client.reload_spawn_policy();
     }
     if let Some(client) = ctx.state.scratch_client() {
         client.reload_agents();
+        client.reload_spawn_policy();
     }
     reload_sleep_policy(ctx);
     let _ = crate::ops::pick::unload_extensions(ctx, &stale_extensions);

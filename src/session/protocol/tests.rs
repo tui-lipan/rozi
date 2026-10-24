@@ -154,6 +154,7 @@ fn protocol_frame_round_trips() {
 #[test]
 fn pane_meta_from_older_peer_defaults_original_user() {
     let mut value = serde_json::to_value(PaneMeta {
+        scrollback: 100,
         pane_id: 1,
         generation: 2,
         agents: Vec::new(),
@@ -563,6 +564,7 @@ fn oversized_frame_is_rejected_before_allocation() {
 #[test]
 fn oversized_write_frame_is_rejected() {
     let msg = ClientMessage::SpawnPane {
+        placement: None,
         pane_id: 1,
         local: false,
         generation: 1,
@@ -836,6 +838,7 @@ fn golden_client_spawn_json_shape() {
         ansi: [Color::Black; 16],
     };
     let value = serde_json::to_value(ClientMessage::SpawnPane {
+        placement: None,
         pane_id: 7,
         local: false,
         generation: 9,
@@ -857,7 +860,7 @@ fn golden_client_spawn_json_shape() {
     .unwrap();
     assert_eq!(
         value,
-        serde_json::json!({"type":"spawn-pane","pane_id":7,"local":false,"generation":9,"launch":{"kind":"direct","argv":["printf","space $literal"]},"cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
+        serde_json::json!({"type":"spawn-pane","placement":null,"pane_id":7,"local":false,"generation":9,"launch":{"kind":"direct","argv":["printf","space $literal"]},"cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
     );
 }
 

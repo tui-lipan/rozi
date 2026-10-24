@@ -425,7 +425,7 @@
 
 [sidebar.settings.files]
 # Show the search field above the tree.
-#explorer = false
+#explorer = true
 #show_hidden = true
 # "cwd" browses the focused pane's directory; "repo" the repository containing it.
 #root = "cwd"

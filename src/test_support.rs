@@ -337,6 +337,71 @@ pub fn configured_app() -> crate::AppRoot {
     crate::AppRoot::configured_for_test(config, listener, guard)
 }
 
+/// Obtain a framework-created event for tests without constructing its non-exhaustive type.
+#[cfg(test)]
+pub(crate) fn forwarded_mouse(
+    kind: tui_lipan::core::event::MouseKind,
+    bytes: Vec<u8>,
+) -> tui_lipan::ForwardedMouseEvent {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use tui_lipan::prelude::*;
+
+    struct Probe(Rc<RefCell<Option<ForwardedMouseEvent>>>);
+    impl Component for Probe {
+        type State = ();
+        type Message = ();
+        type Properties = ();
+        fn create_state(&self, _: &()) {}
+        fn update(&mut self, _: (), _: &mut Context<Self>) -> Update {
+            Update::none()
+        }
+        fn view(&self, _: &Context<Self>) -> Element {
+            let event = self.0.clone();
+            Terminal::new()
+                .snapshot(TerminalRenderSnapshot {
+                    mouse_mode: MouseModeState {
+                        mode: MouseMode::AnyEvent,
+                        encoding: MouseEncoding::Sgr,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .on_mouse_forward_event(Callback::new(move |value| {
+                    *event.borrow_mut() = Some(value)
+                }))
+                .key("mouse-probe")
+        }
+    }
+    fn template() -> ForwardedMouseEvent {
+        let events = Rc::new(RefCell::new(None));
+        let mut backend = tui_lipan::TestBackend::new(Probe(events.clone()));
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 20,
+            h: 10,
+        });
+        backend.focus_key(&"mouse-probe".into());
+        backend
+            .send_mouse(MouseEvent {
+                kind: tui_lipan::core::event::MouseKind::Moved,
+                x: 3,
+                y: 3,
+                mods: KeyMods::NONE,
+            })
+            .expect("forward mouse event");
+        events.borrow_mut().take().expect("structured callback")
+    }
+    thread_local! {
+        static TEMPLATE: ForwardedMouseEvent = template();
+    }
+    let mut event = TEMPLATE.with(Clone::clone);
+    event.kind = kind;
+    event.bytes = bytes;
+    event
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

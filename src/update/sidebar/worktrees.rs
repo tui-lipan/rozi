@@ -277,6 +277,9 @@ mod tests {
         state.sidebar.panels[0].tabs = vec![SidebarTabId::new(super::TAB_ID)];
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new(super::TAB_ID));
         state.current_mut().session_client = Some(client);
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(1);
+        state.current_mut().shared = Some(shared);
         report_location(&mut backend, REPO);
         (backend, outbound)
     }

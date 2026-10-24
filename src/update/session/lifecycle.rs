@@ -6,7 +6,7 @@ use crate::layout::shared::{ClientId, SharedLayout};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, PaneMeta};
 use crate::update::attach::{
-    apply_attached_panes, bind_attached_pane_backends, flush_pending_spawns, open_arriving_panes,
+    bind_attached_pane_backends, flush_pending_spawns, open_arriving_panes,
     reset_state_for_shared_seed, spawn_state_panes_on_session,
 };
 
@@ -271,6 +271,10 @@ pub(crate) fn attached(
     shared.input_locked = input_locked;
     shared.allow_takeover = allow_takeover;
     shared.read_only = read_only;
+    shared.pane_scrollback = panes
+        .iter()
+        .map(|pane| ((pane.pane_id, pane.generation), pane.scrollback))
+        .collect();
     ctx.state.current_mut().shared = Some(shared);
 
     crate::events::emit(
@@ -293,11 +297,9 @@ pub(crate) fn attached(
     // palette label reflects; the lease state affects command labels too.
     ctx.state.commands_dirty = true;
 
-    let panes: Vec<_> = panes
-        .into_iter()
-        .filter(|pane| pane.exited.is_none())
-        .collect();
-    let had_panes = !panes.is_empty();
+    // Layout membership decides which panes remain visible. Metadata must also bind retained
+    // exited panes so a fresh attachment preserves their capacity and exit status.
+    let had_panes = panes.iter().any(|pane| pane.exited.is_none());
 
     let populated = layout.is_some() || had_panes;
     let mut update = if let Some(layout) = layout {
@@ -319,15 +321,14 @@ pub(crate) fn attached(
         crate::pane::pty_events::flush_pending_resizes(ctx, generation);
         Update::full()
     } else if had_panes {
-        // Defensive: a live server holding panes but no committed layout (should not occur under
-        // protocol v6). Adopt the panes, then republish a layout if we control it.
-        apply_attached_panes(ctx, panes);
-        ctx.state.animation = GeometryAnimation::None;
-        flush_pending_spawns(ctx);
-        crate::pane::pty_events::resize::publish_controller_geometry(ctx);
-        let generation = ctx.state.current().resize_flush_generation;
-        crate::pane::pty_events::flush_pending_resizes(ctx, generation);
-        Update::full()
+        // Current peers cannot create this state. Refuse it rather than invent placements.
+        if let Some(client) = ctx.state.current().session_client.as_ref() {
+            client.detach();
+        }
+        ctx.state.current_mut().mark_disconnected();
+        crate::pane::pty_events::notify_error(ctx, "Invalid session layout",
+            "The server has panes without an authoritative layout. Restore a valid session snapshot.".to_string());
+        return Update::full();
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all
         // exited): seed it with the panes the client already holds in state; the first attacher

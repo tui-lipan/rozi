@@ -367,6 +367,7 @@ pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
     command_available(action, state)
         && match action {
             Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
+            Action::PromoteToMaster => crate::ops::focus::can_promote_focused_to_master(state),
             _ => true,
         }
 }
@@ -1588,6 +1589,35 @@ mod tests {
             .terminal
             .project_root = Some("/repo".to_string());
         assert!(palette_visible(Action::OpenWorktrees, &state));
+    }
+
+    #[test]
+    fn promote_to_master_is_listed_only_when_it_would_move_the_focus() {
+        let mut state = State::new(Config::default(), Theme::default());
+        // The lone pane is already the master.
+        assert!(command_available(Action::PromoteToMaster, &state));
+        assert!(!palette_visible(Action::PromoteToMaster, &state));
+
+        let rect = tui_lipan::prelude::FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.panes.push(crate::state::Pane::new(2, 100, rect));
+        crate::layout::tiling::append_tiled_window(workspace, 2);
+        crate::ops::focus::focus_pane(&mut state, 2);
+        assert!(palette_visible(Action::PromoteToMaster, &state));
+
+        state.current_mut().workspaces[0].layout_kind = crate::state::LayoutKind::Monocle;
+        assert!(!palette_visible(Action::PromoteToMaster, &state));
+        state.current_mut().workspaces[0].layout_kind = crate::state::LayoutKind::Dwindle;
+
+        crate::pane::lifecycle::find_pane_mut(&mut state, 2)
+            .unwrap()
+            .floating = true;
+        assert!(!palette_visible(Action::PromoteToMaster, &state));
     }
 
     #[test]

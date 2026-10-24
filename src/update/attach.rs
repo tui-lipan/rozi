@@ -1,7 +1,6 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::layout::tiling::append_tiled_window;
 use crate::pane::lifecycle::{find_pane_in_namespace_mut, pane_env};
 use crate::state::State;
 
@@ -24,6 +23,7 @@ pub(super) fn reset_state_for_shared_seed(state: &mut State) {
 }
 
 fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protocol::PaneMeta) {
+    pane.terminal.use_server_scrollback(meta.scrollback);
     pane.opening = false;
     pane.terminal_active = true;
     pane.pty_generation = meta.generation;
@@ -65,7 +65,9 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
         .terminal
         .apply_rows(meta.runtime.rows.clone(), meta.runtime.integration.clone());
     pane.logging = meta.logging;
-    pane.terminal.status = ManagedTerminalStatus::Ready;
+    pane.terminal.status = meta
+        .exited
+        .map_or(ManagedTerminalStatus::Ready, ManagedTerminalStatus::Exited);
 }
 
 /// After the reconciler has created panes from the shared layout, bind each one's server backend at
@@ -98,63 +100,6 @@ pub(super) fn bind_attached_pane_backends(
             .next_pty_generation
             .max(meta.generation.saturating_add(1));
         ctx.state.current_mut().next_pty_generation = next;
-    }
-}
-
-/// Defensive fallback: adopt server panes when a live session reports panes but no committed layout
-/// (should not happen since the shared-layout protocol landed). Rebuilds a flat tiled workspace
-/// from the pane list.
-pub(super) fn apply_attached_panes(
-    ctx: &mut Context<AppRoot>,
-    panes: Vec<crate::session::protocol::PaneMeta>,
-) {
-    for workspace in &mut ctx.state.current_mut().workspaces {
-        workspace.panes.clear();
-        workspace.tile_tree = None;
-        workspace.focused_pane = None;
-    }
-    ctx.state.current_mut().focused_pane = None;
-
-    for attached in panes {
-        if find_pane_in_namespace_mut(&mut ctx.state, attached.pane_id, false).is_none() {
-            let rect = FloatRect {
-                x: 4.0,
-                y: 3.0,
-                w: 80.0,
-                h: 24.0,
-            };
-            let pane = crate::state::Pane::new(attached.pane_id, ctx.state.config.scrollback, rect);
-            ctx.state.current_mut().workspaces[0].panes.push(pane);
-            append_tiled_window(&mut ctx.state.current_mut().workspaces[0], attached.pane_id);
-        }
-        if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, attached.pane_id, false) {
-            apply_pane_meta(pane, &attached);
-        }
-        ctx.state
-            .agent_attention
-            .observe_records(&attached.agents, crate::state::FirstSighting::Baseline);
-        if attached.pane_id != crate::state::POPUP_PANE_ID {
-            let next = ctx
-                .state
-                .current()
-                .next_pane_id
-                .max(attached.pane_id.saturating_add(1));
-            ctx.state.current_mut().next_pane_id = next;
-        }
-        let next = ctx
-            .state
-            .current()
-            .next_pty_generation
-            .max(attached.generation.saturating_add(1));
-        ctx.state.current_mut().next_pty_generation = next;
-    }
-
-    if ctx.state.current().focused_pane.is_none() {
-        ctx.state.current_mut().focused_pane = ctx.state.current_mut().workspaces[0]
-            .panes
-            .first()
-            .map(|pane| pane.id);
-        ctx.state.current_mut().workspaces[0].focused_pane = ctx.state.current_mut().focused_pane;
     }
 }
 
@@ -191,9 +136,15 @@ pub(crate) fn open_arriving_panes(
 pub(crate) fn spawn_state_panes_on_session(
     ctx: &mut Context<AppRoot>,
 ) -> Vec<(crate::state::PaneId, u64)> {
-    let Some(client) = ctx.state.current().session_client.clone() else {
+    if ctx.state.current().session_client.is_none() {
         return Vec::new();
-    };
+    }
+    // Reseeding assigns fresh generations to the live launch intents below. Their old deferred
+    // requests must not race those replacements. Owner-local requests use a separate namespace.
+    ctx.state
+        .current_mut()
+        .pending_spawns
+        .retain(|request| request.local);
     // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
     // palette before the PTY spawns and the child's startup color queries are answered correctly.
     let fallback_palette = TerminalColorPalette::from_theme(
@@ -226,6 +177,7 @@ pub(crate) fn spawn_state_panes_on_session(
         );
         (shell.as_argv(), integration_env, command_shell.as_argv())
     };
+    let mut requests = Vec::new();
     let mut targets = Vec::new();
     // The `workspaces.iter_mut()` borrow below is a whole-`State` borrow (through `current_mut()`),
     // so the loop body cannot touch `ctx.state`: hoist the generation counter and control socket
@@ -271,7 +223,8 @@ pub(crate) fn spawn_state_panes_on_session(
                 }
                 (_, launch) => launch,
             };
-            client.spawn_pane(crate::session::client::SpawnPaneRequest {
+            requests.push(crate::session::client::SpawnPaneRequest {
+                placement: None,
                 pane_id: pane.id,
                 local: false,
                 generation,
@@ -296,18 +249,25 @@ pub(crate) fn spawn_state_panes_on_session(
             .pending_replay_inputs
             .insert(key, command);
     }
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
+        shared.canonical_canvas = Some((
+            bounds.w.round().max(1.0) as u16,
+            bounds.h.round().max(1.0) as u16,
+        ));
+    }
+    for request in requests {
+        crate::pane::lifecycle::send_pane_spawn(&mut ctx.state, request);
+    }
     targets
 }
 
 /// Flush pane spawns that were queued while no client was connected (see
 /// [`crate::state::State::pending_spawns`]).
 pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
-    let Some(client) = ctx.state.current().session_client.clone() else {
-        return;
-    };
-    for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
-        client.spawn_pane(spawn);
-    }
+    crate::pane::lifecycle::pump_shared_spawns(&mut ctx.state);
 }
 
 #[cfg(test)]
@@ -340,6 +300,7 @@ mod tests {
         apply_pane_meta(
             &mut pane,
             &PaneMeta {
+                scrollback: 100,
                 pane_id: 1,
                 generation: 7,
                 agents: vec![record(0)],

@@ -3018,6 +3018,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                     session: "dev".into(),
                     client_id: 1,
                     panes: vec![crate::session::protocol::PaneMeta {
+                        scrollback: 100,
                         pane_id: 7,
                         generation: 1,
                         agents: vec![agent_ref.into()],
@@ -3314,7 +3315,10 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
                     session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
                     session: "dev".to_string(),
                     client_id: 1,
-                    panes: Vec::new(),
+                    panes: vec![
+                        crate::session::protocol::PaneMeta::for_test(7, 0, 100),
+                        crate::session::protocol::PaneMeta::for_test(9, 0, 100),
+                    ],
                     layout_rev: 1,
                     layout: Some(attached_layout(&[7, 9])),
                     controller: Some(1),

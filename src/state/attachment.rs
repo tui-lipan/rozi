@@ -92,9 +92,9 @@ pub struct Attachment {
     pub reconnect_read_only: bool,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
-    /// Pane spawns requested while no session client was connected yet (e.g. a scratchpad toggle
-    /// during the initial attach or a reconnect window). Flushed to the server once
-    /// [`Msg::SessionAttached`](crate::Msg::SessionAttached) installs the client.
+    /// Deferred launches, including requests made before attach and shared creations waiting
+    /// for the preceding transaction. Only one shared creation is submitted at a time;
+    /// owner-local launches do not wait for shared layout publication.
     pub pending_spawns: Vec<PendingPaneSpawn>,
     /// Replay commands (see [`PaneIdentity::replay`]) waiting for their pane's `SpawnResult`,
     /// keyed by `(pane_id, generation)`. The spawn goes out with `launch: None` so the server

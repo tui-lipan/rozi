@@ -588,6 +588,18 @@ impl TerminalPane {
 
     /// Replace the parsed screen with a fresh one at the server's snapshot geometry, ahead of the
     /// replay that restores it. The pane keeps its binding and runtime metadata.
+    pub fn scrollback_capacity(&self) -> usize {
+        self.scrollback_limit
+    }
+
+    /// Called from metadata before the first server output or a reconnect replay.
+    pub(crate) fn use_server_scrollback(&mut self, capacity: usize) {
+        if self.scrollback_limit != capacity {
+            self.scrollback_limit = capacity;
+            self.reset_screen();
+        }
+    }
+
     pub fn reset_for_replay(&mut self, cols: u16, rows: u16) {
         self.cols = cols.max(1);
         self.rows = rows.max(1);

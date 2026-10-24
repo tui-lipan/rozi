@@ -18,128 +18,12 @@
 //!   motion was waiting, so the child still learns where the pointer was when the button moved.
 
 use std::time::{Duration, Instant};
-use tui_lipan::KeyMods;
-
-/// Read the modifier bits from a mouse report encoded by the terminal widget. SGR and SGR-pixels
-/// carry a decimal button code; X10 and UTF-8 carry that code as one byte offset by 32.
-pub(crate) fn mouse_report_mods(bytes: &[u8]) -> KeyMods {
-    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
-        let mut digits = rest.iter().take_while(|byte| byte.is_ascii_digit());
-        digits.try_fold(0_u16, |code, digit| {
-            code.checked_mul(10)?.checked_add(u16::from(digit - b'0'))
-        })
-    } else {
-        bytes
-            .strip_prefix(b"\x1b[M")
-            .and_then(|report| report.first())
-            .map(|code| u16::from(code.saturating_sub(32)))
-    }
-    .unwrap_or_default();
-
-    KeyMods {
-        shift: code & 4 != 0,
-        alt: code & 8 != 0,
-        ctrl: code & 16 != 0,
-        ..KeyMods::NONE
-    }
-}
-
-#[cfg(test)]
-mod modifier_tests {
-    use super::mouse_report_mods;
-    use tui_lipan::KeyMods;
-
-    #[test]
-    fn reads_modifiers_from_forwarded_mouse_encodings() {
-        assert_eq!(mouse_report_mods(b"\x1b[<39;1;1M"), KeyMods::SHIFT);
-        assert_eq!(mouse_report_mods(b"\x1b[<51;1;1M"), KeyMods::CTRL);
-        assert_eq!(mouse_report_mods(b"\x1b[M+!!"), KeyMods::ALT);
-        assert_eq!(mouse_report_mods(b"\x1b[<35;1;1M"), KeyMods::NONE);
-    }
-}
+use tui_lipan::core::event::MouseKind;
+use tui_lipan::{ForwardedMouseEvent, MouseEncoding};
 
 /// Match `tui-lipan`'s frame interval calculation without exposing framework runner internals.
 pub(crate) fn interval_for_frame_rate(frame_rate: u16) -> Duration {
     Duration::from_micros(1_000_000 / u64::from(frame_rate.max(1))).max(Duration::from_millis(1))
-}
-
-/// Whether an outgoing mouse report describes pointer *motion* rather than a state change.
-///
-/// Only the SGR spellings are inspected, which is not the limitation it looks like: motion is
-/// reported at all only under the modes that use them. In both, bit 5 of the button code marks a
-/// motion report, which covers a drag (32, 33, 34) and a bare move (35) while leaving presses,
-/// releases and wheel notches (64, 65) alone.
-fn is_motion_report(bytes: &[u8]) -> bool {
-    let Some(rest) = bytes.strip_prefix(b"\x1b[<") else {
-        return false;
-    };
-    let digits = rest.iter().take_while(|byte| byte.is_ascii_digit());
-    let mut code: u32 = 0;
-    let mut any = false;
-    for digit in digits {
-        any = true;
-        code = code
-            .saturating_mul(10)
-            .saturating_add(u32::from(digit - b'0'));
-    }
-    any && code & 0x20 != 0
-}
-
-/// Whether an outgoing mouse report is a button *press*: not motion, not a wheel notch, and not a
-/// release.
-///
-/// Covers every encoding `tui-lipan` forwards. SGR marks a release with a lowercase `m`; the legacy
-/// `CSI M` spellings carry the button code offset by 32 and can only mark a release as button 3.
-pub(crate) fn is_press_report(bytes: &[u8]) -> bool {
-    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
-        if rest.last() != Some(&b'M') {
-            return false;
-        }
-        let digits = rest.iter().take_while(|byte| byte.is_ascii_digit());
-        let mut code: u32 = 0;
-        let mut any = false;
-        for digit in digits {
-            any = true;
-            code = code
-                .saturating_mul(10)
-                .saturating_add(u32::from(digit - b'0'));
-        }
-        if !any {
-            return false;
-        }
-        code
-    } else if let Some(&raw) = bytes.strip_prefix(b"\x1b[M").and_then(<[u8]>::first) {
-        let code = u32::from(raw.saturating_sub(32));
-        if code & 0x03 == 0x03 {
-            return false;
-        }
-        code
-    } else {
-        return false;
-    };
-    code & 0x60 == 0
-}
-
-/// Whether an outgoing mouse report is a wheel notch, including modified wheel reports.
-pub(crate) fn is_scroll_report(bytes: &[u8]) -> bool {
-    let code = if let Some(rest) = bytes.strip_prefix(b"\x1b[<") {
-        if rest.last() != Some(&b'M') {
-            return false;
-        }
-        let Some(end) = rest.iter().position(|byte| *byte == b';') else {
-            return false;
-        };
-        std::str::from_utf8(&rest[..end])
-            .ok()
-            .and_then(|digits| digits.parse::<u16>().ok())
-    } else {
-        bytes
-            .strip_prefix(b"\x1b[M")
-            .and_then(|report| report.first())
-            .and_then(|code| code.checked_sub(32))
-            .map(u16::from)
-    };
-    code.is_some_and(|code| code & 0x60 == 0x40)
 }
 
 /// What a cadence wakeup found for a pane whose motion was held.
@@ -166,8 +50,20 @@ pub(crate) struct PointerFlow {
 
 impl PointerFlow {
     /// What to forward now for a report the client wants to send, if anything.
-    pub(crate) fn admit(&mut self, bytes: Vec<u8>, interval: Duration) -> Option<Vec<u8>> {
-        if !is_motion_report(&bytes) {
+    pub(crate) fn admit(
+        &mut self,
+        event: ForwardedMouseEvent,
+        interval: Duration,
+    ) -> Option<Vec<u8>> {
+        // Preserve the SGR-only cadence policy. Legacy encodings continue to forward every
+        // report immediately, including motion.
+        let motion = matches!(event.kind, MouseKind::Moved | MouseKind::Drag(_))
+            && matches!(
+                event.mouse_mode.encoding,
+                MouseEncoding::Sgr | MouseEncoding::SgrPixels
+            );
+        let bytes = event.bytes;
+        if !motion {
             let mut out = self.waiting.take().unwrap_or_default();
             out.extend_from_slice(&bytes);
             // State changes begin a new gesture. Let its first motion report through immediately;
@@ -233,66 +129,71 @@ impl PointerFlow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::core::event::MouseButton;
 
     const FRAME: Duration = Duration::from_millis(8);
 
     fn drag(y: u16) -> Vec<u8> {
-        format!("\x1b[<32;10;{y}M").into_bytes()
+        format!("opaque position {y}").into_bytes()
+    }
+
+    fn motion(y: u16) -> ForwardedMouseEvent {
+        crate::test_support::forwarded_mouse(MouseKind::Drag(MouseButton::Left), drag(y))
     }
 
     #[test]
-    fn motion_is_recognised_and_button_reports_are_not() {
-        assert!(is_motion_report(b"\x1b[<32;10;20M"), "drag");
-        assert!(is_motion_report(b"\x1b[<35;10;20M"), "bare move");
-        assert!(!is_motion_report(b"\x1b[<0;10;20M"), "press");
-        assert!(!is_motion_report(b"\x1b[<0;10;20m"), "release");
-        assert!(!is_motion_report(b"\x1b[<64;10;20M"), "wheel up");
-        assert!(!is_motion_report(b"\x1b[<65;10;20M"), "wheel down");
-        assert!(
-            !is_motion_report(b"\x1b[M abc"),
-            "x10 encoding reports no motion"
-        );
-        assert!(!is_motion_report(b""), "nothing at all");
-    }
-
-    #[test]
-    fn presses_are_recognised_in_every_forwarded_encoding() {
-        assert!(is_press_report(b"\x1b[<0;10;20M"), "sgr left press");
-        assert!(is_press_report(b"\x1b[<2;10;20M"), "sgr right press");
-        assert!(is_press_report(b"\x1b[<16;10;20M"), "sgr ctrl+left press");
-        assert!(!is_press_report(b"\x1b[<0;10;20m"), "sgr release");
-        assert!(!is_press_report(b"\x1b[<32;10;20M"), "sgr drag");
-        assert!(!is_press_report(b"\x1b[<35;10;20M"), "sgr bare move");
-        assert!(!is_press_report(b"\x1b[<64;10;20M"), "sgr wheel up");
-        assert!(
-            is_press_report(&[0x1b, b'[', b'M', 32, 42, 52]),
-            "x10 press"
-        );
-        assert!(
-            !is_press_report(&[0x1b, b'[', b'M', 35, 42, 52]),
-            "x10 release"
-        );
-        assert!(
-            !is_press_report(&[0x1b, b'[', b'M', 64, 42, 52]),
-            "x10 drag"
-        );
-        assert!(
-            !is_press_report(&[0x1b, b'[', b'M', 96, 42, 52]),
-            "x10 wheel"
-        );
-        assert!(!is_press_report(b""), "nothing at all");
+    fn legacy_motion_remains_immediate_and_state_changes_flush_pending_motion() {
+        for encoding in [MouseEncoding::X10, MouseEncoding::Utf8] {
+            let mut flow = PointerFlow::default();
+            for position in 0..3 {
+                let mut event =
+                    crate::test_support::forwarded_mouse(MouseKind::Moved, drag(position));
+                event.mouse_mode.encoding = encoding;
+                assert_eq!(flow.admit(event, FRAME), Some(drag(position)));
+            }
+        }
+        for kind in [
+            MouseKind::Down(MouseButton::Right),
+            MouseKind::Up(MouseButton::Middle),
+            MouseKind::ScrollUp,
+            MouseKind::ScrollDown,
+        ] {
+            let mut flow = PointerFlow::default();
+            flow.admit(
+                crate::test_support::forwarded_mouse(MouseKind::Moved, drag(1)),
+                FRAME,
+            );
+            assert_eq!(
+                flow.admit(
+                    crate::test_support::forwarded_mouse(MouseKind::Moved, drag(2)),
+                    FRAME
+                ),
+                None
+            );
+            let bytes = b"opaque state change".to_vec();
+            let mut expected = drag(2);
+            expected.extend_from_slice(&bytes);
+            assert_eq!(
+                flow.admit(crate::test_support::forwarded_mouse(kind, bytes), FRAME),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
     fn motion_is_capped_to_one_position_per_frame_and_the_newest_waits() {
         let mut flow = PointerFlow::default();
         assert_eq!(
-            flow.admit(drag(1), FRAME),
+            flow.admit(motion(1), FRAME),
             Some(drag(1)),
             "first position is immediate"
         );
-        assert_eq!(flow.admit(drag(2), FRAME), None, "held until next frame");
-        assert_eq!(flow.admit(drag(3), FRAME), None, "supersedes the held one");
+        assert_eq!(flow.admit(motion(2), FRAME), None, "held until next frame");
+        assert_eq!(
+            flow.admit(motion(3), FRAME),
+            None,
+            "supersedes the held one"
+        );
         flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
         assert_eq!(flow.paced(FRAME), Paced::Send(drag(3)));
         assert_eq!(flow.paced(FRAME), Paced::Idle, "nothing left waiting");
@@ -301,13 +202,16 @@ mod tests {
     #[test]
     fn a_button_report_goes_immediately_and_carries_held_motion_with_it() {
         let mut flow = PointerFlow::default();
-        flow.admit(drag(1), FRAME);
-        assert_eq!(flow.admit(drag(2), FRAME), None);
-        let release = b"\x1b[<0;10;9m".to_vec();
+        flow.admit(motion(1), FRAME);
+        assert_eq!(flow.admit(motion(2), FRAME), None);
+        let release = b"opaque release".to_vec();
         let mut expected = drag(2);
         expected.extend_from_slice(&release);
         assert_eq!(
-            flow.admit(release, FRAME),
+            flow.admit(
+                crate::test_support::forwarded_mouse(MouseKind::Up(MouseButton::Left), release),
+                FRAME
+            ),
             Some(expected),
             "the release must not overtake the position it happened at"
         );
@@ -317,8 +221,8 @@ mod tests {
     #[test]
     fn the_last_position_is_delivered_on_the_next_frame_interval() {
         let mut flow = PointerFlow::default();
-        assert_eq!(flow.admit(drag(1), FRAME), Some(drag(1)));
-        assert_eq!(flow.admit(drag(2), FRAME), None, "held behind first");
+        assert_eq!(flow.admit(motion(1), FRAME), Some(drag(1)));
+        assert_eq!(flow.admit(motion(2), FRAME), None, "held behind first");
         assert!(
             flow.arm(FRAME).is_some_and(|after| after <= FRAME),
             "the hold asks for a wakeup within one frame"
@@ -339,12 +243,12 @@ mod tests {
     #[test]
     fn a_wakeup_overtaken_by_a_new_frame_interval_does_nothing() {
         let mut flow = PointerFlow::default();
-        flow.admit(drag(1), FRAME);
-        assert_eq!(flow.admit(drag(2), FRAME), None);
+        flow.admit(motion(1), FRAME);
+        assert_eq!(flow.admit(motion(2), FRAME), None);
         assert!(flow.arm(FRAME).is_some());
         flow.last_sent = Some(Instant::now() - FRAME - Duration::from_millis(1));
         assert_eq!(
-            flow.admit(drag(3), FRAME),
+            flow.admit(motion(3), FRAME),
             Some(drag(3)),
             "new arrival opens the interval first"
         );

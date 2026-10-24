@@ -254,9 +254,12 @@ Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Tu
 **Hidden files** setting to leave them out. Entries that Git ignores, such as a `target/` build
 directory and everything in it, are dimmed too.
 
-Turn on **Search bar** to filter the tree as you type. Files and Git also have **Root**, which
-browses the focused pane's directory or the whole repository containing it, **Line counts**, and
-**Entry limit**. See [Tab settings](#tab-settings).
+Type in the search bar above the Files tree to filter it. Git has a search bar too when you turn on
+its **Search bar** setting, and turning that setting off in Files hides the bar there. The tree
+shows the 1,000 closest matches, and when more entries match, the count beside the field reads like
+`1000/5321`. Files and Git also have **Root**, which browses the focused pane's directory or the
+whole repository containing it, **Line counts**, and **Entry limit**. See
+[Tab settings](#tab-settings).
 
 In a remote session, the listing comes from the remote host, and search covers only directories you
 have already expanded.

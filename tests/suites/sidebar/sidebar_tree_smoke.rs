@@ -94,6 +94,7 @@ fn render_tree(
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -316,6 +317,7 @@ fn files_tab_shows_a_new_file_without_a_refresh_tick() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -424,9 +426,7 @@ fn git_tab_shows_changed_paths_with_diff_stats() {
     assert!(joined.contains('+'), "diff stats render: {joined}");
 }
 
-/// Git markers and diff stats carry the theme's semantic status colors. The widget's own
-/// `git_style_*` defaults are empty styles and it never reads `theme.git_status` itself, so without
-/// the app wiring the palette through, every marker renders in the plain row color.
+/// Git markers and diff stats inherit the active Rozi theme through FileTree defaults.
 #[test]
 fn git_markers_and_diff_stats_use_theme_status_colors() {
     let Some(repo) = Repo::new("colors") else {
@@ -437,6 +437,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -514,6 +515,16 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                     "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
                 );
             }
+            backend.state_mut().theme = rozi::state::ThemePreset::Dracula.theme();
+            backend.render();
+            let changed = backend.state().theme.git_status.modified;
+            assert_ne!(changed, git.modified, "the palette must actually change");
+            assert!(
+                markers(&mut backend)
+                    .iter()
+                    .any(|(symbol, color)| { symbol == "" && *color == changed }),
+                "the mounted Rozi tree follows the active theme"
+            );
         })
         .expect("spawn color smoke thread")
         .join()
@@ -529,6 +540,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
         .spawn(|| {
             // Short viewport against this repository, so both surfaces certainly overflow.
             let has_thumb = |tab: SidebarTab, panes: usize| -> bool {
+                rozi::test_support::isolate_user_dirs();
                 let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
@@ -826,6 +838,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
@@ -990,6 +1003,7 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
+            rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,

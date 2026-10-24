@@ -255,8 +255,12 @@ pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Updat
     crate::pane::pty_events::forward_key_to_pane(ctx, id, key)
 }
 
-pub(super) fn pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
-    handle_pane_mouse(ctx, id, bytes)
+pub(super) fn pane_mouse(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    event: ForwardedMouseEvent,
+) -> Update {
+    handle_pane_mouse(ctx, id, event)
 }
 
 pub(super) fn pane_resize(ctx: &mut Context<AppRoot>, id: PaneId, cols: u16, rows: u16) -> Update {

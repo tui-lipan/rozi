@@ -86,6 +86,10 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
 
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     first.write_control(&ClientMessage::SpawnPane {
+        placement: Some(crate::common::spawn_placement(
+            0,
+            &[(PANE_ID, PANE_GENERATION)],
+        )),
         local: false,
         pane_id: PANE_ID,
         generation: PANE_GENERATION,
@@ -172,13 +176,13 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         }],
     };
     first.write_control(&ClientMessage::CommitLayout {
-        base_rev: 0,
+        base_rev: 1,
         layout: layout.clone(),
         live: false,
     });
     let mut committed = None;
     read_until(&mut first, |frame| {
-        if let Frame::Control(message @ ServerMessage::LayoutCommitted { .. }) = frame {
+        if let Frame::Control(message @ ServerMessage::LayoutCommitted { rev: 2, .. }) = frame {
             committed = Some(message.clone());
             true
         } else {
@@ -188,7 +192,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     assert_eq!(
         committed,
         Some(ServerMessage::LayoutCommitted {
-            rev: 1,
+            rev: 2,
             author: first_client_id,
             layout: layout.clone(),
             live: false,
@@ -219,7 +223,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     else {
         unreachable!()
     };
-    assert_eq!(layout_rev, 1);
+    assert_eq!(layout_rev, 2);
     assert_eq!(reattached_layout, Some(layout));
     assert_eq!(origin.profile.as_deref(), Some("work"));
     assert!(

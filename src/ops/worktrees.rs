@@ -1641,6 +1641,9 @@ mod tests {
                 let current = state.current_mut();
                 current.session_client = Some(client);
                 current.session_attached = true;
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(1);
+                current.shared = Some(shared);
                 current.session_name = Some("dev".into());
                 current.remote_target = target.clone();
                 current.remote_host = remote.then(|| "workbox".into());

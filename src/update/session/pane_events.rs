@@ -313,7 +313,7 @@ pub(crate) fn resized(
 /// the pane, or its new generation, yet. Output that arrives in between is buffered the same way,
 /// and the held geometry is applied before that output is parsed, so an early picture is laid out
 /// against the session's cells rather than this client's own. Returns whether a live pane changed.
-fn apply_or_hold_geometry(
+pub(super) fn apply_or_hold_geometry(
     attachment: &mut crate::state::Attachment,
     pane_id: PaneId,
     generation: u64,

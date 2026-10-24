@@ -281,6 +281,8 @@ impl SnapshotMeta {
 
 #[derive(Serialize, Deserialize)]
 struct SnapshotPane {
+    #[serde(default)]
+    scrollback: Option<usize>,
     pane_id: PaneId,
     generation: u64,
     /// How the pane was *created*: the launch intent a client asked for, or `None` for a plain
@@ -652,6 +654,7 @@ impl SessionServer {
                     .then(|| observed_foreground_command(pane, &shells))
                     .flatten();
             panes.push(SnapshotPane {
+                scrollback: Some(pane.scrollback),
                 pane_id,
                 generation: pane.generation,
                 launch: pane.launch.clone(),
@@ -788,6 +791,7 @@ impl SessionServer {
                 },
                 Some(&replay),
                 true,
+                saved.scrollback,
             );
             if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
                 restored += 1;
@@ -2080,6 +2084,7 @@ mod tests {
     /// A snapshot pane carrying a native agent session fact, and whatever else the test needs.
     fn saved_pane(agent: &str, session: &str, foreground: Option<&str>) -> SnapshotPane {
         SnapshotPane {
+            scrollback: None,
             pane_id: 1,
             generation: 1,
             launch: None,
@@ -2588,6 +2593,7 @@ mod tests {
 
     fn test_pane() -> ServerPane {
         ServerPane {
+            scrollback: 100,
             generation: 1,
             title: None,
             cwd: None,

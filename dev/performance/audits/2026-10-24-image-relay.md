@@ -64,6 +64,134 @@ Consuming-media results are recorded separately below. The baseline above uses t
 probe from PR #240.
 
 
+## After the reviewed probe was merged
+
+Remeasured after integration of PR #240, with Rozi `a3850a5f94156b332282b4519fdbc3aa529ea263`
+and the same local framework override at tui-lipan `294220b137d330916f332f794ddc883469efba5a`.
+The merge carries the reviewed probe's receipt timestamp from the drain thread, event-driven
+sampling, explicit image warmup and CPU ticks over the offered-load interval into the
+consuming-media cases. It changes no server media behavior. PR #241 targets `master`.
+
+Source SHA-256 values were `12cea372145d0efced09f15936fb2b9dc235b3ac830746fd8bc9e3e13fb2397c`
+for `benches/server_fairness.rs` and
+`9e9a77bec8dbd64aab480912bf2d26b6d0d4f0a370339401486c50436292412b` for
+`src/platform/process/linux.rs`. The optimized benchmark executable, which also runs its
+session server, had SHA-256
+`16561f66972a64d6b73833a18be2ae31d274d7b6c2276094f403406489ca3cdb`.
+
+```sh
+env -u LD_PRELOAD -u ROZI_IMAGE_PROBE_CPU_SAMPLER \
+  target/release/deps/server_fairness-ea92c1dad8642605 --image-relay-probe
+```
+
+All 147 runs completed, three repetitions of 49 cases. The baseline's reviewed timing and
+aggregation apply. The server CPU sampler is built into the probe on Linux, with no Python
+sampler. No agent compilation or live host validation ran during measurement; the ordinary
+desktop remained running. These are short local samples with variation, not controlled
+real-time guarantees. `f`, `t` and `s` mean regular file, consuming temporary file and consuming
+POSIX shared memory. Consuming media is inline with either client mix. Each image case offers
+20 images after the warmup image. Drain time includes the two-second offer interval and all
+pending image completion. CPU covers only that offer interval, not total work per completed
+image. Producer-side source creation is excluded from server CPU.
+
+| Format | MiB | Medium | Remote reader | p50 ms | p95 ms | Worst ms | Server CPU % | Drain ms |
+| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Text only | 0 | `f` | false | 0.024 | 0.040 | 0.934 | 0.5 | 2007 |
+| PNG | 1 | `f` | false | 0.023 | 0.043 | 1.031 | 2.5 | 2001 |
+| PNG | 1 | `t` | false | 0.026 | 0.043 | 0.954 | 3.0 | 2002 |
+| PNG | 1 | `s` | false | 0.027 | 0.043 | 0.650 | 3.0 | 2002 |
+| PNG | 1 | `f` | true | 0.025 | 0.043 | 2.027 | 3.0 | 2002 |
+| PNG | 1 | `t` | true | 0.028 | 0.047 | 2.658 | 3.0 | 2002 |
+| PNG | 1 | `s` | true | 0.026 | 0.044 | 1.293 | 3.0 | 2002 |
+| PNG | 8 | `f` | false | 0.022 | 0.049 | 3.384 | 16.0 | 2002 |
+| PNG | 8 | `t` | false | 0.031 | 0.179 | 2.377 | 20.0 | 2001 |
+| PNG | 8 | `s` | false | 0.030 | 0.169 | 1.402 | 19.5 | 2001 |
+| PNG | 8 | `f` | true | 0.032 | 0.177 | 5.208 | 20.5 | 2002 |
+| PNG | 8 | `t` | true | 0.032 | 0.195 | 1.370 | 20.5 | 2002 |
+| PNG | 8 | `s` | true | 0.029 | 0.170 | 4.137 | 20.5 | 2003 |
+| PNG | 32 | `f` | false | 0.026 | 0.044 | 37.373 | 62.5 | 2003 |
+| PNG | 32 | `t` | false | 0.043 | 0.275 | 2.568 | 36.5 | 4453 |
+| PNG | 32 | `s` | false | 0.042 | 0.233 | 4.446 | 36.0 | 4467 |
+| PNG | 32 | `f` | true | 0.049 | 0.400 | 3.628 | 36.5 | 4463 |
+| PNG | 32 | `t` | true | 0.056 | 0.228 | 2.705 | 37.5 | 4459 |
+| PNG | 32 | `s` | true | 0.048 | 0.239 | 3.473 | 37.5 | 4472 |
+| PNG | 64 | `f` | false | 0.021 | 0.043 | 1.275 | 100.0 | 2465 |
+| PNG | 64 | `t` | false | 0.046 | 0.246 | 11.902 | 41.5 | 9051 |
+| PNG | 64 | `s` | false | 0.046 | 0.223 | 22.871 | 41.5 | 9068 |
+| PNG | 64 | `f` | true | 0.147 | 1.901 | 11.085 | 41.5 | 9050 |
+| PNG | 64 | `t` | true | 0.053 | 0.232 | 11.192 | 42.0 | 9062 |
+| PNG | 64 | `s` | true | 0.052 | 1.255 | 11.216 | 42.5 | 9084 |
+| Raw RGBA | 1 | `f` | false | 0.022 | 0.042 | 2.074 | 0.5 | 2001 |
+| Raw RGBA | 1 | `t` | false | 0.026 | 0.045 | 0.882 | 3.5 | 2002 |
+| Raw RGBA | 1 | `s` | false | 0.022 | 0.040 | 0.795 | 3.5 | 2001 |
+| Raw RGBA | 1 | `f` | true | 0.026 | 0.044 | 0.652 | 4.0 | 2002 |
+| Raw RGBA | 1 | `t` | true | 0.027 | 0.043 | 0.654 | 4.0 | 2002 |
+| Raw RGBA | 1 | `s` | true | 0.024 | 0.044 | 1.037 | 4.0 | 2001 |
+| Raw RGBA | 8 | `f` | false | 0.024 | 0.039 | 2.027 | 1.0 | 2002 |
+| Raw RGBA | 8 | `t` | false | 0.031 | 0.518 | 3.403 | 25.0 | 2003 |
+| Raw RGBA | 8 | `s` | false | 0.030 | 0.165 | 1.452 | 25.0 | 2003 |
+| Raw RGBA | 8 | `f` | true | 0.031 | 0.199 | 2.676 | 25.5 | 2002 |
+| Raw RGBA | 8 | `t` | true | 0.030 | 0.176 | 2.694 | 25.5 | 2002 |
+| Raw RGBA | 8 | `s` | true | 0.028 | 0.169 | 2.638 | 26.5 | 2002 |
+| Raw RGBA | 32 | `f` | false | 0.026 | 0.040 | 1.664 | 3.5 | 2002 |
+| Raw RGBA | 32 | `t` | false | 0.044 | 0.862 | 8.416 | 43.5 | 4951 |
+| Raw RGBA | 32 | `s` | false | 0.053 | 0.856 | 9.135 | 43.0 | 4979 |
+| Raw RGBA | 32 | `f` | true | 0.044 | 2.348 | 7.403 | 43.5 | 4950 |
+| Raw RGBA | 32 | `t` | true | 0.042 | 1.674 | 7.787 | 44.0 | 4949 |
+| Raw RGBA | 32 | `s` | true | 0.043 | 1.283 | 11.411 | 44.0 | 4974 |
+| Raw RGBA | 64 | `f` | false | 0.025 | 0.049 | 1.565 | 6.5 | 2002 |
+| Raw RGBA | 64 | `t` | false | 0.066 | 0.216 | 10.909 | 43.5 | 9881 |
+| Raw RGBA | 64 | `s` | false | 0.042 | 0.234 | 15.060 | 43.5 | 9929 |
+| Raw RGBA | 64 | `f` | true | 0.046 | 0.220 | 13.338 | 43.5 | 9900 |
+| Raw RGBA | 64 | `t` | true | 0.148 | 0.213 | 10.579 | 44.0 | 9902 |
+| Raw RGBA | 64 | `s` | true | 0.043 | 1.115 | 14.432 | 43.5 | 9910 |
+
+Compared with the reviewed baseline above, 64 MiB regular-file PNG relay changed from
+2551.568 / 3456.459 / 3562.370 ms p50 / p95 / worst to
+0.147 / 1.901 / 11.085 ms. Raw RGBA relay changed from
+3383.738 / 4288.116 / 4396.121 ms to 0.046 / 0.220 / 13.338 ms.
+Median offered-window server CPU changed from 99.5% to 41.5% for PNG and from 100.0% to
+43.5% for raw RGBA. Large relays still take about 9 to 10 seconds to drain; these CPU figures
+do not establish better throughput or energy per completed image.
+
+The three 64 MiB PNG relay p95 values were 1.901, 2.351 and 0.228 ms; raw relay values were
+0.197, 0.220 and 2.365 ms. The largest individual delay in the matrix was 37.373 ms in the
+third 32 MiB local PNG regular-file case. No performance threshold was added. The improved
+method changes the reported numbers but still justifies off-thread named-media preparation
+and bounded server emission. The historical tables below retain their original source labels
+and must not be compared directly with the reviewed baseline.
+
+After the merge, `cargo fmt --all -- --check`, `cargo test`,
+`cargo clippy --all-targets -- -D warnings`, `cargo build`, the optimized benchmark build and
+`git diff --check` passed with the framework override. This does not replace validation against
+the published dependency. Subsequent registry verification is recorded below. No local path or
+source-less lockfile entry is committed.
+
+## Published dependency verification
+
+After the matrix completed, the maintainer published tui-lipan v0.29.0. Rozi's manifest and
+Cargo-generated registry lockfile now select 0.29.0 for both framework crates, with registry
+sources and checksums. The ignored local override was removed. The release tag is
+`a9a1005c0fd78fd928cadb1e8ee8cfe21474eb13`. Relative to the measured framework revision,
+the only Rust source difference is `src/test_backend.rs`; terminal acquisition, deferred
+preparation, parser and renderer code are unchanged. The measurements above retain their
+original revision labels and were not rerun or relabeled as release measurements.
+
+Without a local override, all of these passed against the registry dependency:
+
+- `cargo fmt --all -- --check`
+- `cargo test --locked`
+- `cargo clippy --locked --all-targets -- -D warnings`
+- `cargo build --locked`
+- `cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings`
+- `cargo deny check licenses sources advisories bans`
+- `cargo audit`, with its two allowed warnings
+- `git diff --check`
+
+PR #241 remains a draft for review. The framework release and registry dependency integration
+are complete. macOS and Windows runtime were not available locally; previous framework macOS
+CI acquisition results and Linux live rendering evidence retain their original revision labels.
+
 ## Historical pre-review baseline
 
 Measured on 2026-10-24 with Rozi `2518aa26` plus the stage-2 benchmark extension, registry

@@ -367,11 +367,6 @@ pub fn run() -> Result<()> {
         .command_chord_reveal_delay(plan.config.input.which_key.reveal_delay())
         // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
-    // `window_title = ""` leaves the host title alone; otherwise it follows the focused pane.
-    let app = match crate::update::host_title::initial(&plan.config) {
-        Some(title) => app.title(title),
-        None => app,
-    };
 
     // Probe / prompt / install before the TUI takes stdin (install = "prompt").
     if let Some(target) = plan.remote() {

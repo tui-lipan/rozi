@@ -20,11 +20,6 @@ pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
     ctx.set_title(title);
 }
 
-/// The startup title, before any session or pane exists. `None` when the user turned titles off.
-pub(crate) fn initial(config: &crate::config::Config) -> Option<&'static str> {
-    (!config.window_title.is_empty()).then_some(FALLBACK)
-}
-
 fn window_title(state: &State) -> String {
     let pane = state
         .focused_pane_target()
@@ -49,7 +44,9 @@ fn pane_cwd(pane: &crate::state::Pane, remote_attached: bool) -> Option<String> 
         return Some(path.clone());
     }
     let cwd = pane.live_cwd().or_else(|| pane.identity.cwd.clone())?;
-    Some(if remote_attached {
+    // A path from another machine (a remote attach, or a pane that ssh'd onward) is not under
+    // this client's home.
+    Some(if remote_attached || pane.terminal.cwd_host.is_some() {
         cwd
     } else {
         crate::platform::paths::compress_home(&cwd)
@@ -195,11 +192,17 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_format_turns_titles_off() {
-        let mut config = crate::config::Config::default();
-        assert_eq!(initial(&config), Some(FALLBACK));
-        config.window_title.clear();
-        assert_eq!(initial(&config), None);
+    fn cwd_keeps_another_machines_path_whole() {
+        let home = crate::platform::paths::home_directory().expect("home directory");
+        let path = format!("{}/project", home.trim_end_matches('/'));
+        let mut state = state_with_focused_title("shell");
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.display_path = None;
+        pane.terminal.cwd = Some(path.clone());
+        assert_eq!(pane_cwd(pane, false).as_deref(), Some("~/project"));
+
+        pane.terminal.cwd_host = Some("remote-box".into());
+        assert_eq!(pane_cwd(pane, false), Some(path));
     }
 
     #[test]

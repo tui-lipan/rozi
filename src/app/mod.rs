@@ -286,6 +286,9 @@ impl Component for AppRoot {
         }
         Self::start_theme_watcher(ctx);
         let start = self.prepare_session_start(ctx);
+        // Set here, not through `App::title`, so the first frame already carries the configured
+        // title rather than a placeholder the first update replaces.
+        crate::update::host_title::sync(ctx);
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
             update_check_interval: ctx.state.update_check_interval(),
@@ -465,6 +468,25 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    #[test]
+    fn the_first_frame_carries_the_configured_window_title() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                crate::test_support::isolate_user_dirs();
+                let mut root = AppRoot::default();
+                root.config.window_title = "devbox".into();
+                assert_eq!(TestBackend::new(root).host_title(), Some("devbox"));
+
+                let mut root = AppRoot::default();
+                root.config.window_title.clear();
+                assert_eq!(TestBackend::new(root).host_title(), None);
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
 
     #[test]
     fn second_ticks_land_just_past_the_next_wall_clock_second() {

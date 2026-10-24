@@ -229,6 +229,10 @@ pub(crate) fn output(
         }
     }
     relay_output_clipboard(ctx, effects.clipboard_events);
+    // Output skips the post-update sweep, so the focused pane's own title change resyncs here.
+    if effects.mutation.title_changed && focused == Some(pane_id) {
+        crate::update::host_title::sync(ctx);
+    }
     crate::ops::capture_wait::pane_output(ctx, pane_id, local);
     if effects.bell_fired {
         emit_output_bell(ctx, pane_id, focused, effects.bell_alert_raised);

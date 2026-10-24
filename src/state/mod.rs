@@ -1012,6 +1012,16 @@ impl State {
         self.current().is_ephemeral_session()
     }
 
+    /// The attached session's name, or `None` while detached or in a temporary session, whose
+    /// generated name means nothing to the user.
+    pub fn named_session(&self) -> Option<&str> {
+        let current = self.current();
+        if !current.session_attached || current.is_ephemeral_session() {
+            return None;
+        }
+        current.session_name.as_deref()
+    }
+
     /// Whether the client currently has no session in the foreground: nothing attached, nothing
     /// connecting, and no panes to draw. This is the launcher — a legitimate resting state, not a
     /// failure — reached by dismissing the startup picker or by killing the last session. Parked

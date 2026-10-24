@@ -217,6 +217,11 @@ files may contain passwords, tokens, and other private output.
 Programs set the pane title with OSC 0 or OSC 2. A custom title set with the `N` command key takes
 precedence. See [Layouts and panes](layouts-and-panes.md#titles-and-exited-panes).
 
+rozi also titles your terminal window, so window switchers and status bars can tell rozi windows
+apart. By default the title reads `rozi · <session> · <focused pane>`. A temporary session has no
+name, so its title reads `rozi · <focused pane>`. An agent's working spinner is left out. Set the
+format, or turn it off, with [`window_title`](configuration.md#top-level-keys).
+
 With `[notifications] bell = true`, a bell from a pane you are not watching marks its workspace. You
 are watching a pane only when both the terminal window and the pane have focus. A bell from a pane
 running an agent does not mark it: the agent's own finished or blocked mark covers it. A pane with

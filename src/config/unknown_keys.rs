@@ -9,6 +9,7 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "scrollback",
     "frame_rate",
     "nerd_icons",
+    "window_title",
     "input",
     "cursor",
     "animations",

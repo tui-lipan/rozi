@@ -45,6 +45,11 @@
 # arrows when enabled; otherwise they use Unicode arrows and text Git marks.
 #nerd_icons = true
 
+# Title rozi gives the host terminal window. {session} is the session name, empty for a temporary
+# session; {pane} is the focused pane's title; {cwd} is its working directory; {host} is this
+# machine. An empty placeholder takes the separator next to it along. "" leaves the title alone.
+#window_title = "rozi · {session} · {pane}"
+
 [cursor]
 # "inherit" follows the host in pickers and honors programs in panes.
 # "static" and "blinking" override blinking everywhere, including program requests.

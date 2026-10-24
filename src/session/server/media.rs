@@ -419,8 +419,11 @@ impl SessionServer {
         client_id: ClientId,
         message: ClientMessage,
     ) -> std::result::Result<ClientMessage, Vec<(Target, ServerMessage)>> {
-        if !self.media.client_barriers.contains_key(&client_id)
-            && self.media_barrier_key(client_id, &message).is_none()
+        // A pong has no session-ordering effect, and holding it would let a long fence expire a
+        // healthy client.
+        if matches!(message, ClientMessage::Pong { .. })
+            || (!self.media.client_barriers.contains_key(&client_id)
+                && self.media_barrier_key(client_id, &message).is_none())
         {
             return Ok(message);
         }

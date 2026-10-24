@@ -596,6 +596,11 @@ impl SessionServer {
             if !client.attached {
                 continue;
             }
+            // A closed transport cannot answer pings while its decoded controls drain behind a
+            // media fence. Releasing the fence removes the client.
+            if client.transport_closed && self.media.client_fenced(client.id) {
+                continue;
+            }
             // A ping queued behind a replay cannot be answered yet. Start the heartbeat clock once
             // the baseline and its catch-up have reached the socket. A resync is different: a pane
             // that keeps flooding can hold one open indefinitely, so its pings skip the barrier

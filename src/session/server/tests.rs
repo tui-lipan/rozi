@@ -7276,6 +7276,53 @@ fn media_fence_drains_final_controls_even_when_the_connection_has_closed() {
 }
 
 #[test]
+fn media_fence_does_not_hold_heartbeat_pongs() {
+    let mut server = media_test_server();
+    server.settings.heartbeat_timeout = Duration::from_millis(50);
+    let (controller, _stream) = attach_client(&mut server);
+    let _source = start_barrier_test_media(&mut server);
+    server.process_client_frame(
+        controller,
+        Frame::Control(resize_message(7, false, 2, 40, 10)),
+    );
+    assert!(server.media.client_fenced(controller));
+    std::thread::sleep(Duration::from_millis(60));
+    server.process_client_frame(controller, Frame::Control(ClientMessage::Pong { seq: 1 }));
+    server.heartbeat();
+    assert!(server.client_attached(controller));
+    assert!(server.media.client_fenced(controller));
+    finish_media_events(&mut server);
+    assert_eq!(server.panes[&7].cols, 40);
+}
+
+#[test]
+fn heartbeat_keeps_a_closed_client_until_its_media_fence_drains() {
+    let mut server = media_test_server();
+    server.settings.heartbeat_timeout = Duration::from_millis(1);
+    let (controller, mut stream) = attach_client(&mut server);
+    let _source = start_barrier_test_media(&mut server);
+    for message in [
+        resize_message(7, false, 2, 40, 10),
+        ClientMessage::CommitLayout {
+            base_rev: 0,
+            layout: shared_layout_for_panes(&[(7, 2)]),
+            live: false,
+        },
+    ] {
+        protocol::write_frame(&mut stream, &message).unwrap();
+    }
+    drop(stream);
+    server.pump_clients();
+    assert!(server.client_mut(controller).unwrap().transport_closed);
+    std::thread::sleep(Duration::from_millis(5));
+    server.heartbeat();
+    assert!(server.client_attached(controller));
+    finish_media_events(&mut server);
+    assert_eq!(server.layout_rev, 1);
+    assert!(!server.client_attached(controller));
+}
+
+#[test]
 fn media_in_one_pane_does_not_fence_other_panes_or_layout_metadata() {
     let mut server = media_test_server();
     server.panes.insert(8, test_pane(2));

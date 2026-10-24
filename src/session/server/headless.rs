@@ -769,7 +769,7 @@ impl SessionServer {
             None => Err(ControlResponse::error_with(
                 ControlErrorCode::Unavailable,
                 format!(
-                    "session `{}` has panes but no shared layout; attach a client once so it commits one",
+                    "session `{}` has panes but no shared layout; restore a valid session snapshot or recreate the invalid session",
                     self.session_name
                 ),
             )),
@@ -1739,7 +1739,7 @@ impl SessionServer {
         // not exist, so refuse instead and say what would fix it.
         if self.layout.is_none() && !self.panes.is_empty() {
             return ControlResponse::error(format!(
-                "session `{}` has panes but no shared layout; attach a client once so it commits one",
+                "session `{}` has panes but no shared layout; restore a valid session snapshot or recreate the invalid session",
                 self.session_name
             ));
         }
@@ -3804,13 +3804,10 @@ mod tests {
             },
         );
         assert!(!response.ok);
-        assert!(
-            response
-                .error
-                .unwrap_or_default()
-                .contains("no shared layout"),
-            "the refusal must name the missing layout"
-        );
+        let error = response.error.unwrap_or_default();
+        assert!(error.contains("no shared layout"));
+        assert!(error.contains("restore a valid session snapshot"));
+        assert!(!error.contains("attach a client"));
         assert!(
             broadcasts.is_empty(),
             "a refused spawn must not touch any client"

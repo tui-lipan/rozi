@@ -456,6 +456,7 @@ pub(crate) fn flush_live_layout_gesture(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
+    crate::pane::lifecycle::pump_shared_spawns(&mut ctx.state);
     if ctx.state.scratch_visible {
         return;
     }
@@ -519,6 +520,15 @@ pub(crate) fn commit_layout_document(
     let Some(client) = state.current().session_client.clone() else {
         return;
     };
+    if !state.current().pending_spawns.is_empty()
+        || state
+            .current()
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.spawn_in_flight.is_some())
+    {
+        return;
+    }
     let canvas = (layout.canvas_cols, layout.canvas_rows);
     let Some(shared) = state.current_mut().shared.as_mut() else {
         return;

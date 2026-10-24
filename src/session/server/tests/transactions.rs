@@ -301,3 +301,302 @@ fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
         }
     }).unwrap().join().unwrap();
 }
+
+#[test]
+fn atomic_spawn_and_ordinary_commit_can_retain_a_known_exited_pane() {
+    let mut server = SessionServer::new_named("retained");
+    let (controller, _stream) = attach_client(&mut server);
+    let mut exited = test_pane(1);
+    exited.exited = Some(7);
+    server.panes.insert(1, exited);
+    server.layout = Some(shared_layout_for_panes(&[(1, 1)]));
+    server.layout_rev = 1;
+    let mut message = spawn(&server, 2);
+    if let ClientMessage::SpawnPane {
+        placement: Some(placement),
+        ..
+    } = &mut message
+    {
+        placement.layout = shared_layout_for_panes(&[(1, 1), (2, 1)]);
+    }
+    assert!(accepted(&server.handle_message(controller, message)));
+    assert_eq!(server.layout_rev, 2);
+    assert_placed(&server);
+    let layout = server.layout.clone().unwrap();
+    assert!(
+        server
+            .handle_commit_layout(controller, 2, layout, false)
+            .iter()
+            .any(|(_, message)| matches!(message, ServerMessage::LayoutCommitted { rev: 3, .. }))
+    );
+    assert!(
+        !server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 9), (2, 1)]))
+    );
+}
+
+struct StartupSpawns {
+    ui: tui_lipan::TestBackend<crate::AppRoot>,
+    outbound: std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+    server: SessionServer,
+    controller: ClientId,
+    _stream: UnixStream,
+    attempts: Vec<(PaneId, u64)>,
+    results: Vec<(PaneId, bool)>,
+}
+
+impl StartupSpawns {
+    fn new(fail_middle: bool) -> Self {
+        use crate::session::client::SessionClient;
+        let mut server = SessionServer::new_named("startup");
+        let (controller, stream) = attach_client(&mut server);
+        let mut ui = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        ui.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        ui.state_mut().config.animations.enabled = false;
+        for ws in &mut ui.state_mut().current_mut().workspaces {
+            ws.panes.clear();
+            ws.tile_tree = None;
+        }
+        for id in [1, 2, 3] {
+            let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
+            if fail_middle && id == 2 {
+                pane.identity.launch = Some(crate::pane::launch::PaneLaunch::Direct {
+                    argv: vec!["/rozi-test-no-such-program/never-exists".into()],
+                });
+            }
+            ui.state_mut().current_mut().workspaces[0].panes.push(pane);
+        }
+        // Profile panes can already have deferred requests when the first attachment arrives.
+        for id in [1, 2, 3] {
+            let identity = ui.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == id)
+                .unwrap()
+                .identity
+                .clone();
+            crate::pane::lifecycle::request_pane_spawn(
+                ui.state_mut(),
+                crate::pane::lifecycle::PaneSpawnRequest {
+                    pane_id: id,
+                    local: false,
+                    generation: 0,
+                    identity,
+                    cols: 80,
+                    rows: 24,
+                    env: Vec::new(),
+                    palette: TerminalColorPalette::default(),
+                },
+            );
+        }
+        let (client, outbound) = SessionClient::test_channel();
+        ui.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: 0,
+                request: crate::state::AttachRequest::new(
+                    "startup",
+                    crate::state::AttachMode::Join,
+                ),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
+            });
+        ui.dispatch(crate::Msg::SessionAttached {
+            epoch: 0,
+            session_instance: server.instance_id.clone(),
+            session: "startup".into(),
+            client_id: controller,
+            panes: Vec::new(),
+            layout_rev: 0,
+            layout: None,
+            controller: Some(controller),
+            clients: Vec::new(),
+            input_locked: false,
+            allow_takeover: true,
+            read_only: false,
+            origin: Default::default(),
+        })
+        .unwrap();
+        Self {
+            ui,
+            outbound,
+            server,
+            controller,
+            _stream: stream,
+            attempts: Vec::new(),
+            results: Vec::new(),
+        }
+    }
+
+    fn step(&mut self) -> bool {
+        let outbound: Vec<_> = self.outbound.try_iter().collect();
+        if outbound.is_empty() {
+            return false;
+        }
+        for frame in outbound {
+            let crate::session::client::ClientOutbound::Control(message) = frame else {
+                continue;
+            };
+            if let ClientMessage::SpawnPane {
+                pane_id,
+                placement: Some(placement),
+                ..
+            } = &message
+            {
+                self.attempts.push((*pane_id, placement.base_rev));
+            }
+            for (_, message) in self.server.handle_message(self.controller, message) {
+                if let ServerMessage::SpawnResult { pane_id, ok, .. } = &message {
+                    self.results.push((*pane_id, *ok));
+                }
+                let message =
+                    crate::session::bootstrap::server_message_to_msg(0, Frame::Control(message));
+                self.ui.dispatch(message).unwrap();
+            }
+        }
+        true
+    }
+
+    fn finish(&mut self) {
+        for _ in 0..30 {
+            if !self.step() {
+                break;
+            }
+        }
+        assert_eq!(self.results, [(1, true), (2, false), (3, true)]);
+        assert_eq!(self.server.panes.len(), 2);
+        assert_placed(&self.server);
+        assert!(self.ui.state().current().pending_spawns.is_empty());
+        assert!(
+            self.ui
+                .state()
+                .current()
+                .shared
+                .as_ref()
+                .unwrap()
+                .spawn_in_flight
+                .is_none()
+        );
+    }
+}
+
+fn startup_test(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(body)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn queued_startup_spawns_continue_after_the_middle_pty_fails() {
+    startup_test(|| {
+        let mut test = StartupSpawns::new(true);
+        test.finish();
+        assert_eq!(test.attempts, [(1, 0), (2, 1), (3, 1)]);
+        assert_eq!(test.server.layout_rev, 2);
+    });
+}
+
+#[test]
+fn queued_startup_spawns_rebase_after_a_stale_middle_transaction() {
+    startup_test(|| {
+        let mut test = StartupSpawns::new(false);
+        test.step();
+        test.server.layout_rev = 4;
+        test.finish();
+        assert_eq!(test.attempts, [(1, 0), (2, 1), (3, 4)]);
+    });
+}
+
+#[test]
+fn queued_startup_spawns_wait_for_control_after_a_rejected_transaction() {
+    startup_test(|| {
+        let mut test = StartupSpawns::new(false);
+        test.step();
+        test.server.controller = None;
+        test.ui
+            .dispatch(crate::Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: None,
+                reason: protocol::ControllerChangeReason::Released,
+            })
+            .unwrap();
+        test.step();
+        assert_eq!(test.attempts, [(1, 0), (2, 1)]);
+        test.server.controller = Some(test.controller);
+        test.ui
+            .dispatch(crate::Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: Some(test.controller),
+                reason: protocol::ControllerChangeReason::Granted,
+            })
+            .unwrap();
+        test.finish();
+        assert_eq!(test.attempts, [(1, 0), (2, 1), (3, 1)]);
+    });
+}
+
+#[test]
+fn queued_startup_spawns_do_not_inherit_a_rejected_read_only_base() {
+    startup_test(|| {
+        let mut test = StartupSpawns::new(false);
+        test.step();
+        test.server.client_mut(test.controller).unwrap().read_only = true;
+        test.step();
+        test.server.client_mut(test.controller).unwrap().read_only = false;
+        test.finish();
+        assert_eq!(test.attempts, [(1, 0), (2, 1), (3, 1)]);
+    });
+}
+
+#[test]
+fn attaching_to_a_layout_with_a_retained_exit_preserves_its_status() {
+    startup_test(|| {
+        let mut test = StartupSpawns::new(true);
+        test.finish();
+        let pane = test.server.panes.get_mut(&1).unwrap();
+        pane.exited = Some(7);
+        let mut ui = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        let (client, _outbound) = crate::session::client::SessionClient::test_channel();
+        ui.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: 0,
+                request: crate::state::AttachRequest::new(
+                    "startup",
+                    crate::state::AttachMode::Join,
+                ),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
+            });
+        ui.dispatch(crate::Msg::SessionAttached {
+            epoch: 0,
+            session_instance: test.server.instance_id.clone(),
+            session: "startup".into(),
+            client_id: 99,
+            panes: test.server.pane_meta(),
+            layout_rev: test.server.layout_rev,
+            layout: test.server.layout.clone(),
+            controller: Some(test.controller),
+            clients: Vec::new(),
+            input_locked: false,
+            allow_takeover: true,
+            read_only: false,
+            origin: Default::default(),
+        })
+        .unwrap();
+        let pane = crate::pane::lifecycle::find_pane(ui.state(), 1).unwrap();
+        assert_eq!(pane.terminal.status, ManagedTerminalStatus::Exited(7));
+        assert!(!pane.closing);
+        assert_eq!(
+            pane.terminal.scrollback_capacity(),
+            test.server.panes[&1].scrollback
+        );
+    });
+}

@@ -297,11 +297,9 @@ pub(crate) fn attached(
     // palette label reflects; the lease state affects command labels too.
     ctx.state.commands_dirty = true;
 
-    let panes: Vec<_> = panes
-        .into_iter()
-        .filter(|pane| pane.exited.is_none())
-        .collect();
-    let had_panes = !panes.is_empty();
+    // Layout membership decides which panes remain visible. Metadata must also bind retained
+    // exited panes so a fresh attachment preserves their capacity and exit status.
+    let had_panes = panes.iter().any(|pane| pane.exited.is_none());
 
     let populated = layout.is_some() || had_panes;
     let mut update = if let Some(layout) = layout {

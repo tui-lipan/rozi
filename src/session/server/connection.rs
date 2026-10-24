@@ -726,19 +726,6 @@ impl SessionServer {
                         },
                     )];
                 }
-                if !local && (!self.is_controller(client_id) || self.client_read_only(client_id)) {
-                    return vec![(
-                        Target::Sender,
-                        ServerMessage::SpawnResult {
-                            pane_id,
-                            local,
-                            generation,
-                            pid: None,
-                            ok: false,
-                            error: Some("not controller".to_string()),
-                        },
-                    )];
-                }
                 let initial_seed = !local
                     && self.origin.is_empty()
                     && self.origin_seed_client.is_none()
@@ -778,6 +765,20 @@ impl SessionServer {
                     && let Some(metadata) = self.pane_metadata_message(Some(client_id), pane_id)
                 {
                     messages.push((Target::Sender, metadata));
+                }
+                if !local
+                    && matches!(message, ServerMessage::SpawnResult { ok: false, .. })
+                    && !messages
+                        .iter()
+                        .any(|(_, message)| matches!(message, ServerMessage::LayoutRejected { .. }))
+                {
+                    messages.push((
+                        Target::Sender,
+                        ServerMessage::LayoutRejected {
+                            current_rev: self.layout_rev,
+                            layout: self.layout.clone(),
+                        },
+                    ));
                 }
                 messages.insert(0, (Target::Sender, message));
                 messages

@@ -94,17 +94,11 @@ pub(crate) fn layout_committed(
     layout: SharedLayout,
     live: bool,
 ) -> Update {
+    if let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) {
+        confirm_shared_spawn(attachment, rev, author, &layout);
+    }
     if epoch != ctx.state.runtime_epoch {
-        if let Some(attachment) = ctx.state.background.get_mut(&epoch)
-            && let Some(shared) = attachment.shared.as_mut()
-        {
-            shared.layout_rev = rev;
-            if shared.client_id != author {
-                shared.assumed_rev = rev;
-                shared.last_committed_layout = Some(layout.clone());
-                attachment.pending_background_layout = Some((rev, layout));
-            }
-        }
+        background_layout_committed(&mut ctx.state, epoch, rev, author, layout);
         return Update::none();
     }
     let my_id = ctx
@@ -121,7 +115,7 @@ pub(crate) fn layout_committed(
         }
         Update::none()
     } else {
-        let update = crate::layout::shared::apply_shared_layout(ctx, &layout, rev);
+        let update = reconcile_with_pending_spawns(ctx, &layout, rev);
         // A step of the controller's gesture is drawn where it lands, as the controller draws it.
         // Only the default transition yields: a revision that closes panes keeps its exit motion.
         if live && ctx.state.animation == crate::layout::anim::GeometryAnimation::TileFloat {
@@ -141,6 +135,119 @@ pub(crate) fn layout_committed(
             "client"
         },
     );
+    update
+}
+
+fn background_layout_committed(
+    state: &mut crate::state::State,
+    epoch: u64,
+    rev: u64,
+    author: ClientId,
+    layout: SharedLayout,
+) {
+    if let Some(attachment) = state.background.get_mut(&epoch)
+        && let Some(shared) = attachment.shared.as_mut()
+    {
+        shared.layout_rev = rev;
+        if shared.client_id != author {
+            shared.assumed_rev = rev;
+            shared.last_committed_layout = Some(layout.clone());
+            attachment.pending_background_layout = Some((rev, layout));
+        }
+    }
+}
+
+fn confirm_shared_spawn(
+    attachment: &mut crate::state::Attachment,
+    rev: u64,
+    author: ClientId,
+    layout: &SharedLayout,
+) {
+    let Some(shared) = attachment.shared.as_mut() else {
+        return;
+    };
+    let Some(flight) = shared.spawn_in_flight else {
+        return;
+    };
+    if author != shared.client_id || rev != flight.base_rev.saturating_add(1) {
+        return;
+    }
+    if !layout
+        .workspaces
+        .iter()
+        .flat_map(|ws| &ws.panes)
+        .any(|pane| pane.pane_id == flight.pane_id && pane.generation == flight.generation)
+    {
+        return;
+    }
+    shared.spawn_in_flight = None;
+    shared.assumed_rev = rev;
+    shared.last_committed_layout = Some(layout.clone());
+}
+
+/// A failure consumes no revision. Wait for the server's rejection frame, which follows the
+/// result even for PTY startup failures, before allowing another shared transaction to start.
+fn reject_shared_spawn(
+    state: &mut crate::state::State,
+    epoch: u64,
+    rev: u64,
+    layout: Option<&SharedLayout>,
+) -> bool {
+    let Some(attachment) = state.attachment_for_epoch_mut(epoch) else {
+        return false;
+    };
+    let Some(shared) = attachment.shared.as_mut() else {
+        return false;
+    };
+    let Some(flight) = shared.spawn_in_flight.filter(|flight| flight.failed) else {
+        return false;
+    };
+    shared.spawn_in_flight = None;
+    shared.layout_rev = rev;
+    shared.assumed_rev = rev;
+    shared.last_committed_layout = layout.cloned();
+    rev == flight.base_rev
+}
+
+/// Foreign corrections must not close placeholders whose spawn has not been submitted yet.
+fn reconcile_with_pending_spawns(
+    ctx: &mut Context<AppRoot>,
+    layout: &SharedLayout,
+    rev: u64,
+) -> Update {
+    let mut pending: std::collections::HashSet<_> = ctx
+        .state
+        .current()
+        .pending_spawns
+        .iter()
+        .map(|request| (request.pane_id, request.generation))
+        .collect();
+    if let Some(flight) = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.spawn_in_flight)
+    {
+        pending.insert((flight.pane_id, flight.generation));
+    }
+    for pane in layout.workspaces.iter().flat_map(|ws| &ws.panes) {
+        pending.remove(&(pane.pane_id, pane.generation));
+    }
+    let mut retained = Vec::new();
+    for (index, ws) in ctx.state.current_mut().workspaces.iter_mut().enumerate() {
+        let (waiting, placed): (Vec<_>, Vec<_>) = std::mem::take(&mut ws.panes)
+            .into_iter()
+            .partition(|pane| !pane.closing && pending.contains(&(pane.id, pane.pty_generation)));
+        ws.panes = placed;
+        retained.push((index, waiting));
+    }
+    let update = crate::layout::shared::apply_shared_layout(ctx, layout, rev);
+    for (index, waiting) in retained {
+        let ws = &mut ctx.state.current_mut().workspaces[index];
+        ws.panes.extend(waiting);
+        ws.tile_tree = crate::layout::effective_tile_tree(ws, None);
+    }
     update
 }
 
@@ -204,6 +311,9 @@ pub(crate) fn layout_rejected(
     current_rev: u64,
     layout: Option<SharedLayout>,
 ) -> Update {
+    if reject_shared_spawn(&mut ctx.state, epoch, current_rev, layout.as_ref()) {
+        return Update::full();
+    }
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch)
             && let Some(shared) = attachment.shared.as_mut()
@@ -217,7 +327,7 @@ pub(crate) fn layout_rejected(
         return Update::none();
     }
     let update = if let Some(layout) = layout {
-        crate::layout::shared::apply_shared_layout(ctx, &layout, current_rev)
+        reconcile_with_pending_spawns(ctx, &layout, current_rev)
     } else {
         Update::full()
     };
@@ -418,6 +528,23 @@ pub(crate) fn flush_attachment_replay_input(
     }
 }
 
+struct SpawnReply {
+    pane_id: PaneId,
+    local: bool,
+    generation: u64,
+    pid: Option<u32>,
+    ok: bool,
+    error: Option<String>,
+}
+
+impl SpawnReply {
+    fn error_message(&self) -> String {
+        self.error
+            .clone()
+            .unwrap_or_else(|| "session spawn failed".to_string())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_result(
     ctx: &mut Context<AppRoot>,
@@ -429,148 +556,225 @@ pub(crate) fn spawn_result(
     ok: bool,
     error: Option<String>,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
-        if local {
-            return Update::none();
-        }
-        let Some(attachment) = ctx.state.background.get_mut(&epoch) else {
-            return Update::none();
-        };
-        let is_controller = attachment.is_controller();
-        let mut spawned_live = false;
-        if let Some(pane) = attachment.find_pane_mut(pane_id) {
-            if pane.pty_generation != generation {
-                return Update::none();
-            }
-            spawned_live = ok;
-            if !pane.terminal.is_ready() {
-                pane.terminal.bind_server_backend(pane_id, generation);
-            }
-            pane.terminal.child_pid = pid;
-            if ok {
-                pane.terminal.status = ManagedTerminalStatus::Ready;
-            } else {
-                let message = error
-                    .clone()
-                    .unwrap_or_else(|| "session spawn failed".to_string());
-                pane.terminal.status = ManagedTerminalStatus::Error(message.into());
-                if is_controller {
-                    attachment.pending_background_layout = None;
-                }
-            }
-        }
-        let replay_armed = attachment
-            .pending_replay_inputs
-            .contains_key(&(pane_id, generation));
-        if replay_armed && !spawned_live {
-            attachment
-                .pending_replay_inputs
-                .remove(&(pane_id, generation));
-        }
-        crate::ops::control::resolve_spawn_reply(
-            &mut ctx.state,
-            epoch,
-            pane_id,
-            local,
-            generation,
-            ok,
-            error.as_deref(),
-        );
-        if replay_armed && spawned_live {
-            return Update::with_command(replay_input_deadline_command(epoch, pane_id, generation));
-        }
-        return Update::none();
-    }
-    let is_controller = ctx.state.is_controller();
-    let mut should_close = false;
-    let mut toast_error = None;
-    let mut spawned_live = false;
-    if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local) {
-        if pane.pty_generation != generation {
-            return Update::none();
-        }
-        spawned_live = ok;
-        // A follower may already hold this pane (bound and Ready) from the reconciler; only (re)bind
-        // a fresh backend for a pane still waiting on its own spawn to complete, so we never destroy
-        // a live screen that is already replaying server output.
-        if !pane.terminal.is_ready() {
-            pane.terminal.bind_server_backend(pane_id, generation);
-        }
-        pane.terminal.child_pid = pid;
-        if ok {
-            pane.terminal.status = ManagedTerminalStatus::Ready;
-        } else {
-            let message = error
-                .clone()
-                .unwrap_or_else(|| "session spawn failed".to_string());
-            pane.terminal.status = ManagedTerminalStatus::Error(message.clone().into());
-            toast_error = Some(message);
-            // Only the controller structurally removes the failed pane; followers wait for the
-            // resulting layout commit.
-            should_close = local || is_controller;
-        }
-    } else if let Some(error) = error {
-        toast_error = Some(error);
-    }
-    // A queued replay command (see `State::pending_replay_inputs`) is not written yet: it waits
-    // for the shell's first prompt report (`pane_runtime_changed` flushes it) so readline echoes
-    // it exactly once at the prompt, instead of the kernel tty echoing it again mid-startup. The
-    // deadline command is the fallback for shells without OSC 133 integration. A failed or
-    // superseded spawn drops the entry instead.
-    let mut replay_deadline = None;
-    if ctx
-        .state
-        .current()
-        .pending_replay_inputs
-        .contains_key(&(pane_id, generation))
-    {
-        if spawned_live {
-            replay_deadline = Some(replay_input_deadline_command(epoch, pane_id, generation));
-        } else {
-            ctx.state
-                .current_mut()
-                .pending_replay_inputs
-                .remove(&(pane_id, generation));
-        }
-    }
-    // The `new-pane` reply is held until here so it can state real readiness rather than mere
-    // acceptance (see `State::pending_spawn_replies`).
-    crate::ops::control::resolve_spawn_reply(
-        &mut ctx.state,
-        epoch,
+    let reply = SpawnReply {
         pane_id,
         local,
         generation,
-        spawned_live,
-        toast_error.as_deref(),
+        pid,
+        ok,
+        error,
+    };
+    let failed_transaction = mark_failed_shared_spawn(&mut ctx.state, epoch, &reply);
+    if epoch != ctx.state.runtime_epoch {
+        return background_spawn_result(ctx, epoch, reply, failed_transaction);
+    }
+    current_spawn_result(ctx, epoch, reply, failed_transaction)
+}
+
+fn mark_failed_shared_spawn(
+    state: &mut crate::state::State,
+    epoch: u64,
+    reply: &SpawnReply,
+) -> bool {
+    if reply.local || reply.ok {
+        return false;
+    }
+    let Some(flight) = state
+        .attachment_for_epoch_mut(epoch)
+        .and_then(|attachment| attachment.shared.as_mut())
+        .and_then(|shared| shared.spawn_in_flight.as_mut())
+    else {
+        return false;
+    };
+    if (flight.pane_id, flight.generation) != (reply.pane_id, reply.generation) {
+        return false;
+    }
+    flight.failed = true;
+    true
+}
+
+/// A reconciled follower may already be replaying output. Rebind only a starting parser.
+fn apply_spawn_terminal(pane: &mut crate::state::Pane, reply: &SpawnReply) -> bool {
+    if pane.pty_generation != reply.generation {
+        return false;
+    }
+    if !pane.terminal.is_ready() {
+        pane.terminal
+            .bind_server_backend(reply.pane_id, reply.generation);
+    }
+    pane.terminal.child_pid = reply.pid;
+    pane.terminal.status = if reply.ok {
+        ManagedTerminalStatus::Ready
+    } else {
+        ManagedTerminalStatus::Error(reply.error_message().into())
+    };
+    true
+}
+
+fn arm_spawn_replay(
+    attachment: &mut crate::state::Attachment,
+    reply: &SpawnReply,
+    live: bool,
+) -> bool {
+    let key = (reply.pane_id, reply.generation);
+    if !attachment.pending_replay_inputs.contains_key(&key) {
+        return false;
+    }
+    if live {
+        return true;
+    }
+    attachment.pending_replay_inputs.remove(&key);
+    false
+}
+
+fn resolve_spawn_control_reply(
+    state: &mut crate::state::State,
+    epoch: u64,
+    reply: &SpawnReply,
+    live: bool,
+    error: Option<&str>,
+) {
+    crate::ops::control::resolve_spawn_reply(
+        state,
+        epoch,
+        reply.pane_id,
+        reply.local,
+        reply.generation,
+        live,
+        error,
     );
-    // Queued control input (see `State::pending_control_input`) rides behind the replay command
-    // when there is one; with no replay armed the PTY is ready now, so write it here. A failed
-    // spawn drops it: nothing will ever read those bytes.
-    if replay_deadline.is_none() {
-        if spawned_live {
-            flush_pending_control_input(ctx, pane_id, generation, local);
-        } else {
-            ctx.state
-                .pending_control_input
-                .remove(&(local, pane_id, generation));
+}
+
+fn background_spawn_result(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    reply: SpawnReply,
+    failed_transaction: bool,
+) -> Update {
+    if reply.local {
+        return Update::none();
+    }
+    let Some(attachment) = ctx.state.background.get_mut(&epoch) else {
+        return Update::none();
+    };
+    let mut live = false;
+    if let Some(pane) = attachment.find_pane_mut(reply.pane_id) {
+        if !apply_spawn_terminal(pane, &reply) {
+            return Update::none();
+        }
+        live = reply.ok;
+        // A rejected transaction never created this placeholder on the server. It cannot become
+        // shared merely because its owner has since parked or lost control.
+        if failed_transaction {
+            pane.closing = true;
         }
     }
+    if !reply.ok && attachment.is_controller() {
+        attachment.pending_background_layout = None;
+    }
+    let replay = arm_spawn_replay(attachment, &reply, live);
+    resolve_spawn_control_reply(
+        &mut ctx.state,
+        epoch,
+        &reply,
+        reply.ok,
+        reply.error.as_deref(),
+    );
+    if replay {
+        Update::with_command(replay_input_deadline_command(
+            epoch,
+            reply.pane_id,
+            reply.generation,
+        ))
+    } else {
+        Update::none()
+    }
+}
+
+struct SpawnPresentation {
+    live: bool,
+    close: bool,
+    error: Option<String>,
+}
+
+fn apply_current_spawn_reply(
+    state: &mut crate::state::State,
+    reply: &SpawnReply,
+    failed_transaction: bool,
+) -> Option<SpawnPresentation> {
+    let may_close = reply.local || state.is_controller() || failed_transaction;
+    let Some(pane) = find_pane_in_namespace_mut(state, reply.pane_id, reply.local) else {
+        return Some(SpawnPresentation {
+            live: false,
+            close: false,
+            error: reply.error.clone(),
+        });
+    };
+    if !apply_spawn_terminal(pane, reply) {
+        return None;
+    }
+    Some(SpawnPresentation {
+        live: reply.ok,
+        close: !reply.ok && may_close,
+        error: (!reply.ok).then(|| reply.error_message()),
+    })
+}
+
+fn finish_spawn_control_input(
+    ctx: &mut Context<AppRoot>,
+    reply: &SpawnReply,
+    live: bool,
+    replay: bool,
+) {
+    if replay {
+        return;
+    }
+    if live {
+        flush_pending_control_input(ctx, reply.pane_id, reply.generation, reply.local);
+    } else {
+        ctx.state
+            .pending_control_input
+            .remove(&(reply.local, reply.pane_id, reply.generation));
+    }
+}
+
+fn current_spawn_result(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    reply: SpawnReply,
+    failed_transaction: bool,
+) -> Update {
+    let Some(presentation) = apply_current_spawn_reply(&mut ctx.state, &reply, failed_transaction)
+    else {
+        return Update::none();
+    };
+    // Replay waits for prompt readiness, with a deadline for shells without integration.
+    let replay = arm_spawn_replay(ctx.state.current_mut(), &reply, presentation.live);
+    resolve_spawn_control_reply(
+        &mut ctx.state,
+        epoch,
+        &reply,
+        presentation.live,
+        presentation.error.as_deref(),
+    );
+    finish_spawn_control_input(ctx, &reply, presentation.live, replay);
     ctx.state.commands_dirty = true;
-    if let Some(error) = toast_error {
+    if let Some(error) = presentation.error {
         crate::pane::pty_events::notify_error(ctx, "Spawn failed", error);
     }
-    if should_close {
-        // The popup lives outside every workspace, so the generic teardown cannot reach it: with a
-        // local namespace and no scratch membership it falls through and marks nothing, leaving a
-        // dead pane on screen. `exited` intercepts popups the same way. `close` rather than
-        // `handle_exit` - a spawn that never started has nothing for `keep_open` to keep.
-        if local && pane_id == crate::state::POPUP_PANE_ID {
+    if presentation.close {
+        // Popups live outside workspaces and need their own close lifecycle.
+        if reply.local && reply.pane_id == crate::state::POPUP_PANE_ID {
             return crate::ops::popup::close(ctx);
         }
-        remove_pane_after_exit(ctx, pane_id, local)
-    } else if let Some(command) = replay_deadline {
-        Update::with_command(command)
+        return remove_pane_after_exit(ctx, reply.pane_id, reply.local);
+    }
+    if replay {
+        Update::with_command(replay_input_deadline_command(
+            epoch,
+            reply.pane_id,
+            reply.generation,
+        ))
     } else {
         Update::full()
     }

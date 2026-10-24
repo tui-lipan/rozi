@@ -22,7 +22,8 @@ revision and the complete resulting document. Local owner-scoped panes carry no 
 The server checks controller authority and read-only state, then revision, document structure,
 and the prospective pane set before starting a PTY. The requested id and generation must appear
 exactly once. Every other live shared pane must remain placed with its current generation;
-unknown additional panes are rejected.
+unknown additional panes are rejected. A known exited pane may remain placed with its recorded
+generation; omission is allowed only for exited panes. Attach preserves retained exit status.
 
 The event loop executes spawn and publication together. Spawn failure publishes no revision.
 Success installs the pane and document before returning any messages or processing PTY events.
@@ -32,8 +33,17 @@ leave a successful pane unplaced.
 
 Headless `new-pane` resolves its explicit append policy and invokes the same transaction with
 server authorship. It cannot bypass a controller. Initial UI and profile panes are published
-incrementally, with only already submitted or server-reported panes in each document. Ordinary
-layout debounce cannot publish an unstarted placeholder. Server-reported identities remain
+serially, with only confirmed server panes and the current creation in each document. Only one
+shared spawn is in flight per attachment. Ordinary layout publications wait behind that
+transaction and the remaining creation queue, so they cannot publish unstarted placeholders.
+
+A successful `LayoutCommitted` confirms the new base before the next request starts. An
+attached client's failed shared spawn returns `SpawnResult` followed by `LayoutRejected`,
+including PTY startup and authority failures. The client removes the failed placeholder and rebases from the reported
+revision before attempting the next independent pane. Losing control pauses the queue until
+control returns. Foreign layout corrections preserve unsent placeholders while applying the
+authoritative structure to existing panes. Fresh-session seeding replaces older deferred
+requests with the newly assigned generations. Server-reported identities remain
 available when a control handoff clears the client's optimistic document cache.
 
 A populated session without a committed layout is invalid for current peers. Attach refuses
@@ -56,6 +66,7 @@ that have no capacity field.
 
 Regression coverage exercises both control dispatchers, authority and revision rejection,
 invalid placement, spawn failure, disconnect boundaries, first and later panes, metadata order,
+failed middle startup panes, stale and authority rejection recovery, retained exited panes,
 client configuration differences, new generations, attach/reconnect, config reload, and
 resurrection. Session protocol, multi-client, headless control, and real PTY suites also run
 through the atomic request shape.

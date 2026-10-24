@@ -581,7 +581,9 @@ fn flushed_revision(ctx: &mut Context<AppRoot>) -> (Option<u64>, bool) {
         None => (None, true),
         Some(shared) if shared.is_controller() => (
             Some(shared.assumed_rev),
-            shared.assumed_rev == shared.layout_rev,
+            shared.assumed_rev == shared.layout_rev
+                && shared.spawn_in_flight.is_none()
+                && ctx.state.current().pending_spawns.is_empty(),
         ),
         Some(shared) => (Some(shared.layout_rev), true),
     }

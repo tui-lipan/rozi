@@ -2850,7 +2850,8 @@ fn layout_commit_requires_the_exact_live_pane_set_and_generations() {
     }));
 
     server.panes.get_mut(&1).unwrap().exited = Some(127);
-    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 7)])));
+    assert!(server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 7)])));
+    assert!(!server.validate_shared_layout_against_panes(&shared_layout_for_panes(&[(1, 8)])));
 }
 
 #[test]
@@ -3113,8 +3114,8 @@ fn spawn_from_follower_is_rejected() {
     );
     assert!(matches!(
         responses.as_slice(),
-        [(Target::Sender, ServerMessage::SpawnResult { ok: false, error: Some(error), .. })]
-            if error == "not controller"
+        [(Target::Sender, ServerMessage::SpawnResult { ok: false, error: Some(error), .. }), (_, ServerMessage::LayoutRejected { .. })]
+            if error == "not controller or read-only"
     ));
     assert!(server.panes.is_empty());
 }

@@ -65,7 +65,9 @@ fn apply_pane_meta(pane: &mut crate::state::Pane, meta: &crate::session::protoco
         .terminal
         .apply_rows(meta.runtime.rows.clone(), meta.runtime.integration.clone());
     pane.logging = meta.logging;
-    pane.terminal.status = ManagedTerminalStatus::Ready;
+    pane.terminal.status = meta
+        .exited
+        .map_or(ManagedTerminalStatus::Ready, ManagedTerminalStatus::Exited);
 }
 
 /// After the reconciler has created panes from the shared layout, bind each one's server backend at
@@ -137,6 +139,12 @@ pub(crate) fn spawn_state_panes_on_session(
     if ctx.state.current().session_client.is_none() {
         return Vec::new();
     }
+    // Reseeding assigns fresh generations to the live launch intents below. Their old deferred
+    // requests must not race those replacements. Owner-local requests use a separate namespace.
+    ctx.state
+        .current_mut()
+        .pending_spawns
+        .retain(|request| request.local);
     // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
     // palette before the PTY spawns and the child's startup color queries are answered correctly.
     let fallback_palette = TerminalColorPalette::from_theme(
@@ -259,12 +267,7 @@ pub(crate) fn spawn_state_panes_on_session(
 /// Flush pane spawns that were queued while no client was connected (see
 /// [`crate::state::State::pending_spawns`]).
 pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
-    if ctx.state.current().session_client.is_none() {
-        return;
-    }
-    for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
-        crate::pane::lifecycle::send_pane_spawn(&mut ctx.state, spawn);
-    }
+    crate::pane::lifecycle::pump_shared_spawns(&mut ctx.state);
 }
 
 #[cfg(test)]

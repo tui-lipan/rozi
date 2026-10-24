@@ -30,7 +30,7 @@ impl SessionServer {
                 let Some(server_pane) = self.panes.get(&pane.pane_id) else {
                     return false;
                 };
-                if server_pane.exited.is_some() || server_pane.generation != pane.generation {
+                if server_pane.generation != pane.generation {
                     return false;
                 }
                 layout_ids.insert(pane.pane_id);
@@ -112,7 +112,7 @@ impl SessionServer {
                 || self
                     .panes
                     .get(id)
-                    .is_some_and(|pane| pane.exited.is_none() && pane.generation == *generation)
+                    .is_some_and(|pane| pane.generation == *generation)
         });
         existing_match
             && self.panes.iter().all(|(id, pane)| {

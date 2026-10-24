@@ -802,44 +802,86 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     }
 }
 
-/// Publish each shared spawn with exactly the panes already submitted plus this pane. Startup
-/// and profile loading may have several local placeholders whose PTYs do not exist yet.
+/// Queue shared transactions until the preceding spawn's publication or rejection is confirmed.
+/// Owner-local panes do not consume a shared revision and need no serialization.
 pub(crate) fn send_pane_spawn(
     state: &mut State,
-    mut request: crate::session::client::SpawnPaneRequest,
+    request: crate::session::client::SpawnPaneRequest,
 ) {
+    if request.local {
+        if let Some(client) = state.current().session_client.as_ref() {
+            client.spawn_pane(request);
+        }
+        return;
+    }
+    state.current_mut().pending_spawns.push(request);
+    pump_shared_spawns(state);
+}
+
+pub(crate) fn pump_shared_spawns(state: &mut State) {
     let Some(client) = state.current().session_client.clone() else {
         return;
     };
-    if !request.local {
-        let Some(shared) = state.current().shared.as_ref() else {
-            return;
-        };
-        let canvas = shared
-            .canonical_canvas
-            .unwrap_or((request.cols.max(1), request.rows.max(1)));
-        let mut known: std::collections::HashSet<_> = shared
-            .last_committed_layout
-            .iter()
-            .flat_map(|layout| &layout.workspaces)
-            .flat_map(|ws| &ws.panes)
-            .map(|pane| pane.pane_id)
-            .collect();
-        known.extend(shared.pane_scrollback.keys().map(|(id, _)| *id));
-        known.insert(request.pane_id);
-        let base_rev = shared.assumed_rev;
-        let mut layout = crate::layout::shared::shared_layout_from_state(state, canvas);
-        layout.retain_panes(&known);
-        request.placement = Some(crate::session::protocol::SpawnPlacementCommit {
-            base_rev,
-            layout: layout.clone(),
-        });
-        let shared = state.current_mut().shared.as_mut().expect("checked above");
-        shared.assumed_rev = base_rev.saturating_add(1);
-        shared.last_committed_layout = Some(layout);
-        shared.canonical_canvas = Some(canvas);
+    send_queued_local_spawns(state, &client);
+    let Some(shared) = state.current().shared.as_ref() else {
+        return;
+    };
+    if shared.spawn_in_flight.is_some() || !shared.is_controller() || shared.read_only {
+        return;
     }
+    if state.current().pending_spawns.is_empty() {
+        return;
+    }
+    let mut request = state.current_mut().pending_spawns.remove(0);
+    let shared = state.current().shared.as_ref().expect("checked above");
+    let canvas = shared
+        .canonical_canvas
+        .unwrap_or((request.cols.max(1), request.rows.max(1)));
+    let mut known: std::collections::HashSet<_> = shared
+        .last_committed_layout
+        .iter()
+        .flat_map(|layout| &layout.workspaces)
+        .flat_map(|ws| &ws.panes)
+        .map(|pane| pane.pane_id)
+        .collect();
+    known.extend(shared.pane_scrollback.keys().map(|(id, _)| *id));
+    known.insert(request.pane_id);
+    let base_rev = shared.assumed_rev;
+    let mut layout = crate::layout::shared::shared_layout_from_state(state, canvas);
+    layout.retain_panes(&known);
+    request.placement = Some(crate::session::protocol::SpawnPlacementCommit {
+        base_rev,
+        layout: layout.clone(),
+    });
+    let shared = state.current_mut().shared.as_mut().expect("checked above");
+    shared.spawn_in_flight = Some(crate::state::SharedSpawnInFlight {
+        pane_id: request.pane_id,
+        generation: request.generation,
+        base_rev,
+        failed: false,
+    });
+    // Only a committed revision advances assumed_rev. Ordinary commits wait behind this flight.
+    shared.last_committed_layout = Some(layout);
+    shared.canonical_canvas = Some(canvas);
     client.spawn_pane(request);
+}
+
+fn send_queued_local_spawns(state: &mut State, client: &crate::session::client::SessionClient) {
+    if !state
+        .current()
+        .pending_spawns
+        .iter()
+        .any(|request| request.local)
+    {
+        return;
+    }
+    let (local, shared): (Vec<_>, Vec<_>) = std::mem::take(&mut state.current_mut().pending_spawns)
+        .into_iter()
+        .partition(|request| request.local);
+    state.current_mut().pending_spawns = shared;
+    for request in local {
+        client.spawn_pane(request);
+    }
 }
 
 /// Resolve this session's interactive-shell and command-runner launch policies from the live

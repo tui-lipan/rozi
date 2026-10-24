@@ -668,14 +668,14 @@ of their own, `[sidebar.settings.<tab>]`. **Sidebar tabs…** edits the same tab
 worktrees = "repository"
 
 [sidebar.settings.files]
-explorer = true
+explorer = false
 show_hidden = false
 ```
 
 | Tab | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- | --- |
 | `activity` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. See [Activity](sidebar.md#activity). |
-| `files`, `git` | `explorer` | bool | `false` | Shows a search field above the tree. |
+| `files`, `git` | `explorer` | bool | `true` for files, `false` for git | Shows a search field above the tree. |
 | `files`, `git` | `show_hidden` | bool | `true` | Lists entries whose names start with a dot. |
 | `files`, `git` | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` for the focused pane's directory, `"repo"` for the repository containing it. |
 | `files`, `git` | `diff_stats` | bool | `false` for files, `true` for git | Shows line-change counts beside Git marks. |

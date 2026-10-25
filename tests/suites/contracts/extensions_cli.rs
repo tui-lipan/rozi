@@ -152,6 +152,44 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
     );
 }
 
+#[test]
+fn failed_revision_bump_during_cli_remove_commits_removal_and_warns() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source extension");
+    write_source_extension(&source, "fail-bump");
+
+    let installed = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
+    assert!(installed.status.success());
+    let destination = temp.path().join("data/rozi/extensions/fail-bump");
+    assert!(destination.exists());
+
+    // Force revision persistence to fail
+    let revision_path = temp.path().join("data/rozi/extensions/.rozi/revision");
+    let _ = std::fs::remove_file(&revision_path);
+    std::fs::create_dir_all(&revision_path).unwrap();
+
+    let removed = rozi(&temp, &["extensions", "remove", "fail-bump"]);
+    assert!(
+        removed.status.success(),
+        "removal must succeed despite revision notification failure:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!destination.exists(), "directory must be removed");
+    assert!(
+        !temp
+            .path()
+            .join("data/rozi/extensions/.rozi/installations/fail-bump.toml")
+            .exists(),
+        "record must be removed"
+    );
+    let stdout = String::from_utf8_lossy(&removed.stdout);
+    assert!(
+        stdout.contains("Warning") && stdout.contains("were not told to reload"),
+        "warning must be surfaced in output:\n{stdout}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn linked_install_reflects_edits_and_remove_only_unlinks_it() {

@@ -5,6 +5,8 @@ use crate::layout::shared::{ClientId, SharedLayout};
 use crate::state::{PaneId, ResizeCorner};
 use crate::{control, session};
 
+pub use crate::extension_installation::{ExtensionInstallOutcome, ExtensionUpdateOutcome};
+
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
@@ -96,7 +98,7 @@ pub enum Msg {
     },
     ExtensionsCloseInstall,
     ExtensionsSubmitInstall,
-    ExtensionsInstallFinished(std::result::Result<String, String>),
+    ExtensionsInstallFinished(std::result::Result<ExtensionInstallOutcome, String>),
     ExtensionsCatalogLoaded {
         epoch: u64,
         result: std::result::Result<Vec<crate::extension_catalog::CatalogEntry>, String>,
@@ -104,12 +106,12 @@ pub enum Msg {
     ExtensionsSubmitCatalogInstall,
     ExtensionsCatalogInstallFinished {
         repository: String,
-        result: std::result::Result<String, String>,
+        result: std::result::Result<ExtensionInstallOutcome, String>,
     },
     ExtensionsUpdateSelected,
     ExtensionsUpdateFinished {
         id: String,
-        result: std::result::Result<bool, String>,
+        result: std::result::Result<ExtensionUpdateOutcome, String>,
     },
     ExtensionUpdateChecked {
         epoch: u64,

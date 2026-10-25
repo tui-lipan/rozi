@@ -953,7 +953,7 @@ fn catalog_install_survives_refreshes_and_closed_dialogs() {
             backend
                 .dispatch(rozi::Msg::ExtensionsCatalogInstallFinished {
                     repository: "someone/first".to_string(),
-                    result: Ok("catalog-first".to_string()),
+                    result: Ok("catalog-first".to_string().into()),
                 })
                 .expect("finish installation");
             assert_eq!(backend.state().extension_install, None);
@@ -1294,4 +1294,109 @@ fn extensions_manager_splits_installed_and_discover_tabs() {
         .expect("spawn tabs thread")
         .join()
         .expect("tabs smoke completes");
+}
+
+#[test]
+fn failed_revision_bump_during_removal_completes_local_mutation_and_surfaces_warning() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let root = rozi::test_support::isolate_user_dirs();
+            let _config = rozi::test_support::lock_config_file();
+            let extensions = extensions_root(root);
+            let ext_dir = extensions.join("to-remove-fail-bump");
+            copy_fixture("valid/direct-command", &ext_dir);
+            let manifest = ext_dir.join("extension.toml");
+            let text = std::fs::read_to_string(&manifest)
+                .expect("read manifest")
+                .replace("id = \"fixture-direct\"", "id = \"fixture-fail-bump\"");
+            std::fs::write(&manifest, text).expect("update manifest id");
+            mark_git_managed(&extensions, "fixture-fail-bump");
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+
+            assert!(ext_dir.exists());
+            assert!(
+                extensions
+                    .join(".rozi/installations/fixture-fail-bump.toml")
+                    .exists()
+            );
+
+            let row = backend
+                .state()
+                .extensions
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .position(|e| e.id.as_deref() == Some("fixture-fail-bump"))
+                .expect("find fixture-fail-bump row");
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(row),
+                ))
+                .expect("select fixture-fail-bump");
+
+            // Arm remove
+            backend
+                .dispatch(rozi::Msg::ExtensionsRemoveSelected)
+                .expect("arm remove");
+
+            // Force revision persistence to fail by replacing .rozi/revision with a directory
+            let revision_path = extensions.join(".rozi/revision");
+            let _ = std::fs::remove_file(&revision_path);
+            std::fs::create_dir_all(&revision_path).expect("create revision directory");
+
+            // Confirm remove while revision bump cannot succeed
+            backend
+                .dispatch(rozi::Msg::ExtensionsRemoveSelected)
+                .expect("remove selected");
+
+            // Clean up the revision directory immediately so subsequent ops/tests are not disrupted
+            let _ = std::fs::remove_dir_all(&revision_path);
+
+            // 1. The operation remains committed
+            assert!(!ext_dir.exists(), "extension directory must be removed");
+
+            // 2. Local bookkeeping is completed
+            assert!(
+                !extensions
+                    .join(".rozi/installations/fixture-fail-bump.toml")
+                    .exists(),
+                "metadata record must be removed"
+            );
+
+            // 3. The current client reconciles
+            let frame_text = frame(&mut backend);
+            assert!(
+                !backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .any(|e| e.id.as_deref() == Some("fixture-fail-bump")),
+                "current client must have reloaded without the removed extension"
+            );
+
+            // 4. Notification failure is surfaced separately
+            assert!(
+                frame_text.contains("Extension removed")
+                    && frame_text.contains("were not told to reload"),
+                "warning toast must be surfaced:\n{frame_text}"
+            );
+        })
+        .expect("spawn thread")
+        .join()
+        .expect("test completes");
 }

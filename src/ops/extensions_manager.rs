@@ -317,7 +317,7 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
             let result = crate::extension_installation::install(
                 crate::extension_installation::InstallRequest::Source(source),
             )
-            .map(|installed| installed.id);
+            .map(crate::msg::ExtensionInstallOutcome::from);
             link.send(crate::Msg::ExtensionsInstallFinished(result));
         });
     }))
@@ -326,7 +326,7 @@ pub(crate) fn submit_install(ctx: &mut Context<AppRoot>) -> Update {
 /// Finishes an installation from the install prompt whatever became of the UI that started it.
 pub(crate) fn install_finished(
     ctx: &mut Context<AppRoot>,
-    result: std::result::Result<String, String>,
+    result: std::result::Result<crate::msg::ExtensionInstallOutcome, String>,
 ) -> Update {
     if ctx
         .state
@@ -375,11 +375,12 @@ fn finish_install(
     ctx: &mut Context<AppRoot>,
     origin: Origin,
     waiting: bool,
-    result: std::result::Result<String, String>,
+    result: std::result::Result<crate::msg::ExtensionInstallOutcome, String>,
     show_error: impl FnOnce(&mut Context<AppRoot>, String),
 ) -> Update {
     match result {
-        Ok(id) => {
+        Ok(outcome) => {
+            let id = outcome.id;
             let show_row = waiting && origin == Origin::Prompt;
             if show_row && let Some(state) = ctx.state.extensions.as_mut() {
                 state.install_prompt = None;
@@ -395,6 +396,9 @@ fn finish_install(
             if !waiting {
                 // The new row alone may go unseen by someone who moved on.
                 notify_info(ctx, &format!("Installed {id}"));
+            }
+            if let Some(warning) = outcome.warning {
+                notify_warning(ctx, "Extension installed", warning);
             }
             update
         }
@@ -513,7 +517,7 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
                     commit: entry.commit,
                 },
             )
-            .map(|installed| installed.id);
+            .map(crate::msg::ExtensionInstallOutcome::from);
             link.send(crate::Msg::ExtensionsCatalogInstallFinished { repository, result });
         });
     }))
@@ -527,7 +531,7 @@ pub(crate) fn submit_catalog_install(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn catalog_install_finished(
     ctx: &mut Context<AppRoot>,
     repository: String,
-    result: std::result::Result<String, String>,
+    result: std::result::Result<crate::msg::ExtensionInstallOutcome, String>,
 ) -> Update {
     if ctx
         .state
@@ -592,7 +596,8 @@ pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
     state.updating_id = Some(id.clone());
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            let result = crate::extension_installation::update(&id).map(|updated| updated.changed);
+            let result = crate::extension_installation::update(&id)
+                .map(crate::msg::ExtensionUpdateOutcome::from);
             link.send(crate::Msg::ExtensionsUpdateFinished { id, result });
         });
     }))
@@ -601,15 +606,18 @@ pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn update_finished(
     ctx: &mut Context<AppRoot>,
     id: String,
-    result: std::result::Result<bool, String>,
+    result: std::result::Result<crate::msg::ExtensionUpdateOutcome, String>,
 ) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
         return match result {
-            Ok(true) => {
+            Ok(outcome) if outcome.changed => {
                 notify_info(ctx, &format!("Updated {id}"));
+                if let Some(warning) = outcome.warning {
+                    notify_warning(ctx, "Extension updated", warning);
+                }
                 crate::ops::config::reload_extensions_quiet(ctx)
             }
-            Ok(false) => {
+            Ok(_) => {
                 notify_info(ctx, &format!("{id} is up to date"));
                 Update::full()
             }
@@ -624,13 +632,16 @@ pub(crate) fn update_finished(
     }
     state.updating_id = None;
     match result {
-        Ok(true) => {
+        Ok(outcome) if outcome.changed => {
             state.update_checks.remove(&id);
             let update = crate::ops::config::reload_extensions_quiet(ctx);
             select_by_id(ctx, &id);
+            if let Some(warning) = outcome.warning {
+                notify_warning(ctx, "Extension updated", warning);
+            }
             update
         }
-        Ok(false) => {
+        Ok(_) => {
             state
                 .update_checks
                 .insert(id.clone(), ExtensionUpdateCheck::Current);
@@ -796,22 +807,25 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
             return Update::full();
         }
     };
-    if let Err(error) = crate::extension_installation::remove_entry(
+    let announce_warning = match crate::extension_installation::remove_entry(
         &path,
         entry.id.as_deref().unwrap_or(&entry.path),
     ) {
-        refresh(ctx, Some(row));
-        notify_error(
-            ctx,
-            if stopped.is_some() {
-                "Extension disabled; removal failed"
-            } else {
-                "Extension not removed"
-            },
-            error,
-        );
-        return stopped.unwrap_or_else(Update::full);
-    }
+        Ok(warning) => warning,
+        Err(error) => {
+            refresh(ctx, Some(row));
+            notify_error(
+                ctx,
+                if stopped.is_some() {
+                    "Extension disabled; removal failed"
+                } else {
+                    "Extension not removed"
+                },
+                error,
+            );
+            return stopped.unwrap_or_else(Update::full);
+        }
+    };
     if let Some(id) = entry.id.as_deref()
         && !duplicate_installation_remains(&ctx.state, &entry)
         && let Err(error) = crate::extension_installation::forget_installation_record(id)
@@ -833,6 +847,9 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
             .get(position.min(visible.len().saturating_sub(1)))
             .copied()
             .unwrap_or(0);
+    }
+    if let Some(warning) = announce_warning {
+        notify_warning(ctx, "Extension removed", warning);
     }
     update
 }
@@ -1817,6 +1834,10 @@ fn warn_about_key_conflicts(ctx: &mut Context<AppRoot>, id: &str) {
             if conflicts == 1 { "" } else { "s" }
         ),
     );
+}
+
+fn notify_warning(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<String>) {
+    crate::pane::pty_events::notify_warning(ctx, title, detail.into());
 }
 
 fn notify_error(ctx: &mut Context<AppRoot>, title: &str, detail: impl Into<String>) {

@@ -32,6 +32,7 @@ pub(crate) struct InstalledExtension {
     pub(crate) id: String,
     pub(crate) destination: PathBuf,
     pub(crate) kind: InstallKind,
+    pub(crate) warning: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +46,7 @@ pub(crate) enum InstallKind {
 pub(crate) struct UpdatedExtension {
     pub(crate) id: String,
     pub(crate) changed: bool,
+    pub(crate) warning: Option<String>,
 }
 
 /// What a Git installation's remote offers beyond the installed revision.
@@ -62,6 +64,61 @@ pub(crate) enum UpdateCheck {
 pub(crate) struct RemovedExtension {
     pub(crate) id: String,
     pub(crate) linked: bool,
+    pub(crate) warning: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionInstallOutcome {
+    pub id: String,
+    pub warning: Option<String>,
+}
+
+impl From<InstalledExtension> for ExtensionInstallOutcome {
+    fn from(installed: InstalledExtension) -> Self {
+        Self {
+            id: installed.id,
+            warning: installed.warning,
+        }
+    }
+}
+
+impl From<String> for ExtensionInstallOutcome {
+    fn from(id: String) -> Self {
+        Self { id, warning: None }
+    }
+}
+
+impl From<&str> for ExtensionInstallOutcome {
+    fn from(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            warning: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionUpdateOutcome {
+    pub changed: bool,
+    pub warning: Option<String>,
+}
+
+impl From<UpdatedExtension> for ExtensionUpdateOutcome {
+    fn from(updated: UpdatedExtension) -> Self {
+        Self {
+            changed: updated.changed,
+            warning: updated.warning,
+        }
+    }
+}
+
+impl From<bool> for ExtensionUpdateOutcome {
+    fn from(changed: bool) -> Self {
+        Self {
+            changed,
+            warning: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,7 +177,7 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
         )
     })?;
 
-    let installed = match source {
+    let mut installed = match source {
         ResolvedSource::Local(path) => {
             install_local(&root, &control, &records, &path, &user.disabled)
         }
@@ -140,18 +197,22 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
             install_link(&root, &records, &path, &id, &user.disabled)
         }
     }?;
-    announce_change(&installed.id, "installed")?;
+    installed.warning = announce_change(&installed.id, "installed");
     Ok(installed)
 }
 
 /// Tell every running client that the installed set changed, so each reloads its extensions.
 ///
-/// Every change to the store goes through this module and ends here. The change itself is already
-/// on disk, so a failure is reported as what it is: done, but not yet picked up.
-fn announce_change(id: &str, done: &str) -> Result<(), String> {
-    crate::config::extension_store_revision::bump().map_err(|error| {
-        format!("Extension `{id}` was {done}, but running clients were not told to reload: {error}")
-    })
+/// Bumps the store revision so other clients pick up the change. A bump failure is returned
+/// as a warning rather than converting a committed mutation into an apparent error.
+fn announce_change(id: &str, done: &str) -> Option<String> {
+    crate::config::extension_store_revision::bump()
+        .err()
+        .map(|error| {
+            format!(
+                "Extension `{id}` was {done}, but running clients were not told to reload: {error}"
+            )
+        })
 }
 
 pub(crate) fn installation_kind(id: &str) -> Option<InstallKind> {
@@ -169,10 +230,11 @@ pub(crate) fn forget_installation_record(id: &str) -> Result<(), String> {
 /// Delete the installation at `path`, one entry of the extensions directory, whatever it declares.
 ///
 /// This is how a caller that already resolved a single entry removes it, including one of several
-/// installations that declare the same ID. `label` names it in an error.
-pub(crate) fn remove_entry(path: &Path, label: &str) -> Result<(), String> {
+/// installations that declare the same ID. `label` names it in an error. Returns any notification
+/// warning if running clients could not be told to reload.
+pub(crate) fn remove_entry(path: &Path, label: &str) -> Result<Option<String>, String> {
     crate::platform::extensions::remove_installation(&crate::config::extensions_dir_path(), path)?;
-    announce_change(label, "removed")
+    Ok(announce_change(label, "removed"))
 }
 
 /// Compares a Git installation with its remote HEAD. A moved HEAD is fetched shallowly, without a
@@ -245,6 +307,7 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
         return Ok(UpdatedExtension {
             id: id.to_string(),
             changed: false,
+            warning: None,
         });
     }
 
@@ -262,10 +325,11 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
             },
         },
     )?;
-    announce_change(id, "updated")?;
+    let warning = announce_change(id, "updated");
     Ok(UpdatedExtension {
         id: id.to_string(),
         changed: true,
+        warning,
     })
 }
 
@@ -319,13 +383,18 @@ pub(crate) fn remove(id: &str) -> Result<RemovedExtension, String> {
 
     crate::platform::extensions::remove_installation(&root, &path)?;
     // The installation is gone whatever happens to its bookkeeping, so clients hear of it either way.
-    let cleanup = forget_removed(&root, id, user.disabled);
-    announce_change(id, "removed")?;
-    cleanup?;
+    let cleanup_warning = forget_removed(&root, id, user.disabled).err();
+    let notify_warning = announce_change(id, "removed");
+    let warning = match (notify_warning, cleanup_warning) {
+        (Some(notify), Some(cleanup)) => Some(format!("{notify}\n{cleanup}")),
+        (Some(w), None) | (None, Some(w)) => Some(w),
+        (None, None) => None,
+    };
 
     Ok(RemovedExtension {
         id: id.to_string(),
         linked,
+        warning,
     })
 }
 
@@ -516,6 +585,7 @@ fn complete_install(
         id,
         destination,
         kind,
+        warning: None,
     })
 }
 

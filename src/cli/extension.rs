@@ -75,6 +75,13 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
             );
         }
     }
+    if let Some(warning) = &installed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -246,6 +253,13 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     if let Some(state) = state {
         println!("{}   {state}", styles.paint("State", OutputTone::Muted));
     }
+    if let Some(warning) = &removed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -271,6 +285,13 @@ pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
         ),
         styles.paint(&updated.id, OutputTone::Accent)
     );
+    if let Some(warning) = &updated.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 

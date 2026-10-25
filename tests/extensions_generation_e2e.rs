@@ -19,7 +19,12 @@ fn extension_service_helper() {
     }
 }
 
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn write_manifest(directory: &Path, revision: &str) {
+    let store = directory.parent().expect("extension store");
+    // Prepare private storage before create_dir_all can give it inherited Windows ACLs.
+    rozi::config::extension_store_revision::ensure_control_dir_in(store).unwrap();
     std::fs::create_dir_all(directory).unwrap();
     let executable = std::env::current_exe().unwrap();
     std::fs::write(
@@ -148,6 +153,7 @@ impl Drop for CleanupBackend {
 
 #[test]
 fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
+    let _lock = TEST_LOCK.lock().unwrap();
     rozi::test_support::isolate_user_dirs();
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
@@ -252,6 +258,53 @@ fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
                 subscription.wait().unwrap().success(),
                 "retired subscription did not close cleanly"
             );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn running_client_automatically_reloads_when_extension_store_revision_changes() {
+    let _lock = TEST_LOCK.lock().unwrap();
+    rozi::test_support::isolate_user_dirs();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+            write_manifest(&root, "initial");
+
+            let mut backend = CleanupBackend(TestBackend::new(
+                rozi::test_support::configured_app_without_control(),
+            ));
+
+            pump_until(&mut backend, Duration::from_secs(5), |backend| {
+                backend
+                    .state()
+                    .services
+                    .running
+                    .contains_key("generation-e2e.watch")
+            });
+            let token_1 = backend.state().extension_generations[EXTENSION_ID].clone();
+            let pid_1 = backend.state().services.running["generation-e2e.watch"]
+                .child
+                .id();
+
+            // Modify the service manifest on disk and bump the extension store revision
+            write_manifest(&root, "updated");
+            rozi::config::extension_store_revision::bump().unwrap();
+
+            // The running client's watcher detects the revision bump and reloads automatically
+            pump_until(&mut backend, Duration::from_secs(10), |backend| {
+                backend.state().extension_generations.get(EXTENSION_ID) != Some(&token_1)
+                    && backend
+                        .state()
+                        .services
+                        .running
+                        .get("generation-e2e.watch")
+                        .map(|w| w.child.id())
+                        != Some(pid_1)
+            });
         })
         .unwrap()
         .join()

@@ -75,11 +75,13 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
             );
         }
     }
-    println!(
-        "{}  {}",
-        styles.paint("Reload", OutputTone::Muted),
-        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-    );
+    if let Some(warning) = &installed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -251,11 +253,13 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     if let Some(state) = state {
         println!("{}   {state}", styles.paint("State", OutputTone::Muted));
     }
-    println!(
-        "{}  {}",
-        styles.paint("Reload", OutputTone::Muted),
-        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-    );
+    if let Some(warning) = &removed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -281,11 +285,11 @@ pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
         ),
         styles.paint(&updated.id, OutputTone::Accent)
     );
-    if updated.changed {
+    if let Some(warning) = &updated.warning {
         println!(
             "{}  {}",
-            styles.paint("Reload", OutputTone::Muted),
-            styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
         );
     }
     Ok(())
@@ -313,12 +317,11 @@ pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
 }
 
 /// From a fresh scaffold to its command running in the current `rozi`.
-fn scaffold_next_steps(id: &str) -> [String; 5] {
+fn scaffold_next_steps(id: &str) -> [String; 4] {
     [
         format!("cd {id}"),
         "rozi extensions check .".to_string(),
         "rozi extensions install --link .".to_string(),
-        "rozi run-action reload-extensions".to_string(),
         format!("rozi run-action {id}.hello"),
     ]
 }

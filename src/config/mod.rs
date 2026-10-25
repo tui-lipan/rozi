@@ -22,6 +22,7 @@ pub use extensions::placement::{
     ExtensionPlacements, LaunchTemplate, PlacedCommand, PlacedService, PlacedTab, Placement,
     SharedPlacements,
 };
+pub use extensions::revision as extension_store_revision;
 pub use extensions::{
     DiscoverReadiness, EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
     ExtensionCheckDocument, ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic,

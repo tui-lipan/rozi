@@ -18,12 +18,12 @@ rozi extensions new my-extension
 cd my-extension
 rozi extensions check .
 rozi extensions install --link .
-rozi run-action reload-extensions
 rozi run-action my-extension.hello
 ```
 
 `rozi extensions new` prints these steps after it creates the scaffold. `--link` makes this
-checkout the installed extension, so after an edit you only run `reload-extensions` again. The
+checkout the installed extension, and installing it reloads running clients automatically. After an
+edit inside the checkout you run `reload-extensions` to pick up changes. The
 last command shows a "Hello from my-extension" notification in the running `rozi`; run the commands
 from a pane in it, or open the command palette and choose **Hello from my-extension**.
 
@@ -862,7 +862,7 @@ the eligibility result in `discover`, as `ready` and `problems`. See
 Then test in the isolated environment described in [Extension testing](extension-testing.md).
 Do not test by copying unfinished code into your normal extension directory.
 
-After changing a linked or installed extension:
+After changing a linked checkout:
 
 ```sh
 rozi run-action reload-extensions

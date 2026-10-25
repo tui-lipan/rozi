@@ -730,6 +730,8 @@ pub fn config_text_changed_on_disk() -> bool {
 
 pub fn load_config() -> LoadedConfig {
     let path = config_path();
+    // Before the scan, so an installation that lands during it still reads as unseen.
+    super::extensions::revision::note(super::extensions::revision::read());
     let extension_scan = super::extensions::scan_extensions();
 
     let text = match std::fs::read_to_string(&path) {

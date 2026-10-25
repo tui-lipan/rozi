@@ -1425,7 +1425,8 @@ pub struct ExtensionsState {
     /// has not been checked since the picker opened.
     pub update_checks: BTreeMap<String, ExtensionUpdateCheck>,
     pub update_check_epoch: u64,
-    /// Extensions the running update has yet to finish, one at a time. Empty when none runs.
+    /// Ids from [`crate::state::State::extension_update`] that have not finished. Empty when no
+    /// run is active. The picker copies this when it opens; the run itself outlives the picker.
     pub updating: BTreeSet<String>,
     pub(crate) manifest_entries: BTreeSet<String>,
     pub(crate) removable_entries: BTreeSet<String>,
@@ -1462,6 +1463,20 @@ pub struct ExtensionInstallPromptState {
     pub error: Option<String>,
     pub error_scroll_offset: usize,
     pub error_scroll_max: Option<usize>,
+}
+
+/// One update of one or more Git installations.
+///
+/// It lives on [`crate::state::State`], not on the Extensions picker. The worker keeps writing
+/// installations after the picker closes, and a reopened picker must not start a second run or
+/// accept the previous run's completion. The run stays until its aggregate result arrives, so
+/// the gap after the last per-row result cannot start another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionUpdateRun {
+    /// Distinguishes this run's results from a later run's.
+    pub id: u64,
+    /// Installations this run has not finished.
+    pub pending: BTreeSet<String>,
 }
 
 /// An extension installation in flight, from a discovery report or the install prompt.

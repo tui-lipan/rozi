@@ -11,7 +11,7 @@ use crate::config::{
 };
 use crate::state::{
     CatalogExtensionDetailState, ExtensionDetailState, ExtensionPickerRow, ExtensionUpdateCheck,
-    ExtensionsState, ExtensionsTab,
+    ExtensionUpdateRun, ExtensionsState, ExtensionsTab,
 };
 
 pub(crate) const EXTENSION_UPDATING_LABEL: &str = "updating…";
@@ -21,6 +21,7 @@ const UPDATE_CHECK_WORKERS: usize = 4;
 const SHORT_REVISION_LEN: usize = 7;
 
 static NEXT_UPDATE_CHECK_EPOCH: AtomicU64 = AtomicU64::new(1);
+static NEXT_EXTENSION_UPDATE_RUN: AtomicU64 = AtomicU64::new(1);
 static NEXT_CATALOG_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 struct ManagerScan {
@@ -34,6 +35,12 @@ struct ManagerScan {
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let scan = scan(ctx);
     let catalog_epoch = next_catalog_epoch();
+    let updating = ctx
+        .state
+        .extension_update
+        .as_ref()
+        .map(|run| run.pending.clone())
+        .unwrap_or_default();
     ctx.state.show_palette = false;
     ctx.state.keybindings = None;
     ctx.state.show_settings = false;
@@ -60,7 +67,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         installation_kinds: scan.installation_kinds,
         update_checks: BTreeMap::new(),
         update_check_epoch: 0,
-        updating: BTreeSet::new(),
+        updating,
         manifest_entries: scan.manifest_entries,
         removable_entries: scan.removable_entries,
     });
@@ -560,13 +567,13 @@ pub(crate) fn catalog_install_finished(
 /// Updates the selected row when a check found an update for it. Otherwise checks every Git
 /// installation again, because whether anything has an update is a question about all of them.
 pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.extension_update.is_some() {
+        return Update::none();
+    }
     let id = selected_entry(&ctx.state).and_then(|entry| entry.id.clone());
     let Some(state) = ctx.state.extensions.as_ref() else {
         return Update::none();
     };
-    if !state.updating.is_empty() {
-        return Update::none();
-    }
     match id {
         Some(id)
             if matches!(
@@ -582,11 +589,14 @@ pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
 
 /// Updates every installation a check found an update for, one after another.
 pub(crate) fn update_all(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.extension_update.is_some() {
+        return Update::none();
+    }
     let Some(state) = ctx.state.extensions.as_ref() else {
         return Update::none();
     };
     let ids = updatable_ids(state);
-    if !state.updating.is_empty() || ids.is_empty() {
+    if ids.is_empty() {
         return Update::none();
     }
     start_updates(ctx, ids)
@@ -604,9 +614,21 @@ pub(crate) fn updatable_ids(state: &ExtensionsState) -> Vec<String> {
 
 /// Runs the updates on one thread, in order, so two never stage at once. Each result arrives as
 /// soon as it is known, and the whole run reloads once at the end, even if the picker has closed.
+///
+/// Refuses while a run is already active. Closing the picker does not clear that run, so reopening
+/// it cannot start a second worker beside the first.
 fn start_updates(ctx: &mut Context<AppRoot>, ids: Vec<String>) -> Update {
+    if ctx.state.extension_update.is_some() || ids.is_empty() {
+        return Update::none();
+    }
+    let run = NEXT_EXTENSION_UPDATE_RUN.fetch_add(1, Ordering::Relaxed);
+    let pending: BTreeSet<String> = ids.iter().cloned().collect();
+    ctx.state.extension_update = Some(ExtensionUpdateRun {
+        id: run,
+        pending: pending.clone(),
+    });
     if let Some(state) = ctx.state.extensions.as_mut() {
-        state.updating = ids.iter().cloned().collect();
+        state.updating = pending;
     }
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
@@ -615,28 +637,37 @@ fn start_updates(ctx: &mut Context<AppRoot>, ids: Vec<String>) -> Update {
                 let result =
                     crate::extension_installation::update(&id).map(|updated| updated.changed);
                 link.send(crate::Msg::ExtensionsUpdateFinished {
+                    run,
                     id: id.clone(),
                     result: result.clone(),
                 });
                 results.push((id, result));
             }
-            link.send(crate::Msg::ExtensionsUpdatesFinished { results });
+            link.send(crate::Msg::ExtensionsUpdatesFinished { run, results });
         });
     }))
 }
 
-/// Settles one row of a running update. Toasts and the reload wait for the whole run.
+/// Settles one row of the active update run. Toasts and the reload wait for the whole run.
+/// A result from any other run is ignored, including one whose id the active run also has.
 pub(crate) fn update_finished(
     ctx: &mut Context<AppRoot>,
+    run: u64,
     id: String,
     result: std::result::Result<bool, String>,
 ) -> Update {
+    let accepted = ctx
+        .state
+        .extension_update
+        .as_mut()
+        .is_some_and(|current| current.id == run && current.pending.remove(&id));
+    if !accepted {
+        return Update::none();
+    }
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    if !state.updating.remove(&id) {
-        return Update::none();
-    }
+    state.updating.remove(&id);
     match result {
         // The reload at the end of the run checks it again, against the new files.
         Ok(true) => {
@@ -655,8 +686,18 @@ pub(crate) fn update_finished(
 
 pub(crate) fn updates_finished(
     ctx: &mut Context<AppRoot>,
+    run: u64,
     results: Vec<(String, std::result::Result<bool, String>)>,
 ) -> Update {
+    if ctx
+        .state
+        .extension_update
+        .as_ref()
+        .is_none_or(|current| current.id != run)
+    {
+        return Update::none();
+    }
+    ctx.state.extension_update = None;
     if let Some(state) = ctx.state.extensions.as_mut() {
         state.updating.clear();
     }
@@ -701,12 +742,18 @@ pub(crate) fn update_checked(
     id: String,
     check: ExtensionUpdateCheck,
 ) -> Update {
+    // A running update owns the row, and its reload starts a fresh check. The run outlives the
+    // picker, so this consults it rather than the row set the picker happens to be showing.
+    let owned_by_update = ctx
+        .state
+        .extension_update
+        .as_ref()
+        .is_some_and(|run| run.pending.contains(&id));
     let Some(state) = ctx.state.extensions.as_mut() else {
         return Update::none();
     };
-    // A running update owns the row, and its reload starts a fresh check.
     if state.update_check_epoch != epoch
-        || state.updating.contains(&id)
+        || owned_by_update
         || !state.update_checks.contains_key(&id)
     {
         return Update::none();
@@ -806,6 +853,9 @@ pub(crate) fn copy_report(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.extension_update.is_some() {
+        return Update::none();
+    }
     let Some(entry) = selected_entry(&ctx.state).cloned() else {
         return Update::none();
     };

@@ -312,6 +312,9 @@ pub struct State {
     /// commits to disk whether or not the manager or the dialog that started it is still open, and
     /// a reopened manager must not start a second one.
     pub extension_install: Option<ExtensionInstall>,
+    /// The extension update run in flight. Same reason as [`Self::extension_install`]: closing
+    /// the picker must not forget a worker that is still replacing installations.
+    pub extension_update: Option<ExtensionUpdateRun>,
     pub next_pick_id: u64,
     pub theme: Theme,
     pub system_theme: Option<Theme>,
@@ -682,6 +685,7 @@ impl State {
             pick: None,
             extensions: None,
             extension_install: None,
+            extension_update: None,
             next_pick_id: 1,
             theme,
             system_theme: None,

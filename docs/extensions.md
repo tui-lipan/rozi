@@ -260,8 +260,10 @@ rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-`--all` updates each Git-managed installation in turn. One that fails does not stop the rest, and
-the command exits with an error after reporting every failure.
+`--all` updates each Git-managed installation in turn, including one whose manifest is missing or
+invalid. One that fails does not stop the rest, and the command exits with an error after
+reporting every failure. An installation whose source metadata cannot be read is reported the
+same way.
 
 A reload after an update restarts the extension's services, so they run the new files.
 
@@ -281,5 +283,7 @@ On a row with a known update, `Ctrl+U` runs the same update as the CLI and reloa
 client when it succeeds. On any other row, `Ctrl+U` checks every Git-managed installation's remote
 again. When more than one update is known, `Ctrl+Shift+U` updates them all in turn and reloads once
 at the end. It needs a terminal that reports `Shift` with `Ctrl`, such as one with the Kitty
-keyboard protocol; elsewhere, use `rozi extensions update --all`. After a CLI update, reload
-explicitly, because `rozi` does not watch extension directories.
+keyboard protocol; elsewhere, use `rozi extensions update --all`. Closing **Extensions** does not
+stop an update. Opening it again shows the rows that are still updating, and another update or a
+removal waits until that run finishes. After a CLI update, reload explicitly, because `rozi` does
+not watch extension directories.

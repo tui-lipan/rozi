@@ -291,7 +291,15 @@ fn catalog_row(
 /// `update` on a row a check found a newer revision for, otherwise `check`, which asks every Git
 /// installation's remote again. Nothing starts while an update runs, and `check` waits until some
 /// installation is not already being checked.
-fn update_action(state: &crate::state::ExtensionsState, id: Option<&str>) -> OverlayAction {
+fn update_busy(ctx: &Context<AppRoot>) -> bool {
+    ctx.state.extension_update.is_some()
+}
+
+fn update_action(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+    id: Option<&str>,
+) -> OverlayAction {
     let available = matches!(
         id.and_then(|id| state.update_checks.get(id)),
         Some(crate::state::ExtensionUpdateCheck::Available { .. })
@@ -304,17 +312,20 @@ fn update_action(state: &crate::state::ExtensionsState, id: Option<&str>) -> Ove
         "ctrl-u",
         if available { "update" } else { "check" },
         Msg::ExtensionsUpdateSelected,
-        state.updating.is_empty() && (available || checkable),
+        !update_busy(ctx) && (available || checkable),
     )
 }
 
 /// Shown only when there is more than one update to run; a single one is `Ctrl+U` on its row.
-fn update_all_action(state: &crate::state::ExtensionsState) -> OverlayAction {
+fn update_all_action(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+) -> OverlayAction {
     OverlayAction::new(
         "ctrl-shift-u",
         "update all",
         Msg::ExtensionsUpdateAll,
-        state.updating.is_empty() && crate::ops::extensions_manager::updatable_ids(state).len() > 1,
+        !update_busy(ctx) && crate::ops::extensions_manager::updatable_ids(state).len() > 1,
     )
 }
 
@@ -332,10 +343,10 @@ fn installed_actions(
     });
     let manifest =
         selected.is_some_and(|entry| state.manifest_entries.contains(entry.path.as_str()));
-    let removable = state.updating.is_empty()
+    let removable = !update_busy(ctx)
         && selected.is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
     let selected_id = selected.and_then(|entry| entry.id.as_deref());
-    let update = update_action(state, selected_id);
+    let update = update_action(ctx, state, selected_id);
     vec![
         OverlayAction::new(
             "enter",
@@ -357,7 +368,7 @@ fn installed_actions(
         ),
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
         update,
-        update_all_action(state),
+        update_all_action(ctx, state),
         OverlayAction::new("ctrl-r", "reload", Msg::ExtensionsReload, true),
         OverlayAction::new(
             "ctrl-o",
@@ -558,7 +569,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
     let actions = vec![
-        update_action(state, entry.id.as_deref()),
+        update_action(ctx, state, entry.id.as_deref()),
         OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, true),
         OverlayAction::new(
             "ctrl-o",

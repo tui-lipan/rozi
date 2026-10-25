@@ -212,11 +212,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::ExtensionsUpdateSelected => crate::ops::extensions_manager::update_selected(ctx),
         Msg::ExtensionsUpdateAll => crate::ops::extensions_manager::update_all(ctx),
-        Msg::ExtensionsUpdatesFinished { results } => {
-            crate::ops::extensions_manager::updates_finished(ctx, results)
+        Msg::ExtensionsUpdatesFinished { run, results } => {
+            crate::ops::extensions_manager::updates_finished(ctx, run, results)
         }
-        Msg::ExtensionsUpdateFinished { id, result } => {
-            crate::ops::extensions_manager::update_finished(ctx, id, result)
+        Msg::ExtensionsUpdateFinished { run, id, result } => {
+            crate::ops::extensions_manager::update_finished(ctx, run, id, result)
         }
         Msg::ExtensionUpdateChecked { epoch, id, check } => {
             crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)

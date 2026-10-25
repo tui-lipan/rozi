@@ -273,24 +273,24 @@ pub(crate) fn run_update_extension_cli(id: Option<&str>) -> Result<()> {
 }
 
 fn run_update_all_extensions_cli() -> Result<()> {
-    let ids = crate::extension_installation::git_installation_ids();
-    if ids.is_empty() {
+    let listed =
+        crate::extension_installation::list_git_installations().map_err(std::io::Error::other)?;
+    if listed.ids.is_empty() && listed.failures.is_empty() {
         println!("No Git-managed extensions to update");
         return Ok(());
     }
     let styles = OutputStyles::detect();
     let mut changed = false;
-    let mut failed = 0;
-    for id in &ids {
+    let mut failed = listed.failures.len();
+    for (id, error) in &listed.failures {
+        report_not_updated(&styles, id, error);
+    }
+    for id in &listed.ids {
         match update_one_extension(id) {
             Ok(updated) => changed |= updated,
             Err(error) => {
                 failed += 1;
-                eprintln!(
-                    "{} {}: {error}",
-                    styles.paint("Not updated", OutputTone::Error),
-                    styles.paint(id, OutputTone::Accent)
-                );
+                report_not_updated(&styles, id, &error);
             }
         }
     }
@@ -298,13 +298,21 @@ fn run_update_all_extensions_cli() -> Result<()> {
         print_reload_hint();
     }
     if failed > 0 {
+        let total = listed.ids.len() + listed.failures.len();
         return Err(std::io::Error::other(format!(
-            "{failed} of {} extensions could not be updated",
-            ids.len()
+            "{failed} of {total} extensions could not be updated"
         ))
         .into());
     }
     Ok(())
+}
+
+fn report_not_updated(styles: &OutputStyles, id: &str, error: &str) {
+    eprintln!(
+        "{} {}: {error}",
+        styles.paint("Not updated", OutputTone::Error),
+        styles.paint(id, OutputTone::Accent)
+    );
 }
 
 /// Updates `id` and prints its outcome, reporting whether its files changed.

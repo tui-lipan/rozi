@@ -108,13 +108,17 @@ pub enum Msg {
     },
     ExtensionsUpdateSelected,
     ExtensionsUpdateAll,
-    /// One extension of a running update finished; `Ok(true)` when its files changed.
+    /// One extension of update run `run` finished; `Ok(true)` when its files changed.
+    /// A result whose `run` is not the active one is ignored.
     ExtensionsUpdateFinished {
+        run: u64,
         id: String,
         result: std::result::Result<bool, String>,
     },
-    /// Every extension of a running update finished, with each one's result in order.
+    /// Every extension of update run `run` finished, with each one's result in order.
+    /// A result whose `run` is not the active one is ignored.
     ExtensionsUpdatesFinished {
+        run: u64,
         results: Vec<(String, std::result::Result<bool, String>)>,
     },
     ExtensionUpdateChecked {

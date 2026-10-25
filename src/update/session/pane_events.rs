@@ -15,6 +15,12 @@ struct PaneOutputEffects {
     bell_alert_raised: bool,
 }
 
+enum CurrentPaneOutput {
+    Applied(PaneOutputEffects),
+    Orphan(Vec<tui_lipan::TerminalOutputMedia>),
+    Consumed,
+}
+
 fn apply_current_pane_output(
     state: &mut crate::state::State,
     pane_id: PaneId,
@@ -22,7 +28,7 @@ fn apply_current_pane_output(
     generation: u64,
     bytes: &[u8],
     media: Vec<tui_lipan::TerminalOutputMedia>,
-) -> Option<PaneOutputEffects> {
+) -> CurrentPaneOutput {
     let attended = state.is_pane_attended(pane_id);
     // Sidebar rows and modal pickers can derive labels from the raw terminal title too. Their
     // composition stays on the full refresh path until they also bind live sources.
@@ -37,9 +43,14 @@ fn apply_current_pane_output(
     } else {
         state.current().image_media_policy()
     };
-    let pane = find_pane_in_namespace_mut(state, pane_id, local)?;
-    if pane.pty_generation != generation {
-        return None;
+    let Some(pane) = find_pane_in_namespace_mut(state, pane_id, local) else {
+        return CurrentPaneOutput::Orphan(media);
+    };
+    if pane.pty_generation < generation {
+        return CurrentPaneOutput::Orphan(media);
+    }
+    if pane.pty_generation > generation {
+        return CurrentPaneOutput::Consumed;
     }
     pane.terminal.set_media_policy(policy);
     let was_ready = pane.terminal.is_ready();
@@ -49,7 +60,7 @@ fn apply_current_pane_output(
             if let Some(client) = &state.current().session_client {
                 client.end_for_replay();
             }
-            return None;
+            return CurrentPaneOutput::Consumed;
         }
     };
     let mut chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
@@ -82,7 +93,7 @@ fn apply_current_pane_output(
             pane.activity.bell = true;
         }
     }
-    Some(PaneOutputEffects {
+    CurrentPaneOutput::Applied(PaneOutputEffects {
         indicator_raised,
         chrome_changed,
         live_title_changed,
@@ -206,20 +217,25 @@ pub(crate) fn output(
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
     // Both flags only ever go false -> true here, so that is a single frame per quiet period
     // rather than one per output chunk.
-    let Some(effects) = apply_current_pane_output(
+    let effects = match apply_current_pane_output(
         &mut ctx.state,
         pane_id,
         local,
         generation,
         &bytes,
-        media.clone(),
-    ) else {
-        // Output arrived before the layout commit that introduces this pane (or its new generation).
-        // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
-        // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
-        // Local output never joins that shared-layout race: the owner created the pane itself.
-        buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes, media);
-        return Update::none();
+        media,
+    ) {
+        CurrentPaneOutput::Applied(effects) => effects,
+        CurrentPaneOutput::Orphan(media) => {
+            // Output arrived before the layout commit that introduces this pane (or its new
+            // generation). Buffer it so the reconciler can replay it when the pane appears;
+            // dropping it would leave a follower's fresh pane blank until the next redraw. Nothing
+            // draws it yet, so no frame. Local output never joins that shared-layout race: the
+            // owner created the pane itself.
+            buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes, media);
+            return Update::none();
+        }
+        CurrentPaneOutput::Consumed => return Update::none(),
     };
     if metadata.sequence != 0
         && (effects.mutation.is_visual() || effects.chrome_changed || effects.live_title_changed)

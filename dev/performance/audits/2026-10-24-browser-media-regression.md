@@ -302,13 +302,16 @@ retain at most 128 acquired-file obligations and 128 MiB, with process-wide issu
 files and 256 MiB. Queued media also observes the connection limit; framework snapshots have their
 own process-wide storage budget. Limit exhaustion disconnects the affected client for replay.
 
-The client transport reader takes private hard links, validates files and exact commands, then
-batches acquisition acknowledgements before UI dispatch. Its serial acquisition order proves the
-acknowledged prefix independently of visibility, rendering and presentation acknowledgements.
-Hard-link failure copies while the server obligation remains live. Acquired resources stay with
-mailbox and orphan envelopes. Orphan overflow ends the transport for replay rather than keeping a
-partial escape. Background attachments apply the same owned resources. Acquisition failure shuts
-the transport down even if the UI does not dispatch its disconnect event.
+The client transport reader waits for client media capacity (128 files and 128 MiB in the inbound
+mailbox, tracked alongside the 8 MiB wire-byte limit and reclaimed on same-image replacement) before
+taking private hard links, validating files and exact commands, and queueing acquisition
+acknowledgements before UI dispatch. Its serial acquisition order proves the acknowledged prefix
+independently of visibility, rendering and presentation acknowledgements. Hard-link failure copies
+while the server obligation remains live. Acquired resources stay with mailbox and orphan envelopes,
+where orphan buffering enforces its own 64-file / 64 MiB per-pane-generation and 128-file / 128 MiB
+global media limits. Orphan overflow ends the transport for replay rather than keeping a partial
+escape. Background attachments apply the same owned resources. Acquisition failure shuts the
+transport down even if the UI does not dispatch its disconnect event.
 
 Acknowledgements mark resources for retirement; a server turn reclaims at most one live obligation
 and one disconnected queue entry. Disconnected queues keep their ownership and reservation charges

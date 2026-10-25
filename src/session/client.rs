@@ -19,10 +19,12 @@ use crate::session::protocol::Frame;
 use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use crate::session::queue::{ByteQueue, PushError, SegmentCoalesce};
+use crate::session::queue::{ByteQueue, MediaWeight, PushError, ReplacementKey, SegmentCoalesce};
 use crate::state::PaneId;
 
 const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CLIENT_INBOUND_MEDIA_BYTES: usize = 128 * 1024 * 1024;
+const MAX_CLIENT_INBOUND_MEDIA_FILES: usize = 128;
 const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
 const MAX_INTERLEAVED_PANE_BYTES: usize = 64 * 1024;
 /// How long [`SessionClient::shutdown`] waits for the writer thread to put the request on the wire
@@ -90,6 +92,7 @@ impl ShutdownFlush {
 /// worker threads, and closes the outbound queue.
 struct ClientTransport {
     outbound: Arc<ByteQueue<ClientOutbound>>,
+    inbound: Option<Arc<InboundMailbox>>,
     shutdown_stream: Mutex<Option<crate::platform::ipc::IpcConnection>>,
     shutdown_signal: Arc<AtomicBool>,
     shutdown_flush: Arc<ShutdownFlush>,
@@ -101,6 +104,9 @@ impl ClientTransport {
     fn disconnect(&self) {
         self.shutdown_signal.store(true, Ordering::SeqCst);
         self.outbound.close();
+        if let Some(inbound) = &self.inbound {
+            inbound.wake();
+        }
         if let Ok(mut guard) = self.shutdown_stream.lock()
             && let Some(stream) = guard.take()
         {
@@ -460,14 +466,15 @@ impl SessionClient {
         // the duplicate handle used to interrupt those operations.
         let shutdown_stream = stream.try_clone()?;
         let shutdown_flush = Arc::new(ShutdownFlush::new());
+        let client_inbound = inbound.mailbox();
         let transport = Arc::new(ClientTransport {
             outbound: Arc::clone(&outbound),
+            inbound: client_inbound.clone(),
             shutdown_stream: Mutex::new(Some(shutdown_stream)),
             shutdown_signal: Arc::clone(&shutdown_signal),
             shutdown_flush: Arc::clone(&shutdown_flush),
             shutdown_requested: AtomicBool::new(false),
         });
-        let client_inbound = inbound.mailbox();
         let writer_outbound = Arc::clone(&outbound);
         let writer_inbound = client_inbound.clone();
         let writer_shutdown_signal = Arc::clone(&shutdown_signal);
@@ -977,6 +984,17 @@ impl InboundTarget {
         }
     }
 
+    fn wait_for_capacity(
+        &self,
+        frame: &Frame<ServerMessage>,
+        shutdown: Option<&AtomicBool>,
+    ) -> std::result::Result<(), ()> {
+        match self {
+            Self::Channel(_) => Ok(()),
+            Self::Mailbox(mailbox) => mailbox.wait_for_capacity(frame, shutdown),
+        }
+    }
+
     fn send(&self, frame: Frame<ServerMessage>) -> std::result::Result<(), ()> {
         match self {
             Self::Channel(channel) => channel.send(frame).map_err(|_| ()),
@@ -1005,7 +1023,7 @@ pub struct InboundMailbox {
     ended: AtomicBool,
     epoch: u64,
     session_name: String,
-    link: CommandLink<crate::Msg>,
+    link: Option<CommandLink<crate::Msg>>,
 }
 
 impl InboundMailbox {
@@ -1014,8 +1032,26 @@ impl InboundMailbox {
         session_name: String,
         link: CommandLink<crate::Msg>,
     ) -> Arc<Self> {
+        Self::with_limits(
+            epoch,
+            session_name,
+            Some(link),
+            MAX_CLIENT_INBOUND_BYTES,
+            MAX_CLIENT_INBOUND_MEDIA_BYTES,
+            MAX_CLIENT_INBOUND_MEDIA_FILES,
+        )
+    }
+
+    fn with_limits(
+        epoch: u64,
+        session_name: String,
+        link: Option<CommandLink<crate::Msg>>,
+        capacity: usize,
+        media_bytes: usize,
+        media_files: usize,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            queue: ByteQueue::new(MAX_CLIENT_INBOUND_BYTES),
+            queue: ByteQueue::with_media_limits(capacity, media_bytes, media_files),
             scheduled: AtomicBool::new(false),
             active: AtomicBool::new(false),
             ended: AtomicBool::new(false),
@@ -1023,6 +1059,47 @@ impl InboundMailbox {
             session_name,
             link,
         })
+    }
+
+    #[cfg(test)]
+    fn for_test_with_limits(capacity: usize, media_bytes: usize, media_files: usize) -> Arc<Self> {
+        Self::with_limits(
+            1,
+            "test".to_string(),
+            None,
+            capacity,
+            media_bytes,
+            media_files,
+        )
+    }
+
+    pub(crate) fn wake(&self) {
+        self.queue.wake();
+    }
+
+    fn wait_for_capacity(
+        self: &Arc<Self>,
+        frame: &Frame<ServerMessage>,
+        shutdown: Option<&AtomicBool>,
+    ) -> std::result::Result<(), ()> {
+        let bytes = inbound_frame_bytes(frame);
+        let media = inbound_frame_media(frame);
+        let replacement = inbound_replacement_key(frame);
+        if let Err(error) = self
+            .queue
+            .wait_for_capacity(bytes, media, replacement, shutdown)
+        {
+            if shutdown.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
+                return Err(());
+            }
+            self.fail(inbound_push_error_message(
+                &error,
+                bytes,
+                self.queue.stats().capacity,
+            ));
+            return Err(());
+        }
+        Ok(())
     }
 
     pub(crate) fn push(
@@ -1033,15 +1110,14 @@ impl InboundMailbox {
         // this bounded mailbox. Backpressure that reader instead of tearing down a healthy local
         // session: the server still owns per-client outbox isolation, so a genuinely slow client
         // cannot stall broadcasts to everyone else.
+        let bytes = inbound_frame_bytes(&frame);
         let result = enqueue_inbound_frame(&self.queue, frame);
         if let Err(error) = result {
-            let message = match error {
-                PushError::TooLarge(_) => "session inbound frame exceeded 8 MiB",
-                PushError::Closed(_) => "session inbound queue closed",
-                // Blocking insertion waits for capacity, so `Full` is not produced.
-                PushError::Full(_) => "session inbound queue unavailable",
-            };
-            self.fail(message.to_string());
+            self.fail(inbound_push_error_message(
+                &error,
+                bytes,
+                self.queue.stats().capacity,
+            ));
             return Err(());
         }
         self.schedule();
@@ -1097,12 +1173,27 @@ impl InboundMailbox {
                 .scheduled
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
+            && let Some(link) = &self.link
         {
-            self.link.send(crate::Msg::DrainSessionFrames {
+            link.send(crate::Msg::DrainSessionFrames {
                 epoch: self.epoch,
                 mailbox: Arc::clone(self),
             });
         }
+    }
+}
+
+fn inbound_push_error_message<T>(error: &PushError<T>, bytes: usize, capacity: usize) -> String {
+    match error {
+        PushError::TooLarge(_) if bytes > capacity => {
+            "session inbound frame exceeded 8 MiB".to_string()
+        }
+        PushError::TooLarge(_) => {
+            "session inbound media exceeded client retention bounds".to_string()
+        }
+        PushError::Closed(_) => "session inbound queue closed".to_string(),
+        // Blocking insertion waits for capacity, so `Full` is not produced.
+        PushError::Full(_) => "session inbound queue unavailable".to_string(),
     }
 }
 
@@ -1114,7 +1205,19 @@ fn enqueue_inbound_frame(
     frame: Frame<ServerMessage>,
 ) -> std::result::Result<(), PushError<InboundEvent>> {
     let bytes = inbound_frame_bytes(&frame);
-    let replacement = match &frame {
+    let media = inbound_frame_media(&frame);
+    let replacement = inbound_replacement_key(&frame);
+    invalidate_inbound_replacements(queue, &frame);
+    let event = InboundEvent::Frame(Box::new(frame));
+    if let Some(key) = replacement {
+        queue.push_blocking_latest_media(event, bytes, media, key)
+    } else {
+        queue.push_blocking_within_segment_media(event, bytes, media, coalesce_inbound_segment)
+    }
+}
+
+fn inbound_replacement_key(frame: &Frame<ServerMessage>) -> Option<ReplacementKey> {
+    match frame {
         Frame::PaneOutput {
             pane_id,
             local,
@@ -1123,13 +1226,34 @@ fn enqueue_inbound_frame(
             ..
         } => metadata.replacement_key(*pane_id, *local, *generation),
         _ => None,
+    }
+}
+
+fn inbound_frame_media(frame: &Frame<ServerMessage>) -> MediaWeight {
+    let Frame::PaneOutput {
+        media: Some(media), ..
+    } = frame
+    else {
+        return MediaWeight::default();
     };
-    invalidate_inbound_replacements(queue, &frame);
-    let event = InboundEvent::Frame(Box::new(frame));
-    if let Some(key) = replacement {
-        queue.push_blocking_latest(event, bytes, key)
+    if !media.acquired.is_empty() {
+        let bytes = media
+            .acquired
+            .iter()
+            .fold(0usize, |acc, item| acc.saturating_add(item.file.byte_len()));
+        MediaWeight {
+            bytes,
+            files: media.acquired.len(),
+        }
     } else {
-        queue.push_blocking_within_segment(event, bytes, coalesce_inbound_segment)
+        let bytes = media
+            .files
+            .iter()
+            .fold(0usize, |acc, item| acc.saturating_add(item.byte_len));
+        MediaWeight {
+            bytes,
+            files: media.files.len(),
+        }
     }
 }
 
@@ -1458,6 +1582,34 @@ fn acquire_frame_media(
     Ok(())
 }
 
+fn enqueue_acquisition_acks(
+    outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
+    acks: Vec<protocol::AcquisitionAck>,
+) -> bool {
+    if acks.is_empty() {
+        return true;
+    }
+    let Some(outbound) = outbound else {
+        return false;
+    };
+    let ack = ClientOutbound::AcquisitionAcks(acks);
+    let len = ack.wire_bytes();
+    outbound
+        .try_push_with(ack, len, |queued, next| {
+            let (ClientOutbound::AcquisitionAcks(queued), ClientOutbound::AcquisitionAcks(next)) =
+                (queued, next)
+            else {
+                return false;
+            };
+            if queued.len().saturating_add(next.len()) > 4096 {
+                return false;
+            }
+            queued.extend_from_slice(next);
+            true
+        })
+        .is_ok()
+}
+
 fn forward_inbound_trusted<R: std::io::Read>(
     trusted_local: bool,
     reader: &mut R,
@@ -1496,17 +1648,12 @@ fn forward_inbound_trusted<R: std::io::Read>(
             }
             Err(_) => break,
         };
-        let mut frames = Vec::new();
-        let mut acks = Vec::new();
         loop {
             if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
                 break 'read;
             }
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(mut frame)) => {
-                    if acquire_frame_media(&mut frame, trusted_local, &mut acks).is_err() {
-                        break 'read;
-                    }
                     if let Frame::Control(ServerMessage::AttachmentAck { transfer_id, error }) =
                         &frame
                     {
@@ -1527,22 +1674,29 @@ fn forward_inbound_trusted<R: std::io::Read>(
                         TransportFrameDisposition::Consumed => continue,
                         TransportFrameDisposition::Disconnect => break 'read,
                     }
-                    frames.push(frame);
+                    // Wait for client retention capacity before importing or acknowledging a file:
+                    // the server keeps its obligation pinned until the ACK arrives, so a lagging
+                    // UI applies backpressure to the connection rather than accumulating unbounded
+                    // client hard links behind the 8 MiB wire-byte mailbox limit.
+                    if inbound
+                        .wait_for_capacity(&frame, shutdown_signal.map(Arc::as_ref))
+                        .is_err()
+                    {
+                        break 'read;
+                    }
+                    let mut acks = Vec::new();
+                    if acquire_frame_media(&mut frame, trusted_local, &mut acks).is_err() {
+                        break 'read;
+                    }
+                    if !enqueue_acquisition_acks(outbound, acks) {
+                        break 'read;
+                    }
+                    if inbound.send(frame).is_err() {
+                        break 'read;
+                    }
                 }
                 Ok(None) => break,
                 Err(_) => break 'read,
-            }
-        }
-        if !acks.is_empty() {
-            let ack = ClientOutbound::AcquisitionAcks(acks);
-            let len = ack.wire_bytes();
-            if outbound.is_none_or(|q| q.try_push(ack, len).is_err()) {
-                break;
-            }
-        }
-        for frame in frames {
-            if inbound.send(frame).is_err() {
-                break 'read;
             }
         }
         if would_block {
@@ -2446,6 +2600,7 @@ mod tests {
         let shutdown_signal = Arc::new(AtomicBool::new(false));
         let transport = ClientTransport {
             outbound: Arc::clone(&outbound),
+            inbound: None,
             shutdown_stream: Mutex::new(None),
             shutdown_signal: Arc::clone(&shutdown_signal),
             shutdown_flush: Arc::new(ShutdownFlush::new()),
@@ -2469,8 +2624,16 @@ mod acquisition_tests {
     use base64::Engine as _;
 
     fn frame() -> (tui_lipan::TerminalOutputTransaction, Frame<ServerMessage>) {
+        frame_with_identity(1, 9, protocol::OutputMetadata::default())
+    }
+
+    fn frame_with_identity(
+        acquisition_sequence: u64,
+        image_id: u32,
+        metadata: protocol::OutputMetadata,
+    ) -> (tui_lipan::TerminalOutputTransaction, Frame<ServerMessage>) {
         let source = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(source.path(), [1, 2, 3, 255]).unwrap();
+        std::fs::write(source.path(), [image_id as u8, 2, 3, 255]).unwrap();
         let name = base64::engine::general_purpose::STANDARD
             .encode(source.path().to_string_lossy().as_bytes());
         let mut server = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
@@ -2478,7 +2641,7 @@ mod acquisition_tests {
         server.set_output_transaction_recording(true);
         server.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);
         server.process_bytes(
-            format!("\x1b_Ga=T,t=f,f=32,s=1,v=1,i=9,C=1,q=2;{name}\x1b\\").as_bytes(),
+            format!("\x1b_Ga=T,t=f,f=32,s=1,v=1,i={image_id},C=1,q=2;{name}\x1b\\").as_bytes(),
         );
         let transaction = server.take_output_transactions().remove(0);
         let files = transaction
@@ -2495,10 +2658,10 @@ mod acquisition_tests {
             pane_id: 7,
             generation: 2,
             local: false,
-            metadata: protocol::OutputMetadata::default(),
+            metadata,
             bytes: transaction.bytes.clone(),
             media: Some(protocol::OutputMedia {
-                acquisition_sequence: 1,
+                acquisition_sequence,
                 files,
                 acquired: Vec::new(),
             }),
@@ -2521,7 +2684,7 @@ mod acquisition_tests {
         let private = media.acquired[0].file.path().to_owned();
         assert_ne!(private, transaction.media[0].file.path());
         drop(transaction);
-        assert_eq!(std::fs::read(&private).unwrap(), [1, 2, 3, 255]);
+        assert_eq!(std::fs::read(&private).unwrap(), [9, 2, 3, 255]);
         drop(frame);
         assert!(!private.exists());
     }
@@ -2535,5 +2698,273 @@ mod acquisition_tests {
         drop(transaction);
         assert!(acquire_frame_media(&mut frame, true, &mut acks).is_err());
         assert!(acks.is_empty());
+    }
+
+    #[test]
+    fn undrained_mailbox_backpressures_distinct_media_before_acquiring_or_acknowledging() {
+        let (tx1, f1) = frame_with_identity(1, 1, protocol::OutputMetadata::default());
+        let (tx2, f2) = frame_with_identity(2, 2, protocol::OutputMetadata::default());
+        let (tx3, f3) = frame_with_identity(3, 3, protocol::OutputMetadata::default());
+
+        let mut wire = Vec::new();
+        for frame in [&f1, &f2, &f3] {
+            let Frame::PaneOutput {
+                pane_id,
+                generation,
+                local,
+                metadata,
+                media,
+                bytes,
+            } = frame
+            else {
+                unreachable!();
+            };
+            protocol::write_pane_output_media_frame(
+                &mut wire,
+                *pane_id,
+                *generation,
+                *local,
+                *metadata,
+                media.as_ref(),
+                bytes,
+            )
+            .unwrap();
+        }
+        assert!(
+            wire.len() < 1024,
+            "wire representation of NamedAsFiles frames is tiny compared to 8 MiB mailbox capacity"
+        );
+
+        // Wire capacity is the full 8 MiB, while client media capacity allows only two 4-byte
+        // files (8 media bytes, 2 media files).
+        let mailbox = InboundMailbox::for_test_with_limits(MAX_CLIENT_INBOUND_BYTES, 8, 2);
+        let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));
+        let reader_mailbox = Arc::clone(&mailbox);
+        let reader_outbound = Arc::clone(&outbound);
+        let reader = thread::spawn(move || {
+            forward_inbound_trusted(
+                true,
+                &mut std::io::Cursor::new(wire),
+                &InboundTarget::Mailbox(reader_mailbox),
+                Some(&reader_outbound),
+                None,
+                None,
+                false,
+                None,
+                HEARTBEAT_TIMEOUT,
+                None,
+            );
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while mailbox.queue.stats().len < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        thread::sleep(Duration::from_millis(25));
+
+        let stats = mailbox.queue.stats();
+        assert_eq!(stats.len, 2);
+        assert_eq!(stats.media_bytes, 8);
+        assert_eq!(stats.media_files, 2);
+        assert!(
+            !reader.is_finished(),
+            "third media frame must block on client media retention bounds"
+        );
+
+        // Only the first two frames have been acquired and acknowledged; the third remains pinned
+        // on the server until the client drains a frame from the mailbox.
+        assert_eq!(
+            outbound.try_pop(),
+            Some(ClientOutbound::AcquisitionAcks(vec![
+                protocol::AcquisitionAck {
+                    local: false,
+                    pane_id: 7,
+                    generation: 2,
+                    sequence: 1,
+                },
+                protocol::AcquisitionAck {
+                    local: false,
+                    pane_id: 7,
+                    generation: 2,
+                    sequence: 2,
+                },
+            ]))
+        );
+        assert_eq!(outbound.try_pop(), None);
+
+        // Server can safely drop transactions 1 and 2 once acknowledged, while transaction 3 stays
+        // alive until the client drains capacity.
+        drop(tx1);
+        drop(tx2);
+
+        let Some((InboundEvent::Frame(first), _, true)) = mailbox.pop() else {
+            panic!("expected first media frame");
+        };
+        let Frame::PaneOutput {
+            media: Some(first_media),
+            ..
+        } = &*first
+        else {
+            panic!("expected acquired media on first frame");
+        };
+        let first_private = first_media.acquired[0].file.path().to_owned();
+        assert_eq!(std::fs::read(&first_private).unwrap(), [1, 2, 3, 255]);
+        drop(first);
+        assert!(!first_private.exists());
+
+        reader
+            .join()
+            .expect("reader finishes once media capacity opens");
+        drop(tx3);
+
+        assert_eq!(
+            outbound.try_pop(),
+            Some(ClientOutbound::AcquisitionAcks(vec![
+                protocol::AcquisitionAck {
+                    local: false,
+                    pane_id: 7,
+                    generation: 2,
+                    sequence: 3,
+                },
+            ]))
+        );
+        let stats = mailbox.queue.stats();
+        assert_eq!(stats.high_water_media_bytes, 8);
+        assert_eq!(stats.high_water_media_files, 2);
+
+        let Some((InboundEvent::Frame(second), _, true)) = mailbox.pop() else {
+            panic!("expected second media frame");
+        };
+        let Some((InboundEvent::Frame(third), _, _)) = mailbox.pop() else {
+            panic!("expected third media frame");
+        };
+        let Frame::PaneOutput {
+            media: Some(third_media),
+            ..
+        } = &*third
+        else {
+            panic!("expected acquired media on third frame");
+        };
+        assert_eq!(
+            std::fs::read(third_media.acquired[0].file.path()).unwrap(),
+            [3, 2, 3, 255]
+        );
+        drop(second);
+        drop(third);
+        assert_eq!(mailbox.queue.stats().media_bytes, 0);
+        assert_eq!(mailbox.queue.stats().media_files, 0);
+    }
+
+    #[test]
+    fn independent_graphics_replacement_reclaims_superseded_client_media_files() {
+        let meta = |sequence: u64| protocol::OutputMetadata {
+            sequence,
+            coalesce_epoch: 0,
+            class: protocol::OutputClass::IndependentGraphics {
+                image: 9,
+                incarnation: 1,
+                revision: sequence,
+            },
+        };
+        let (tx1, mut f1) = frame_with_identity(1, 9, meta(1));
+        let (tx2, mut f2) = frame_with_identity(2, 9, meta(2));
+        let mut acks = Vec::new();
+        acquire_frame_media(&mut f1, true, &mut acks).unwrap();
+        acquire_frame_media(&mut f2, true, &mut acks).unwrap();
+        drop(tx1);
+        drop(tx2);
+
+        let first_private = match &f1 {
+            Frame::PaneOutput {
+                media: Some(media), ..
+            } => media.acquired[0].file.path().to_owned(),
+            _ => unreachable!(),
+        };
+        let second_private = match &f2 {
+            Frame::PaneOutput {
+                media: Some(media), ..
+            } => media.acquired[0].file.path().to_owned(),
+            _ => unreachable!(),
+        };
+        assert!(first_private.exists());
+        assert!(second_private.exists());
+
+        // Queue allows only 1 media file (4 media bytes); replacing the same-image entry must
+        // fit within the single-file budget and immediately unlink the superseded private file.
+        let queue = ByteQueue::with_media_limits(MAX_CLIENT_INBOUND_BYTES, 4, 1);
+        enqueue_inbound_frame(&queue, f1).unwrap();
+        assert_eq!(queue.stats().media_bytes, 4);
+        assert_eq!(queue.stats().media_files, 1);
+
+        enqueue_inbound_frame(&queue, f2).unwrap();
+        assert!(
+            !first_private.exists(),
+            "superseded frame drops its private hard link"
+        );
+        assert!(second_private.exists());
+        assert_eq!(queue.stats().len, 1);
+        assert_eq!(queue.stats().media_bytes, 4);
+        assert_eq!(queue.stats().media_files, 1);
+        assert_eq!(queue.stats().coalesced_frames, 1);
+
+        let popped = queue.try_pop().unwrap();
+        drop(popped);
+        assert!(!second_private.exists());
+        assert_eq!(queue.stats().media_bytes, 0);
+        assert_eq!(queue.stats().media_files, 0);
+    }
+
+    #[test]
+    fn oversized_client_media_frame_fails_mailbox_without_acquiring_or_acknowledging() {
+        let (_tx, frame) = frame_with_identity(1, 1, protocol::OutputMetadata::default());
+        let Frame::PaneOutput {
+            pane_id,
+            generation,
+            local,
+            metadata,
+            media,
+            bytes,
+        } = &frame
+        else {
+            unreachable!();
+        };
+        let mut wire = Vec::new();
+        protocol::write_pane_output_media_frame(
+            &mut wire,
+            *pane_id,
+            *generation,
+            *local,
+            *metadata,
+            media.as_ref(),
+            bytes,
+        )
+        .unwrap();
+
+        let mailbox = InboundMailbox::for_test_with_limits(MAX_CLIENT_INBOUND_BYTES, 2, 1);
+        let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));
+        forward_inbound_trusted(
+            true,
+            &mut std::io::Cursor::new(wire),
+            &InboundTarget::Mailbox(Arc::clone(&mailbox)),
+            Some(&outbound),
+            None,
+            None,
+            false,
+            None,
+            HEARTBEAT_TIMEOUT,
+            None,
+        );
+
+        assert_eq!(outbound.try_pop(), None);
+        assert_eq!(
+            mailbox.pop(),
+            Some((
+                InboundEvent::Failed(
+                    "session inbound media exceeded client retention bounds".to_string()
+                ),
+                0,
+                false,
+            ))
+        );
     }
 }

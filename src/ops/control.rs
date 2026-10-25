@@ -1202,24 +1202,14 @@ fn validate_agent_input_reference(
     let Some(slot) = reference.slot.as_ref() else {
         return Ok(());
     };
-    let active = crate::pane::lifecycle::find_pane(&ctx.state, reference.pane.pane_id)
-        .and_then(|pane| {
-            pane.terminal
-                .published_rows
-                .iter()
-                .find(|row| row.has_key(slot))
-        })
-        .is_some_and(|row| row.active);
-    let slot = &slot.id;
-    if active {
-        Ok(())
-    } else {
-        Err(ControlResponse::error_with(
+    let rows = crate::pane::lifecycle::find_pane(&ctx.state, reference.pane.pane_id)
+        .map_or(&[][..], |pane| &pane.terminal.published_rows);
+    match crate::session::protocol::slot_input_refusal(rows, slot) {
+        None => Ok(()),
+        Some(message) => Err(ControlResponse::error_with(
             ControlErrorCode::Conflict,
-            format!(
-                "published agent slot `{slot}` is not active; read only targets the visible activity"
-            ),
-        ))
+            message,
+        )),
     }
 }
 

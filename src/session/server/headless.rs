@@ -1312,21 +1312,16 @@ impl SessionServer {
         let Some(slot) = reference.slot.as_ref() else {
             return Ok(());
         };
-        let active = self
+        let rows = self
             .panes
             .get(&reference.pane.pane_id)
-            .and_then(|pane| pane.runtime.rows.iter().find(|row| row.has_key(slot)))
-            .is_some_and(|row| row.active);
-        let slot = &slot.id;
-        if active {
-            Ok(())
-        } else {
-            Err(ControlResponse::error_with(
+            .map_or(&[][..], |pane| &pane.runtime.rows);
+        match protocol::slot_input_refusal(rows, slot) {
+            None => Ok(()),
+            Some(message) => Err(ControlResponse::error_with(
                 ControlErrorCode::Conflict,
-                format!(
-                    "published agent slot `{slot}` is not active; read and prompt only target the visible activity"
-                ),
-            ))
+                message,
+            )),
         }
     }
 

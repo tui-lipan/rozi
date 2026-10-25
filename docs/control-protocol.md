@@ -1005,8 +1005,11 @@ While one integration owns the pane, a report from another integration token is 
 row whose reporting session it names, and only for that row. Publish `live_session` when a row's
 conversation runs in a process other than the pane's own, so that process's hooks, not the pane
 owner's last report, speak for it. A pane id given to `agents get`, `read`, `wait`, or `prompt`
-names the active agent row; a row that is not active is reached only by its exact reference. A
-released row report's token, or one whose conversation no row names any more, is retired.
+names the active agent row; a row that is not active is reached only by its exact reference.
+`read` and `prompt` refuse such a reference with `conflict`, because the input would land in the
+conversation on screen instead. When the publisher marks none of its rows active, the refusal says
+it cannot tell which conversation is on screen. A released row report's token, or one whose
+conversation no row names any more, is retired.
 
 When a session is restored, the pane's active agent row's `native_session` is the conversation rozi
 resumes, ahead of the report's. Activity rows are never resumed. When the window holding that agent

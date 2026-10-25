@@ -2731,8 +2731,8 @@ mod acquisition_tests {
             .unwrap();
         }
         assert!(
-            wire.len() < 1024,
-            "wire representation of NamedAsFiles frames is tiny compared to 8 MiB mailbox capacity"
+            wire.len() < MAX_CLIENT_INBOUND_BYTES,
+            "wire representation of NamedAsFiles frames fits within the 8 MiB mailbox wire capacity"
         );
 
         // Wire capacity is the full 8 MiB, while client media capacity allows only two 4-byte

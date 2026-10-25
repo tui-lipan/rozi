@@ -282,8 +282,9 @@ fn running_client_automatically_reloads_when_extension_store_revision_changes() 
             let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
             write_manifest(&root, "initial");
 
-            let mut backend =
-                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
+            let mut backend = CleanupBackend(TestBackend::new(
+                rozi::test_support::configured_app_without_control(),
+            ));
 
             pump_until(&mut backend, Duration::from_secs(5), |backend| {
                 backend

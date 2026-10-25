@@ -90,6 +90,11 @@ Right click does nothing clipboard-related by default, so it stays available to 
 to rozi. If you set `right_click`, it follows the same pointer rule as middle click, and
 `"copy-or-paste"` copies only a selection in the pane you click.
 
+A program that tracks the mouse, such as Codex or Claude Code, receives middle and right clicks
+itself and pastes from the clipboard of the machine it runs on. In a remote session that is the
+remote host, so the click usually pastes nothing. Hold `Shift` while you middle-click or right-click
+to paste your local clipboard with rozi instead; `Ctrl+V` works too.
+
 You can change all of these under [`[clipboard]`](configuration.md#clipboard); changes apply when
 the config reloads. If the system has no primary selection, regular clipboard copying still works,
 and primary-only gestures are turned off.

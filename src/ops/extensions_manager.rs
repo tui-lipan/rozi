@@ -678,7 +678,16 @@ pub(crate) fn update_finished(
                 .update_checks
                 .insert(id, ExtensionUpdateCheck::Current);
         }
-        Err(_) => {}
+        // A known answer stays, so the row can be updated again. `checking…` is a check this
+        // run ignored, and leaving it would make `Ctrl+U` skip the row after the run.
+        Err(_) => {
+            if matches!(
+                state.update_checks.get(&id),
+                Some(ExtensionUpdateCheck::Checking)
+            ) {
+                state.update_checks.remove(&id);
+            }
+        }
     }
     refresh_detail_report(ctx);
     Update::full()
@@ -725,6 +734,9 @@ pub(crate) fn updates_finished(
         (changed, _) => notify_info(ctx, &format!("Updated {} extensions", changed.len())),
     }
     let Some(&first) = changed.first() else {
+        // Nothing was replaced, so there is no reload to check the new files. Ask for any Git
+        // installation that still has no answer, including one this run owned.
+        check_unchecked_installations(ctx);
         refresh_detail_report(ctx);
         return Update::full();
     };
@@ -742,8 +754,9 @@ pub(crate) fn update_checked(
     id: String,
     check: ExtensionUpdateCheck,
 ) -> Update {
-    // A running update owns the row, and its reload starts a fresh check. The run outlives the
-    // picker, so this consults it rather than the row set the picker happens to be showing.
+    // A running update owns the row. Success reloads and checks the new files; failure checks
+    // the row once the run has released it. An answer that arrives meanwhile is ignored. The
+    // run outlives the picker, so this consults it rather than the rows the picker is showing.
     let owned_by_update = ctx
         .state
         .extension_update
@@ -1181,23 +1194,58 @@ fn git_installation_ids(
         .collect()
 }
 
-/// Rechecks every Git installation, replacing whatever an earlier check found.
+/// Installation ids the active update run has not finished. A remote check has nothing useful
+/// to add while that run owns the checkout.
+fn ids_owned_by_update(ctx: &Context<AppRoot>) -> BTreeSet<String> {
+    ctx.state
+        .extension_update
+        .as_ref()
+        .map(|run| run.pending.clone())
+        .unwrap_or_default()
+}
+
+/// Rechecks every Git installation an active update does not own, replacing whatever an earlier
+/// check found for those rows. An owned row keeps an answer it already has. Marking it
+/// `checking…` would outlive a failed update: the ignored answer never clears it, and `Ctrl+U`
+/// skips a row already marked checking.
 fn start_update_check(ctx: &mut Context<AppRoot>) {
-    let Some(state) = ctx.state.extensions.as_mut() else {
-        return;
+    let owned = ids_owned_by_update(ctx);
+    let (epoch, ids, kept) = {
+        let Some(state) = ctx.state.extensions.as_mut() else {
+            return;
+        };
+        let epoch = next_update_check_epoch();
+        state.update_check_epoch = epoch;
+        let ids: Vec<_> = git_installation_ids(&state.installation_kinds)
+            .into_iter()
+            .filter(|id| !owned.contains(id))
+            .collect();
+        let kept: BTreeMap<_, _> = state
+            .update_checks
+            .iter()
+            .filter(|(id, check)| {
+                owned.contains(id.as_str()) && !matches!(check, ExtensionUpdateCheck::Checking)
+            })
+            .map(|(id, check)| (id.clone(), check.clone()))
+            .collect();
+        (epoch, ids, kept)
     };
-    let epoch = next_update_check_epoch();
-    state.update_check_epoch = epoch;
-    let ids = git_installation_ids(&state.installation_kinds);
-    let checking = request_update_checks(ctx, epoch, ids.clone());
+    // Mark the rows before the workers run. A fast failure can answer on the next schedule,
+    // and that answer is dropped until the row is already `checking…`.
+    let start = !ids.is_empty() && ctx.state.command_link.is_some();
     if let Some(state) = ctx.state.extensions.as_mut() {
-        state.update_checks = if checking {
-            ids.into_iter()
+        state.update_checks = if start {
+            ids.iter()
+                .cloned()
                 .map(|id| (id, ExtensionUpdateCheck::Checking))
                 .collect()
         } else {
             BTreeMap::new()
         };
+        state.update_checks.extend(kept);
+    }
+    if start {
+        spawn_update_checks(ctx, epoch, ids);
     }
 }
 
@@ -1217,40 +1265,47 @@ fn check_all_installations(ctx: &mut Context<AppRoot>) -> Update {
     Update::none()
 }
 
-/// Checks the Git installations whose current check `wanted` accepts, reporting whether any
-/// check started.
+/// Checks the Git installations whose current check `wanted` accepts, except ones an active
+/// update owns, reporting whether any check started.
 fn check_installations(
     ctx: &mut Context<AppRoot>,
     wanted: impl Fn(Option<&ExtensionUpdateCheck>) -> bool,
 ) -> bool {
-    let Some(state) = ctx.state.extensions.as_ref() else {
-        return false;
+    let owned = ids_owned_by_update(ctx);
+    let (epoch, ids) = {
+        let Some(state) = ctx.state.extensions.as_ref() else {
+            return false;
+        };
+        let ids: Vec<_> = git_installation_ids(&state.installation_kinds)
+            .into_iter()
+            .filter(|id| !owned.contains(id))
+            .filter(|id| wanted(state.update_checks.get(id)))
+            .collect();
+        if ids.is_empty() || ctx.state.command_link.is_none() {
+            return false;
+        }
+        (state.update_check_epoch, ids)
     };
-    let epoch = state.update_check_epoch;
-    let ids: Vec<_> = git_installation_ids(&state.installation_kinds)
-        .into_iter()
-        .filter(|id| wanted(state.update_checks.get(id)))
-        .collect();
-    if !request_update_checks(ctx, epoch, ids.clone()) {
-        return false;
-    }
+    // Mark before spawning, so a fast answer cannot arrive before the row shows `checking…`.
     if let Some(state) = ctx.state.extensions.as_mut() {
         state.update_checks.extend(
-            ids.into_iter()
+            ids.iter()
+                .cloned()
                 .map(|id| (id, ExtensionUpdateCheck::Checking)),
         );
     }
+    spawn_update_checks(ctx, epoch, ids);
     true
 }
 
 /// Checks `ids` on a few worker threads, each answer sent as soon as it is known, so one slow
-/// remote holds back only its own row. Reports whether any check started.
-fn request_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) -> bool {
+/// remote holds back only its own row.
+fn spawn_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) {
     if ids.is_empty() {
-        return false;
+        return;
     }
     let Some(link) = ctx.state.command_link.clone() else {
-        return false;
+        return;
     };
     let workers = ids.len().min(UPDATE_CHECK_WORKERS);
     let queue = std::sync::Arc::new(std::sync::Mutex::new(ids.into_iter()));
@@ -1265,7 +1320,6 @@ fn request_update_checks(ctx: &Context<AppRoot>, epoch: u64, ids: Vec<String>) -
             }
         });
     }
-    true
 }
 
 fn update_check(

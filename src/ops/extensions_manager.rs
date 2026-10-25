@@ -191,7 +191,9 @@ pub(crate) fn reload(ctx: &mut Context<AppRoot>) -> Update {
         start_catalog_load(ctx);
         return Update::full();
     }
-    crate::ops::config::reload_extensions_quiet(ctx)
+    let update = crate::ops::config::reload_extensions_quiet(ctx);
+    start_update_check(ctx);
+    update
 }
 
 pub(crate) fn open_install(ctx: &mut Context<AppRoot>) -> Update {
@@ -884,7 +886,9 @@ pub(crate) fn config_reloaded(ctx: &mut Context<AppRoot>) {
     }
     let selected = selected_entry(&ctx.state).map(identity);
     refresh(ctx, selected);
-    start_update_check(ctx);
+    // Toggling, configuring, installing, or removing an extension reloads config, and none of
+    // those moves another installation's remote, so only rows without an answer are checked.
+    check_unchecked_installations(ctx);
 }
 
 fn refresh(ctx: &mut Context<AppRoot>, selected: Option<String>) {
@@ -1096,6 +1100,28 @@ fn start_update_check(ctx: &mut Context<AppRoot>) {
         } else {
             BTreeMap::new()
         };
+    }
+}
+
+/// Checks the Git installations with neither an answer nor a running check, such as one just
+/// installed or one an update just replaced, and keeps every other row's result.
+fn check_unchecked_installations(ctx: &mut Context<AppRoot>) {
+    let Some(state) = ctx.state.extensions.as_ref() else {
+        return;
+    };
+    let epoch = state.update_check_epoch;
+    let ids: Vec<_> = git_installation_ids(&state.installation_kinds)
+        .into_iter()
+        .filter(|id| !state.update_checks.contains_key(id))
+        .collect();
+    if !request_update_checks(ctx, epoch, ids.clone()) {
+        return;
+    }
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        state.update_checks.extend(
+            ids.into_iter()
+                .map(|id| (id, ExtensionUpdateCheck::Checking)),
+        );
     }
 }
 

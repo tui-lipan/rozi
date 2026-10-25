@@ -354,3 +354,64 @@ fn moving_pane_requests_grabbing_and_restores_text_after_release() {
         assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
     });
 }
+
+#[test]
+fn modifier_drag_pointers_are_active_before_button_release() {
+    on_large_stack(|| {
+        use tui_lipan::PointerShape;
+        use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
+        for (button, shape) in [
+            (MouseButton::Left, PointerShape::Grabbing),
+            (MouseButton::Right, PointerShape::NwResize),
+        ] {
+            let mut backend = backend();
+            backend.state_mut().config.animations.enabled = false;
+            backend.update_level(output("ready\r\n")).unwrap();
+            backend.render();
+            for (x, y, kind) in [
+                (10, 7, MouseKind::Down(button)),
+                (14, 9, MouseKind::Drag(button)),
+            ] {
+                backend
+                    .send_mouse(MouseEvent {
+                        x,
+                        y,
+                        kind,
+                        mods: KeyMods::ALT,
+                    })
+                    .unwrap();
+            }
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(shape),
+                "cursor must be active while {button:?} is held"
+            );
+            backend
+                .send_mouse(MouseEvent {
+                    x: 17,
+                    y: 10,
+                    kind: MouseKind::Drag(button),
+                    mods: KeyMods::ALT,
+                })
+                .unwrap();
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(shape),
+                "cursor must remain active through later drag events"
+            );
+            backend
+                .send_mouse(MouseEvent {
+                    x: 17,
+                    y: 10,
+                    kind: MouseKind::Up(button),
+                    mods: KeyMods::ALT,
+                })
+                .unwrap();
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(PointerShape::Text),
+                "release restores content cursor"
+            );
+        }
+    });
+}

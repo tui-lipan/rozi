@@ -608,3 +608,19 @@ also declares its current crate version, as Cargo requires for the package-size 
 archive; this checks packaging only. A publishable Rozi build still requires released framework
 0.30.0 and removal of the temporary git source, as described above. Locked metadata confirms both
 framework crates resolve to the reviewed pushed commit.
+
+### Released framework integration
+
+The [framework 0.30.0 release](https://github.com/tui-lipan/tui-lipan/releases/tag/v0.30.0)
+was published on 2026-10-25. Rozi now requires registry `tui-lipan` 0.30.0. Both `tui-lipan` and
+`tui-lipan-macro` resolve to crates.io 0.30.0, with registry sources and checksums in `Cargo.lock`.
+The temporary git dependency and source allowlist are removed; the local path override remains
+disabled. This completes the registry integration that was pending in the earlier sections.
+
+The performance figures above remain measurements of their original frozen executables. They were
+not rerun or relabelled for the dependency-source change.
+
+Registry integration passed formatting, the full locked test suite, strict all-target Clippy,
+`cargo build --locked`, Windows cross-target strict Clippy, dependency policy and vulnerability
+checks, the locked package-size check, and `git diff --check`. Logs are
+`/tmp/rozi-registry-030-check-0.log` through `-8.log`.

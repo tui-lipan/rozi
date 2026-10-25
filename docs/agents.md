@@ -57,6 +57,11 @@ them. The plugin needs Python 3.10 or newer available as `python3`; no rozi exte
 also reports from remote panes and from sessions with no window attached, as long as the pane's
 host runs the same rozi version.
 
+The plugin reports only for a Codex client started with `codex --no-daemon`. By default Codex runs
+its threads in a shared background server, which also runs their hooks, outside any pane, so they
+cannot reach rozi. For those clients, use the [codex-rozi-sessions](#codex-threads) extension,
+which reads each thread's state from the background server.
+
 The plugin reports one activity for the thread on screen. After `/resume`, the pane picks up the
 resumed thread once you send it a prompt. See the plugin README for the event mapping, checkout installation, and verification
 steps.
@@ -493,7 +498,13 @@ the client to that thread with Codex's `/resume`, and only from an empty prompt 
 running. Install it from the **Discover** tab of **Extensions…**, or with
 `rozi extensions install https://github.com/tui-lipan/codex-rozi-sessions.git`.
 
-It works with or without the [Codex hook plugin](#integrate-codex-hooks). With it, the hooks' state
-drives the row for the thread they report on, matched by `native_session`. The extension covers
-local panes on Linux and macOS whose Codex client uses the background server, which is Codex's
-default.
+A pane whose client has only one thread gets that thread's row while it is on screen, which is
+also how rozi resumes it when it [restores the session](sessions.md#reopen-an-agent-conversation).
+The extension covers local panes on Linux and macOS whose Codex client uses the background server,
+which is Codex's default; the [Codex hook plugin](#integrate-codex-hooks) does not report for
+them.
+
+The extension knows which thread a client shows from the pane's title. Add the thread ID to it
+once: in Codex, run `/title`, select `thread-id`, and save. Without it, two threads with the same
+name, which Codex gives threads started with similar prompts, leave the extension unable to tell
+which one is on screen, and `rozi agents read` and `prompt` refuse to target either of them.

@@ -33,11 +33,11 @@ codex plugin add rozi@rozi
 Remove an installed copy with `codex plugin remove rozi@rozi`, then restart Codex.
 For pane and session control, install Rozi's separate [agent skill](../../docs/agent-skill.md).
 
-For a single Codex client running several threads at once, also install the
-[codex-rozi-sessions extension](https://github.com/tui-lipan/codex-rozi-sessions). It lists every
-thread loaded in Codex's background server as its own row, and the hook report supplies the live
-state of the row with the same thread ID. The plugin works on its own when you only need activity
-for the thread on screen.
+The plugin reports only for a Codex client started with `codex --no-daemon`. By default Codex runs
+its threads in a shared background server, which also runs their hooks, outside any Rozi pane, so
+the plugin has no pane to report to and does nothing. For those clients, install the
+[codex-rozi-sessions extension](https://github.com/tui-lipan/codex-rozi-sessions) instead. It reads
+each thread's state from the background server and lists every loaded thread as its own row.
 
 ## Activity states
 
@@ -107,9 +107,9 @@ Failed transactions roll back before retrying, so an event is recorded once. The
 timeout is five seconds, leaving time for startup and delivery after persistence. Delivery stays
 best effort; a failed delivery leaves committed state pending.
 
-Reporting requires the pane's `ROZI_PANE` and `ROZI_SESSION_INSTANCE`. Codex runs hooks in the
-client process, so this holds whether the thread runs in that process or in Codex's shared
-background server. With `ROZI_SOCKET`, reports go through the pane's UI. Without it — in a remote
+Reporting requires the pane's `ROZI_PANE` and `ROZI_SESSION_INSTANCE`, which a hook has only when
+Codex runs it in the client process, as it does for a `--no-daemon` client. With `ROZI_SOCKET`,
+reports go through the pane's UI. Without it — in a remote
 pane, or a session with no window attached — they go straight to the session server the pane runs
 in, which needs the Rozi build containing this plugin on the pane's host. If neither is reachable,
 hook reports are lost until Codex starts a new reporting lifecycle. Removing the plugin while Codex

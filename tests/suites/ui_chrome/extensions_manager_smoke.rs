@@ -393,6 +393,21 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
             backend
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("disable selected fixture");
+            // A toggle reloads config, but it cannot move the fixture's remote, so the update
+            // found earlier stays known instead of being checked for again.
+            assert!(
+                matches!(
+                    backend
+                        .state()
+                        .extensions
+                        .as_ref()
+                        .expect("extensions state")
+                        .update_checks
+                        .get("fixture-direct"),
+                    Some(rozi::state::ExtensionUpdateCheck::Available { .. })
+                ),
+                "a toggle must not restart the update check"
+            );
             let toggled = frame(&mut backend);
             // The group header, the `enable` hint, and the row's own description carry the new
             // state, so the toggle stays silent and the description does not repeat the group.
@@ -460,8 +475,8 @@ fn extensions_manager_lists_toggles_and_opens_shared_diagnostics() {
                 .dispatch(rozi::Msg::ExtensionsToggleSelected)
                 .expect("restore disabled fixture for the remaining checks");
 
-            // The config reloads above start fresh background update checks. Fence their replies
-            // before comparing report frames so only the scroll position can change the capture.
+            // Forget the injected update and fence any late reply before comparing report frames,
+            // so only the scroll position can change the capture.
             {
                 let state = backend
                     .state_mut()

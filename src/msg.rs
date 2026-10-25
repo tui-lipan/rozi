@@ -838,6 +838,7 @@ pub enum Msg {
     },
     TerminalPresented(Vec<tui_lipan::PresentedTerminal>),
     SessionOutput {
+        media: Option<crate::session::protocol::OutputMedia>,
         metadata: crate::session::protocol::OutputMetadata,
         epoch: u64,
         pane_id: PaneId,

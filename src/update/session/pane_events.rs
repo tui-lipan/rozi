@@ -21,6 +21,7 @@ fn apply_current_pane_output(
     local: bool,
     generation: u64,
     bytes: &[u8],
+    media: Vec<tui_lipan::TerminalOutputMedia>,
 ) -> Option<PaneOutputEffects> {
     let attended = state.is_pane_attended(pane_id);
     // Sidebar rows and modal pickers can derive labels from the raw terminal title too. Their
@@ -42,7 +43,15 @@ fn apply_current_pane_output(
     }
     pane.terminal.set_media_policy(policy);
     let was_ready = pane.terminal.is_ready();
-    let output = pane.terminal.process_server_output(bytes);
+    let output = match pane.terminal.process_server_output_media(bytes, media) {
+        Ok(output) => output,
+        Err(_) => {
+            if let Some(client) = &state.current().session_client {
+                client.end_for_replay();
+            }
+            return None;
+        }
+    };
     let mut chrome_changed = matches!(output.frame, crate::pane::OutputFrame::Rebuild);
     let mut live_title_changed = false;
     if chrome_changed
@@ -123,13 +132,14 @@ fn apply_stale_output(
     local: bool,
     generation: u64,
     bytes: &[u8],
+    media: Vec<tui_lipan::TerminalOutputMedia>,
 ) {
     // A popup belongs to the outgoing attachment. Scratch frames are retagged when drained.
     if local {
         return;
     }
     if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
-        attachment.apply_background_output(pane_id, generation, bytes);
+        attachment.apply_background_media_output(pane_id, generation, bytes, media);
     }
 }
 
@@ -139,9 +149,14 @@ fn buffer_orphan_output(
     local: bool,
     generation: u64,
     bytes: &[u8],
+    media: Vec<tui_lipan::TerminalOutputMedia>,
 ) {
-    if !local && let Some(shared) = state.current_mut().shared.as_mut() {
-        shared.buffer_orphan_output(pane_id, generation, bytes);
+    if !local
+        && let Some(shared) = state.current_mut().shared.as_mut()
+        && !shared.buffer_orphan_media(pane_id, generation, bytes, media)
+        && let Some(client) = &state.current().session_client
+    {
+        client.end_for_replay();
     }
 }
 
@@ -168,6 +183,7 @@ fn output_frame_update(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn output(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
@@ -176,11 +192,13 @@ pub(crate) fn output(
     generation: u64,
     metadata: crate::session::protocol::OutputMetadata,
     bytes: Vec<u8>,
+    media: Option<crate::session::protocol::OutputMedia>,
 ) -> Update {
+    let media = media.map_or_else(Vec::new, |m| m.acquired);
     if epoch != ctx.state.runtime_epoch {
         // A retained background attachment: keep its screens live so switching back is instant, but
         // never draw them (nothing background is on screen).
-        apply_stale_output(ctx, epoch, pane_id, local, generation, &bytes);
+        apply_stale_output(ctx, epoch, pane_id, local, generation, &bytes, media);
         return Update::none();
     }
     let focused = ctx.state.focused_pane();
@@ -188,14 +206,19 @@ pub(crate) fn output(
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
     // Both flags only ever go false -> true here, so that is a single frame per quiet period
     // rather than one per output chunk.
-    let Some(effects) =
-        apply_current_pane_output(&mut ctx.state, pane_id, local, generation, &bytes)
-    else {
+    let Some(effects) = apply_current_pane_output(
+        &mut ctx.state,
+        pane_id,
+        local,
+        generation,
+        &bytes,
+        media.clone(),
+    ) else {
         // Output arrived before the layout commit that introduces this pane (or its new generation).
         // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
         // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
         // Local output never joins that shared-layout race: the owner created the pane itself.
-        buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes);
+        buffer_orphan_output(&mut ctx.state, pane_id, local, generation, &bytes, media);
         return Update::none();
     };
     if metadata.sequence != 0

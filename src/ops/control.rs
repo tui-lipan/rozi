@@ -4142,6 +4142,7 @@ mod tests {
         let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
         backend
             .dispatch(crate::Msg::SessionOutput {
+                media: None,
                 metadata: crate::session::protocol::OutputMetadata::default(),
                 epoch,
                 pane_id: 1,
@@ -4379,6 +4380,7 @@ mod tests {
                 let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
                 backend
                     .dispatch(crate::Msg::SessionOutput {
+                        media: None,
                         metadata: crate::session::protocol::OutputMetadata::default(),
                         epoch,
                         pane_id: 1,

@@ -251,6 +251,14 @@ impl SessionServer {
     pub(super) fn process_client_frame(&mut self, id: ClientId, frame: Frame<ClientMessage>) {
         match frame {
             Frame::PaneOutput { .. } => self.set_close_after_flush(id),
+            Frame::AcquisitionAcks(acks) => {
+                if self
+                    .client_mut(id)
+                    .is_some_and(|c| !c.acquisitions.acknowledge(&acks))
+                {
+                    self.disconnect_after_controls(id);
+                }
+            }
             Frame::PresentationAcks(acks) => self.accept_presentation_acks(id, acks),
             Frame::PresentationInterest(interest) => {
                 self.accept_presentation_interest(id, interest)
@@ -392,6 +400,7 @@ impl SessionServer {
             self.send_outbound(
                 owner,
                 &ServerOutbound::PaneOutput {
+                    media: Vec::new(),
                     metadata: protocol::OutputMetadata::default(),
                     pane_id,
                     local,
@@ -1341,6 +1350,11 @@ impl SessionServer {
                     message: "the session endpoint belongs to a different server".to_string(),
                 },
             )];
+        }
+        // Complete named output for existing recipients before this reader joins the common
+        // representation. The new reader's baseline replay carries pixels.
+        while self.media.has_named_output() {
+            self.pump_media_output();
         }
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
         if let Some(client) = self.client_mut(client_id) {

@@ -210,6 +210,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.dispatch(rozi::Msg::SessionOutput {
+                    media: None,
                     metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
@@ -230,6 +231,7 @@ fn message_overhead(c: &mut Criterion) {
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
                 let _ = backend.update_level(rozi::Msg::SessionOutput {
+                    media: None,
                     metadata: rozi::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id,
@@ -288,6 +290,7 @@ fn inbound_drain(c: &mut Criterion) {
                         .map(|index| {
                             let (pane_id, generation) = pane_keys[index % pane_keys.len()];
                             Frame::PaneOutput {
+                                media: None,
                                 metadata: Default::default(),
                                 pane_id,
                                 local: false,
@@ -361,6 +364,7 @@ fn inbound_fairness(c: &mut Criterion) {
         let extra_hot = HOT_CAP / CHUNK - 1;
         let mut frames = Vec::with_capacity(extra_hot + 2);
         frames.push(Frame::PaneOutput {
+            media: None,
             metadata: Default::default(),
             pane_id: hot_id,
             local: false,
@@ -368,6 +372,7 @@ fn inbound_fairness(c: &mut Criterion) {
             bytes: hot_chunk.clone(),
         });
         frames.push(Frame::PaneOutput {
+            media: None,
             metadata: Default::default(),
             pane_id: quiet_id,
             local: false,
@@ -375,6 +380,7 @@ fn inbound_fairness(c: &mut Criterion) {
             bytes: quiet_chunk,
         });
         frames.extend((0..extra_hot).map(|_| Frame::PaneOutput {
+            media: None,
             metadata: Default::default(),
             pane_id: hot_id,
             local: false,

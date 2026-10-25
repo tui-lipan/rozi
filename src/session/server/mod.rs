@@ -22,6 +22,7 @@ use crate::session::protocol::{
 use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
 use crate::state::PaneId;
 
+mod acquisition;
 mod agent_summary;
 mod attachments;
 mod browse;
@@ -144,6 +145,8 @@ impl ServerIdleWait {
 }
 
 pub struct SessionServer {
+    retired_media: VecDeque<acquisition::RetiredMedia>,
+    acquisition_reaper_cursor: usize,
     /// Fencing token for this running server. Never persisted or restored.
     instance_id: protocol::SessionInstanceId,
     panes: HashMap<PaneId, ServerPane>,
@@ -651,9 +654,23 @@ enum AttachSeedWork {
     Done,
 }
 
+/// Serialized output owns every immutable path it names through staging and coalescing.
+#[derive(Clone, Debug, Default)]
+struct EncodedOutput {
+    bytes: Vec<u8>,
+    media: Vec<tui_lipan::TerminalOutputMedia>,
+    scope: Option<PresentationKey>,
+}
+impl std::ops::Deref for EncodedOutput {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 struct OutboxFrame {
     replacement: Option<ReplacementKey>,
-    bytes: Arc<[u8]>,
+    bytes: Arc<EncodedOutput>,
     class: OutboxClass,
     /// The shared pane whose transcript this frame carries, if any. Only these frames may be shed
     /// from a lagging client; a later replay of the pane stands in for them.
@@ -664,7 +681,7 @@ struct OutboxFrame {
 /// drop it. A resize is tagged too: delivered after a newer replay, it would restore stale geometry.
 struct CatchUpFrame {
     replacement: Option<ReplacementKey>,
-    bytes: Arc<[u8]>,
+    bytes: Arc<EncodedOutput>,
     delta: SeedDelta,
 }
 
@@ -673,7 +690,7 @@ struct PaneSeedReplay {
     /// [`ServerMessage::PaneReset`] at snapshot-point geometry, which must reach the client before
     /// replay. The attach manifest geometry can be stale by the time a pending pane is exported,
     /// and a resynced pane holds a screen the replay would otherwise append to.
-    reset_frame: Option<Arc<[u8]>>,
+    reset_frame: Option<Arc<EncodedOutput>>,
     spool: PaneReplayStorage,
     remaining: u64,
 }
@@ -761,7 +778,7 @@ struct AttachSeedState {
     pending: VecDeque<PaneSeedKey>,
     /// OSC baselines use the replay send window rather than one aggregate attach frame.
     pending_program_status: VecDeque<PaneSeedKey>,
-    program_status_frame: Option<Arc<[u8]>>,
+    program_status_frame: Option<Arc<EncodedOutput>>,
     replay: Option<PaneSeedReplay>,
     catch_up: VecDeque<CatchUpFrame>,
     catch_up_base: u64,
@@ -900,6 +917,7 @@ struct ClientConn {
     shed_bytes: u64,
     /// Panes this client fell behind again while their replay was still queued or in flight.
     requeued_panes: u64,
+    acquisitions: acquisition::Acquisitions,
     presentation_interest: HashMap<PresentationKey, protocol::PanePresentationInterest>,
     presented_sequences: HashMap<PresentationKey, u64>,
     /// When each presented sequence last advanced.
@@ -940,15 +958,24 @@ impl ClientConn {
             resync_pending: BTreeSet::new(),
             shed_bytes: 0,
             requeued_panes: 0,
+            acquisitions: acquisition::Acquisitions::default(),
             presentation_interest: HashMap::new(),
             presented_sequences: HashMap::new(),
             presented_at: HashMap::new(),
         }
     }
 
+    fn front_started(&self) -> bool {
+        self.front_offset > 0
+            || self
+                .outbox
+                .front()
+                .is_some_and(|f| f.bytes.scope.is_some() && f.bytes.media.is_empty())
+    }
+
     fn replace_outbox(
         &mut self,
-        bytes: &Arc<[u8]>,
+        bytes: &Arc<EncodedOutput>,
         replacement: Option<ReplacementKey>,
         cap: usize,
     ) -> bool {
@@ -959,7 +986,7 @@ impl ClientConn {
         else {
             return false;
         };
-        if index == 0 && self.front_offset != 0 {
+        if index == 0 && self.front_started() {
             return false;
         }
         let previous = self.outbox[index].bytes.len();
@@ -1022,7 +1049,7 @@ impl ClientConn {
 
     fn try_push_class(
         &mut self,
-        bytes: Arc<[u8]>,
+        bytes: Arc<EncodedOutput>,
         cap: usize,
         class: OutboxClass,
         pane: Option<PaneSeedKey>,
@@ -1053,9 +1080,9 @@ impl ClientConn {
     /// A client too far behind to take a pane's output has that pane shed rather than being
     /// disconnected: its queued transcript is dropped and the pane is replayed from the server's
     /// screen once the client catches up. Only control traffic with nothing left to shed overflows.
-    fn push_delta(
+    fn push_delta_inner(
         &mut self,
-        bytes: Arc<[u8]>,
+        bytes: Arc<EncodedOutput>,
         delta: SeedDelta,
         default_cap: usize,
         replacement: Option<ReplacementKey>,
@@ -1083,7 +1110,7 @@ impl ClientConn {
     /// until it fits.
     fn push_live(
         &mut self,
-        bytes: Arc<[u8]>,
+        bytes: Arc<EncodedOutput>,
         delta: SeedDelta,
         cap: usize,
         replacement: Option<ReplacementKey>,
@@ -1124,7 +1151,7 @@ impl ClientConn {
     /// Retain a change behind replay, shedding the pane holding the most catch-up until it fits.
     fn push_catch_up(
         &mut self,
-        bytes: Arc<[u8]>,
+        bytes: Arc<EncodedOutput>,
         delta: SeedDelta,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
@@ -1200,7 +1227,7 @@ impl ClientConn {
 
     /// Frames in the outbox a shed may drop. A frame the socket has partially written must finish.
     fn sheddable_outbox(&self) -> impl Iterator<Item = &OutboxFrame> {
-        self.outbox.iter().skip(usize::from(self.front_offset > 0))
+        self.outbox.iter().skip(usize::from(self.front_started()))
     }
 
     fn largest_outbox_pane(&self) -> Option<PaneSeedKey> {
@@ -1279,7 +1306,7 @@ impl ClientConn {
 
     /// Drop every queued, unwritten frame of `key`'s transcript. Returns the bytes freed.
     fn purge_outbox_pane(&mut self, key: PaneSeedKey) -> usize {
-        let pinned_front = self.front_offset > 0;
+        let pinned_front = self.front_started();
         let (mut freed, mut seed_freed, mut catch_up_freed) = (0, 0, 0);
         let mut index = 0;
         self.outbox.retain(|frame| {
@@ -1608,6 +1635,7 @@ enum ServerOutbound {
     /// message would make every byte-carrying move pay the largest control message's footprint.
     Control(Box<ServerMessage>),
     PaneOutput {
+        media: Vec<tui_lipan::TerminalOutputMedia>,
         metadata: protocol::OutputMetadata,
         pane_id: PaneId,
         local: bool,
@@ -1646,6 +1674,8 @@ impl SessionServer {
         let session_name = session_name.into();
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
         Self {
+            retired_media: VecDeque::new(),
+            acquisition_reaper_cursor: 0,
             instance_id: protocol::SessionInstanceId::generate(),
             panes: HashMap::new(),
             local_panes: HashMap::new(),
@@ -1726,7 +1756,7 @@ impl SessionServer {
             let timeout = idle_wait.next_timeout(!self.clients.is_empty(), activity);
             let timeout = self.graphics_pacing_timeout(timeout);
             if self.media.pending() {
-                self.events.wait_for_change(timeout);
+                self.events.wait_for_change(self.media.seen_wakes, timeout);
             } else {
                 self.events.wait_for_item(timeout);
             }
@@ -1987,11 +2017,14 @@ impl Drop for SessionServer {
     }
 }
 
-fn encode_control(message: &ServerMessage) -> Option<Arc<[u8]>> {
+fn encode_control(message: &ServerMessage) -> Option<Arc<EncodedOutput>> {
     let mut buf = Vec::new();
-    protocol::write_frame(&mut buf, message)
-        .ok()
-        .map(|()| Arc::from(buf))
+    protocol::write_frame(&mut buf, message).ok().map(|()| {
+        Arc::new(EncodedOutput {
+            bytes: buf,
+            ..Default::default()
+        })
+    })
 }
 
 fn encode_pane_output(
@@ -2000,11 +2033,16 @@ fn encode_pane_output(
     local: bool,
     metadata: protocol::OutputMetadata,
     bytes: &[u8],
-) -> Option<Arc<[u8]>> {
+) -> Option<Arc<EncodedOutput>> {
     let mut buf = Vec::new();
     protocol::write_pane_output_frame(&mut buf, pane_id, generation, local, metadata, bytes)
         .ok()
-        .map(|()| Arc::from(buf))
+        .map(|()| {
+            Arc::new(EncodedOutput {
+                bytes: buf,
+                ..Default::default()
+            })
+        })
 }
 
 fn wire_local(owner: Option<ClientId>) -> bool {

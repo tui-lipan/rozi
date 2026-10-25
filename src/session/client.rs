@@ -241,6 +241,7 @@ pub struct SpawnPaneRequest {
 pub(crate) enum ClientOutbound {
     Control(ClientMessage),
     PresentationAcks(Vec<protocol::PresentationAck>),
+    AcquisitionAcks(Vec<protocol::AcquisitionAck>),
     PresentationInterest(Vec<protocol::PanePresentationInterest>),
     PaneInput {
         latency_sensitive: bool,
@@ -486,6 +487,9 @@ impl SessionClient {
                         }
                         result
                     }
+                    ClientOutbound::AcquisitionAcks(acks) => {
+                        protocol::write_acquisition_acks(&mut stream, &acks)
+                    }
                     ClientOutbound::PresentationAcks(acks) => {
                         protocol::write_presentation_acks(&mut stream, &acks)
                     }
@@ -532,7 +536,8 @@ impl SessionClient {
         let attachment_replies = Arc::new(attachments::Replies::default());
         let reader_attachment_replies = Arc::clone(&attachment_replies);
         thread::spawn(move || {
-            forward_inbound(
+            forward_inbound_trusted(
+                shares_filesystem,
                 &mut reader,
                 &inbound,
                 Some(&heartbeat_outbound),
@@ -543,6 +548,11 @@ impl SessionClient {
                 HEARTBEAT_TIMEOUT,
                 Some(&reader_attachment_replies),
             );
+            // A failed acquisition must end the connection even if its UI mailbox is parked.
+            // The transport owner retains another descriptor, so dropping this reader alone
+            // does not deliver EOF to the server.
+            let _ = reader.shutdown(std::net::Shutdown::Both);
+            reader_shutdown_signal.store(true, Ordering::Release);
             reader_outbound.close();
         });
         let client = Self {
@@ -903,6 +913,13 @@ impl SessionClient {
     pub fn rename(&self, name: String) {
         self.send_control(ClientMessage::Rename { name });
     }
+    /// End this transport so reconnect obtains a complete retained replay.
+    pub(crate) fn end_for_replay(&self) {
+        if let Some(transport) = &self.transport {
+            transport.disconnect();
+        }
+    }
+
     pub fn detach(&self) {
         self.send_control(ClientMessage::Detach);
     }
@@ -1153,6 +1170,7 @@ fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
             .len()
             .saturating_add(protocol::PANE_OUTPUT_FRAME_OVERHEAD),
         Frame::PresentationAcks(acks) => 5 + acks.len() * 21,
+        Frame::AcquisitionAcks(acks) => 5 + acks.len() * 21,
         Frame::PresentationInterest(interest) => 5 + interest.len() * 15,
         Frame::Control(message) => serde_json::to_vec(message)
             .map(|bytes| bytes.len().saturating_add(5))
@@ -1170,6 +1188,7 @@ fn coalesce_inbound_segment(
     };
     let (
         Frame::PaneOutput {
+            media: None,
             metadata,
             pane_id,
             local,
@@ -1177,6 +1196,7 @@ fn coalesce_inbound_segment(
             bytes,
         },
         Frame::PaneOutput {
+            media: None,
             metadata: next_metadata,
             pane_id: next_pane,
             local: next_local,
@@ -1212,6 +1232,7 @@ impl ClientOutbound {
                 .map(|bytes| bytes.len().saturating_add(5))
                 .unwrap_or(5),
             Self::PresentationAcks(acks) => 5 + acks.len() * 21,
+            Self::AcquisitionAcks(acks) => 5 + acks.len() * 21,
             Self::PresentationInterest(interest) => 5 + interest.len() * 15,
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
@@ -1366,7 +1387,79 @@ impl SilenceWatchdog {
     }
 }
 
+#[cfg(test)]
 fn forward_inbound<R: std::io::Read>(
+    reader: &mut R,
+    inbound: &InboundTarget,
+    outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
+    latest_server_metrics: Option<&Arc<Mutex<Option<TimedServerRuntimeMetrics>>>>,
+    metrics_request_pending: Option<&Arc<AtomicBool>>,
+    request_metrics_on_heartbeat: bool,
+    shutdown_signal: Option<&Arc<AtomicBool>>,
+    heartbeat_timeout: Duration,
+    attachment_replies: Option<&attachments::Replies>,
+) {
+    forward_inbound_trusted(
+        false,
+        reader,
+        inbound,
+        outbound,
+        latest_server_metrics,
+        metrics_request_pending,
+        request_metrics_on_heartbeat,
+        shutdown_signal,
+        heartbeat_timeout,
+        attachment_replies,
+    )
+}
+
+/// Acquisition is serial on the transport reader. Every acknowledgement is therefore a proven
+/// prefix even when the UI subsequently coalesces, hides, parks, resets or buffers the envelope.
+fn acquire_frame_media(
+    frame: &mut Frame<ServerMessage>,
+    trusted_local: bool,
+    acks: &mut Vec<protocol::AcquisitionAck>,
+) -> io::Result<()> {
+    let Frame::PaneOutput {
+        pane_id,
+        local,
+        generation,
+        media: Some(media),
+        bytes,
+        ..
+    } = frame
+    else {
+        return Ok(());
+    };
+    if !trusted_local {
+        return Err(io::Error::other(
+            "remote output named a local immutable file",
+        ));
+    }
+    for binding in &media.files {
+        let file = tui_lipan::TerminalImmutableFile::acquire(
+            &binding.path,
+            binding.byte_len,
+            binding.format,
+        )?;
+        let acquired = tui_lipan::TerminalOutputMedia {
+            command_range: binding.command_range.clone(),
+            file,
+        };
+        acquired.validate_command(bytes)?;
+        media.acquired.push(acquired);
+    }
+    acks.push(protocol::AcquisitionAck {
+        local: *local,
+        pane_id: *pane_id,
+        generation: *generation,
+        sequence: media.acquisition_sequence,
+    });
+    Ok(())
+}
+
+fn forward_inbound_trusted<R: std::io::Read>(
+    trusted_local: bool,
     reader: &mut R,
     inbound: &InboundTarget,
     outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
@@ -1403,12 +1496,17 @@ fn forward_inbound<R: std::io::Read>(
             }
             Err(_) => break,
         };
+        let mut frames = Vec::new();
+        let mut acks = Vec::new();
         loop {
             if shutdown_signal.is_some_and(|sig| sig.load(Ordering::Relaxed)) {
                 break 'read;
             }
             match decoder.next_frame::<ServerMessage>() {
-                Ok(Some(frame)) => {
+                Ok(Some(mut frame)) => {
+                    if acquire_frame_media(&mut frame, trusted_local, &mut acks).is_err() {
+                        break 'read;
+                    }
                     if let Frame::Control(ServerMessage::AttachmentAck { transfer_id, error }) =
                         &frame
                     {
@@ -1429,12 +1527,22 @@ fn forward_inbound<R: std::io::Read>(
                         TransportFrameDisposition::Consumed => continue,
                         TransportFrameDisposition::Disconnect => break 'read,
                     }
-                    if inbound.send(frame).is_err() {
-                        break 'read;
-                    }
+                    frames.push(frame);
                 }
                 Ok(None) => break,
                 Err(_) => break 'read,
+            }
+        }
+        if !acks.is_empty() {
+            let ack = ClientOutbound::AcquisitionAcks(acks);
+            let len = ack.wire_bytes();
+            if outbound.is_none_or(|q| q.try_push(ack, len).is_err()) {
+                break;
+            }
+        }
+        for frame in frames {
+            if inbound.send(frame).is_err() {
+                break 'read;
             }
         }
         if would_block {
@@ -1489,6 +1597,66 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn failed_acquisition_closes_the_transport_without_ui_dispatch() {
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        server_stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let server = std::thread::spawn(move || {
+            let _: ClientMessage = protocol::read_frame(&mut server_stream).unwrap();
+            protocol::write_frame(&mut server_stream, &attached_message()).unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let bytes = b"\x1b_Ga=T,t=f,f=32,s=1,v=1;L3RtcC9taXNzaW5n\x1b\\";
+            let media = protocol::OutputMedia {
+                acquisition_sequence: 1,
+                files: vec![protocol::ImmutableFileBinding {
+                    command_range: 0..bytes.len(),
+                    path: root.path().join("missing"),
+                    byte_len: 4,
+                    format: 32,
+                }],
+                acquired: Vec::new(),
+            };
+            protocol::write_pane_output_media_frame(
+                &mut server_stream,
+                7,
+                2,
+                false,
+                protocol::OutputMetadata::default(),
+                Some(&media),
+                bytes,
+            )
+            .unwrap();
+            let closed = loop {
+                match server_stream.read(&mut [0; 1024]) {
+                    Ok(0) => break true,
+                    Ok(_) => continue, // The initial metrics request may already be queued.
+                    Err(_) => break false,
+                }
+            };
+            assert!(
+                closed,
+                "acquisition failure must close transport before UI dispatch"
+            );
+        });
+        let (tx, _rx) = mpsc::channel();
+        // Keep the transport owner alive and never drain the UI channel.
+        let (_client, _) = SessionClient::from_stream_attached_target(
+            IpcConnection::from_unix(client_stream),
+            "test",
+            InboundTarget::Channel(tx),
+            false,
+            true,
+            Duration::from_secs(2),
+            None,
+            None,
+        )
+        .unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn attached_stream_decodes_control_and_pane_frames() {
         let (mut client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
         let server = std::thread::spawn(move || {
@@ -1528,6 +1696,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(1))
                 .expect("pane frame"),
             Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 3,
                 local: false,
@@ -1781,6 +1950,7 @@ mod tests {
     #[test]
     fn inbound_coalescing_matches_exact_pane_identity() {
         let mut output = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -1788,6 +1958,7 @@ mod tests {
             bytes: b"alpha".to_vec(),
         }));
         let continuation = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -1801,6 +1972,7 @@ mod tests {
         assert_eq!(
             output,
             InboundEvent::Frame(Box::new(Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: false,
@@ -1810,6 +1982,7 @@ mod tests {
         );
         for mismatch in [
             Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 2,
                 local: false,
@@ -1817,6 +1990,7 @@ mod tests {
                 bytes: b"pane".to_vec(),
             },
             Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: true,
@@ -1824,6 +1998,7 @@ mod tests {
                 bytes: b"local".to_vec(),
             },
             Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 1,
                 local: false,
@@ -1865,6 +2040,7 @@ mod tests {
         };
 
         push(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -1872,6 +2048,7 @@ mod tests {
             bytes: b"a1".to_vec(),
         });
         push(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 2,
             local: false,
@@ -1879,6 +2056,7 @@ mod tests {
             bytes: b"b1".to_vec(),
         });
         push(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -1896,6 +2074,7 @@ mod tests {
         };
         push(Frame::Control(control.clone()));
         push(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -1931,6 +2110,7 @@ mod tests {
     fn inbound_independent_graphics_never_overtake_an_input_mark() {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let graphics = |sequence: u64, bytes: &[u8]| Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata {
                 sequence,
                 coalesce_epoch: 0,
@@ -1978,6 +2158,7 @@ mod tests {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
             let frame = Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
@@ -2008,6 +2189,7 @@ mod tests {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
             let frame = Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
@@ -2064,6 +2246,7 @@ mod tests {
         let queue = ByteQueue::new(MAX_CLIENT_INBOUND_BYTES);
         let push = |pane_id, bytes: Vec<u8>| {
             let frame = Frame::PaneOutput {
+                media: None,
                 metadata: protocol::OutputMetadata::default(),
                 pane_id,
                 local: false,
@@ -2104,6 +2287,7 @@ mod tests {
         let first = vec![b'a'; 64 * 1024];
         let second = vec![b'b'; 512 * 1024];
         let mut output = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -2111,6 +2295,7 @@ mod tests {
             bytes: first,
         }));
         let continuation = InboundEvent::Frame(Box::new(Frame::PaneOutput {
+            media: None,
             metadata: protocol::OutputMetadata::default(),
             pane_id: 1,
             local: false,
@@ -2275,5 +2460,80 @@ mod tests {
             outbound.try_pop(),
             Some(ClientOutbound::Control(ClientMessage::Shutdown))
         ));
+    }
+}
+
+#[cfg(test)]
+mod acquisition_tests {
+    use super::*;
+    use base64::Engine as _;
+
+    fn frame() -> (tui_lipan::TerminalOutputTransaction, Frame<ServerMessage>) {
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), [1, 2, 3, 255]).unwrap();
+        let name = base64::engine::general_purpose::STANDARD
+            .encode(source.path().to_string_lossy().as_bytes());
+        let mut server = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        server.set_image_file_storage_enabled(true);
+        server.set_output_transaction_recording(true);
+        server.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);
+        server.process_bytes(
+            format!("\x1b_Ga=T,t=f,f=32,s=1,v=1,i=9,C=1,q=2;{name}\x1b\\").as_bytes(),
+        );
+        let transaction = server.take_output_transactions().remove(0);
+        let files = transaction
+            .media
+            .iter()
+            .map(|m| protocol::ImmutableFileBinding {
+                command_range: m.command_range.clone(),
+                path: m.file.path().to_owned(),
+                byte_len: m.file.byte_len(),
+                format: m.file.format(),
+            })
+            .collect();
+        let frame = Frame::PaneOutput {
+            pane_id: 7,
+            generation: 2,
+            local: false,
+            metadata: protocol::OutputMetadata::default(),
+            bytes: transaction.bytes.clone(),
+            media: Some(protocol::OutputMedia {
+                acquisition_sequence: 1,
+                files,
+                acquired: Vec::new(),
+            }),
+        };
+        (transaction, frame)
+    }
+
+    #[test]
+    fn hidden_transport_acquires_and_acknowledges_before_any_ui_or_presentation() {
+        let (transaction, mut frame) = frame();
+        let mut acks = Vec::new();
+        acquire_frame_media(&mut frame, true, &mut acks).unwrap();
+        assert_eq!(acks.len(), 1);
+        let Frame::PaneOutput {
+            media: Some(media), ..
+        } = &frame
+        else {
+            panic!("media envelope");
+        };
+        let private = media.acquired[0].file.path().to_owned();
+        assert_ne!(private, transaction.media[0].file.path());
+        drop(transaction);
+        assert_eq!(std::fs::read(&private).unwrap(), [1, 2, 3, 255]);
+        drop(frame);
+        assert!(!private.exists());
+    }
+
+    #[test]
+    fn remote_and_failed_acquisitions_cannot_advance_the_watermark() {
+        let (transaction, mut frame) = frame();
+        let mut acks = Vec::new();
+        assert!(acquire_frame_media(&mut frame, false, &mut acks).is_err());
+        assert!(acks.is_empty());
+        drop(transaction);
+        assert!(acquire_frame_media(&mut frame, true, &mut acks).is_err());
+        assert!(acks.is_empty());
     }
 }

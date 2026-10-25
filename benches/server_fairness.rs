@@ -1427,8 +1427,11 @@ fn image_relay_case(repeat: usize, image: Option<(u32, usize)>, relay: bool, med
         "an observer disconnected during the sample"
     );
     let image_output_bytes = fixture.image_output_bytes.load(Ordering::Relaxed);
-    if image.is_some() {
-        let minimum = if relay || medium != b'f' {
+    if let Some((format, _)) = image {
+        // Local raw media names the server's immutable snapshot. Other local re-readable
+        // payloads keep the producer file; remote readers and consumed PNG receive pixels.
+        let inline = relay || (medium != b'f' && format == 100);
+        let minimum = if inline {
             std::fs::metadata(&corpus).unwrap().len()
         } else {
             100

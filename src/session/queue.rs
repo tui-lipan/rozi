@@ -53,6 +53,7 @@ struct State<T> {
     bytes: usize,
     high_water_bytes: usize,
     closed: bool,
+    wakes: u64,
 }
 
 impl<T> State<T> {
@@ -90,6 +91,7 @@ impl<T> ByteQueue<T> {
                 bytes: 0,
                 high_water_bytes: 0,
                 closed: false,
+                wakes: 0,
             }),
             changed: Condvar::new(),
         }
@@ -365,9 +367,25 @@ impl<T> ByteQueue<T> {
         Some(value)
     }
 
-    /// Wait for activity even when every queued stream is blocked on deferred work.
-    pub(crate) fn wait_for_change(&self, timeout: Duration) {
+    /// Interrupt a consumer waiting for work that finishes outside this queue.
+    pub(crate) fn wake(&self) {
+        self.state.lock().expect("byte queue poisoned").wakes += 1;
+        self.changed.notify_all();
+    }
+
+    /// Number of [`Self::wake`] calls so far. Read it before checking the outside work.
+    pub(crate) fn wakes(&self) -> u64 {
+        self.state.lock().expect("byte queue poisoned").wakes
+    }
+
+    /// Wait for activity even when every queued stream is blocked on deferred work: until the
+    /// queue changes, a wake arrives, or `timeout` elapses. Returns immediately if a wake arrived
+    /// after `seen` was read.
+    pub(crate) fn wait_for_change(&self, seen: u64, timeout: Duration) {
         let state = self.state.lock().expect("byte queue poisoned");
+        if state.wakes != seen {
+            return;
+        }
         let _ = self
             .changed
             .wait_timeout(state, timeout)

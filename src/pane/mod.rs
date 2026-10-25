@@ -630,8 +630,26 @@ impl TerminalPane {
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
     pub fn process_server_output(&mut self, bytes: &[u8]) -> ProcessedOutput {
+        self.process_server_output_media(bytes, Vec::new())
+            .expect("ordinary output has no immutable bindings")
+    }
+
+    /// Apply already acquired transport resources without reopening server names.
+    pub fn process_server_output_media(
+        &mut self,
+        bytes: &[u8],
+        media: Vec<tui_lipan::TerminalOutputMedia>,
+    ) -> std::io::Result<ProcessedOutput> {
         let mut screen = self.screen.borrow_mut();
-        let mutation = screen.process_bytes(bytes);
+        let mutation = if media.is_empty() {
+            screen.process_bytes(bytes)
+        } else {
+            let prepared =
+                screen.prepare_immutable_media_input(std::sync::Arc::from(bytes), media)?;
+            screen
+                .process_prepared_media_input(prepared)
+                .map_err(|_| std::io::Error::other("stale immutable media input"))?
+        };
         self.output_seen = true;
         let _ = screen.drain_responses();
         let clipboard_events = screen.drain_clipboard_events();
@@ -661,11 +679,11 @@ impl TerminalPane {
         } else {
             OutputFrame::None
         };
-        ProcessedOutput {
+        Ok(ProcessedOutput {
             frame,
             mutation,
             clipboard_events,
-        }
+        })
     }
 
     pub fn is_ready(&self) -> bool {

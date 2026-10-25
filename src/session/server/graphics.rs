@@ -40,6 +40,7 @@ impl OutputStaging {
         generation: u64,
         metadata: protocol::OutputMetadata,
         bytes: Vec<u8>,
+        media: Vec<tui_lipan::TerminalOutputMedia>,
     ) {
         match metadata.class {
             protocol::OutputClass::IndependentGraphics { .. } => {
@@ -54,6 +55,7 @@ impl OutputStaging {
         }
         let key = metadata.replacement_key(pane_id, local, generation);
         let output = ServerOutbound::PaneOutput {
+            media,
             pane_id,
             local,
             generation,
@@ -86,6 +88,7 @@ impl ServerPane {
         }
         // Internal/test screens which have not opted into recording remain conservatively ordered.
         vec![TerminalOutputTransaction {
+            media: Vec::new(),
             class: TerminalOutputClass::Ordered,
             bytes: bytes.to_vec(),
         }]
@@ -164,6 +167,7 @@ impl SessionServer {
                 generation,
                 metadata,
                 transaction.bytes,
+                transaction.media,
             );
         }
         self.graphics_metrics.graphics_transactions += staging.metrics.graphics_transactions;

@@ -39,3 +39,6 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Temporary immutable-media API dependency; remove with the registry 0.30.0 upgrade.
+allow-git = ["https://github.com/tui-lipan/tui-lipan.git"]

@@ -74,7 +74,9 @@ exclude = [
 # symlink target icons.
 # 0.29.0: runtime `Context::set_title`, `TestBackend::host_title`, consuming Kitty media relay
 # policy, and deferred named-media preparation.
-tui-lipan = { version = "0.29.0", features = [
+# Immutable media ownership needs the unreleased framework API. Replace this pinned git
+# dependency with registry 0.30.0 after its release, before publishing rozi.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "c2ba4d204dfa5ae902a4d30a3c94ab215f1056d4", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

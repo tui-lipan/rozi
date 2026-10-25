@@ -1799,6 +1799,41 @@ mod retention_tests {
     }
 
     #[test]
+    fn background_attachment_applies_owned_media_after_the_server_name_is_gone() {
+        use base64::Engine as _;
+        let mut state = state();
+        let generation = state.current().active_workspace_ref().panes[0].pty_generation;
+        state.park_current(4, Attachment::new());
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), [1, 2, 3, 255]).unwrap();
+        let name = base64::engine::general_purpose::STANDARD
+            .encode(source.path().to_string_lossy().as_bytes());
+        let mut server = tui_lipan::prelude::TerminalScreen::new(5, 20, 100);
+        server.set_image_file_storage_enabled(true);
+        server.set_output_transaction_recording(true);
+        server.set_image_relay_policy(tui_lipan::GraphicsRelayPolicy::NamedAsFiles);
+        server.process_bytes(
+            format!("\x1b_Ga=T,t=f,f=32,s=1,v=1,i=9,C=1,q=2;{name}\x1b\\").as_bytes(),
+        );
+        let transaction = server.take_output_transactions().remove(0);
+        let original = &transaction.media[0];
+        let file = tui_lipan::TerminalImmutableFile::acquire(original.file.path(), 4, 32).unwrap();
+        let binding = tui_lipan::TerminalOutputMedia {
+            command_range: original.command_range.clone(),
+            file,
+        };
+        let bytes = transaction.bytes.clone();
+        let server_path = original.file.path().to_owned();
+        drop(transaction);
+        drop(server);
+        assert!(!server_path.exists());
+        let parked = state.attachment_for_epoch_mut(4).unwrap();
+        parked.apply_background_media_output(1, generation, &bytes, vec![binding]);
+        assert!(parked.find_pane_mut(1).unwrap().terminal.has_images());
+        assert!(state.current_mut().find_pane_mut(1).is_none());
+    }
+
+    #[test]
     fn background_output_ignores_a_stale_generation() {
         let mut state = state();
         let generation = state.current().active_workspace_ref().panes[0].pty_generation;

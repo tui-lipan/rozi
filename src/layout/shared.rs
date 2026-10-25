@@ -1411,6 +1411,7 @@ fn rebuild_shared_workspaces(
                         &mut existing,
                         shared_pane,
                     ));
+                    end_invalid_orphan_transport(ctx);
                     existing
                 }
                 None => {
@@ -1438,6 +1439,7 @@ fn rebuild_shared_workspaces(
                         &mut pane,
                         shared_pane,
                     ));
+                    end_invalid_orphan_transport(ctx);
                     pane
                 }
             };
@@ -1741,6 +1743,19 @@ fn ctx_shared_mut(
     ctx.state.current_mut().shared.as_mut()
 }
 
+fn end_invalid_orphan_transport(ctx: &mut Context<crate::AppRoot>) {
+    if ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .is_some_and(|s| s.orphan_replay_required)
+        && let Some(client) = &ctx.state.current().session_client
+    {
+        client.end_for_replay();
+    }
+}
+
 fn drain_orphan_output(
     shared: Option<&mut crate::state::SharedSessionState>,
     pane: &mut crate::state::Pane,
@@ -1756,8 +1771,15 @@ fn drain_orphan_output(
         pane.terminal
             .apply_server_geometry(geometry.cols, geometry.rows, geometry.cell);
     }
-    if let Some(bytes) = shared.take_orphan_output(shared_pane.pane_id, shared_pane.generation) {
-        return pane.terminal.process_server_output(&bytes).clipboard_events;
+    if let Some((bytes, media)) =
+        shared.take_owned_orphan_output(shared_pane.pane_id, shared_pane.generation)
+    {
+        match pane.terminal.process_server_output_media(&bytes, media) {
+            Ok(output) => return output.clipboard_events,
+            Err(_) => {
+                shared.orphan_replay_required = true;
+            }
+        }
     }
     Vec::new()
 }
@@ -2833,6 +2855,7 @@ mod reconciler_tests {
                 .encode([10u8, 20, 30, 255].repeat(112 * 128));
             backend
                 .dispatch(Msg::SessionOutput {
+                    media: None,
                     metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: 2,
@@ -2919,6 +2942,7 @@ mod reconciler_tests {
                 .encode([10u8, 20, 30, 255].repeat(112 * 128));
             backend
                 .dispatch(Msg::SessionOutput {
+                    media: None,
                     metadata: crate::session::protocol::OutputMetadata::default(),
                     epoch,
                     pane_id: 2,

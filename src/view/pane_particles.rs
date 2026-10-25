@@ -26,13 +26,17 @@ pub(crate) fn particle_pane(
     } else {
         (PAD_X, PAD_Y)
     };
-    let left = (rect.x - f32::from(pad_x)).max(0.0);
-    let top = (rect.y - f32::from(pad_y)).max(0.0);
+    // Work in whole cells: the pane lands on `rect.to_rect()`, so the wrapper must be sized from
+    // that same rounding. Mixing it with the float rect clipped a column (or row) off a pane whose
+    // fractional origin sat past the left (or top) canvas edge.
+    let pane = rect.to_rect();
+    let left = (pane.x - pad_x).max(0);
+    let top = (pane.y - pad_y).max(0);
     let inner = Rect {
-        x: (rect.x - left).round() as i16,
-        y: (rect.y - top).round() as i16,
-        w: rect.to_rect().w,
-        h: rect.to_rect().h,
+        x: pane.x - left,
+        y: pane.y - top,
+        w: pane.w,
+        h: pane.h,
     };
     let canvas = Canvas::new().passthrough(true).child_at(inner, child);
     let mut scope = EffectScope::new().child(canvas);
@@ -46,10 +50,10 @@ pub(crate) fn particle_pane(
         ));
     }
     let outer = FloatRect {
-        x: left,
-        y: top,
-        w: rect.x + rect.w + f32::from(pad_x) - left,
-        h: rect.y + rect.h + f32::from(pad_y) - top,
+        x: f32::from(left),
+        y: f32::from(top),
+        w: f32::from(inner.x) + f32::from(pane.w) + f32::from(pad_x),
+        h: f32::from(inner.y) + f32::from(pane.h) + f32::from(pad_y),
     };
     (outer, Element::from(scope).key(key))
 }
@@ -581,6 +585,50 @@ mod tests {
                 &ctx.theme(),
             );
             Canvas::new().child_at(rect.to_rect(), element).into()
+        }
+    }
+
+    #[test]
+    fn wrapper_keeps_the_far_edges_of_a_pane_past_the_canvas_origin() {
+        let theme = Theme::default();
+        let timed = PanePaintMotion::Timed {
+            started_at: Duration::ZERO,
+            transition: TransitionConfig {
+                duration: Duration::from_millis(880),
+                easing: Easing::Linear,
+            },
+            closing: false,
+            interval: Duration::from_nanos(33_333_333),
+        };
+        for (motion, pad_x, pad_y) in [(PanePaintMotion::Fixed(1.0), 0, 0), (timed, PAD_X, PAD_Y)] {
+            for origin in [-2.4, -0.4, 0.4, 3.6] {
+                let rect = FloatRect {
+                    x: origin,
+                    y: origin,
+                    w: 24.5,
+                    h: 6.5,
+                };
+                let (outer, _) = particle_pane(
+                    Text::new("").into(),
+                    rect,
+                    motion,
+                    false,
+                    4,
+                    "particles".into(),
+                    &theme,
+                );
+                let (outer, pane) = (outer.to_rect(), rect.to_rect());
+                assert_eq!(
+                    outer.x + outer.w as i16,
+                    pane.x + pane.w as i16 + pad_x,
+                    "right edge at origin {origin}"
+                );
+                assert_eq!(
+                    outer.y + outer.h as i16,
+                    pane.y + pane.h as i16 + pad_y,
+                    "bottom edge at origin {origin}"
+                );
+            }
         }
     }
 

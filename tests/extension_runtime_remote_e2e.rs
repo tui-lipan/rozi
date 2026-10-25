@@ -24,6 +24,11 @@ use tui_lipan::TestBackend;
 
 const CASE_ENV: &str = "ROZI_REMOTE_RUNTIME_CASE";
 const EXTENSION_ID: &str = "remote-probe";
+/// How long `two_clients_on_one_host_are_independent` waits for each client's worker to start.
+const CLIENT_START: Duration = Duration::from_secs(60);
+/// How long a client waits there to be told to stop. Longer than the test can take to tell it:
+/// both clients starting, one after the other, and the first one shutting down.
+const CLIENT_STOP: Duration = Duration::from_secs(180);
 
 fn executable(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -836,9 +841,7 @@ fn client_case() {
     let (pid, _) = worker(backend, &[]);
     std::fs::write(out(&format!("client-{name}")), pid.to_string()).unwrap();
     let stop = out(&format!("stop-{name}"));
-    pump_until(backend, Duration::from_secs(60), "the stop signal", |_| {
-        stop.exists()
-    });
+    pump_until(backend, CLIENT_STOP, "the stop signal", |_| stop.exists());
     drop(app);
     let deadline = Instant::now() + Duration::from_secs(15);
     while alive(pid) {
@@ -892,7 +895,7 @@ fn two_clients_on_one_host_are_independent() {
         let b = scope.spawn(|| world.run("client", &[("CLIENT_NAME", "b")]));
         let pid = |name: &str| -> u32 {
             let path = world.path(&format!("out/client-{name}"));
-            let deadline = Instant::now() + Duration::from_secs(60);
+            let deadline = Instant::now() + CLIENT_START;
             loop {
                 if let Ok(pid) = read(&path).trim().parse() {
                     return pid;

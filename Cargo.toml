@@ -76,7 +76,7 @@ exclude = [
 # policy, and deferred named-media preparation.
 # 0.30.0: immutable media ownership and trusted local snapshot adoption.
 # OSC 22 and pointer-shape support. Replace this revision with its crates.io release before merging.
-tui-lipan = { version = "0.30.0", git = "https://github.com/tui-lipan/tui-lipan", rev = "f70220c58387e98716ed2b51cc17e6f496b6c629", features = [
+tui-lipan = { version = "0.30.0", git = "https://github.com/tui-lipan/tui-lipan", rev = "1688af1b77c8b01e93aad64d1b072b8ee274f624", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -109,9 +109,19 @@ pub enum Msg {
         result: std::result::Result<ExtensionInstallOutcome, String>,
     },
     ExtensionsUpdateSelected,
+    ExtensionsUpdateAll,
+    /// One extension of update run `run` finished, with its change and notification outcome.
+    /// A result whose `run` is not the active one is ignored.
     ExtensionsUpdateFinished {
+        run: u64,
         id: String,
         result: std::result::Result<ExtensionUpdateOutcome, String>,
+    },
+    /// Every extension of update run `run` finished, with each one's result in order.
+    /// A result whose `run` is not the active one is ignored.
+    ExtensionsUpdatesFinished {
+        run: u64,
+        results: Vec<(String, std::result::Result<ExtensionUpdateOutcome, String>)>,
     },
     ExtensionUpdateChecked {
         epoch: u64,

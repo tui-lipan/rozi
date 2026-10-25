@@ -52,6 +52,34 @@ fn mark_git_managed(extensions: &Path, id: &str) {
     .expect("write Git installation record");
 }
 
+/// A real checkout plus its Git record, so `open` scans it and starts an update check.
+fn install_git_extension(extensions: &Path, id: &str) {
+    let dir = extensions.join(id);
+    std::fs::create_dir_all(&dir).expect("create extension directory");
+    std::fs::write(
+        dir.join("extension.toml"),
+        format!("[extension]\nid = \"{id}\"\napi = 1\ntitle = \"{id}\"\nversion = \"0.1.0\"\n"),
+    )
+    .expect("write extension manifest");
+    mark_git_managed(extensions, id);
+}
+
+/// Removes the extensions this test installed into the process-wide scratch directory.
+struct RemoveInstalledExtensions {
+    extensions: PathBuf,
+    ids: &'static [&'static str],
+}
+
+impl Drop for RemoveInstalledExtensions {
+    fn drop(&mut self) {
+        let records = self.extensions.join(".rozi/installations");
+        for id in self.ids {
+            let _ = std::fs::remove_dir_all(self.extensions.join(id));
+            let _ = std::fs::remove_file(records.join(format!("{id}.toml")));
+        }
+    }
+}
+
 fn frame(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
     backend.advance(std::time::Duration::from_millis(200));
@@ -1309,6 +1337,625 @@ fn extensions_manager_splits_installed_and_discover_tabs() {
         .expect("spawn tabs thread")
         .join()
         .expect("tabs smoke completes");
+}
+
+/// `Ctrl+U` checks every Git installation from a row without a known update, `Ctrl+Shift+U`
+/// appears once more than one update is known and runs them all, and the run settles each row as
+/// it finishes but reports once at the end.
+#[test]
+fn extensions_manager_checks_and_updates_every_git_installation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            // The isolated directories are shared by every test in this process, so this test
+            // injects its rows. Their ids have no installation record, so a real update or check
+            // fails at once without reaching a network.
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let available = || rozi::state::ExtensionUpdateCheck::Available {
+                revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+                version: Some("0.2.0".to_string()),
+            };
+            let current = rozi::state::ExtensionUpdateCheck::Current;
+            {
+                let state = backend
+                    .state_mut()
+                    .extensions
+                    .as_mut()
+                    .expect("extensions state");
+                for id in ["update-alpha", "update-beta", "update-local"] {
+                    state.entries.push(installed_info(id));
+                }
+                rozi::test_support::mark_extension_git_managed(state, "update-alpha");
+                rozi::test_support::mark_extension_git_managed(state, "update-beta");
+                // The check the manager started on opening answers an epoch this one replaces.
+                state.update_check_epoch = u64::MAX;
+                state.update_checks.clear();
+                state
+                    .update_checks
+                    .insert("update-alpha".to_string(), current.clone());
+                state
+                    .update_checks
+                    .insert("update-beta".to_string(), current.clone());
+                state.selected = state.entries.len() - 1;
+            }
+            let check = |backend: &TestBackend<AppRoot>, id: &str| {
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .expect("extensions state")
+                    .update_checks
+                    .get(id)
+                    .cloned()
+            };
+
+            let local = frame(&mut backend);
+            assert!(local.contains("check Ctrl+U"), "{local}");
+            assert!(!local.contains("update all"), "{local}");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateSelected)
+                .expect("check from a local row");
+            // Without installation records both checks fail at once; wait for those answers so
+            // they cannot land on the rows this test injects next.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while ["update-alpha", "update-beta"].iter().any(|id| {
+                !matches!(
+                    check(&backend, id),
+                    Some(rozi::state::ExtensionUpdateCheck::Failed(_))
+                )
+            }) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Ctrl+U on any row asks every Git remote again"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                backend.pump().expect("pump check answers");
+            }
+
+            {
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                state
+                    .update_checks
+                    .insert("update-alpha".to_string(), available());
+                state
+                    .update_checks
+                    .insert("update-beta".to_string(), current.clone());
+                state.selected = state.entries.len() - 3;
+            }
+            let one = frame(&mut backend);
+            assert!(one.contains("update Ctrl+U"), "{one}");
+            assert!(
+                !one.contains("update all"),
+                "a single update is Ctrl+U on its row:\n{one}"
+            );
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .unwrap()
+                .update_checks
+                .insert("update-beta".to_string(), available());
+            let two = frame(&mut backend);
+            assert!(two.contains("update all Ctrl+Shift+U"), "{two}");
+
+            // A run in progress: each row settles when its own update finishes. The run itself
+            // stays until the aggregate result, so nothing else can start in between.
+            let run = 1;
+            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+                id: run,
+                pending: ["update-alpha", "update-beta"].map(String::from).into(),
+            });
+            backend.state_mut().extensions.as_mut().unwrap().updating =
+                ["update-alpha", "update-beta"].map(String::from).into();
+            let running = frame(&mut backend);
+            assert!(running.contains("updating…"), "{running}");
+            assert!(!running.contains("update all"), "{running}");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    run,
+                    id: "update-beta".to_string(),
+                    result: Ok(false.into()),
+                })
+                .expect("beta finished");
+            assert_eq!(check(&backend, "update-beta"), Some(current.clone()));
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    run,
+                    id: "update-alpha".to_string(),
+                    result: Err("remote unreachable".to_string()),
+                })
+                .expect("alpha finished");
+            assert_eq!(check(&backend, "update-alpha"), Some(available()));
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .updating
+                    .is_empty()
+            );
+            assert!(backend.state().extension_update.is_some());
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    run,
+                    results: vec![
+                        (
+                            "update-alpha".to_string(),
+                            Err("remote unreachable".to_string()),
+                        ),
+                        ("update-beta".to_string(), Ok(false.into())),
+                    ],
+                })
+                .expect("run finished");
+            let reported = frame(&mut backend);
+            assert!(
+                reported.contains("update-alpha: remote unreachable"),
+                "a run names the extension each failure belongs to:\n{reported}"
+            );
+            assert!(!reported.contains("up to date"), "{reported}");
+
+            // The key itself: Ctrl+Shift+U runs both, where Ctrl+U would update only the row.
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .unwrap()
+                .update_checks
+                .insert("update-beta".to_string(), available());
+            frame(&mut backend);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('u'),
+                    mods: KeyMods {
+                        shift: true,
+                        ..KeyMods::CTRL
+                    },
+                })
+                .expect("update all");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                backend.pump().expect("pump update results");
+                let settled = frame(&mut backend);
+                if settled.contains("update-beta:") {
+                    assert!(settled.contains("update-alpha:"), "{settled}");
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "both updates report:\n{settled}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        })
+        .expect("spawn update-all thread")
+        .join()
+        .expect("update-all smoke completes");
+}
+
+/// An update keeps its identity when Extensions is closed. Reopening cannot start another run
+/// beside it, and a completion from any other run cannot clear the one that is still busy.
+#[test]
+fn extensions_manager_keeps_an_update_run_across_reopen() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let alpha = "update-alpha";
+            let beta = "update-beta";
+            let available = || rozi::state::ExtensionUpdateCheck::Available {
+                revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+                version: Some("0.2.0".to_string()),
+            };
+            let alpha_path = format!("/nonexistent/{alpha}");
+            {
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                state.entries.push(installed_info(alpha));
+                state.entries.push(installed_info(beta));
+                rozi::test_support::mark_extension_removable(state, &alpha_path);
+                state.update_checks.insert(alpha.to_string(), available());
+                state.update_checks.insert(beta.to_string(), available());
+                state.selected = state
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(alpha))
+                    .expect("alpha row");
+                state.updating.insert(alpha.to_string());
+            }
+            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+                id: 40,
+                pending: [alpha.to_string()].into(),
+            });
+            let running = frame(&mut backend);
+            assert!(running.contains("updating…"), "{running}");
+            assert!(!running.contains("update all"), "{running}");
+            assert!(
+                !running.contains("remove"),
+                "a running update cannot be removed:\n{running}"
+            );
+
+            backend
+                .dispatch(rozi::Msg::CloseExtensions)
+                .expect("close extensions");
+            assert!(backend.state().extensions.is_none());
+            assert_eq!(
+                pending_ids(&backend),
+                vec![alpha.to_string()],
+                "the update run survives closing the picker"
+            );
+
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("reopen extensions");
+            {
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                assert!(
+                    state.updating.contains(alpha),
+                    "reopening shows the update that was already running"
+                );
+                state.entries.push(installed_info(alpha));
+                state.entries.push(installed_info(beta));
+                rozi::test_support::mark_extension_removable(state, &alpha_path);
+                state.update_checks.insert(alpha.to_string(), available());
+                state.update_checks.insert(beta.to_string(), available());
+                state.selected = state
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(alpha))
+                    .expect("alpha row after reopen");
+            }
+            let reopened = frame(&mut backend);
+            assert!(reopened.contains("updating…"), "{reopened}");
+            assert!(
+                !reopened.contains("remove"),
+                "the reopened update still cannot be removed:\n{reopened}"
+            );
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateAll)
+                .expect("update all while the first run is active");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateSelected)
+                .expect("update selected while the first run is active");
+            backend
+                .dispatch(rozi::Msg::ExtensionsRemoveSelected)
+                .expect("remove while the first run is active");
+            assert_eq!(
+                backend.state().extension_update.as_ref().map(|run| run.id),
+                Some(40)
+            );
+            assert_eq!(pending_ids(&backend), vec![alpha.to_string()]);
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .pending_remove
+                    .is_none()
+            );
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    run: 7,
+                    results: vec![(alpha.to_string(), Ok(true.into()))],
+                })
+                .expect("stale aggregate");
+            assert_eq!(pending_ids(&backend), vec![alpha.to_string()]);
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    run: 40,
+                    id: alpha.to_string(),
+                    result: Ok(true.into()),
+                })
+                .expect("alpha's own row finished");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    run: 40,
+                    results: vec![(alpha.to_string(), Ok(true.into()))],
+                })
+                .expect("first run finished");
+            assert!(backend.state().extension_update.is_none());
+
+            {
+                // Finishing the run reloads, and that rescan drops rows this test injected.
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                if !state
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id.as_deref() == Some(beta))
+                {
+                    state.entries.push(installed_info(beta));
+                }
+                state.updating.insert(beta.to_string());
+                rozi::test_support::mark_extension_removable(
+                    state,
+                    &format!("/nonexistent/{beta}"),
+                );
+                state.selected = state
+                    .entries
+                    .iter()
+                    .position(|entry| entry.id.as_deref() == Some(beta))
+                    .expect("beta row");
+            }
+            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+                id: 41,
+                pending: [beta.to_string()].into(),
+            });
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    run: 40,
+                    id: beta.to_string(),
+                    result: Ok(true.into()),
+                })
+                .expect("previous run's row result");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    run: 40,
+                    results: vec![(beta.to_string(), Ok(true.into()))],
+                })
+                .expect("previous run's aggregate");
+            backend
+                .dispatch(rozi::Msg::ExtensionsRemoveSelected)
+                .expect("remove the newer run");
+            assert_eq!(
+                backend.state().extension_update.as_ref().map(|run| run.id),
+                Some(41)
+            );
+            assert_eq!(pending_ids(&backend), vec![beta.to_string()]);
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .pending_remove
+                    .is_none()
+            );
+            let newer = frame(&mut backend);
+            assert!(newer.contains("updating…"), "{newer}");
+            assert!(
+                !newer.contains("remove"),
+                "the newer run stays busy after the previous run reports:\n{newer}"
+            );
+        })
+        .expect("spawn update-run thread")
+        .join()
+        .expect("update-run smoke completes");
+}
+
+/// Reopening Extensions while an update runs must not check the installations that update owns.
+/// The check would be ignored, and a failed update would leave the row on `checking…`, which
+/// `Ctrl+U` then skips.
+#[test]
+fn extensions_manager_reopen_does_not_stick_an_owned_row_on_checking() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let root = rozi::test_support::isolate_user_dirs();
+            let extensions = extensions_root(root);
+            let owned = "update-owned";
+            let bystander = "update-bystander";
+            let _cleanup = RemoveInstalledExtensions {
+                extensions: extensions.clone(),
+                ids: &["update-owned", "update-bystander"],
+            };
+            install_git_extension(&extensions, owned);
+            install_git_extension(&extensions, bystander);
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            // Mount before opening. The command link arrives with the first pump, and the check
+            // started by `open` needs it. A dispatch that is also the first mount can open the
+            // picker before that link exists, so no check starts at all.
+            backend.render();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while backend.state().command_link.is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the mount never delivered the command link"
+                );
+                backend.pump().expect("pump the mount");
+                std::thread::yield_now();
+            }
+            let run = 8;
+            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+                id: run,
+                pending: [owned.to_string()].into(),
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("reopen extensions during the update");
+
+            let check = |backend: &TestBackend<AppRoot>, id: &str| {
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .expect("extensions state")
+                    .update_checks
+                    .get(id)
+                    .cloned()
+            };
+            {
+                let state = backend.state().extensions.as_ref().unwrap();
+                assert!(
+                    state
+                        .entries
+                        .iter()
+                        .any(|entry| entry.id.as_deref() == Some(owned)),
+                    "open scanned the installation the update owns"
+                );
+                assert!(
+                    state.updating.contains(owned),
+                    "reopening shows the update that is still running"
+                );
+                assert!(
+                    check(&backend, owned).is_none(),
+                    "open does not check an installation the update owns, got {:?}",
+                    check(&backend, owned)
+                );
+                assert!(
+                    check(&backend, bystander).is_some(),
+                    "open still checks a Git installation the update does not own, got {:?}",
+                    check(&backend, bystander)
+                );
+            }
+
+            let epoch = backend
+                .state()
+                .extensions
+                .as_ref()
+                .unwrap()
+                .update_check_epoch;
+            backend
+                .dispatch(rozi::Msg::ExtensionUpdateChecked {
+                    epoch,
+                    id: owned.to_string(),
+                    check: rozi::state::ExtensionUpdateCheck::Available {
+                        revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+                        version: Some("0.2.0".to_string()),
+                    },
+                })
+                .expect("check answer for the owned installation");
+            assert!(
+                check(&backend, owned).is_none(),
+                "a check answer is ignored while the update owns the installation"
+            );
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateSelected)
+                .expect("check while the update runs");
+            assert!(
+                check(&backend, owned).is_none(),
+                "Ctrl+U does not start a check for an installation the update owns"
+            );
+
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    run,
+                    id: owned.to_string(),
+                    result: Err("remote unreachable".to_string()),
+                })
+                .expect("owned update failed");
+            assert!(
+                !matches!(
+                    check(&backend, owned),
+                    Some(rozi::state::ExtensionUpdateCheck::Checking)
+                ),
+                "a failed update does not leave the row checking"
+            );
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    run,
+                    results: vec![(owned.to_string(), Err("remote unreachable".to_string()))],
+                })
+                .expect("update run finished");
+            assert!(backend.state().extension_update.is_none());
+
+            // The run released the row, so the check it skipped can finish. A stuck
+            // `checking…` has no worker left, and this wait would time out.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                match check(&backend, owned) {
+                    Some(rozi::state::ExtensionUpdateCheck::Failed(_)) => break,
+                    Some(rozi::state::ExtensionUpdateCheck::Checking) | None => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "the row stayed {:?} after the update failed",
+                            check(&backend, owned)
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        backend.pump().expect("pump the check");
+                    }
+                    other => panic!("unexpected check for the failed update: {other:?}"),
+                }
+            }
+            let settled = frame(&mut backend);
+            let row = settled
+                .lines()
+                .find(|line| line.contains(owned))
+                .expect("owned row");
+            assert!(
+                !['◐', '◓', '◑', '◒']
+                    .iter()
+                    .any(|glyph| row.contains(*glyph)),
+                "the failed row is not stuck on the checking spinner:\n{row}"
+            );
+            assert!(row.contains("git"), "{row}");
+
+            let owned_index = backend
+                .state()
+                .extensions
+                .as_ref()
+                .unwrap()
+                .entries
+                .iter()
+                .position(|entry| entry.id.as_deref() == Some(owned))
+                .expect("owned row");
+            backend
+                .dispatch(rozi::Msg::ExtensionsSelect(
+                    rozi::state::ExtensionPickerRow::Installed(owned_index),
+                ))
+                .expect("select the failed row");
+            // A known answer, not `checking…`. Ctrl+U has to replace it. A skipped check would
+            // leave this in place, including when the new check answers before this assertion.
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .unwrap()
+                .update_checks
+                .insert(
+                    owned.to_string(),
+                    rozi::state::ExtensionUpdateCheck::Current,
+                );
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateSelected)
+                .expect("check the failed row");
+            assert_ne!(
+                check(&backend, owned),
+                Some(rozi::state::ExtensionUpdateCheck::Current),
+                "Ctrl+U checks the row after the failed update"
+            );
+        })
+        .expect("spawn owned-check thread")
+        .join()
+        .expect("owned-check smoke completes");
+}
+
+fn pending_ids(backend: &TestBackend<AppRoot>) -> Vec<String> {
+    backend
+        .state()
+        .extension_update
+        .as_ref()
+        .map(|run| run.pending.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 #[test]

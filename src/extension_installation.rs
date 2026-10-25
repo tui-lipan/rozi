@@ -333,6 +333,74 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
     })
 }
 
+/// Git installations named by their records, and records that could not be read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ListedGitInstallations {
+    /// Git installation ids, in id order.
+    pub(crate) ids: Vec<String>,
+    /// `(label, error)` for a record that could not be read, in label order.
+    pub(crate) failures: Vec<(String, String)>,
+}
+
+/// Lists Git installations from their records, not from a manifest scan.
+///
+/// `--all` updates this list. A checkout whose `extension.toml` cannot be scanned still has a
+/// record, and omitting it would report that there was nothing to update. A record that cannot
+/// be read is a failure, not an absence.
+pub(crate) fn list_git_installations() -> Result<ListedGitInstallations, String> {
+    let root = crate::config::extensions_dir_path();
+    let records = root.join(CONTROL_DIRECTORY).join("installations");
+    let entries = match fs::read_dir(&records) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ListedGitInstallations::default());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not list extension installation records {}: {error}",
+                records.display()
+            ));
+        }
+    };
+    let mut ids = std::collections::BTreeSet::new();
+    let mut failures = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                failures.push((
+                    records.display().to_string(),
+                    format!("Could not list extension installation records: {error}"),
+                ));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            failures.push((
+                path.display().to_string(),
+                "Extension installation record name is not valid UTF-8".to_string(),
+            ));
+            continue;
+        };
+        let Some(id) = name.strip_suffix(".toml").filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        match read_record(&root, id) {
+            Ok(Some(record)) if matches!(record.source, InstallationSource::Git { .. }) => {
+                ids.insert(record.id);
+            }
+            Ok(_) => {}
+            Err(error) => failures.push((id.to_string(), error)),
+        }
+    }
+    failures.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(ListedGitInstallations {
+        ids: ids.into_iter().collect(),
+        failures,
+    })
+}
+
 /// Whether an installation declares `id`, valid or not.
 pub(crate) fn is_installed(id: &str) -> bool {
     crate::config::scan_extensions()

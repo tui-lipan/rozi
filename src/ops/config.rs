@@ -123,7 +123,11 @@ fn event_touches_store_revision(event: &notify::Event) -> bool {
 /// Handles an extension-store wakeup. A change this client already scanned, such as one it made
 /// itself and reloaded for, stays silent.
 pub(crate) fn extension_store_changed(ctx: &mut Context<AppRoot>) -> Update {
-    if !crate::config::extension_store_revision::changed_since_last_scan() {
+    // An update run reconciles the store once every checkout has settled. Keep its intermediate
+    // revisions unseen so completion also reconciles changes another client made meanwhile.
+    if ctx.state.extension_update.is_some()
+        || !crate::config::extension_store_revision::changed_since_last_scan()
+    {
         return Update::none();
     }
     reload_extensions(ctx)

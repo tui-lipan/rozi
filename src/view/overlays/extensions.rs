@@ -244,7 +244,7 @@ fn installed_row(
     });
     let label = entry.display_name();
     let id = entry.id.as_deref();
-    let updating = id.is_some_and(|id| state.updating_id.as_deref() == Some(id));
+    let updating = id.is_some_and(|id| state.updating.contains(id));
     let checking = id.is_some_and(|id| {
         state.update_checks.get(id) == Some(&crate::state::ExtensionUpdateCheck::Checking)
     });
@@ -288,27 +288,44 @@ fn catalog_row(
     )
 }
 
-/// `update` once a check found a newer revision, `check` until then. Only a Git installation has
-/// an upstream, and nothing starts while another update or check runs.
-fn update_action(state: &crate::state::ExtensionsState, id: Option<&str>) -> OverlayAction {
-    let git = id.is_some_and(|id| {
-        state.installation_kinds.get(id) == Some(&crate::extension_installation::InstallKind::Git)
-    });
-    let check = id.and_then(|id| state.update_checks.get(id));
-    let checking = matches!(check, Some(crate::state::ExtensionUpdateCheck::Checking));
-    let label = if matches!(
-        check,
+/// `update` on a row a check found a newer revision for, otherwise `check`, which asks every Git
+/// installation's remote again. Nothing starts while an update runs, and `check` waits until some
+/// installation is not already being checked.
+fn update_busy(ctx: &Context<AppRoot>) -> bool {
+    ctx.state.extension_update.is_some()
+}
+
+fn update_action(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+    id: Option<&str>,
+) -> OverlayAction {
+    let available = matches!(
+        id.and_then(|id| state.update_checks.get(id)),
         Some(crate::state::ExtensionUpdateCheck::Available { .. })
-    ) {
-        "update"
-    } else {
-        "check"
-    };
+    );
+    let checkable = state.installation_kinds.iter().any(|(id, kind)| {
+        *kind == crate::extension_installation::InstallKind::Git
+            && state.update_checks.get(id) != Some(&crate::state::ExtensionUpdateCheck::Checking)
+    });
     OverlayAction::new(
         "ctrl-u",
-        label,
+        if available { "update" } else { "check" },
         Msg::ExtensionsUpdateSelected,
-        git && state.updating_id.is_none() && !checking,
+        !update_busy(ctx) && (available || checkable),
+    )
+}
+
+/// Shown only when there is more than one update to run; a single one is `Ctrl+U` on its row.
+fn update_all_action(
+    ctx: &Context<AppRoot>,
+    state: &crate::state::ExtensionsState,
+) -> OverlayAction {
+    OverlayAction::new(
+        "ctrl-shift-u",
+        "update all",
+        Msg::ExtensionsUpdateAll,
+        !update_busy(ctx) && crate::ops::extensions_manager::updatable_ids(state).len() > 1,
     )
 }
 
@@ -326,10 +343,10 @@ fn installed_actions(
     });
     let manifest =
         selected.is_some_and(|entry| state.manifest_entries.contains(entry.path.as_str()));
-    let removable = state.updating_id.is_none()
+    let removable = !update_busy(ctx)
         && selected.is_some_and(|entry| state.removable_entries.contains(entry.path.as_str()));
     let selected_id = selected.and_then(|entry| entry.id.as_deref());
-    let update = update_action(state, selected_id);
+    let update = update_action(ctx, state, selected_id);
     vec![
         OverlayAction::new(
             "enter",
@@ -351,6 +368,7 @@ fn installed_actions(
         ),
         OverlayAction::new("ctrl-i", "install", Msg::ExtensionsOpenInstall, true),
         update,
+        update_all_action(ctx, state),
         OverlayAction::new("ctrl-r", "reload", Msg::ExtensionsReload, true),
         OverlayAction::new(
             "ctrl-o",
@@ -551,7 +569,7 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
         return Text::new("").into();
     };
     let actions = vec![
-        update_action(state, entry.id.as_deref()),
+        update_action(ctx, state, entry.id.as_deref()),
         OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, true),
         OverlayAction::new(
             "ctrl-o",

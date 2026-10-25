@@ -606,3 +606,71 @@ fn check_extension_explains_launch_cwd_and_safe_environment_details() {
             .contains("do-not-print")
     );
 }
+
+/// `--all` updates from installation records. A Git record whose manifest cannot be scanned is
+/// still attempted, and a record that cannot be read is a reported failure.
+#[test]
+fn update_all_includes_a_git_installation_with_an_unreadable_manifest() {
+    let temp = tempfile::tempdir().unwrap();
+    let extensions = temp.path().join("data/rozi/extensions");
+    let records = extensions.join(".rozi/installations");
+    std::fs::create_dir_all(&records).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for private in [
+            temp.path().join("data"),
+            temp.path().join("data/rozi"),
+            extensions.clone(),
+            extensions.join(".rozi"),
+            records.clone(),
+        ] {
+            std::fs::set_permissions(private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    let broken = extensions.join("broken-manifest");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join("extension.toml"), "this is not toml").unwrap();
+    std::fs::write(
+        records.join("broken-manifest.toml"),
+        "schema_version = 1\nid = \"broken-manifest\"\n\n[source]\nkind = \"git\"\n\
+         remote = \"https://example.invalid/broken-manifest.git\"\n\
+         revision = \"0123456789abcdef0123456789abcdef01234567\"\n",
+    )
+    .unwrap();
+    std::fs::write(records.join("broken-record.toml"), "not toml [[[").unwrap();
+    std::fs::write(
+        records.join("copied-local.toml"),
+        "schema_version = 1\nid = \"copied-local\"\n\n[source]\nkind = \"local\"\n\
+         path = \"/tmp/copied-local\"\n",
+    )
+    .unwrap();
+
+    let updated = rozi(&temp, &["extensions", "update", "--all"]);
+    let stdout = String::from_utf8_lossy(&updated.stdout);
+    let stderr = String::from_utf8_lossy(&updated.stderr);
+    assert!(
+        !updated.status.success(),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stdout.contains("No Git-managed extensions to update"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("broken-manifest"),
+        "a Git record with an unreadable manifest is updated, not skipped:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("broken-record"),
+        "an unreadable installation record is a failure:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("copied-local") && !stderr.contains("copied-local"),
+        "a local installation is not part of --all:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("2 of 2 extensions could not be updated"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+}

@@ -211,8 +211,12 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::extensions_manager::catalog_install_finished(ctx, repository, result)
         }
         Msg::ExtensionsUpdateSelected => crate::ops::extensions_manager::update_selected(ctx),
-        Msg::ExtensionsUpdateFinished { id, result } => {
-            crate::ops::extensions_manager::update_finished(ctx, id, result)
+        Msg::ExtensionsUpdateAll => crate::ops::extensions_manager::update_all(ctx),
+        Msg::ExtensionsUpdatesFinished { run, results } => {
+            crate::ops::extensions_manager::updates_finished(ctx, run, results)
+        }
+        Msg::ExtensionsUpdateFinished { run, id, result } => {
+            crate::ops::extensions_manager::update_finished(ctx, run, id, result)
         }
         Msg::ExtensionUpdateChecked { epoch, id, check } => {
             crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)

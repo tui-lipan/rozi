@@ -293,7 +293,8 @@ pub(crate) enum ExtensionsCommand {
         config_path: Option<String>,
     },
     Update {
-        id: String,
+        /// `None` (`--all`) updates every Git-managed installation.
+        id: Option<String>,
         config_path: Option<String>,
     },
     /// Print what an extension's processes on this machine printed.

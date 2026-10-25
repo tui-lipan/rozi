@@ -310,3 +310,78 @@ fn running_client_automatically_reloads_when_extension_store_revision_changes() 
         .join()
         .unwrap();
 }
+
+#[test]
+fn extension_update_run_defers_store_reload_until_success() {
+    check_store_reload_after_update_run(true);
+}
+
+#[test]
+fn failed_extension_update_run_reconciles_deferred_store_changes() {
+    check_store_reload_after_update_run(false);
+}
+
+fn check_store_reload_after_update_run(succeeded: bool) {
+    let _lock = TEST_LOCK.lock().unwrap();
+    rozi::test_support::isolate_user_dirs();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+            write_manifest(&root, "before-run");
+            let mut backend = CleanupBackend(TestBackend::new(
+                rozi::test_support::configured_app_without_control(),
+            ));
+            pump_until(&mut backend, Duration::from_secs(5), |backend| {
+                backend
+                    .state()
+                    .services
+                    .running
+                    .contains_key("generation-e2e.watch")
+            });
+            let token = backend.state().extension_generations[EXTENSION_ID].clone();
+            let run = 42;
+            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+                id: run,
+                pending: [EXTENSION_ID.to_string()].into(),
+            });
+
+            // Either this worker or another client has changed the store. A watcher wakeup must
+            // not restart services between individual updates in this run.
+            write_manifest(&root, "during-run");
+            rozi::config::extension_store_revision::bump().unwrap();
+            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+            assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
+
+            let result = if succeeded {
+                Ok(true.into())
+            } else {
+                Err("remote unreachable".to_string())
+            };
+            backend
+                .dispatch(Msg::ExtensionsUpdateFinished {
+                    run,
+                    id: EXTENSION_ID.to_string(),
+                    result: result.clone(),
+                })
+                .unwrap();
+            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+            assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
+
+            backend
+                .dispatch(Msg::ExtensionsUpdatesFinished {
+                    run,
+                    results: vec![(EXTENSION_ID.to_string(), result)],
+                })
+                .unwrap();
+            assert!(backend.state().extension_update.is_none());
+            assert_ne!(backend.state().extension_generations[EXTENSION_ID], token);
+            assert!(!rozi::config::extension_store_revision::changed_since_last_scan());
+            let settled = backend.state().extension_generations[EXTENSION_ID].clone();
+            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+            assert_eq!(backend.state().extension_generations[EXTENSION_ID], settled);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

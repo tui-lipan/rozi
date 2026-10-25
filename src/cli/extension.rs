@@ -263,11 +263,61 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
-    let mut progress = crate::platform::progress::ActivityRow::new("Updating extension");
+/// Updates one Git-managed extension, or every one when `id` is `None`. A failure does not stop
+/// the rest, but makes the command fail once they have all run.
+pub(crate) fn run_update_extension_cli(id: Option<&str>) -> Result<()> {
+    let Some(id) = id else {
+        return run_update_all_extensions_cli();
+    };
+    update_one_extension(id).map_err(std::io::Error::other)?;
+    Ok(())
+}
+
+fn run_update_all_extensions_cli() -> Result<()> {
+    let listed =
+        crate::extension_installation::list_git_installations().map_err(std::io::Error::other)?;
+    if listed.ids.is_empty() && listed.failures.is_empty() {
+        println!("No Git-managed extensions to update");
+        return Ok(());
+    }
+    let styles = OutputStyles::detect();
+    let mut failed = listed.failures.len();
+    for (id, error) in &listed.failures {
+        report_not_updated(&styles, id, error);
+    }
+    for id in &listed.ids {
+        match update_one_extension(id) {
+            Ok(()) => {}
+            Err(error) => {
+                failed += 1;
+                report_not_updated(&styles, id, &error);
+            }
+        }
+    }
+    if failed > 0 {
+        let total = listed.ids.len() + listed.failures.len();
+        return Err(std::io::Error::other(format!(
+            "{failed} of {total} extensions could not be updated"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn report_not_updated(styles: &OutputStyles, id: &str, error: &str) {
+    eprintln!(
+        "{} {}: {error}",
+        styles.paint("Not updated", OutputTone::Error),
+        styles.paint(id, OutputTone::Accent)
+    );
+}
+
+/// Updates `id` and prints its outcome.
+fn update_one_extension(id: &str) -> std::result::Result<(), String> {
+    let mut progress = crate::platform::progress::ActivityRow::new(format!("Updating {id}"));
     let updated = crate::extension_installation::update(id);
     progress.finish();
-    let updated = updated.map_err(std::io::Error::other)?;
+    let updated = updated?;
     let styles = OutputStyles::detect();
     println!(
         "{} {}",

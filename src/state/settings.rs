@@ -113,6 +113,7 @@ settings_actions! {
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCursorBlink,
+    CycleMousePointer,
     CycleCopyOnSelect,
     CycleMiddleClickPaste,
     CycleRightClickClipboard,

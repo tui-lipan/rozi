@@ -54,6 +54,8 @@
 # "inherit" follows the host in pickers and honors programs in panes.
 # "static" and "blinking" override blinking everywhere, including program requests.
 #blink = "inherit"
+# Mouse pointer feedback: "off", "panes" for pane app requests, or "all" for rozi too.
+#pointer = "all"
 
 [shell_integration]
 # "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;

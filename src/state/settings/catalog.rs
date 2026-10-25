@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tui_lipan::prelude::CapStyle;
 
 use crate::config::{
-    Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
+    Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste, MousePointer,
     RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::input::Action;
@@ -383,6 +383,19 @@ pub static SETTINGS: &[SettingSpec] = {
                 config_field!(cursor.blink),
                 CursorBlink::label,
                 ChoiceSave::Key(ConfigKey::new("cursor", "blink"), CursorBlink::id),
+            )),
+        ),
+        row(
+            CycleMousePointer,
+            G::General,
+            "Mouse pointer",
+            &["cursor", "hover", "hand", "resize", "OSC 22", "pane apps"],
+            Choice(&EnumChoice::new(
+                "Mouse pointer",
+                Choices::Fixed(MousePointer::all),
+                config_field!(cursor.pointer),
+                MousePointer::label,
+                ChoiceSave::Key(ConfigKey::new("cursor", "pointer"), MousePointer::id),
             )),
         ),
         row(

@@ -415,3 +415,42 @@ fn modifier_drag_pointers_are_active_before_button_release() {
         }
     });
 }
+
+#[test]
+fn mouse_pointer_modes_filter_pane_requests_and_chrome_at_runtime() {
+    on_large_stack(|| {
+        use rozi::config::MousePointer;
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.update_level(output("\x1b]22;grab\x07")).unwrap();
+        backend.render();
+        let split = (20..60)
+            .find(|&x| backend.pointer_shape_at(x, 12) == Some(PointerShape::EwResize))
+            .unwrap();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        backend.state_mut().config.cursor.pointer = MousePointer::Panes;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        assert_eq!(backend.pointer_shape_at(split, 12), None);
+        assert_eq!(
+            backend.pointer_shape_at(65, 12),
+            None,
+            "pane-only mode has no synthetic text fallback"
+        );
+        backend.state_mut().config.cursor.pointer = MousePointer::Off;
+        backend.render();
+        for y in 0..24 {
+            for x in 0..80 {
+                assert_eq!(backend.pointer_shape_at(x, y), None);
+            }
+        }
+        backend.state_mut().config.cursor.pointer = MousePointer::All;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        assert_eq!(
+            backend.pointer_shape_at(split, 12),
+            Some(PointerShape::EwResize)
+        );
+    });
+}

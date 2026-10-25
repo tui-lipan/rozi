@@ -263,8 +263,10 @@ The update clones the recorded remote into a staging area, validates it, and rep
 checkout only if the new version is valid. It refuses to replace a checkout with local changes.
 Copied local extensions and linked checkouts cannot be updated this way.
 
-**Extensions…** checks Git remotes in the background whenever it opens or reloads. A muted spinner
-beside a row's version shows its check running, and the **Installed** tab counts the updates found.
+**Extensions…** checks Git remotes in the background when it opens and when `Ctrl+R` reloads the
+**Installed** tab. Enabling, configuring, or installing an extension keeps the results already
+found and checks only installations that have none yet. A muted spinner beside a row's version
+shows its check running, and the **Installed** tab counts the updates found.
 An outdated row shows `installed → latest`, using the version from the remote `extension.toml`, or a
 short commit hash when the remote changed without changing its version. The report's **Update** row
 shows the same result, or the error when a remote could not be checked.

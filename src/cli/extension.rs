@@ -75,11 +75,13 @@ pub(crate) fn run_install_extension_cli(source: &str, link: bool) -> Result<()> 
             );
         }
     }
-    println!(
-        "{}  {}",
-        styles.paint("Reload", OutputTone::Muted),
-        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-    );
+    if let Some(warning) = &installed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -251,11 +253,13 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     if let Some(state) = state {
         println!("{}   {state}", styles.paint("State", OutputTone::Muted));
     }
-    println!(
-        "{}  {}",
-        styles.paint("Reload", OutputTone::Muted),
-        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-    );
+    if let Some(warning) = &removed.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
     Ok(())
 }
 
@@ -265,10 +269,7 @@ pub(crate) fn run_update_extension_cli(id: Option<&str>) -> Result<()> {
     let Some(id) = id else {
         return run_update_all_extensions_cli();
     };
-    let changed = update_one_extension(id).map_err(std::io::Error::other)?;
-    if changed {
-        print_reload_hint();
-    }
+    update_one_extension(id).map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -280,22 +281,18 @@ fn run_update_all_extensions_cli() -> Result<()> {
         return Ok(());
     }
     let styles = OutputStyles::detect();
-    let mut changed = false;
     let mut failed = listed.failures.len();
     for (id, error) in &listed.failures {
         report_not_updated(&styles, id, error);
     }
     for id in &listed.ids {
         match update_one_extension(id) {
-            Ok(updated) => changed |= updated,
+            Ok(()) => {}
             Err(error) => {
                 failed += 1;
                 report_not_updated(&styles, id, &error);
             }
         }
-    }
-    if changed {
-        print_reload_hint();
     }
     if failed > 0 {
         let total = listed.ids.len() + listed.failures.len();
@@ -315,8 +312,8 @@ fn report_not_updated(styles: &OutputStyles, id: &str, error: &str) {
     );
 }
 
-/// Updates `id` and prints its outcome, reporting whether its files changed.
-fn update_one_extension(id: &str) -> std::result::Result<bool, String> {
+/// Updates `id` and prints its outcome.
+fn update_one_extension(id: &str) -> std::result::Result<(), String> {
     let mut progress = crate::platform::progress::ActivityRow::new(format!("Updating {id}"));
     let updated = crate::extension_installation::update(id);
     progress.finish();
@@ -338,16 +335,14 @@ fn update_one_extension(id: &str) -> std::result::Result<bool, String> {
         ),
         styles.paint(&updated.id, OutputTone::Accent)
     );
-    Ok(updated.changed)
-}
-
-fn print_reload_hint() {
-    let styles = OutputStyles::detect();
-    println!(
-        "{}  {}",
-        styles.paint("Reload", OutputTone::Muted),
-        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-    );
+    if let Some(warning) = &updated.warning {
+        println!(
+            "{}  {}",
+            styles.paint("Warning", OutputTone::Warning),
+            styles.paint(warning, OutputTone::Warning)
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
@@ -372,12 +367,11 @@ pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {
 }
 
 /// From a fresh scaffold to its command running in the current `rozi`.
-fn scaffold_next_steps(id: &str) -> [String; 5] {
+fn scaffold_next_steps(id: &str) -> [String; 4] {
     [
         format!("cd {id}"),
         "rozi extensions check .".to_string(),
         "rozi extensions install --link .".to_string(),
-        "rozi run-action reload-extensions".to_string(),
         format!("rozi run-action {id}.hello"),
     ]
 }

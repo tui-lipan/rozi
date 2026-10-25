@@ -97,6 +97,7 @@ impl StartupTasks {
             std::thread::spawn(move || check_for_update(update_link, interval));
         }
         ops::config::spawn_config_watcher(&link);
+        ops::config::spawn_extension_store_watcher(&link);
         if self.watch_hangup {
             let hangup_link = link.clone();
             if let Err(err) = platform::server_lifecycle::on_hangup(move || {

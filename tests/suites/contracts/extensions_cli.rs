@@ -59,6 +59,11 @@ fn rozi_in_with_env(
     command.output().unwrap()
 }
 
+/// The marker every running client watches to learn that the installed set changed.
+fn store_revision(temp: &tempfile::TempDir) -> Option<String> {
+    std::fs::read_to_string(temp.path().join("data/rozi/extensions/.rozi/revision")).ok()
+}
+
 fn write_source_extension(path: &Path, id: &str) {
     std::fs::create_dir_all(path).unwrap();
     std::fs::write(
@@ -91,6 +96,11 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
         String::from_utf8_lossy(&installed.stderr)
     );
     let install_output = String::from_utf8_lossy(&installed.stdout);
+    let after_install = store_revision(&temp).expect("an installation tells running clients");
+    assert!(
+        !install_output.contains("reload-extensions"),
+        "running clients reload by themselves:\n{install_output}"
+    );
     assert!(install_output.contains("Navigation targets  2 programs"));
     assert!(install_output.contains("Keybindings  1 active"));
     let listed = rozi(&temp, &["extensions", "list", "--verbose"]);
@@ -117,6 +127,11 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
     assert!(
         String::from_utf8_lossy(&update.stderr).contains("not a Rozi-managed Git installation")
     );
+    assert_eq!(
+        store_revision(&temp).as_ref(),
+        Some(&after_install),
+        "a refused change leaves running clients alone"
+    );
 
     let removed = rozi(&temp, &["extensions", "remove", "disabled"]);
     assert!(
@@ -126,12 +141,52 @@ fn local_install_copies_enables_and_removes_without_touching_the_source() {
         String::from_utf8_lossy(&removed.stderr)
     );
     assert!(!destination.exists());
+    assert_ne!(store_revision(&temp), Some(after_install));
+    assert!(!String::from_utf8_lossy(&removed.stdout).contains("reload-extensions"));
     assert!(source.join("source-only").is_file());
     assert!(
         !temp
             .path()
             .join("data/rozi/extensions/.rozi/installations/disabled.toml")
             .exists()
+    );
+}
+
+#[test]
+fn failed_revision_bump_during_cli_remove_commits_removal_and_warns() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source extension");
+    write_source_extension(&source, "fail-bump");
+
+    let installed = rozi(&temp, &["extensions", "install", source.to_str().unwrap()]);
+    assert!(installed.status.success());
+    let destination = temp.path().join("data/rozi/extensions/fail-bump");
+    assert!(destination.exists());
+
+    // Force revision persistence to fail
+    let revision_path = temp.path().join("data/rozi/extensions/.rozi/revision");
+    let _ = std::fs::remove_file(&revision_path);
+    std::fs::create_dir_all(&revision_path).unwrap();
+
+    let removed = rozi(&temp, &["extensions", "remove", "fail-bump"]);
+    assert!(
+        removed.status.success(),
+        "removal must succeed despite revision notification failure:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!destination.exists(), "directory must be removed");
+    assert!(
+        !temp
+            .path()
+            .join("data/rozi/extensions/.rozi/installations/fail-bump.toml")
+            .exists(),
+        "record must be removed"
+    );
+    let stdout = String::from_utf8_lossy(&removed.stdout);
+    assert!(
+        stdout.contains("Warning") && stdout.contains("were not told to reload"),
+        "warning must be surfaced in output:\n{stdout}"
     );
 }
 
@@ -289,6 +344,7 @@ fn git_install_records_the_original_remote_and_exact_revision() {
     ]);
     let updated_revision = String::from_utf8(run_git(&["rev-parse", "HEAD"]).stdout).unwrap();
     let updated_revision = updated_revision.trim();
+    let before_update = store_revision(&temp);
     let updated = rozi_in_with_env(
         &temp,
         &["extensions", "update", "git-source"],
@@ -304,6 +360,11 @@ fn git_install_records_the_original_remote_and_exact_revision() {
     assert_eq!(
         std::fs::read_to_string(destination.join("updated")).unwrap(),
         "new revision"
+    );
+    assert_ne!(
+        store_revision(&temp),
+        before_update,
+        "an update tells running clients"
     );
     let metadata = std::fs::read_to_string(
         temp.path()

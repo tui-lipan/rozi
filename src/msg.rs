@@ -5,6 +5,8 @@ use crate::layout::shared::{ClientId, SharedLayout};
 use crate::state::{PaneId, ResizeCorner};
 use crate::{control, session};
 
+pub use crate::extension_installation::{ExtensionInstallOutcome, ExtensionUpdateOutcome};
+
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
@@ -96,7 +98,7 @@ pub enum Msg {
     },
     ExtensionsCloseInstall,
     ExtensionsSubmitInstall,
-    ExtensionsInstallFinished(std::result::Result<String, String>),
+    ExtensionsInstallFinished(std::result::Result<ExtensionInstallOutcome, String>),
     ExtensionsCatalogLoaded {
         epoch: u64,
         result: std::result::Result<Vec<crate::extension_catalog::CatalogEntry>, String>,
@@ -104,22 +106,22 @@ pub enum Msg {
     ExtensionsSubmitCatalogInstall,
     ExtensionsCatalogInstallFinished {
         repository: String,
-        result: std::result::Result<String, String>,
+        result: std::result::Result<ExtensionInstallOutcome, String>,
     },
     ExtensionsUpdateSelected,
     ExtensionsUpdateAll,
-    /// One extension of update run `run` finished; `Ok(true)` when its files changed.
+    /// One extension of update run `run` finished, with its change and notification outcome.
     /// A result whose `run` is not the active one is ignored.
     ExtensionsUpdateFinished {
         run: u64,
         id: String,
-        result: std::result::Result<bool, String>,
+        result: std::result::Result<ExtensionUpdateOutcome, String>,
     },
     /// Every extension of update run `run` finished, with each one's result in order.
     /// A result whose `run` is not the active one is ignored.
     ExtensionsUpdatesFinished {
         run: u64,
-        results: Vec<(String, std::result::Result<bool, String>)>,
+        results: Vec<(String, std::result::Result<ExtensionUpdateOutcome, String>)>,
     },
     ExtensionUpdateChecked {
         epoch: u64,
@@ -153,6 +155,9 @@ pub enum Msg {
     PointerFlowTick(crate::state::PaneId),
     /// The config watcher saw `config.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
+    /// The installed extension set changed, from this client, another one, or the CLI; reload
+    /// extensions unless this client's last scan already saw the change.
+    ExtensionStoreChanged,
     /// Run one scheduled `WorkbarSegment::Command` refresh for the current configuration epoch.
     WorkbarCommandPoll {
         epoch: u64,
@@ -848,6 +853,7 @@ pub enum Msg {
     },
     TerminalPresented(Vec<tui_lipan::PresentedTerminal>),
     SessionOutput {
+        media: Option<crate::session::protocol::OutputMedia>,
         metadata: crate::session::protocol::OutputMetadata,
         epoch: u64,
         pane_id: PaneId,

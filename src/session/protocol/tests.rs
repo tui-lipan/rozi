@@ -770,12 +770,12 @@ fn binary_pane_frame_has_golden_shape() {
     write_pane_output_frame(&mut buf, 7, 9, false, OutputMetadata::default(), b"abc").unwrap();
 
     let mut expected = Vec::new();
-    expected.extend_from_slice(&54_u32.to_be_bytes());
+    expected.extend_from_slice(&66_u32.to_be_bytes());
     expected.push(FRAME_KIND_PANE_OUTPUT);
     expected.extend_from_slice(&7_u32.to_be_bytes());
     expected.extend_from_slice(&9_u64.to_be_bytes());
     expected.push(0);
-    expected.extend_from_slice(&[0; 37]);
+    expected.extend_from_slice(&[0; 49]);
     expected.extend_from_slice(b"abc");
 
     assert_eq!(buf, expected);
@@ -1164,6 +1164,7 @@ fn semantic_output_and_presentation_frames_round_trip_at_every_wire_split() {
             frames,
             vec![
                 Frame::PaneOutput {
+                    media: None,
                     pane_id: 7,
                     local: false,
                     generation: 11,
@@ -1256,4 +1257,53 @@ fn attachment_steps_and_acknowledgements_round_trip_through_framing() {
     write_frame(&mut bytes, &ack).unwrap();
     let decoded: ServerMessage = read_frame(&mut std::io::Cursor::new(bytes)).unwrap();
     assert_eq!(decoded, ack);
+}
+
+#[test]
+fn immutable_media_and_acquisition_acks_round_trip() {
+    let media = OutputMedia {
+        acquisition_sequence: 42,
+        files: vec![ImmutableFileBinding {
+            command_range: 1..8,
+            path: std::path::PathBuf::from("immutable-frame"),
+            byte_len: 4,
+            format: 32,
+        }],
+        acquired: Vec::new(),
+    };
+    let mut wire = Vec::new();
+    write_pane_output_media_frame(
+        &mut wire,
+        7,
+        2,
+        false,
+        OutputMetadata::default(),
+        Some(&media),
+        b"123456789",
+    )
+    .unwrap();
+    let acks = vec![AcquisitionAck {
+        local: false,
+        pane_id: 7,
+        generation: 2,
+        sequence: 42,
+    }];
+    write_acquisition_acks(&mut wire, &acks).unwrap();
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut &wire[..]).unwrap();
+    assert_eq!(
+        decoder.next_frame::<serde_json::Value>().unwrap(),
+        Some(Frame::PaneOutput {
+            pane_id: 7,
+            local: false,
+            generation: 2,
+            metadata: OutputMetadata::default(),
+            media: Some(media),
+            bytes: b"123456789".to_vec(),
+        })
+    );
+    assert_eq!(
+        decoder.next_frame::<serde_json::Value>().unwrap(),
+        Some(Frame::AcquisitionAcks(acks))
+    );
 }

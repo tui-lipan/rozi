@@ -491,6 +491,7 @@ impl SessionServer {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);
                         }
                         let output = ServerOutbound::PaneOutput {
+                            media: Vec::new(),
                             metadata: protocol::OutputMetadata::default(),
                             pane_id: id,
                             local: wire_local(owner),
@@ -543,6 +544,7 @@ impl SessionServer {
                         self.send_outbound(
                             owner,
                             &ServerOutbound::PaneOutput {
+                                media: Vec::new(),
                                 metadata: protocol::OutputMetadata::default(),
                                 pane_id: id,
                                 local: wire_local(owner),
@@ -633,6 +635,7 @@ impl SessionServer {
         self.send_outbound(
             owner,
             &ServerOutbound::PaneOutput {
+                media: Vec::new(),
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: id,
                 local: wire_local(owner),
@@ -820,6 +823,7 @@ impl SessionServer {
             self.send_outbound(
                 owner,
                 &ServerOutbound::PaneOutput {
+                    media: Vec::new(),
                     metadata: protocol::OutputMetadata::default(),
                     pane_id: id,
                     local: wire_local(owner),
@@ -835,6 +839,7 @@ impl SessionServer {
             }));
         }
         Some(ServerOutbound::PaneOutput {
+            media: Vec::new(),
             metadata: protocol::OutputMetadata::default(),
             pane_id: id,
             local: wire_local(owner),
@@ -858,8 +863,9 @@ impl SessionServer {
     /// A frame named in a file costs a hundred bytes on the wire instead of a compressed and
     /// base64-ed copy of every pixel. While every attached client shares this machine's
     /// filesystem, reusable file names are forwarded and each client opens the file itself.
-    /// Consuming sources (`t=t`, `t=s`) are acquired once here and always relayed inline, so
-    /// clients and later replays never reopen a source the server has already removed.
+    /// Consuming sources (`t=t`, `t=s`) are acquired once here into an immutable snapshot the
+    /// server owns, and clients are sent that snapshot's name instead. Clients and later replays
+    /// therefore never reopen a source the server has already removed; replays carry pixels.
     ///
     /// A client attached over SSH cannot open a path on this machine. The server then reads the
     /// file itself and forwards the pixels inline, so a child that chose files before that client
@@ -872,7 +878,7 @@ impl SessionServer {
         ImageMedia {
             policy: GraphicsMediaPolicy::default(),
             relay: if reachable {
-                tui_lipan::GraphicsRelayPolicy::Consuming
+                tui_lipan::GraphicsRelayPolicy::NamedAsFiles
             } else {
                 tui_lipan::GraphicsRelayPolicy::All
             },

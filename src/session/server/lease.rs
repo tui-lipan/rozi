@@ -488,6 +488,8 @@ impl SessionServer {
             return;
         };
         let mut removed = self.clients.remove(index);
+        self.retired_media
+            .push_back(acquisition::RetiredMedia::take(&mut removed));
         self.departed_coalesced_frames += removed.coalesced_frames;
         self.departed_coalesced_bytes += removed.coalesced_bytes;
         self.resync_totals.departed_shed_bytes += removed.shed_bytes;
@@ -647,7 +649,7 @@ impl SessionServer {
     }
 
     pub(super) fn flush_clients(&mut self) -> bool {
-        let mut activity = false;
+        let mut activity = self.reap_acquisitions();
         let mut dead: Vec<ClientId> = Vec::new();
         let mut completed_seeds = Vec::new();
         let now = Instant::now();
@@ -678,7 +680,11 @@ impl SessionServer {
 
     fn flush_client_outbox(client: &mut ClientConn) -> (bool, bool) {
         let mut activity = false;
-        while let Some(front) = client.outbox.front() {
+        while !client.outbox.is_empty() {
+            if client.front_offset == 0 && !client.prepare_acquisition() {
+                return (true, true);
+            }
+            let front = client.outbox.front().expect("nonempty outbox");
             let class = front.class;
             let chunk = &front.bytes[client.front_offset..];
             match client.stream.write(chunk) {
@@ -770,11 +776,11 @@ impl SessionServer {
     /// Queue one shared encoded frame on every attached client. Each client retains its own write
     /// offset, while the immutable payload allocation is shared.
     #[cfg(all(test, unix))]
-    pub(super) fn push_to_attached(&mut self, bytes: Arc<[u8]>) {
+    pub(super) fn push_to_attached(&mut self, bytes: Arc<EncodedOutput>) {
         self.push_delta_to_attached(bytes, SeedDelta::Control);
     }
 
-    fn push_delta_to_attached(&mut self, bytes: Arc<[u8]>, delta: SeedDelta) {
+    fn push_delta_to_attached(&mut self, bytes: Arc<EncodedOutput>, delta: SeedDelta) {
         let mut slow = Vec::new();
         for client in &mut self.clients {
             if !client.attached {
@@ -804,15 +810,21 @@ impl SessionServer {
         match outbound {
             ServerOutbound::Control(message) => self.broadcast_control(message),
             ServerOutbound::PaneOutput {
+                media,
                 metadata,
                 pane_id,
                 local,
                 generation,
                 bytes,
             } => {
-                let Some(frame) =
-                    encode_pane_output(*pane_id, *generation, *local, *metadata, bytes)
-                else {
+                let Some(frame) = acquisition::encode_output(
+                    *pane_id,
+                    *generation,
+                    *local,
+                    *metadata,
+                    bytes,
+                    media,
+                ) else {
                     return;
                 };
                 let delta = if *local {
@@ -861,6 +873,7 @@ impl SessionServer {
                 (encode_control(message), seed_delta_for_control(message))
             }
             ServerOutbound::PaneOutput {
+                media,
                 metadata,
                 pane_id,
                 local,
@@ -868,7 +881,7 @@ impl SessionServer {
                 bytes,
                 ..
             } => (
-                encode_pane_output(*pane_id, *generation, *local, *metadata, bytes),
+                acquisition::encode_output(*pane_id, *generation, *local, *metadata, bytes, media),
                 if *local {
                     SeedDelta::Control
                 } else {
@@ -1322,7 +1335,7 @@ impl SessionServer {
     fn queue_attach_frame(
         &mut self,
         id: ClientId,
-        frame: Arc<[u8]>,
+        frame: Arc<EncodedOutput>,
         class: OutboxClass,
         pane: Option<PaneSeedKey>,
         overflow_reason: &'static str,

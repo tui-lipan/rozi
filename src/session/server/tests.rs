@@ -257,7 +257,7 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     let (_local, _stream) = attach_client(&mut server);
     let shared = ImageMedia {
         policy: GraphicsMediaPolicy::default(),
-        relay: tui_lipan::GraphicsRelayPolicy::Consuming,
+        relay: tui_lipan::GraphicsRelayPolicy::NamedAsFiles,
     };
     assert_eq!(server.image_media(), shared);
 
@@ -355,9 +355,7 @@ fn sent_pane_output_matching(
     let mut forwarded = Vec::new();
     while let Some(queued) = client.outbox.pop_front() {
         let mut decoder = protocol::FrameDecoder::default();
-        decoder
-            .read_from_status(&mut queued.bytes.as_ref())
-            .unwrap();
+        decoder.read_from_status(&mut &queued.bytes[..]).unwrap();
         while let Ok(Some(frame)) = decoder.next_frame::<ServerMessage>() {
             if let Frame::PaneOutput { pane_id, bytes, .. } = frame
                 && include(pane_id)
@@ -405,6 +403,7 @@ fn a_file_frame_reaches_a_remote_client_as_inline_pixels() {
         server.send_outbound(
             None,
             &ServerOutbound::PaneOutput {
+                media: Vec::new(),
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 7,
                 local: false,
@@ -458,10 +457,16 @@ fn slow_client_is_disconnected_at_exact_backlog_boundary() {
     client.outbox.clear();
     client.outbox_bytes = 0;
 
-    server.push_to_attached(Arc::from(vec![0; 32]));
+    server.push_to_attached(Arc::new(EncodedOutput {
+        bytes: vec![0; 32],
+        ..Default::default()
+    }));
     assert!(server.client_attached(id));
     assert_eq!(server.client_mut(id).unwrap().outbox_bytes, 32);
-    server.push_to_attached(Arc::from(vec![1]));
+    server.push_to_attached(Arc::new(EncodedOutput {
+        bytes: vec![1],
+        ..Default::default()
+    }));
     assert!(!server.client_attached(id));
 }
 
@@ -525,7 +530,10 @@ fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
     let (first, mut first_stream) = attach_client(&mut server);
     let (second, mut second_stream) = attach_client(&mut server);
 
-    server.push_to_attached(Arc::from(vec![7; 32]));
+    server.push_to_attached(Arc::new(EncodedOutput {
+        bytes: vec![7; 32],
+        ..Default::default()
+    }));
     let queued = server.runtime_metrics().client_outboxes;
     assert_eq!(queued.bytes.current_bytes, 64);
     assert_eq!(queued.bytes.high_water_bytes, 64);
@@ -561,6 +569,7 @@ fn pending_pane_output_is_represented_only_by_its_future_snapshot() {
         .screen_mut()
         .process_bytes(b"before snapshot");
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
         metadata: protocol::OutputMetadata::default(),
         pane_id: 7,
         local: false,
@@ -643,6 +652,7 @@ fn output_after_snapshot_waits_behind_the_complete_replay() {
 
     assert!(server.pump_attach_seeds());
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
         metadata: protocol::OutputMetadata::default(),
         pane_id: key.pane_id,
         local: false,
@@ -1019,6 +1029,7 @@ fn catch_up_overflow_sheds_the_flooding_pane_and_requeues_its_replay() {
 
     for _ in 0..2 {
         server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            media: Vec::new(),
             metadata: protocol::OutputMetadata::default(),
             pane_id: key.pane_id,
             local: false,
@@ -1057,7 +1068,10 @@ fn catch_up_overflow_with_no_pane_output_to_shed_disconnects_with_a_reason() {
     );
 
     for _ in 0..2 {
-        server.push_to_attached(Arc::from(vec![b'c'; 5 * 1024 * 1024]));
+        server.push_to_attached(Arc::new(EncodedOutput {
+            bytes: vec![b'c'; 5 * 1024 * 1024],
+            ..Default::default()
+        }));
     }
 
     assert!(!server.client_attached(client_id));
@@ -1077,6 +1091,7 @@ fn broadcast_pane_output(
     bytes: &[u8],
 ) {
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
         metadata: protocol::OutputMetadata::default(),
         pane_id,
         local: false,
@@ -6385,6 +6400,7 @@ fn client_outboxes_coalesce_independent_frames_and_preserve_ordered_barriers() {
     let (id, _stream) = attach_client(&mut server);
     for sequence in 1..=100 {
         server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            media: Vec::new(),
             pane_id: 7,
             local: false,
             generation: 2,
@@ -6399,6 +6415,7 @@ fn client_outboxes_coalesce_independent_frames_and_preserve_ordered_barriers() {
     client.front_offset = 1;
     client.outbox_bytes -= 1;
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
         pane_id: 7,
         local: false,
         generation: 2,
@@ -6407,6 +6424,7 @@ fn client_outboxes_coalesce_independent_frames_and_preserve_ordered_barriers() {
     });
     assert_eq!(server.client_mut(id).unwrap().outbox.len(), 2);
     server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
         pane_id: 7,
         local: false,
         generation: 2,
@@ -6419,6 +6437,7 @@ fn client_outboxes_coalesce_independent_frames_and_preserve_ordered_barriers() {
     });
     for sequence in 103..=104 {
         server.broadcast_outbound(&ServerOutbound::PaneOutput {
+            media: Vec::new(),
             pane_id: 7,
             local: false,
             generation: 2,
@@ -6450,6 +6469,7 @@ fn semantic_packetization_waits_for_complete_graphics_commands() {
         server.send_outbound(
             None,
             &ServerOutbound::PaneOutput {
+                media: Vec::new(),
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 7,
                 local: false,
@@ -6465,7 +6485,7 @@ fn semantic_packetization_waits_for_complete_graphics_commands() {
     assert_eq!(client.outbox.len(), 1);
     let bytes = client.outbox.front().unwrap().bytes.clone();
     let mut decoder = protocol::FrameDecoder::default();
-    decoder.read_from_status(&mut bytes.as_ref()).unwrap();
+    decoder.read_from_status(&mut &bytes[..]).unwrap();
     let Some(Frame::PaneOutput {
         metadata, bytes, ..
     }) = decoder.next_frame::<ServerMessage>().unwrap()
@@ -6505,6 +6525,7 @@ fn independent_graphics_after_an_input_mark_never_replace_frames_ahead_of_it() {
         server.send_outbound(
             None,
             &ServerOutbound::PaneOutput {
+                media: Vec::new(),
                 metadata: protocol::OutputMetadata::default(),
                 pane_id: 7,
                 local: false,
@@ -6559,6 +6580,7 @@ fn semantic_staging_coalesces_independent_transactions_before_client_outboxes() 
     server.send_outbound(
         None,
         &ServerOutbound::PaneOutput {
+            media: Vec::new(),
             metadata: protocol::OutputMetadata::default(),
             pane_id: 7,
             local: false,
@@ -6861,6 +6883,8 @@ fn media_test_server() -> SessionServer {
     let mut server = SessionServer::new_named("graphics-owned");
     let mut pane = test_pane(2);
     pane.screen_mut().set_output_transaction_recording(true);
+    // As in production, see `new_terminal_screen`.
+    pane.screen_mut().set_image_file_storage_enabled(true);
     server.panes.insert(7, pane);
     server
 }
@@ -6908,6 +6932,31 @@ fn assert_inline_pixel(bytes: &[u8], expected: &[u8]) {
     );
 }
 
+/// Local clients are sent the server's immutable snapshot by name: one `t=f` reference that every
+/// client can read, which is neither the consumed source nor a consuming reference.
+fn assert_snapshot_pixel(bytes: &[u8], source: &std::path::Path, expected: &[u8]) {
+    use base64::Engine as _;
+    assert!(!bytes.windows(3).any(|key| key == b"t=t" || key == b"t=s"));
+    assert!(bytes.windows(3).any(|key| key == b"t=f"));
+    let source =
+        base64::engine::general_purpose::STANDARD.encode(source.as_os_str().as_encoded_bytes());
+    assert!(
+        !bytes
+            .windows(source.len())
+            .any(|name| name == source.as_bytes())
+    );
+    for _ in 0..2 {
+        let mut receiver = TerminalScreen::new(5, 20, 100);
+        receiver.set_image_media_policy(GraphicsMediaPolicy::SHARED);
+        receiver.process_bytes(bytes);
+        let capture = receiver.capture_frame();
+        assert_eq!(
+            &capture.images.first().expect("retained image").rgba[..4],
+            expected
+        );
+    }
+}
+
 #[test]
 fn the_server_consumes_a_temp_file_once_for_two_local_clients_and_late_attach() {
     let mut server = media_test_server();
@@ -6929,7 +6978,7 @@ fn the_server_consumes_a_temp_file_once_for_two_local_clients_and_late_attach() 
     fs::write(&path, [0, 255, 0, 255]).unwrap();
     let bytes = sent_pane_output(&mut server, first);
     assert_eq!(sent_pane_output(&mut server, second), bytes);
-    assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
+    assert_snapshot_pixel(&bytes, &path, &[255, 0, 0, 255]);
     let replay = server
         .panes
         .get_mut(&7)
@@ -7066,7 +7115,7 @@ fn deferred_image_and_its_input_tail_commit_before_a_resize_barrier() {
 }
 
 #[test]
-fn a_remote_detaching_during_preparation_restores_only_reusable_file_references() {
+fn a_remote_detaching_during_preparation_restores_immutable_snapshot_references() {
     for medium in ['f', 't'] {
         let mut server = media_test_server();
         let (local, _local_stream) = attach_client(&mut server);
@@ -7081,19 +7130,21 @@ fn a_remote_detaching_during_preparation_restores_only_reusable_file_references(
         server.remove_client(remote);
         finish_media_events(&mut server);
         let bytes = sent_pane_output(&mut server, local);
-        if medium == 'f' {
-            assert_eq!(bytes, frame);
-            assert!(path.exists());
-        } else {
-            assert_inline_pixel(&bytes, &[255, 0, 0, 255]);
-            assert!(!path.exists());
-        }
+        assert_eq!(path.exists(), medium == 'f');
+        assert_snapshot_pixel(&bytes, &path, &[255, 0, 0, 255]);
     }
 }
 
 #[test]
 fn large_relay_emission_allows_text_between_its_chunks_and_keeps_the_next_source_unclaimed() {
     let mut server = media_test_server();
+    // Relay inline, as for a remote reader or a frame no snapshot can hold.
+    server
+        .panes
+        .get_mut(&7)
+        .unwrap()
+        .screen_mut()
+        .set_image_file_storage_enabled(false);
     server.panes.insert(8, test_pane(2));
     let (local, _local_stream) = attach_client(&mut server);
     server.client_mut(local).unwrap().outbox.clear();

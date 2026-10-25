@@ -270,17 +270,39 @@ impl Attachment {
     /// since a background attachment is never drawn - only its screen is kept live for an instant
     /// switch-back.
     pub fn apply_background_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        self.apply_background_media_output(pane_id, generation, bytes, Vec::new());
+    }
+
+    pub fn apply_background_media_output(
+        &mut self,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: &[u8],
+        media: Vec<tui_lipan::TerminalOutputMedia>,
+    ) {
         let policy = self.image_media_policy();
         if let Some(pane) = self.find_pane_mut(pane_id) {
             if pane.pty_generation == generation {
                 pane.terminal.set_media_policy(policy);
-                pane.terminal.process_server_output(bytes);
+                if pane
+                    .terminal
+                    .process_server_output_media(bytes, media)
+                    .is_err()
+                {
+                    if let Some(client) = &self.session_client {
+                        client.end_for_replay();
+                    }
+                    return;
+                }
                 pane.terminal.take_bell();
                 pane.activity.last_activity = Some(std::time::Instant::now());
                 pane.activity.has_unseen_output = true;
             }
-        } else if let Some(shared) = self.shared.as_mut() {
-            shared.buffer_orphan_output(pane_id, generation, bytes);
+        } else if let Some(shared) = self.shared.as_mut()
+            && !shared.buffer_orphan_media(pane_id, generation, bytes, media)
+            && let Some(client) = &self.session_client
+        {
+            client.end_for_replay();
         }
     }
 

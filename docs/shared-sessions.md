@@ -169,9 +169,9 @@ people: taking control changes the terminal size and can make another person's f
 redraw.
 
 A client that stops responding is disconnected so it cannot hold layout control or block the
-session. A client that responds but cannot keep up with a pane's output stays attached: rozi skips
-the output it fell behind on and redraws the pane from its current screen when the client catches
-up. Other clients are not affected.
+session. If a responsive client falls behind, rozi skips missed output and redraws the pane from
+its current screen. Image output that exceeds what the client can retain may instead disconnect
+that client; reconnecting restores the current pane contents. Other clients are not affected.
 
 A named session keeps running as long as its server does, whether or not clients are attached. See
 [Sessions](sessions.md) for detaching and resurrection, and [Remote sessions](remote.md) for SSH

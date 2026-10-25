@@ -57,6 +57,82 @@ pub(crate) fn spawn_config_watcher(link: &CommandLink<Msg>) {
     });
 }
 
+/// Watches the extension store's revision and requests an extension reload when another process,
+/// or this one, changes the installed set. Only the revision file counts: staging clones and
+/// metadata records written beside it are ignored, and edits inside an extension are never seen.
+pub(crate) fn spawn_extension_store_watcher(link: &CommandLink<Msg>) {
+    let link = link.clone();
+    std::thread::spawn(move || {
+        let root = crate::config::extensions_dir_path();
+        let report = |message: String| {
+            link.send(Msg::BackgroundError {
+                title: "Extension changes not watched",
+                message: format!(
+                    "{message}\nRun `rozi run-action reload-extensions` after a change"
+                ),
+            });
+        };
+        let control = match crate::config::extension_store_revision::ensure_control_dir_in(&root) {
+            Ok(control) => control,
+            Err(error) => return report(error.to_string()),
+        };
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(event_tx) {
+            Ok(watcher) => watcher,
+            Err(error) => return report(error.to_string()),
+        };
+        if let Err(error) = watcher.watch(&control, notify::RecursiveMode::NonRecursive) {
+            return report(error.to_string());
+        }
+        // An installation that finished between the first extension scan and this watch is
+        // otherwise missed; the handler drops the wakeup when nothing changed.
+        link.send(Msg::ExtensionStoreChanged);
+
+        loop {
+            let event = match event_rx.recv() {
+                Ok(Ok(event)) => event,
+                Ok(Err(_)) => continue,
+                Err(_) => return,
+            };
+            if !event_touches_store_revision(&event) {
+                continue;
+            }
+            loop {
+                match event_rx.recv_timeout(Duration::from_millis(150)) {
+                    Ok(_) => {}
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            link.send(Msg::ExtensionStoreChanged);
+        }
+    });
+}
+
+fn event_touches_store_revision(event: &notify::Event) -> bool {
+    use notify::EventKind;
+    matches!(
+        event.kind,
+        EventKind::Any | EventKind::Create(_) | EventKind::Modify(_)
+    ) && event
+        .paths
+        .iter()
+        .any(|path| crate::config::extension_store_revision::is_revision_file(path))
+}
+
+/// Handles an extension-store wakeup. A change this client already scanned, such as one it made
+/// itself and reloaded for, stays silent.
+pub(crate) fn extension_store_changed(ctx: &mut Context<AppRoot>) -> Update {
+    // An update run reconciles the store once every checkout has settled. Keep its intermediate
+    // revisions unseen so completion also reconciles changes another client made meanwhile.
+    if ctx.state.extension_update.is_some()
+        || !crate::config::extension_store_revision::changed_since_last_scan()
+    {
+        return Update::none();
+    }
+    reload_extensions(ctx)
+}
+
 fn event_touches_config(event: &notify::Event, target: &std::path::Path) -> bool {
     use notify::EventKind;
     if !matches!(

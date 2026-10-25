@@ -152,6 +152,28 @@ impl AppRoot {
         app
     }
 
+    pub(crate) fn configured_for_test_without_control(config: Config) -> Self {
+        let mut app = Self::new(
+            config,
+            ThemePreset::Lipan.theme(),
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            StartupSession::Attach {
+                request: state::AttachRequest::new(
+                    state::ephemeral_session_name(),
+                    state::AttachMode::Join,
+                ),
+                auto_created: true,
+            },
+        );
+        app.update_checks = false;
+        app.watch_hangup = false;
+        app
+    }
+
     fn start_theme_watcher(ctx: &mut Context<Self>) {
         let Some(path) =
             config::resolve_choice(&ctx.state.config.theme.name).and_then(|choice| match choice {

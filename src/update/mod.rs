@@ -234,6 +234,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::HostTerminalColorsChanged => crate::ops::theme::host_terminal_colors_changed(ctx),
         Msg::ThemeTick => overlays::theme_tick(ctx),
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
+        Msg::ExtensionStoreChanged => crate::ops::config::extension_store_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
         Msg::AlertPulseTick => panes::alert_pulse_tick(ctx),
@@ -807,13 +808,16 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::FlushLayoutCommit { epoch } => session::flush_layout_commit(ctx, epoch),
         Msg::SessionOutput {
+            media,
             metadata,
             epoch,
             pane_id,
             local,
             generation,
             bytes,
-        } => session::output(ctx, epoch, pane_id, local, generation, metadata, bytes),
+        } => session::output(
+            ctx, epoch, pane_id, local, generation, metadata, bytes, media,
+        ),
         Msg::SessionResized {
             epoch,
             pane_id,
@@ -1251,6 +1255,7 @@ mod tests {
             // drain budget and command yielding, not mailbox coalescing.
             mailbox
                 .push(Frame::PaneOutput {
+                    media: None,
                     metadata: crate::session::protocol::OutputMetadata::default(),
                     pane_id: (index % 2) as crate::state::PaneId + 1,
                     local: false,

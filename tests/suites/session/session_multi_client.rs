@@ -536,16 +536,58 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
         )
     });
     controller.write_pane_input(PANE_ID, PANE_GENERATION, b"emit\r");
+    let mut adopted = Vec::new();
     for client in [&mut controller, &mut follower] {
         let mut wire = Vec::new();
+        let mut receiver = TerminalScreen::new(24, 80, 100);
+        receiver.set_image_file_storage_enabled(true);
+        receiver.set_image_media_policy(GraphicsMediaPolicy::SHARED);
+        let mut acks = Vec::new();
         read_until(client, |frame| {
             if let Frame::PaneOutput {
                 pane_id: PANE_ID,
                 bytes,
+                media,
+                generation,
+                local,
                 ..
             } = frame
             {
                 wire.extend_from_slice(bytes);
+                if let Some(media) = media {
+                    let bindings: Vec<_> = media
+                        .files
+                        .iter()
+                        .map(|binding| {
+                            let file = tui_lipan::TerminalImmutableFile::acquire(
+                                &binding.path,
+                                binding.byte_len,
+                                binding.format,
+                            )
+                            .unwrap();
+                            adopted.push(file.clone());
+                            tui_lipan::TerminalOutputMedia {
+                                command_range: binding.command_range.clone(),
+                                file,
+                            }
+                        })
+                        .collect();
+                    let prepared = receiver
+                        .prepare_immutable_media_input(
+                            std::sync::Arc::from(bytes.as_slice()),
+                            bindings,
+                        )
+                        .unwrap();
+                    receiver.process_prepared_media_input(prepared).unwrap();
+                    acks.push(rozi::session::protocol::AcquisitionAck {
+                        pane_id: PANE_ID,
+                        generation: *generation,
+                        local: *local,
+                        sequence: media.acquisition_sequence,
+                    });
+                } else {
+                    receiver.process_bytes(bytes);
+                }
             }
             contains(&wire, b"owned-media-emitted")
         });
@@ -553,11 +595,20 @@ fn consumed_media_reaches_two_local_clients_and_a_late_remote_over_the_protocol(
             !contains(&wire, b"t=t"),
             "a consuming source reached a client"
         );
-        let mut receiver = TerminalScreen::new(24, 80, 100);
-        receiver.set_image_media_policy(GraphicsMediaPolicy::NONE);
-        receiver.process_bytes(&wire);
+        assert!(contains(&wire, b"t=f"));
+        assert!(!contains(&wire, name.as_bytes()));
         assert!(receiver.has_images());
+        assert!(!acks.is_empty(), "the test must exercise media acquisition");
+        let mut acknowledgement = Vec::new();
+        rozi::session::protocol::write_acquisition_acks(&mut acknowledgement, &acks).unwrap();
+        client.write_raw(&acknowledgement);
     }
+    assert_eq!(adopted.len(), 2);
+    assert_ne!(
+        adopted[0].path(),
+        adopted[1].path(),
+        "clients must own private names"
+    );
     assert!(!path.exists());
     let mut remote = crate::common::TestConnection::connect(server.endpoint());
     let mut attach = crate::common::attach_message(server.session(), "late-media-remote");

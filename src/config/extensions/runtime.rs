@@ -139,7 +139,7 @@ fn extension_id_from_pairs(env: &[(String, String)]) -> Option<&str> {
         .map(|(_, value)| value.as_str())
 }
 
-fn fresh_token() -> String {
+pub(super) fn fresh_token() -> String {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("operating-system randomness unavailable");
     let mut token = String::with_capacity(bytes.len() * 2);

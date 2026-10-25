@@ -11,8 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::extension_store_revision::CONTROL_DIRECTORY;
+
 const INSTALLATION_SCHEMA_VERSION: u32 = 1;
-const CONTROL_DIRECTORY: &str = ".rozi";
 static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// What installing any extension grants, trusted or not, shown wherever one is installed.
@@ -31,6 +32,7 @@ pub(crate) struct InstalledExtension {
     pub(crate) id: String,
     pub(crate) destination: PathBuf,
     pub(crate) kind: InstallKind,
+    pub(crate) warning: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +46,7 @@ pub(crate) enum InstallKind {
 pub(crate) struct UpdatedExtension {
     pub(crate) id: String,
     pub(crate) changed: bool,
+    pub(crate) warning: Option<String>,
 }
 
 /// What a Git installation's remote offers beyond the installed revision.
@@ -61,6 +64,61 @@ pub(crate) enum UpdateCheck {
 pub(crate) struct RemovedExtension {
     pub(crate) id: String,
     pub(crate) linked: bool,
+    pub(crate) warning: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionInstallOutcome {
+    pub id: String,
+    pub warning: Option<String>,
+}
+
+impl From<InstalledExtension> for ExtensionInstallOutcome {
+    fn from(installed: InstalledExtension) -> Self {
+        Self {
+            id: installed.id,
+            warning: installed.warning,
+        }
+    }
+}
+
+impl From<String> for ExtensionInstallOutcome {
+    fn from(id: String) -> Self {
+        Self { id, warning: None }
+    }
+}
+
+impl From<&str> for ExtensionInstallOutcome {
+    fn from(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            warning: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionUpdateOutcome {
+    pub changed: bool,
+    pub warning: Option<String>,
+}
+
+impl From<UpdatedExtension> for ExtensionUpdateOutcome {
+    fn from(updated: UpdatedExtension) -> Self {
+        Self {
+            changed: updated.changed,
+            warning: updated.warning,
+        }
+    }
+}
+
+impl From<bool> for ExtensionUpdateOutcome {
+    fn from(changed: bool) -> Self {
+        Self {
+            changed,
+            warning: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,7 +177,7 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
         )
     })?;
 
-    match source {
+    let mut installed = match source {
         ResolvedSource::Local(path) => {
             install_local(&root, &control, &records, &path, &user.disabled)
         }
@@ -138,7 +196,23 @@ pub(crate) fn install(request: InstallRequest) -> Result<InstalledExtension, Str
             let id = source_id.expect("linked source was validated");
             install_link(&root, &records, &path, &id, &user.disabled)
         }
-    }
+    }?;
+    installed.warning = announce_change(&installed.id, "installed");
+    Ok(installed)
+}
+
+/// Tell every running client that the installed set changed, so each reloads its extensions.
+///
+/// Bumps the store revision so other clients pick up the change. A bump failure is returned
+/// as a warning rather than converting a committed mutation into an apparent error.
+fn announce_change(id: &str, done: &str) -> Option<String> {
+    crate::config::extension_store_revision::bump()
+        .err()
+        .map(|error| {
+            format!(
+                "Extension `{id}` was {done}, but running clients were not told to reload: {error}"
+            )
+        })
 }
 
 pub(crate) fn installation_kind(id: &str) -> Option<InstallKind> {
@@ -151,6 +225,16 @@ pub(crate) fn installation_kind(id: &str) -> Option<InstallKind> {
 pub(crate) fn forget_installation_record(id: &str) -> Result<(), String> {
     crate::config::validate_extension_installation_id(id)?;
     remove_record(&crate::config::extensions_dir_path(), id)
+}
+
+/// Delete the installation at `path`, one entry of the extensions directory, whatever it declares.
+///
+/// This is how a caller that already resolved a single entry removes it, including one of several
+/// installations that declare the same ID. `label` names it in an error. Returns any notification
+/// warning if running clients could not be told to reload.
+pub(crate) fn remove_entry(path: &Path, label: &str) -> Result<Option<String>, String> {
+    crate::platform::extensions::remove_installation(&crate::config::extensions_dir_path(), path)?;
+    Ok(announce_change(label, "removed"))
 }
 
 /// Compares a Git installation with its remote HEAD. A moved HEAD is fetched shallowly, without a
@@ -223,6 +307,7 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
         return Ok(UpdatedExtension {
             id: id.to_string(),
             changed: false,
+            warning: None,
         });
     }
 
@@ -240,9 +325,11 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
             },
         },
     )?;
+    let warning = announce_change(id, "updated");
     Ok(UpdatedExtension {
         id: id.to_string(),
         changed: true,
+        warning,
     })
 }
 
@@ -363,11 +450,27 @@ pub(crate) fn remove(id: &str) -> Result<RemovedExtension, String> {
         .is_symlink();
 
     crate::platform::extensions::remove_installation(&root, &path)?;
-    remove_record(&root, id)?;
+    // The installation is gone whatever happens to its bookkeeping, so clients hear of it either way.
+    let cleanup_warning = forget_removed(&root, id, user.disabled).err();
+    let notify_warning = announce_change(id, "removed");
+    let warning = match (notify_warning, cleanup_warning) {
+        (Some(notify), Some(cleanup)) => Some(format!("{notify}\n{cleanup}")),
+        (Some(w), None) | (None, Some(w)) => Some(w),
+        (None, None) => None,
+    };
 
-    if user.disabled.iter().any(|candidate| candidate.trim() == id) {
-        let disabled = user
-            .disabled
+    Ok(RemovedExtension {
+        id: id.to_string(),
+        linked,
+        warning,
+    })
+}
+
+/// The bookkeeping that outlives a removed installation: its source record and any disabled entry.
+fn forget_removed(root: &Path, id: &str, disabled: Vec<String>) -> Result<(), String> {
+    remove_record(root, id)?;
+    if disabled.iter().any(|candidate| candidate.trim() == id) {
+        let disabled = disabled
             .into_iter()
             .filter(|candidate| candidate.trim() != id)
             .collect::<Vec<_>>();
@@ -375,11 +478,7 @@ pub(crate) fn remove(id: &str) -> Result<RemovedExtension, String> {
             format!("Extension `{id}` was removed, but its disabled config entry remains: {error}")
         })?;
     }
-
-    Ok(RemovedExtension {
-        id: id.to_string(),
-        linked,
-    })
+    Ok(())
 }
 
 fn ensure_storage_root(root: &Path) -> Result<(), String> {
@@ -554,6 +653,7 @@ fn complete_install(
         id,
         destination,
         kind,
+        warning: None,
     })
 }
 

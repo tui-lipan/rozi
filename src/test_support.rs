@@ -352,6 +352,14 @@ pub fn configured_app() -> crate::AppRoot {
     crate::AppRoot::configured_for_test(config, listener, guard)
 }
 
+/// Build the real configured root without a live control endpoint. Integration tests use this
+/// when startup tasks and extension filesystem watching are exercised, but no control requests
+/// need to be served.
+pub fn configured_app_without_control() -> crate::AppRoot {
+    let config = crate::config::load_config().config;
+    crate::AppRoot::configured_for_test_without_control(config)
+}
+
 /// Obtain a framework-created event for tests without constructing its non-exhaustive type.
 #[cfg(test)]
 pub(crate) fn forwarded_mouse(

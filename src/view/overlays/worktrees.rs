@@ -126,6 +126,7 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                 return Some(
                     ListItem::from_spans([Span::new(row.branch.clone()).style(branch_style)])
                         .description(REMOVING)
+                        .pointer_shape(PointerShape::Default)
                         .description_style(muted)
                         .description_spinner(crate::view::vocabulary::picker_circle_spinner(muted)),
                 );
@@ -147,7 +148,12 @@ pub(crate) fn worktree_overlay(ctx: &Context<AppRoot>) -> Element {
                     .description_spans(description)
                     .primary_truncate_description_first(false)
                     .primary_min_label_width(Length::Percent(40))
-                    .primary_description_gap(PICKER_DESCRIPTION_GAP),
+                    .primary_description_gap(PICKER_DESCRIPTION_GAP)
+                    .pointer_shape(if busy {
+                        PointerShape::Default
+                    } else {
+                        PointerShape::Pointer
+                    }),
             )
         });
     let empty = if let Some(error) = picker.error.as_deref() {
@@ -290,7 +296,12 @@ fn branch_picker(ctx: &Context<AppRoot>, form: &WorktreeFormState) -> Element {
             } else {
                 "Existing branch"
             })
-            .style(muted)]),
+            .style(muted)])
+            .pointer_shape(if checked_out {
+                PointerShape::Default
+            } else {
+                PointerShape::Pointer
+            }),
         )
     }))
     .on_query_change(

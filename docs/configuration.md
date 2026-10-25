@@ -113,7 +113,7 @@ session's panes.
 | `services` | On reload. Changed services restart, removed services stop, and unchanged services keep running. |
 | `agents` | On reload, in the controlled session server and the local scratch session. |
 | `extensions.disabled` | When the config file changes. |
-| Extension manifests | After `reload-extensions`. |
+| Extension manifests | Automatically on install, update, or removal; after `reload-extensions` for edited checkouts. |
 
 ## Invalid configuration
 

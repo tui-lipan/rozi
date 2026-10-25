@@ -143,6 +143,9 @@ pub enum Msg {
     PointerFlowTick(crate::state::PaneId),
     /// The config watcher saw `config.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
+    /// The installed extension set changed, from this client, another one, or the CLI; reload
+    /// extensions unless this client's last scan already saw the change.
+    ExtensionStoreChanged,
     /// Run one scheduled `WorkbarSegment::Command` refresh for the current configuration epoch.
     WorkbarCommandPoll {
         epoch: u64,

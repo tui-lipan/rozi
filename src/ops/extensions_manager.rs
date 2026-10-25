@@ -796,9 +796,9 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
             return Update::full();
         }
     };
-    if let Err(error) = crate::platform::extensions::remove_installation(
-        &crate::config::extensions_dir_path(),
+    if let Err(error) = crate::extension_installation::remove_entry(
         &path,
+        entry.id.as_deref().unwrap_or(&entry.path),
     ) {
         refresh(ctx, Some(row));
         notify_error(

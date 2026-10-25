@@ -117,7 +117,6 @@ fn write_scaffold(id: &str, destination: &Path, python: &PythonLaunch) -> Result
          ```bash\n\
          rozi extensions check .\n\
          rozi extensions install --link .\n\
-         rozi run-action reload-extensions\n\
          rozi extensions list --verbose\n\
          rozi run-action {id}.hello\n\
          ```\n\n\

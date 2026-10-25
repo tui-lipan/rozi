@@ -110,7 +110,7 @@ rozi extensions install https://github.com/user/rozi-git-tools.git
 rozi extensions install git@github.com:user/rozi-git-tools.git
 ```
 
-Then run `rozi run-action reload-extensions` in each running client that should load it.
+Running clients reload automatically when an extension is installed.
 
 `rozi` validates the extension before installing it. It copies a local directory and clones a Git
 repository into its own storage. In both cases it:
@@ -204,8 +204,7 @@ rozi extensions remove git-tools
 ```
 
 Removal deletes a copied extension or a `rozi`-owned Git clone. For a linked extension, it deletes
-only the symlink, never the checkout it points to. After a CLI removal, run
-`rozi run-action reload-extensions` in running clients.
+only the symlink, never the checkout it points to. Running clients reload automatically.
 
 Removal also deletes the extension's output logs. It keeps the files the extension saved in its
 [state directory](writing-extensions.md#keep-state), so reinstalling it picks up where it left
@@ -253,11 +252,10 @@ inactive. See [Keybindings](keybindings.md) for key notation.
 
 ```sh
 rozi extensions update git-tools
-rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
 
-A reload after an update restarts the extension's services, so they run the new files.
+Running clients reload automatically after an update and restart the extension's services, so they run the new files.
 
 The update clones the recorded remote into a staging area, validates it, and replaces the old
 checkout only if the new version is valid. It refuses to replace a checkout with local changes.
@@ -269,6 +267,6 @@ An outdated row shows `installed → latest`, using the version from the remote 
 short commit hash when the remote changed without changing its version. The report's **Update** row
 shows the same result, or the error when a remote could not be checked.
 
-On a row with a known update, `Ctrl+U` runs the same update as the CLI and reloads the current
-client when it succeeds. On any other Git-managed row, `Ctrl+U` checks the remote again. After a CLI
-update, reload explicitly, because `rozi` does not watch extension directories.
+On a row with a known update, `Ctrl+U` runs the same update as the CLI. On any other Git-managed
+row, `Ctrl+U` checks the remote again. Changes to linked checkouts still take an explicit
+`reload-extensions`, because `rozi` does not watch individual files inside checkouts.

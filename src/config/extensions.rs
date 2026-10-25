@@ -18,6 +18,7 @@ mod keybindings;
 mod manifest;
 mod paths;
 pub mod placement;
+pub mod revision;
 mod runtime;
 mod settings;
 mod validation;

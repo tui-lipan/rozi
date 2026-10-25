@@ -230,6 +230,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::HostTerminalColorsChanged => crate::ops::theme::host_terminal_colors_changed(ctx),
         Msg::ThemeTick => overlays::theme_tick(ctx),
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
+        Msg::ExtensionStoreChanged => crate::ops::config::extension_store_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
         Msg::AlertPulseTick => panes::alert_pulse_tick(ctx),

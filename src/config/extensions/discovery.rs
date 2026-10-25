@@ -25,7 +25,7 @@ pub(super) fn directories(root: &Path) -> (Vec<PathBuf>, Vec<String>) {
     for entry in entries {
         match entry {
             Ok(entry) => {
-                if entry.file_name() == ".rozi" {
+                if entry.file_name() == super::revision::CONTROL_DIRECTORY {
                     continue;
                 }
                 match entry.file_type() {

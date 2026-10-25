@@ -76,7 +76,7 @@ exclude = [
 # policy, and deferred named-media preparation.
 # Immutable media ownership needs the unreleased framework API. Replace this pinned git
 # dependency with registry 0.30.0 after its release, before publishing rozi.
-tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan.git", rev = "c2ba4d204dfa5ae902a4d30a3c94ab215f1056d4", features = [
+tui-lipan = { version = "0.29.0", git = "https://github.com/tui-lipan/tui-lipan.git", rev = "c2ba4d204dfa5ae902a4d30a3c94ab215f1056d4", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

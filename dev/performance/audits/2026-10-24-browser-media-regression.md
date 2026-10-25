@@ -596,3 +596,15 @@ strict Clippy, `cargo deny check licenses sources advisories bans`, `cargo audit
 `git diff --check`. Logs are `/tmp/rozi-review-root-check-0.log` through `-7.log`.
 A generated framework documentation source-line reference was refreshed in follow-up commit
 `0b641fe`; the Rozi dependency remains on the identical reviewed implementation at `c2ba4d2`.
+
+The framework PR's extended [macOS media job](https://github.com/tui-lipan/tui-lipan/actions/runs/40180175293/job/121129510200)
+passed all three test steps: POSIX shared memory, immutable-file import/lifetime and prepared media.
+This supplies the previously missing Apple compile and targeted media execution evidence, without
+claiming a macOS interactive visual review.
+
+The paired consumer is [Rozi #244](https://github.com/tui-lipan/rozi/pull/244). The git dependency
+also declares its current crate version, as Cargo requires for the package-size CI check.
+`cargo package --locked --no-verify --allow-dirty` passed locally, producing a 3.3 MiB compressed
+archive; this checks packaging only. A publishable Rozi build still requires released framework
+0.30.0 and removal of the temporary git source, as described above. Locked metadata confirms both
+framework crates resolve to the reviewed pushed commit.

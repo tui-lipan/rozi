@@ -238,10 +238,15 @@ Pane programs can show images with the Kitty graphics protocol. rozi displays th
 format the host terminal supports, including Kitty, iTerm2, sixel, or a text-cell fallback. Images
 scroll with the terminal and belong to the screen (main or alternate) they were drawn on.
 
+When a program redraws an image faster than a client can show it, such as a browser playing a
+video, rozi shows the most recent frame and skips the ones in between, so the picture stays current
+instead of falling behind. Over SSH, only the parts of an image that changed are sent, so a mostly
+still page costs a fraction of a full redraw.
+
 Limits:
 
-- Kitty protocol animation frames are not supported. Programs that redraw an image can still
-  animate it.
+- Kitty protocol animation frames are not supported, apart from edits to an image's first frame.
+  Programs that redraw an image can still animate it.
 - Each pane keeps up to 200 MiB of image data, and evicts the oldest images beyond that. A client
   that attaches to a running session receives the images still on screen.
 - A single image upload is limited to 64 MiB.

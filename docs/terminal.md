@@ -73,6 +73,12 @@ Ghostty is set to `3` and rozi to `3`, one notch scrolls nine lines, so lower on
 scrolling is too fast. A program that tracks the mouse, such as an editor, receives the wheel
 itself and scrolls by its own step.
 
+On terminals that support mouse pointer shapes, the pointer follows the pane application under
+the mouse, including an unfocused pane. Text selection uses a text pointer, clickable controls use
+a pointing hand, and split boundaries show resize arrows. Plain pane borders and title areas use
+the normal pointer. Moving a pane shows a grabbing hand, and resizing it shows diagonal arrows.
+Other terminals keep their usual pointer.
+
 rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
 the program does not fall behind. Presses, releases, and wheel events are always sent.
 

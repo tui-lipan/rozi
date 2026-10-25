@@ -1633,8 +1633,13 @@ pub(crate) fn pane_element(
     // whole-pane fade follows the lifecycle; animation gates choose timed or instant transitions.
     let animations = ctx.state.config.animations;
     let opacity = crate::layout::anim::pane_opacity_target(animations, pane);
+    let window_region = window_region.child(window_stack);
+    let window_region = match pane_gesture_pointer(&ctx.state, id, prefix_active) {
+        Some(shape) => window_region.pointer_shape(shape),
+        None => window_region.into(),
+    };
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
-        .child(window_region.child(window_stack))
+        .child(window_region)
         .into();
     let pane_tree = pane_reveal_scope(
         pane_tree,
@@ -1663,6 +1668,32 @@ pub(crate) fn pane_element(
     let element: Element = animated.into();
 
     element.key(pane_window_key(id, pane.pty_generation))
+}
+
+/// Pointer feedback for the pane gesture Rozi currently owns.
+fn pane_gesture_pointer(
+    state: &crate::state::State,
+    id: PaneId,
+    prefix_active: bool,
+) -> Option<PointerShape> {
+    if state.moving_pane.is_some_and(|session| session.id == id) {
+        return Some(PointerShape::Grabbing);
+    }
+    if let Some(session) = state
+        .resizing_pane
+        .as_ref()
+        .filter(|session| session.id == id)
+    {
+        return Some(match session.corner {
+            crate::state::ResizeCorner::UpperLeft | crate::state::ResizeCorner::LowerRight => {
+                PointerShape::NwseResize
+            }
+            crate::state::ResizeCorner::UpperRight | crate::state::ResizeCorner::LowerLeft => {
+                PointerShape::NeswResize
+            }
+        });
+    }
+    prefix_active.then_some(PointerShape::Grab)
 }
 
 /// Whether the pane's open or close animation is over, so a screenshot flash may take its
@@ -2198,7 +2229,11 @@ fn resize_strip_element(
         }))
         .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
-        .into()
+        .pointer_shape(if horizontal_split {
+            PointerShape::EwResize
+        } else {
+            PointerShape::NsResize
+        })
 }
 
 fn resize_junction_element(
@@ -2251,7 +2286,7 @@ fn resize_junction_element(
         }))
         .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
-        .into()
+        .pointer_shape(PointerShape::Move)
 }
 
 /// Pane representatives for the horizontal and vertical splits a junction drag moves, chosen from

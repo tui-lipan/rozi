@@ -1685,12 +1685,10 @@ fn pane_gesture_pointer(
         .filter(|session| session.id == id)
     {
         return Some(match session.corner {
-            crate::state::ResizeCorner::UpperLeft | crate::state::ResizeCorner::LowerRight => {
-                PointerShape::NwseResize
-            }
-            crate::state::ResizeCorner::UpperRight | crate::state::ResizeCorner::LowerLeft => {
-                PointerShape::NeswResize
-            }
+            crate::state::ResizeCorner::UpperLeft => PointerShape::NwResize,
+            crate::state::ResizeCorner::UpperRight => PointerShape::NeResize,
+            crate::state::ResizeCorner::LowerLeft => PointerShape::SwResize,
+            crate::state::ResizeCorner::LowerRight => PointerShape::SeResize,
         });
     }
     prefix_active.then_some(PointerShape::Grab)

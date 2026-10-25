@@ -47,6 +47,7 @@ pub(super) fn sidebar(
     let panels: Element = if indices.len() > 1 {
         let divider_style = Style::new().fg(fill.elevate_by(0.15)).bg(fill);
         let mut splitter = Splitter::horizontal()
+            .handle_pointer_shape(PointerShape::NsResize)
             .split_id(split_id)
             .weights(weights)
             .weights_nonce(nonce)
@@ -173,6 +174,7 @@ pub(super) fn docking_shell(
         ],
     );
     let mut splitter = Splitter::vertical()
+        .handle_pointer_shape(PointerShape::EwResize)
         .split_id("rozi-sidebar-shell")
         .weights(weights)
         .weights_nonce(nonce)

@@ -289,3 +289,68 @@ fn pane_chrome_does_not_keep_the_childs_hand_pointer() {
         );
     });
 }
+
+#[test]
+fn pane_resize_pointers_distinguish_all_four_corners() {
+    on_large_stack(|| {
+        use rozi::state::{LayoutTarget, ResizeCorner, ResizeSession};
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        for (corner, expected) in [
+            (ResizeCorner::UpperLeft, PointerShape::NwResize),
+            (ResizeCorner::UpperRight, PointerShape::NeResize),
+            (ResizeCorner::LowerLeft, PointerShape::SwResize),
+            (ResizeCorner::LowerRight, PointerShape::SeResize),
+        ] {
+            backend.state_mut().resizing_pane = Some(ResizeSession {
+                id: PANE,
+                corner,
+                workspace: LayoutTarget::Workspace(0),
+                start_x: 15,
+                start_y: 12,
+                start_tile_tree: None,
+                start_split_ratios: Vec::new(),
+                start_floating_rect: None,
+                start_scrollable_width: None,
+                start_scratch_height: None,
+            });
+            backend.render();
+            assert_eq!(backend.pointer_shape_at(15, 12), Some(expected));
+            assert_eq!(backend.pointer_shape_at(65, 12), Some(PointerShape::Text));
+        }
+        backend.state_mut().resizing_pane = None;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}
+
+#[test]
+fn moving_pane_requests_grabbing_and_restores_text_after_release() {
+    on_large_stack(|| {
+        use rozi::state::MoveSession;
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.state_mut().moving_pane = Some(MoveSession {
+            id: PANE,
+            was_floating: false,
+            drag_rect: FloatRect {
+                x: 0.0,
+                y: 1.0,
+                w: 40.0,
+                h: 23.0,
+            },
+            pointer_x: 15,
+            pointer_y: 12,
+        });
+        backend.render();
+        assert_eq!(
+            backend.pointer_shape_at(15, 12),
+            Some(PointerShape::Grabbing)
+        );
+        backend.state_mut().moving_pane = None;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}

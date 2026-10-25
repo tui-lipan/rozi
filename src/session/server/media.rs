@@ -14,6 +14,8 @@ pub(super) struct MediaPipeline {
     stage_key: Option<MediaKey>,
     output: Option<PendingMediaOutput>,
     client_barriers: HashMap<ClientId, usize>,
+    /// Event-queue wakes already observed when completion was last polled.
+    pub(super) seen_wakes: u64,
 }
 
 const MEDIA_OUTPUT_BYTES_PER_TICK: usize = 256 * 1024;
@@ -34,7 +36,9 @@ impl PendingMediaOutput {
             let remaining = front.bytes.len() - self.offset;
             // A graphics replacement stays atomic. Splitting its independence metadata would
             // allow a downstream coalescer to discard pieces of the same transmission.
-            let length = if front.class == tui_lipan::TerminalOutputClass::Ordered {
+            let length = if front.class == tui_lipan::TerminalOutputClass::Ordered
+                && front.media.is_empty()
+            {
                 remaining.min(budget)
             } else {
                 remaining
@@ -43,6 +47,7 @@ impl PendingMediaOutput {
                 self.transactions.pop_front().expect("pending output")
             } else {
                 let transaction = tui_lipan::TerminalOutputTransaction {
+                    media: Vec::new(),
                     class: front.class,
                     bytes: front.bytes[self.offset..self.offset + length].to_vec(),
                 };
@@ -67,7 +72,8 @@ struct MediaWorker {
 }
 
 impl MediaWorker {
-    fn new() -> io::Result<Self> {
+    /// `events` is woken after each result, so the server commits it without polling.
+    fn new(events: Arc<ByteQueue<ServerEvent>>) -> io::Result<Self> {
         let (jobs, incoming) = mpsc::sync_channel::<TerminalMediaWork>(1);
         let (completed, results) = mpsc::sync_channel(1);
         let handle = std::thread::Builder::new()
@@ -77,6 +83,7 @@ impl MediaWorker {
                     if completed.send(work.run()).is_err() {
                         break;
                     }
+                    events.wake();
                 }
             })?;
         Ok(Self {
@@ -101,6 +108,12 @@ impl Drop for MediaWorker {
 }
 
 impl MediaPipeline {
+    pub(super) fn has_named_output(&self) -> bool {
+        self.output
+            .as_ref()
+            .is_some_and(|o| o.transactions.iter().any(|t| !t.media.is_empty()))
+    }
+
     pub(super) fn client_fenced(&self, client_id: ClientId) -> bool {
         self.client_barriers.contains_key(&client_id)
     }
@@ -109,12 +122,17 @@ impl MediaPipeline {
         self.active.is_some()
     }
 
-    fn start(&mut self, key: MediaKey, work: TerminalMediaWork) -> bool {
+    fn start(
+        &mut self,
+        events: &Arc<ByteQueue<ServerEvent>>,
+        key: MediaKey,
+        work: TerminalMediaWork,
+    ) -> bool {
         if self.active.is_some() {
             return false;
         }
         if self.worker.is_none() {
-            match MediaWorker::new() {
+            match MediaWorker::new(Arc::clone(events)) {
                 Ok(worker) => self.worker = Some(worker),
                 Err(error) => {
                     eprintln!("rozi: cannot start media worker: {error}");
@@ -204,7 +222,8 @@ impl MediaPipeline {
         Some((key, batch, continuation))
     }
 
-    fn poll(&mut self, relay: tui_lipan::GraphicsRelayPolicy) {
+    fn poll(&mut self, relay: tui_lipan::GraphicsRelayPolicy, wakes: u64) {
+        self.seen_wakes = wakes;
         if self.output.is_some() || self.stage_key.is_some() {
             return;
         }
@@ -243,7 +262,7 @@ impl MediaPipeline {
 impl SessionServer {
     pub(super) fn poll_media(&mut self) {
         let relay = self.image_media().relay;
-        self.media.poll(relay);
+        self.media.poll(relay, self.events.wakes());
         if let Some(key) = self.media.active
             && self
                 .pane(key.0, key.1)
@@ -355,7 +374,8 @@ impl SessionServer {
         let Some(work) = work else {
             return true;
         };
-        self.media.start(key, work)
+        let events = Arc::clone(&self.events);
+        self.media.start(&events, key, work)
     }
 
     /// Parser mutations wait only for the exact screen being prepared/emitted. Layout commits
@@ -484,6 +504,34 @@ mod tests {
     use base64::Engine as _;
 
     #[test]
+    fn ordered_media_envelope_is_not_split_at_the_emission_budget() {
+        let source = tempfile::NamedTempFile::new().unwrap();
+        fs::write(source.path(), [1, 2, 3, 255]).unwrap();
+        let file = tui_lipan::TerminalImmutableFile::acquire(source.path(), 4, 32).unwrap();
+        let mut bytes = vec![b'x'; MEDIA_OUTPUT_BYTES_PER_TICK - 2];
+        let start = bytes.len();
+        bytes.extend_from_slice(b"\x1b_Ga=T,t=f,f=32,s=1,v=1;immutable\x1b\\");
+        let end = bytes.len();
+        let mut output = PendingMediaOutput {
+            offset: 0,
+            transactions: vec![tui_lipan::TerminalOutputTransaction {
+                class: tui_lipan::TerminalOutputClass::Ordered,
+                bytes,
+                media: vec![tui_lipan::TerminalOutputMedia {
+                    command_range: start..end,
+                    file,
+                }],
+            }]
+            .into(),
+        };
+        let batch = output.take_batch();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].bytes.len(), end);
+        assert_eq!(batch[0].media[0].command_range, start..end);
+        assert!(output.transactions.is_empty());
+    }
+
+    #[test]
     fn worker_consumes_a_source_once_and_relays_owned_pixels_to_readers_and_replay() {
         let server =
             SessionServer::new_named_with_settings("media-worker", ServerSettings::default());
@@ -505,12 +553,15 @@ mod tests {
             .expect("named media preparation");
         let key = (None, 7, 1);
         let mut pipeline = MediaPipeline::default();
-        assert!(!pipeline.start(key, work));
+        let events = Arc::new(ByteQueue::new(1024));
+        pipeline.seen_wakes = events.wakes();
+        assert!(!pipeline.start(&events, key, work));
+        // Completion interrupts the wait; a lost wake would leave each round to its timeout.
         let deadline = Instant::now() + Duration::from_secs(5);
         while pipeline.ready_length(key).is_none() {
-            pipeline.poll(policy.relay);
-            assert!(Instant::now() < deadline, "worker did not finish");
-            std::thread::yield_now();
+            events.wait_for_change(pipeline.seen_wakes, Duration::from_secs(5));
+            pipeline.poll(policy.relay, events.wakes());
+            assert!(Instant::now() < deadline, "worker did not wake the server");
         }
         source
             .process_prepared_media_input(pipeline.take_ready(key).unwrap())

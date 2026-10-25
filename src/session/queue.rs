@@ -1,12 +1,27 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MediaWeight {
+    pub(crate) bytes: usize,
+    pub(crate) files: usize,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct QueueStats {
     pub(crate) bytes: usize,
     pub(crate) high_water_bytes: usize,
     pub(crate) capacity: usize,
+    #[cfg(test)]
+    pub(crate) media_bytes: usize,
+    #[cfg(test)]
+    pub(crate) high_water_media_bytes: usize,
+    #[cfg(test)]
+    pub(crate) media_files: usize,
+    #[cfg(test)]
+    pub(crate) high_water_media_files: usize,
     pub(crate) len: usize,
     pub(crate) closed: bool,
     pub(crate) coalesced_frames: u64,
@@ -41,6 +56,7 @@ pub(crate) struct ReplacementKey {
 struct Entry<T> {
     value: T,
     bytes: usize,
+    media: MediaWeight,
     replacement: Option<ReplacementKey>,
 }
 
@@ -52,7 +68,12 @@ struct State<T> {
     coalesced_bytes: u64,
     bytes: usize,
     high_water_bytes: usize,
+    media_bytes: usize,
+    high_water_media_bytes: usize,
+    media_files: usize,
+    high_water_media_files: usize,
     closed: bool,
+    wakes: u64,
 }
 
 impl<T> State<T> {
@@ -64,6 +85,32 @@ impl<T> State<T> {
         }
         self.base += 1;
     }
+
+    fn replacement_index(&self, key: Option<ReplacementKey>) -> Option<usize> {
+        key.and_then(|key| self.replacements.get(&key).copied())
+            .and_then(|index| index.checked_sub(self.base))
+            .and_then(|index| usize::try_from(index).ok())
+    }
+
+    fn replacement_weight(&self, key: Option<ReplacementKey>) -> (usize, MediaWeight) {
+        self.replacement_index(key)
+            .and_then(|index| self.entries.get(index))
+            .map_or((0, MediaWeight::default()), |entry| {
+                (entry.bytes, entry.media)
+            })
+    }
+
+    fn subtract_entry_weight(&mut self, entry: &Entry<T>) {
+        self.bytes -= entry.bytes;
+        self.media_bytes -= entry.media.bytes;
+        self.media_files -= entry.media.files;
+    }
+
+    fn record_high_water(&mut self) {
+        self.high_water_bytes = self.high_water_bytes.max(self.bytes);
+        self.high_water_media_bytes = self.high_water_media_bytes.max(self.media_bytes);
+        self.high_water_media_files = self.high_water_media_files.max(self.media_files);
+    }
 }
 
 /// FIFO queue bounded by retained payload bytes rather than message count.
@@ -73,14 +120,26 @@ impl<T> State<T> {
 /// blocked producers and consumers.
 pub(crate) struct ByteQueue<T> {
     capacity: usize,
+    media_bytes: usize,
+    media_files: usize,
     state: Mutex<State<T>>,
     changed: Condvar,
 }
 
 impl<T> ByteQueue<T> {
     pub(crate) fn new(capacity: usize) -> Self {
+        Self::with_media_limits(capacity, 0, 0)
+    }
+
+    pub(crate) fn with_media_limits(
+        capacity: usize,
+        media_bytes: usize,
+        media_files: usize,
+    ) -> Self {
         Self {
             capacity,
+            media_bytes,
+            media_files,
             state: Mutex::new(State {
                 entries: VecDeque::new(),
                 base: 0,
@@ -89,10 +148,69 @@ impl<T> ByteQueue<T> {
                 coalesced_bytes: 0,
                 bytes: 0,
                 high_water_bytes: 0,
+                media_bytes: 0,
+                high_water_media_bytes: 0,
+                media_files: 0,
+                high_water_media_files: 0,
                 closed: false,
+                wakes: 0,
             }),
             changed: Condvar::new(),
         }
+    }
+
+    pub(crate) fn exceeds_entry_limits(&self, bytes: usize, media: MediaWeight) -> bool {
+        bytes > self.capacity || media.bytes > self.media_bytes || media.files > self.media_files
+    }
+
+    fn fits_in_state(
+        &self,
+        state: &State<T>,
+        bytes: usize,
+        media: MediaWeight,
+        previous: (usize, MediaWeight),
+    ) -> bool {
+        state.bytes.saturating_sub(previous.0).saturating_add(bytes) <= self.capacity
+            && state
+                .media_bytes
+                .saturating_sub(previous.1.bytes)
+                .saturating_add(media.bytes)
+                <= self.media_bytes
+            && state
+                .media_files
+                .saturating_sub(previous.1.files)
+                .saturating_add(media.files)
+                <= self.media_files
+    }
+
+    /// Block until an entry with `(bytes, media)` and optional `key` can be inserted, or until the
+    /// queue closes or `shutdown_signal` is raised.
+    pub(crate) fn wait_for_capacity(
+        &self,
+        bytes: usize,
+        media: MediaWeight,
+        key: Option<ReplacementKey>,
+        shutdown_signal: Option<&AtomicBool>,
+    ) -> Result<(), PushError<()>> {
+        if self.exceeds_entry_limits(bytes, media) {
+            return Err(PushError::TooLarge(()));
+        }
+        let state = self.state.lock().expect("byte queue poisoned");
+        let state = self
+            .changed
+            .wait_while(state, |state| {
+                let shutting_down =
+                    shutdown_signal.is_some_and(|signal| signal.load(Ordering::Acquire));
+                let previous = state.replacement_weight(key);
+                !state.closed
+                    && !shutting_down
+                    && !self.fits_in_state(state, bytes, media, previous)
+            })
+            .expect("byte queue poisoned");
+        if state.closed || shutdown_signal.is_some_and(|signal| signal.load(Ordering::Acquire)) {
+            return Err(PushError::Closed(()));
+        }
+        Ok(())
     }
 
     /// A replay/reset is a dependency barrier even when the server's producer epoch is unchanged.
@@ -137,58 +255,75 @@ impl<T> ByteQueue<T> {
         {
             back.bytes += bytes;
             state.bytes += bytes;
-            state.high_water_bytes = state.high_water_bytes.max(state.bytes);
+            state.record_high_water();
             self.changed.notify_all();
             return Ok(());
         }
         state.entries.push_back(Entry {
             value,
             bytes,
+            media: MediaWeight::default(),
             replacement: None,
         });
         state.bytes += bytes;
-        state.high_water_bytes = state.high_water_bytes.max(state.bytes);
+        state.record_high_water();
         self.changed.notify_all();
         Ok(())
     }
 
     /// Supersede pending independent state in O(1), accounting for reclaimed bytes before
     /// applying capacity. This never merges bytes or replaces an ordered entry.
+    #[cfg(test)]
     pub(crate) fn try_push_latest(
         &self,
         value: T,
         bytes: usize,
         key: Option<ReplacementKey>,
     ) -> Result<(), PushError<T>> {
-        if bytes > self.capacity {
+        self.try_push_latest_media(value, bytes, MediaWeight::default(), key)
+    }
+
+    pub(crate) fn try_push_latest_media(
+        &self,
+        value: T,
+        bytes: usize,
+        media: MediaWeight,
+        key: Option<ReplacementKey>,
+    ) -> Result<(), PushError<T>> {
+        if self.exceeds_entry_limits(bytes, media) {
             return Err(PushError::TooLarge(value));
         }
         let mut state = self.state.lock().expect("byte queue poisoned");
         if state.closed {
             return Err(PushError::Closed(value));
         }
-        let index = key
-            .and_then(|key| state.replacements.get(&key).copied())
-            .and_then(|index| index.checked_sub(state.base))
-            .and_then(|index| usize::try_from(index).ok());
-        let previous_bytes = index
+        let index = state.replacement_index(key);
+        let previous = index
             .and_then(|index| state.entries.get(index))
-            .map_or(0, |entry| entry.bytes);
-        let retained = state
-            .bytes
-            .saturating_sub(previous_bytes)
-            .saturating_add(bytes);
-        if retained > self.capacity {
+            .map_or((0, MediaWeight::default()), |entry| {
+                (entry.bytes, entry.media)
+            });
+        if !self.fits_in_state(&state, bytes, media, previous) {
             return Err(PushError::Full(value));
         }
+        let retained = state.bytes.saturating_sub(previous.0).saturating_add(bytes);
+        let retained_media_bytes = state
+            .media_bytes
+            .saturating_sub(previous.1.bytes)
+            .saturating_add(media.bytes);
+        let retained_media_files = state
+            .media_files
+            .saturating_sub(previous.1.files)
+            .saturating_add(media.files);
         if let Some(entry) = index.and_then(|index| state.entries.get_mut(index)) {
             *entry = Entry {
                 value,
                 bytes,
+                media,
                 replacement: key,
             };
             state.coalesced_frames += 1;
-            state.coalesced_bytes += previous_bytes as u64;
+            state.coalesced_bytes += previous.0 as u64;
         } else {
             if let Some(key) = key {
                 let position = state.base + state.entries.len() as u64;
@@ -197,23 +332,27 @@ impl<T> ByteQueue<T> {
             state.entries.push_back(Entry {
                 value,
                 bytes,
+                media,
                 replacement: key,
             });
         }
         state.bytes = retained;
-        state.high_water_bytes = state.high_water_bytes.max(retained);
+        state.media_bytes = retained_media_bytes;
+        state.media_files = retained_media_files;
+        state.record_high_water();
         self.changed.notify_all();
         Ok(())
     }
 
-    pub(crate) fn push_blocking_latest(
+    pub(crate) fn push_blocking_latest_media(
         &self,
         mut value: T,
         bytes: usize,
+        media: MediaWeight,
         key: ReplacementKey,
     ) -> Result<(), PushError<T>> {
         loop {
-            match self.try_push_latest(value, bytes, Some(key)) {
+            match self.try_push_latest_media(value, bytes, media, Some(key)) {
                 Err(PushError::Full(returned)) => value = returned,
                 result => return result,
             }
@@ -221,15 +360,8 @@ impl<T> ByteQueue<T> {
             let _state = self
                 .changed
                 .wait_while(state, |state| {
-                    let previous = state
-                        .replacements
-                        .get(&key)
-                        .and_then(|position| position.checked_sub(state.base))
-                        .and_then(|position| state.entries.get(position as usize))
-                        .map_or(0, |entry| entry.bytes);
-                    !state.closed
-                        && state.bytes.saturating_sub(previous).saturating_add(bytes)
-                            > self.capacity
+                    let previous = state.replacement_weight(Some(key));
+                    !state.closed && !self.fits_in_state(state, bytes, media, previous)
                 })
                 .expect("byte queue poisoned");
         }
@@ -264,13 +396,25 @@ impl<T> ByteQueue<T> {
         &self,
         value: T,
         bytes: usize,
+        coalesce: impl FnMut(&mut T, &T, bool) -> SegmentCoalesce,
+    ) -> Result<(), PushError<T>> {
+        self.push_blocking_within_segment_media(value, bytes, MediaWeight::default(), coalesce)
+    }
+
+    pub(crate) fn push_blocking_within_segment_media(
+        &self,
+        value: T,
+        bytes: usize,
+        media: MediaWeight,
         mut coalesce: impl FnMut(&mut T, &T, bool) -> SegmentCoalesce,
     ) -> Result<(), PushError<T>> {
-        if bytes > self.capacity {
+        if self.exceeds_entry_limits(bytes, media) {
             return Err(PushError::TooLarge(value));
         }
         let mut state = self.state.lock().expect("byte queue poisoned");
-        while !state.closed && state.bytes.saturating_add(bytes) > self.capacity {
+        while !state.closed
+            && !self.fits_in_state(&state, bytes, media, (0, MediaWeight::default()))
+        {
             state = self.changed.wait(state).expect("byte queue poisoned");
         }
         if state.closed {
@@ -282,6 +426,8 @@ impl<T> ByteQueue<T> {
             match coalesce(&mut entry.value, &value, offset == 0) {
                 SegmentCoalesce::Merged => {
                     entry.bytes += bytes;
+                    entry.media.bytes += media.bytes;
+                    entry.media.files += media.files;
                     merged = true;
                     break;
                 }
@@ -289,20 +435,18 @@ impl<T> ByteQueue<T> {
                 SegmentCoalesce::Barrier => break,
             }
         }
-        if merged {
-            state.bytes += bytes;
-            state.high_water_bytes = state.high_water_bytes.max(state.bytes);
-            self.changed.notify_all();
-            return Ok(());
+        if !merged {
+            state.entries.push_back(Entry {
+                value,
+                bytes,
+                media,
+                replacement: None,
+            });
         }
-
-        state.entries.push_back(Entry {
-            value,
-            bytes,
-            replacement: None,
-        });
         state.bytes += bytes;
-        state.high_water_bytes = state.high_water_bytes.max(state.bytes);
+        state.media_bytes += media.bytes;
+        state.media_files += media.files;
+        state.record_high_water();
         self.changed.notify_all();
         Ok(())
     }
@@ -317,7 +461,7 @@ impl<T> ByteQueue<T> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         let entry = state.entries.pop_front()?;
         state.remove_front_index(&entry);
-        state.bytes -= entry.bytes;
+        state.subtract_entry_weight(&entry);
         let has_more = !state.entries.is_empty();
         self.changed.notify_all();
         Some((entry.value, entry.bytes, has_more))
@@ -333,7 +477,7 @@ impl<T> ByteQueue<T> {
         let mut state = self.state.lock().expect("byte queue poisoned");
         let index = state.entries.iter().position(|entry| ready(&entry.value))?;
         let entry = state.entries.remove(index)?;
-        state.bytes -= entry.bytes;
+        state.subtract_entry_weight(&entry);
         if index == 0 {
             state.base += 1;
         }
@@ -344,6 +488,7 @@ impl<T> ByteQueue<T> {
                 Entry {
                     value,
                     bytes,
+                    media: MediaWeight::default(),
                     replacement: None,
                 },
             );
@@ -365,9 +510,25 @@ impl<T> ByteQueue<T> {
         Some(value)
     }
 
-    /// Wait for activity even when every queued stream is blocked on deferred work.
-    pub(crate) fn wait_for_change(&self, timeout: Duration) {
+    /// Interrupt a consumer waiting for work that finishes outside this queue.
+    pub(crate) fn wake(&self) {
+        self.state.lock().expect("byte queue poisoned").wakes += 1;
+        self.changed.notify_all();
+    }
+
+    /// Number of [`Self::wake`] calls so far. Read it before checking the outside work.
+    pub(crate) fn wakes(&self) -> u64 {
+        self.state.lock().expect("byte queue poisoned").wakes
+    }
+
+    /// Wait for activity even when every queued stream is blocked on deferred work: until the
+    /// queue changes, a wake arrives, or `timeout` elapses. Returns immediately if a wake arrived
+    /// after `seen` was read.
+    pub(crate) fn wait_for_change(&self, seen: u64, timeout: Duration) {
         let state = self.state.lock().expect("byte queue poisoned");
+        if state.wakes != seen {
+            return;
+        }
         let _ = self
             .changed
             .wait_timeout(state, timeout)
@@ -379,7 +540,7 @@ impl<T> ByteQueue<T> {
         loop {
             if let Some(entry) = state.entries.pop_front() {
                 state.remove_front_index(&entry);
-                state.bytes -= entry.bytes;
+                state.subtract_entry_weight(&entry);
                 self.changed.notify_all();
                 return Some(entry.value);
             }
@@ -429,6 +590,14 @@ impl<T> ByteQueue<T> {
             bytes: state.bytes,
             high_water_bytes: state.high_water_bytes,
             capacity: self.capacity,
+            #[cfg(test)]
+            media_bytes: state.media_bytes,
+            #[cfg(test)]
+            high_water_media_bytes: state.high_water_media_bytes,
+            #[cfg(test)]
+            media_files: state.media_files,
+            #[cfg(test)]
+            high_water_media_files: state.high_water_media_files,
             len: state.entries.len(),
             closed: state.closed,
             coalesced_frames: state.coalesced_frames,
@@ -697,5 +866,48 @@ mod tests {
         producer.join().unwrap();
         assert_eq!(actual, expected);
         assert!(queue.stats().high_water_bytes <= 32);
+    }
+
+    #[test]
+    fn media_bounds_track_replacements_and_backpressure_distinct_entries() {
+        let queue = Arc::new(ByteQueue::with_media_limits(1024, 64, 2));
+        let media = MediaWeight {
+            bytes: 32,
+            files: 1,
+        };
+        for frame in 0..10 {
+            queue
+                .try_push_latest_media(frame, 1, media, Some(replacement(7, 0)))
+                .unwrap();
+        }
+        assert_eq!(queue.stats().media_bytes, 32);
+        assert_eq!(queue.stats().media_files, 1);
+        queue
+            .try_push_latest_media(10, 1, media, Some(replacement(8, 0)))
+            .unwrap();
+        assert_eq!(queue.stats().media_bytes, 64);
+        assert_eq!(queue.stats().media_files, 2);
+        assert_eq!(
+            queue.try_push_latest_media(11, 1, media, Some(replacement(9, 0))),
+            Err(PushError::Full(11))
+        );
+        assert_eq!(
+            queue.try_push_latest_media(
+                12,
+                1,
+                MediaWeight {
+                    bytes: 65,
+                    files: 1
+                },
+                Some(replacement(9, 0)),
+            ),
+            Err(PushError::TooLarge(12))
+        );
+        assert_eq!(queue.try_pop(), Some(9));
+        assert_eq!(queue.stats().media_bytes, 32);
+        assert_eq!(queue.stats().media_files, 1);
+        assert_eq!(queue.try_pop(), Some(10));
+        assert_eq!(queue.stats().media_bytes, 0);
+        assert_eq!(queue.stats().media_files, 0);
     }
 }

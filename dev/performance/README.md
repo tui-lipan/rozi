@@ -4,7 +4,7 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest report is [Graphics resize latency, 2026-10-14](audits/2026-10-14-graphics-resize.md).
+The latest measurements are [immutable media adoption, 2026-10-25](audits/2026-10-24-browser-media-regression.md#final-build-adoption-v2).
 The preceding [graphics pipeline acceptance](audits/2026-10-14-graphics-pipeline.md) records the
 broader rendering work.
 
@@ -15,6 +15,8 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-10-25 | `9f914739` and framework `a9a1005` with recorded adoption-v2 changes and source hashes | about 60 frames/s; combined plain/noise CPU 9.9–10.4% / 11.1–11.75%, below pre-#241; client pixel reads removed, shared snapshot storage lower; local raw-media fairness improves, inline tails vary; strict RSS parity remains unmet in some cases; registry framework 0.30.0 integrated | [Immutable adoption and acquisition watermarks](audits/2026-10-24-browser-media-regression.md#final-build-adoption-v2) |
+| 2026-10-24 | `3a07e529` versus `9f914739`, both with framework 0.29.0; fix on `9f914739` with an unreleased framework change | automatic shared-memory negotiation raised combined Rozi video CPU from 12–13% to 110% of one core and forced files dropped to 49.6 frames/s; snapshot relay and worker wakeup restore 59.8 frames/s at 16.4–16.9%, and 59.6 instead of 34.7 frames/s on incompressible video | [Browser consuming-media regression](audits/2026-10-24-browser-media-regression.md) |
 | 2026-10-14 | `a6ba03fc` with framework `113ac1b` plus local resize fixes | resize upload gap falls from 183.5 ms to 17.0 ms at 60 Hz and 6.9 ms at 240 Hz; static native pictures survive resize and match composed pixels | [Graphics resize latency](audits/2026-10-14-graphics-resize.md) |
 | 2026-10-14 | `c31f5499` with framework `49ae792`; composed fix `746eaa2` | every client frame presented at 60–240 Hz (baseline dropped 3–9%, browser patches up to 64%); host traffic 11–133× lower; five pipeline defects fixed during the audit; TuiOS capped near 60 frames/s in comparison | [Graphics pipeline acceptance](audits/2026-10-14-graphics-pipeline.md) |
 | 2026-10-11 | `60742a5a` with framework `f1e6085b` and `81392dec` | direct placement reduces generated-workload composition; Raffles lookup fix reduces client CPU by 55%; shipped in framework 0.22.2; generated file-reuse limitation recorded in audit | [Native Kitty patch forwarding](audits/2026-10-11-native-kitty-patches.md) |

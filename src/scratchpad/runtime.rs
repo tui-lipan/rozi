@@ -174,6 +174,7 @@ mod tests {
         let message = message_for_frame(
             41,
             Frame::PaneOutput {
+                media: None,
                 metadata: crate::session::protocol::OutputMetadata::default(),
                 pane_id: 7,
                 local: true,
@@ -185,6 +186,7 @@ mod tests {
         assert!(matches!(
             message,
             crate::Msg::SessionOutput {
+                media: None,
                 metadata: _,
                 epoch: 41,
                 pane_id: 7,

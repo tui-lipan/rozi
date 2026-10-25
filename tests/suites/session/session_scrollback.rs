@@ -119,6 +119,7 @@ fn attach_replay(
             local: false,
             generation: GENERATION,
             metadata: _,
+            media: _,
             bytes,
         } = frame
         {

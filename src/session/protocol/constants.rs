@@ -8,7 +8,7 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 38;
+pub const PROTOCOL_VERSION: u32 = 39;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
@@ -43,11 +43,17 @@ pub(crate) const FRAME_KIND_PANE_INPUT: u8 = 3;
 
 pub(crate) const FRAME_KIND_PRESENTATION_ACK: u8 = 4;
 pub(crate) const FRAME_KIND_PRESENTATION_INTEREST: u8 = 5;
-pub(crate) const PANE_OUTPUT_METADATA_LEN: usize = 37;
+pub(crate) const PANE_OUTPUT_SEMANTICS_LEN: usize = 37;
+pub(crate) const PANE_OUTPUT_ACQUISITION_OFFSET: usize =
+    PANE_FRAME_OVERHEAD + PANE_OUTPUT_SEMANTICS_LEN;
+pub(crate) const PANE_OUTPUT_METADATA_LEN: usize =
+    PANE_OUTPUT_SEMANTICS_LEN + size_of::<u64>() + size_of::<u32>();
 
-/// Complete v30 output frame overhead including semantic metadata.
+/// Output frame overhead including semantics and the acquisition header, excluding file bindings.
 pub const PANE_OUTPUT_FRAME_OVERHEAD: usize = PANE_FRAME_OVERHEAD + PANE_OUTPUT_METADATA_LEN;
 
 /// Regular-file attachment limits; chunks are base64 inside bounded control frames.
 pub const MAX_ATTACHMENT_BYTES: u64 = 16 * 1024 * 1024;
 pub const ATTACHMENT_CHUNK_BYTES: usize = 256 * 1024;
+
+pub(crate) const FRAME_KIND_ACQUISITION_ACK: u8 = 6;

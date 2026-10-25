@@ -443,6 +443,25 @@ python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
   --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 auto generated"
 ```
 
+A small animated page understates full-frame cost. For sustained browser video, generate a fixture
+with `tools/graphics-video.sh DIRECTORY plain|noise` before measuring, serve it over loopback and
+pass its URL. `plain` compresses well; `noise` is close to incompressible and is the case where any
+per-frame compression or copy shows up. Measure each Rozi build with terminal-browser's automatic
+transport, then again with `TERMINAL_BROWSER_FRAMES=file` in the runner's environment: the browser
+prefers shared memory, so the two take different server paths. `TERMINAL_BROWSER_PRESENT` selects
+presentation and does not change transport. Compare client and server CPU, client frames written
+per second and frame-interval percentiles at the same producer viewport; record the scene's
+SHA-256, because realtime VP9 encoding can differ between FFmpeg builds.
+
+```bash
+tools/graphics-video.sh /tmp/graphics-video noise
+python3 -m http.server --bind 127.0.0.1 --directory /tmp/graphics-video 18974 &
+python3 tools/graphics-benchmark.py --binary /absolute/path/to/rozi \
+  --window-lab /absolute/path/to/window_lab.py --output /tmp/graphics-video-60 \
+  --fps 60 --producer-fps 60 --seconds 20 --warmup 8 --width 1900 --height 1050 \
+  --command "$PWD/tools/graphics-browser.sh /path/to/terminal-browser 60 full http://127.0.0.1:18974/"
+```
+
 `--tap host-read` loads the interposer in Ghostty instead and records what Ghostty reads from its
 PTY. It measures receipt at the host terminal rather than the client's write, and it also sees
 multiplexers that write without libc, so use it for comparisons with other multiplexers.
@@ -516,3 +535,12 @@ checked against the process start time, as percent of one core. At the usual 100
 second this resolves 0.5 percent. Other platforms report no CPU value. Run without
 compilation or other heavy work, retain the exact binary revisions, and compare repeated runs on the
 same host.
+
+When measuring immutable media adoption, count physical snapshot storage by unique `(st_dev,
+st_ino)` pairs. Server names, client-private links and host handoff names can name the same inode;
+adding each name's size overstates storage. Include files under
+`/tmp/tty-graphics-protocol-owner-*/` and the existing
+`/tmp/tty-graphics-protocol-frame-*` and `/tmp/tty-graphics-protocol-host-*` patterns when comparing
+builds. Report producer ring files separately. Use `/proc/PID/io` read-byte deltas per frame to
+check that the client stopped copying pixels. Keep these diagnostics separate from wire-tap CPU
+samples and retain process start identities alongside counters.

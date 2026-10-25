@@ -22,18 +22,10 @@ fn extension_service_helper() {
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn write_manifest(directory: &Path, revision: &str) {
+    let store = directory.parent().expect("extension store");
+    // Prepare private storage before create_dir_all can give it inherited Windows ACLs.
+    rozi::config::extension_store_revision::ensure_control_dir_in(store).unwrap();
     std::fs::create_dir_all(directory).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Some(parent) = directory.parent() {
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-            if let Some(grandparent) = parent.parent() {
-                let _ =
-                    std::fs::set_permissions(grandparent, std::fs::Permissions::from_mode(0o700));
-            }
-        }
-    }
     let executable = std::env::current_exe().unwrap();
     std::fs::write(
         directory.join("extension.toml"),

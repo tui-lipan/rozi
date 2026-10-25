@@ -115,7 +115,7 @@ pub fn run() -> Result<()> {
             }
             cli::ExtensionsCommand::Update { id, config_path } => {
                 apply_config_path(config_path);
-                return cli::run_update_extension_cli(&id);
+                return cli::run_update_extension_cli(id.as_deref());
             }
             cli::ExtensionsCommand::Logs { id, unit, lines } => {
                 return cli::run_logs_extension_cli(&id, unit.as_deref(), lines);

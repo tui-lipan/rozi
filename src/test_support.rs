@@ -327,6 +327,15 @@ pub fn lock_config_file() -> crate::config::ConfigEditGuard {
     crate::config::config_edit_lock()
 }
 
+/// Record `id` as a Git installation in an open Extensions picker, as a rescan of a Git checkout
+/// would, so a test can inject its rows instead of writing into the shared extensions directory.
+pub fn mark_extension_git_managed(state: &mut crate::state::ExtensionsState, id: &str) {
+    state.installation_kinds.insert(
+        id.to_string(),
+        crate::extension_installation::InstallKind::Git,
+    );
+}
+
 /// Build the real configured root with a live control endpoint inside the isolated test
 /// environment. Integration tests use this when `AppRoot::default()` would intentionally be too
 /// inert: the default root has no filesystem config, startup tasks, or listener.

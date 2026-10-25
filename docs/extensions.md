@@ -150,7 +150,8 @@ On the **Installed** tab:
 | `Enter` | Enable or disable the selected extension |
 | `Ctrl+D` | Open the full report |
 | `Ctrl+I` | Open the install prompt |
-| `Ctrl+U` | Check for, or apply, an update to a Git-managed extension |
+| `Ctrl+U` | Apply the selected extension's update, or check every Git-managed extension for one |
+| `Ctrl+Shift+U` | Update every extension with a known update (shown when there is more than one) |
 | `Ctrl+R` | Rescan extension manifests |
 | `Ctrl+O` | Open `extension.toml` |
 | `Ctrl+K` | Remove the installation (press twice) |
@@ -249,13 +250,18 @@ inactive. See [Keybindings](keybindings.md) for key notation.
 
 ## Update an extension
 
-`rozi` never updates extensions automatically. Update one Git-managed installation explicitly:
+`rozi` never updates extensions automatically. Update one Git-managed installation, or all of them,
+explicitly:
 
 ```sh
 rozi extensions update git-tools
+rozi extensions update --all
 rozi run-action reload-extensions
 rozi extensions list --verbose
 ```
+
+`--all` updates each Git-managed installation in turn. One that fails does not stop the rest, and
+the command exits with an error after reporting every failure.
 
 A reload after an update restarts the extension's services, so they run the new files.
 
@@ -272,5 +278,8 @@ short commit hash when the remote changed without changing its version. The repo
 shows the same result, or the error when a remote could not be checked.
 
 On a row with a known update, `Ctrl+U` runs the same update as the CLI and reloads the current
-client when it succeeds. On any other Git-managed row, `Ctrl+U` checks the remote again. After a CLI
-update, reload explicitly, because `rozi` does not watch extension directories.
+client when it succeeds. On any other row, `Ctrl+U` checks every Git-managed installation's remote
+again. When more than one update is known, `Ctrl+Shift+U` updates them all in turn and reloads once
+at the end. It needs a terminal that reports `Shift` with `Ctrl`, such as one with the Kitty
+keyboard protocol; elsewhere, use `rozi extensions update --all`. After a CLI update, reload
+explicitly, because `rozi` does not watch extension directories.

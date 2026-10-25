@@ -259,11 +259,60 @@ pub(crate) fn run_remove_extension_cli(id: &str, purge: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
-    let mut progress = crate::platform::progress::ActivityRow::new("Updating extension");
+/// Updates one Git-managed extension, or every one when `id` is `None`. A failure does not stop
+/// the rest, but makes the command fail once they have all run.
+pub(crate) fn run_update_extension_cli(id: Option<&str>) -> Result<()> {
+    let Some(id) = id else {
+        return run_update_all_extensions_cli();
+    };
+    let changed = update_one_extension(id).map_err(std::io::Error::other)?;
+    if changed {
+        print_reload_hint();
+    }
+    Ok(())
+}
+
+fn run_update_all_extensions_cli() -> Result<()> {
+    let ids = crate::extension_installation::git_installation_ids();
+    if ids.is_empty() {
+        println!("No Git-managed extensions to update");
+        return Ok(());
+    }
+    let styles = OutputStyles::detect();
+    let mut changed = false;
+    let mut failed = 0;
+    for id in &ids {
+        match update_one_extension(id) {
+            Ok(updated) => changed |= updated,
+            Err(error) => {
+                failed += 1;
+                eprintln!(
+                    "{} {}: {error}",
+                    styles.paint("Not updated", OutputTone::Error),
+                    styles.paint(id, OutputTone::Accent)
+                );
+            }
+        }
+    }
+    if changed {
+        print_reload_hint();
+    }
+    if failed > 0 {
+        return Err(std::io::Error::other(format!(
+            "{failed} of {} extensions could not be updated",
+            ids.len()
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+/// Updates `id` and prints its outcome, reporting whether its files changed.
+fn update_one_extension(id: &str) -> std::result::Result<bool, String> {
+    let mut progress = crate::platform::progress::ActivityRow::new(format!("Updating {id}"));
     let updated = crate::extension_installation::update(id);
     progress.finish();
-    let updated = updated.map_err(std::io::Error::other)?;
+    let updated = updated?;
     let styles = OutputStyles::detect();
     println!(
         "{} {}",
@@ -281,14 +330,16 @@ pub(crate) fn run_update_extension_cli(id: &str) -> Result<()> {
         ),
         styles.paint(&updated.id, OutputTone::Accent)
     );
-    if updated.changed {
-        println!(
-            "{}  {}",
-            styles.paint("Reload", OutputTone::Muted),
-            styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
-        );
-    }
-    Ok(())
+    Ok(updated.changed)
+}
+
+fn print_reload_hint() {
+    let styles = OutputStyles::detect();
+    println!(
+        "{}  {}",
+        styles.paint("Reload", OutputTone::Muted),
+        styles.paint("rozi run-action reload-extensions", OutputTone::Accent)
+    );
 }
 
 pub(crate) fn run_new_extension_cli(id: &str) -> Result<()> {

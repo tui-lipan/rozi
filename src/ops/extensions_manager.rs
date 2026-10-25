@@ -60,7 +60,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
         installation_kinds: scan.installation_kinds,
         update_checks: BTreeMap::new(),
         update_check_epoch: 0,
-        updating_id: None,
+        updating: BTreeSet::new(),
         manifest_entries: scan.manifest_entries,
         removable_entries: scan.removable_entries,
     });
@@ -557,94 +557,142 @@ pub(crate) fn catalog_install_finished(
     })
 }
 
+/// Updates the selected row when a check found an update for it. Otherwise checks every Git
+/// installation again, because whether anything has an update is a question about all of them.
 pub(crate) fn update_selected(ctx: &mut Context<AppRoot>) -> Update {
-    let Some(entry) = selected_entry(&ctx.state).cloned() else {
+    let id = selected_entry(&ctx.state).and_then(|entry| entry.id.clone());
+    let Some(state) = ctx.state.extensions.as_ref() else {
         return Update::none();
     };
-    let Some(id) = entry.id.clone() else {
-        return Update::none();
-    };
-    let Some(state) = ctx.state.extensions.as_mut() else {
-        return Update::none();
-    };
-    if state.updating_id.is_some()
-        || state.installation_kinds.get(&id)
-            != Some(&crate::extension_installation::InstallKind::Git)
-    {
+    if !state.updating.is_empty() {
         return Update::none();
     }
-    match state.update_checks.get(&id) {
-        Some(ExtensionUpdateCheck::Available { .. }) => {}
-        Some(ExtensionUpdateCheck::Checking) => return Update::none(),
-        // Without a known update the same key asks again, so a failed or stale check is one
-        // keypress from an answer instead of a full clone that may change nothing.
-        _ => {
-            let epoch = state.update_check_epoch;
-            if request_update_checks(ctx, epoch, vec![id.clone()])
-                && let Some(state) = ctx.state.extensions.as_mut()
-            {
-                state
-                    .update_checks
-                    .insert(id, ExtensionUpdateCheck::Checking);
-            }
-            refresh_detail_report(ctx);
-            return Update::full();
+    match id {
+        Some(id)
+            if matches!(
+                state.update_checks.get(&id),
+                Some(ExtensionUpdateCheck::Available { .. })
+            ) =>
+        {
+            start_updates(ctx, vec![id])
         }
+        _ => check_all_installations(ctx),
     }
-    state.updating_id = Some(id.clone());
+}
+
+/// Updates every installation a check found an update for, one after another.
+pub(crate) fn update_all(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(state) = ctx.state.extensions.as_ref() else {
+        return Update::none();
+    };
+    let ids = updatable_ids(state);
+    if !state.updating.is_empty() || ids.is_empty() {
+        return Update::none();
+    }
+    start_updates(ctx, ids)
+}
+
+/// Git installations whose check found an update, in id order.
+pub(crate) fn updatable_ids(state: &ExtensionsState) -> Vec<String> {
+    state
+        .update_checks
+        .iter()
+        .filter(|(_, check)| matches!(check, ExtensionUpdateCheck::Available { .. }))
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+/// Runs the updates on one thread, in order, so two never stage at once. Each result arrives as
+/// soon as it is known, and the whole run reloads once at the end, even if the picker has closed.
+fn start_updates(ctx: &mut Context<AppRoot>, ids: Vec<String>) -> Update {
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        state.updating = ids.iter().cloned().collect();
+    }
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            let result = crate::extension_installation::update(&id).map(|updated| updated.changed);
-            link.send(crate::Msg::ExtensionsUpdateFinished { id, result });
+            let mut results = Vec::with_capacity(ids.len());
+            for id in ids {
+                let result =
+                    crate::extension_installation::update(&id).map(|updated| updated.changed);
+                link.send(crate::Msg::ExtensionsUpdateFinished {
+                    id: id.clone(),
+                    result: result.clone(),
+                });
+                results.push((id, result));
+            }
+            link.send(crate::Msg::ExtensionsUpdatesFinished { results });
         });
     }))
 }
 
+/// Settles one row of a running update. Toasts and the reload wait for the whole run.
 pub(crate) fn update_finished(
     ctx: &mut Context<AppRoot>,
     id: String,
     result: std::result::Result<bool, String>,
 ) -> Update {
     let Some(state) = ctx.state.extensions.as_mut() else {
-        return match result {
-            Ok(true) => {
-                notify_info(ctx, &format!("Updated {id}"));
-                crate::ops::config::reload_extensions_quiet(ctx)
-            }
-            Ok(false) => {
-                notify_info(ctx, &format!("{id} is up to date"));
-                Update::full()
-            }
-            Err(error) => {
-                notify_error(ctx, "Extension not updated", error);
-                Update::full()
-            }
-        };
+        return Update::none();
     };
-    if state.updating_id.as_deref() != Some(&id) {
+    if !state.updating.remove(&id) {
         return Update::none();
     }
-    state.updating_id = None;
     match result {
+        // The reload at the end of the run checks it again, against the new files.
         Ok(true) => {
             state.update_checks.remove(&id);
-            let update = crate::ops::config::reload_extensions_quiet(ctx);
-            select_by_id(ctx, &id);
-            update
         }
         Ok(false) => {
             state
                 .update_checks
-                .insert(id.clone(), ExtensionUpdateCheck::Current);
-            refresh_detail_report(ctx);
-            notify_info(ctx, &format!("{id} is up to date"));
-            Update::full()
+                .insert(id, ExtensionUpdateCheck::Current);
         }
-        Err(error) => {
+        Err(_) => {}
+    }
+    refresh_detail_report(ctx);
+    Update::full()
+}
+
+pub(crate) fn updates_finished(
+    ctx: &mut Context<AppRoot>,
+    results: Vec<(String, std::result::Result<bool, String>)>,
+) -> Update {
+    if let Some(state) = ctx.state.extensions.as_mut() {
+        state.updating.clear();
+    }
+    let changed: Vec<_> = results
+        .iter()
+        .filter(|(_, result)| result == &Ok(true))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let failed = results.iter().any(|(_, result)| result.is_err());
+    for (id, result) in &results {
+        if let Err(error) = result {
+            let error = if results.len() > 1 {
+                format!("{id}: {error}")
+            } else {
+                error.clone()
+            };
             notify_error(ctx, "Extension not updated", error);
-            Update::full()
         }
     }
+    match (changed.as_slice(), results.as_slice()) {
+        ([id], _) => notify_info(ctx, &format!("Updated {id}")),
+        ([], [(id, _)]) if !failed => notify_info(ctx, &format!("{id} is up to date")),
+        ([], _) if !failed => notify_info(ctx, "Extensions are up to date"),
+        ([], _) => {}
+        (changed, _) => notify_info(ctx, &format!("Updated {} extensions", changed.len())),
+    }
+    let Some(&first) = changed.first() else {
+        refresh_detail_report(ctx);
+        return Update::full();
+    };
+    let first = first.to_string();
+    let update = crate::ops::config::reload_extensions_quiet(ctx);
+    if results.len() == 1 {
+        select_by_id(ctx, &first);
+    }
+    update
 }
 
 pub(crate) fn update_checked(
@@ -658,7 +706,7 @@ pub(crate) fn update_checked(
     };
     // A running update owns the row, and its reload starts a fresh check.
     if state.update_check_epoch != epoch
-        || state.updating_id.as_deref() == Some(id.as_str())
+        || state.updating.contains(&id)
         || !state.update_checks.contains_key(&id)
     {
         return Update::none();
@@ -1106,16 +1154,35 @@ fn start_update_check(ctx: &mut Context<AppRoot>) {
 /// Checks the Git installations with neither an answer nor a running check, such as one just
 /// installed or one an update just replaced, and keeps every other row's result.
 fn check_unchecked_installations(ctx: &mut Context<AppRoot>) {
+    check_installations(ctx, |check| check.is_none());
+}
+
+/// Checks every Git installation again except those already being checked, keeping the running
+/// checks' epoch so their answers still land.
+fn check_all_installations(ctx: &mut Context<AppRoot>) -> Update {
+    if check_installations(ctx, |check| check != Some(&ExtensionUpdateCheck::Checking)) {
+        refresh_detail_report(ctx);
+        return Update::full();
+    }
+    Update::none()
+}
+
+/// Checks the Git installations whose current check `wanted` accepts, reporting whether any
+/// check started.
+fn check_installations(
+    ctx: &mut Context<AppRoot>,
+    wanted: impl Fn(Option<&ExtensionUpdateCheck>) -> bool,
+) -> bool {
     let Some(state) = ctx.state.extensions.as_ref() else {
-        return;
+        return false;
     };
     let epoch = state.update_check_epoch;
     let ids: Vec<_> = git_installation_ids(&state.installation_kinds)
         .into_iter()
-        .filter(|id| !state.update_checks.contains_key(id))
+        .filter(|id| wanted(state.update_checks.get(id)))
         .collect();
     if !request_update_checks(ctx, epoch, ids.clone()) {
-        return;
+        return false;
     }
     if let Some(state) = ctx.state.extensions.as_mut() {
         state.update_checks.extend(
@@ -1123,6 +1190,7 @@ fn check_unchecked_installations(ctx: &mut Context<AppRoot>) {
                 .map(|id| (id, ExtensionUpdateCheck::Checking)),
         );
     }
+    true
 }
 
 /// Checks `ids` on a few worker threads, each answer sent as soon as it is known, so one slow
@@ -1490,7 +1558,7 @@ pub(crate) fn catalog_entry_installed(
 /// left out.
 pub(crate) fn extension_description(entry: &ExtensionInfo, state: &ExtensionsState) -> String {
     let id = entry.id.as_deref();
-    if id.is_some_and(|id| state.updating_id.as_deref() == Some(id)) {
+    if id.is_some_and(|id| state.updating.contains(id)) {
         return EXTENSION_UPDATING_LABEL.to_string();
     }
     let mut parts = Vec::new();

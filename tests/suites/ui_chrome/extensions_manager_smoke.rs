@@ -1310,3 +1310,197 @@ fn extensions_manager_splits_installed_and_discover_tabs() {
         .join()
         .expect("tabs smoke completes");
 }
+
+/// `Ctrl+U` checks every Git installation from a row without a known update, `Ctrl+Shift+U`
+/// appears once more than one update is known and runs them all, and the run settles each row as
+/// it finishes but reports once at the end.
+#[test]
+fn extensions_manager_checks_and_updates_every_git_installation() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            // The isolated directories are shared by every test in this process, so this test
+            // injects its rows. Their ids have no installation record, so a real update or check
+            // fails at once without reaching a network.
+            rozi::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 110,
+                h: 45,
+            });
+            backend
+                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+                .expect("open extensions");
+            let available = || rozi::state::ExtensionUpdateCheck::Available {
+                revision: "89abcdef0123456789abcdef0123456789abcdef".to_string(),
+                version: Some("0.2.0".to_string()),
+            };
+            let current = rozi::state::ExtensionUpdateCheck::Current;
+            {
+                let state = backend
+                    .state_mut()
+                    .extensions
+                    .as_mut()
+                    .expect("extensions state");
+                for id in ["update-alpha", "update-beta", "update-local"] {
+                    state.entries.push(installed_info(id));
+                }
+                rozi::test_support::mark_extension_git_managed(state, "update-alpha");
+                rozi::test_support::mark_extension_git_managed(state, "update-beta");
+                // The check the manager started on opening answers an epoch this one replaces.
+                state.update_check_epoch = u64::MAX;
+                state.update_checks.clear();
+                state
+                    .update_checks
+                    .insert("update-alpha".to_string(), current.clone());
+                state
+                    .update_checks
+                    .insert("update-beta".to_string(), current.clone());
+                state.selected = state.entries.len() - 1;
+            }
+            let check = |backend: &TestBackend<AppRoot>, id: &str| {
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .expect("extensions state")
+                    .update_checks
+                    .get(id)
+                    .cloned()
+            };
+
+            let local = frame(&mut backend);
+            assert!(local.contains("check Ctrl+U"), "{local}");
+            assert!(!local.contains("update all"), "{local}");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateSelected)
+                .expect("check from a local row");
+            // Without installation records both checks fail at once; wait for those answers so
+            // they cannot land on the rows this test injects next.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while ["update-alpha", "update-beta"].iter().any(|id| {
+                !matches!(
+                    check(&backend, id),
+                    Some(rozi::state::ExtensionUpdateCheck::Failed(_))
+                )
+            }) {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Ctrl+U on any row asks every Git remote again"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                backend.pump().expect("pump check answers");
+            }
+
+            {
+                let state = backend.state_mut().extensions.as_mut().unwrap();
+                state
+                    .update_checks
+                    .insert("update-alpha".to_string(), available());
+                state
+                    .update_checks
+                    .insert("update-beta".to_string(), current.clone());
+                state.selected = state.entries.len() - 3;
+            }
+            let one = frame(&mut backend);
+            assert!(one.contains("update Ctrl+U"), "{one}");
+            assert!(
+                !one.contains("update all"),
+                "a single update is Ctrl+U on its row:\n{one}"
+            );
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .unwrap()
+                .update_checks
+                .insert("update-beta".to_string(), available());
+            let two = frame(&mut backend);
+            assert!(two.contains("update all Ctrl+Shift+U"), "{two}");
+
+            // A run in progress: each row settles when its own update finishes.
+            backend.state_mut().extensions.as_mut().unwrap().updating =
+                ["update-alpha", "update-beta"].map(String::from).into();
+            let running = frame(&mut backend);
+            assert!(running.contains("updating…"), "{running}");
+            assert!(!running.contains("update all"), "{running}");
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    id: "update-beta".to_string(),
+                    result: Ok(false),
+                })
+                .expect("beta finished");
+            assert_eq!(check(&backend, "update-beta"), Some(current.clone()));
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdateFinished {
+                    id: "update-alpha".to_string(),
+                    result: Err("remote unreachable".to_string()),
+                })
+                .expect("alpha finished");
+            assert_eq!(check(&backend, "update-alpha"), Some(available()));
+            assert!(
+                backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .updating
+                    .is_empty()
+            );
+            backend
+                .dispatch(rozi::Msg::ExtensionsUpdatesFinished {
+                    results: vec![
+                        (
+                            "update-alpha".to_string(),
+                            Err("remote unreachable".to_string()),
+                        ),
+                        ("update-beta".to_string(), Ok(false)),
+                    ],
+                })
+                .expect("run finished");
+            let reported = frame(&mut backend);
+            assert!(
+                reported.contains("update-alpha: remote unreachable"),
+                "a run names the extension each failure belongs to:\n{reported}"
+            );
+            assert!(!reported.contains("up to date"), "{reported}");
+
+            // The key itself: Ctrl+Shift+U runs both, where Ctrl+U would update only the row.
+            backend
+                .state_mut()
+                .extensions
+                .as_mut()
+                .unwrap()
+                .update_checks
+                .insert("update-beta".to_string(), available());
+            frame(&mut backend);
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('u'),
+                    mods: KeyMods {
+                        shift: true,
+                        ..KeyMods::CTRL
+                    },
+                })
+                .expect("update all");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                backend.pump().expect("pump update results");
+                let settled = frame(&mut backend);
+                if settled.contains("update-beta:") {
+                    assert!(settled.contains("update-alpha:"), "{settled}");
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "both updates report:\n{settled}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        })
+        .expect("spawn update-all thread")
+        .join()
+        .expect("update-all smoke completes");
+}

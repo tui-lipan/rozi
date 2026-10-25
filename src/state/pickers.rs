@@ -1425,7 +1425,8 @@ pub struct ExtensionsState {
     /// has not been checked since the picker opened.
     pub update_checks: BTreeMap<String, ExtensionUpdateCheck>,
     pub update_check_epoch: u64,
-    pub(crate) updating_id: Option<String>,
+    /// Extensions the running update has yet to finish, one at a time. Empty when none runs.
+    pub updating: BTreeSet<String>,
     pub(crate) manifest_entries: BTreeSet<String>,
     pub(crate) removable_entries: BTreeSet<String>,
 }

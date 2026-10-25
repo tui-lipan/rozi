@@ -29,7 +29,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "install --link <PATH>",
                 "Link and enable a development checkout",
             ),
-            row("update <ID>", "Update a managed Git extension"),
+            row("update <ID>|--all", "Update managed Git extensions"),
             row("remove <ID> [--purge]", "Remove an installed extension"),
             row("new <ID>", "Create a valid extension scaffold"),
             row("check <PATH> [--json]", "Validate an unpacked extension"),
@@ -98,13 +98,19 @@ const UPDATE_HELP_SECTIONS: &[HelpSection] = &[
         heading: "USAGE",
         advanced_only: false,
         note: "",
-        rows: &[row("rozi extensions update <ID>", "")],
+        rows: &[
+            row("rozi extensions update <ID>", ""),
+            row("rozi extensions update --all", ""),
+        ],
     },
     HelpSection {
         heading: "OPTIONS",
         advanced_only: false,
         note: "",
-        rows: &[row("-h, --help", "Print help")],
+        rows: &[
+            row("--all", "Update every Git-managed extension"),
+            row("-h, --help", "Print help"),
+        ],
     },
 ];
 
@@ -156,7 +162,7 @@ pub(crate) fn print_remove_help() {
 
 pub(crate) fn print_update_help() {
     let styles = HelpStyles::detect();
-    let mut out = styles.title_line("rozi extensions update", "update a managed Git extension");
+    let mut out = styles.title_line("rozi extensions update", "update managed Git extensions");
     append_help_sections(&mut out, UPDATE_HELP_SECTIONS, &styles, true);
     println!("{out}");
 }
@@ -330,7 +336,15 @@ fn parse_update(
     iter: &mut impl Iterator<Item = String>,
     config_path: Option<String>,
 ) -> std::result::Result<ParsedCli, String> {
-    let id = require_value(iter, "extensions update requires an extension id")?;
+    let missing = "extensions update requires an extension id or --all";
+    let id = match iter.next() {
+        Some(arg) if arg == "--all" => None,
+        Some(arg) if arg.starts_with('-') => {
+            return Err(format!("unknown extensions update option `{arg}`"));
+        }
+        Some(arg) => Some(arg),
+        None => return Err(missing.to_string()),
+    };
     reject_trailing_control_args(iter, "extensions update")?;
     Ok(ParsedCli::Extensions(ExtensionsCommand::Update {
         id,
@@ -513,7 +527,13 @@ mod tests {
                 "git-tools".into(),
             ])
             .expect("parses"),
-            ParsedCli::Extensions(ExtensionsCommand::Update { id, .. }) if id == "git-tools"
+            ParsedCli::Extensions(ExtensionsCommand::Update { id, .. })
+                if id.as_deref() == Some("git-tools")
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["extensions".into(), "update".into(), "--all".into()])
+                .expect("parses"),
+            ParsedCli::Extensions(ExtensionsCommand::Update { id: None, .. })
         ));
         assert!(matches!(
             parse_cli_args(vec![
@@ -551,6 +571,15 @@ mod tests {
         );
         assert!(parse_cli_args(vec!["extensions".into(), "remove".into()]).is_err());
         assert!(parse_cli_args(vec!["extensions".into(), "update".into()]).is_err());
+        for args in [
+            vec!["--all", "git-tools"],
+            vec!["git-tools", "--all"],
+            vec!["--every"],
+        ] {
+            let mut argv = vec!["extensions".to_string(), "update".to_string()];
+            argv.extend(args.iter().map(|arg| arg.to_string()));
+            assert!(parse_cli_args(argv).is_err(), "{args:?}");
+        }
         assert!(
             parse_cli_args(vec![
                 "extensions".into(),

@@ -107,9 +107,15 @@ pub enum Msg {
         result: std::result::Result<String, String>,
     },
     ExtensionsUpdateSelected,
+    ExtensionsUpdateAll,
+    /// One extension of a running update finished; `Ok(true)` when its files changed.
     ExtensionsUpdateFinished {
         id: String,
         result: std::result::Result<bool, String>,
+    },
+    /// Every extension of a running update finished, with each one's result in order.
+    ExtensionsUpdatesFinished {
+        results: Vec<(String, std::result::Result<bool, String>)>,
     },
     ExtensionUpdateChecked {
         epoch: u64,

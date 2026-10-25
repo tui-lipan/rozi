@@ -246,6 +246,17 @@ pub(crate) fn update(id: &str) -> Result<UpdatedExtension, String> {
     })
 }
 
+/// Ids of the discovered installations that update from a Git remote, in id order.
+pub(crate) fn git_installation_ids() -> Vec<String> {
+    let ids: std::collections::BTreeSet<_> = crate::config::scan_extensions()
+        .entries()
+        .into_iter()
+        .filter_map(|entry| entry.id)
+        .filter(|id| installation_kind(id) == Some(InstallKind::Git))
+        .collect();
+    ids.into_iter().collect()
+}
+
 /// Whether an installation declares `id`, valid or not.
 pub(crate) fn is_installed(id: &str) -> bool {
     crate::config::scan_extensions()

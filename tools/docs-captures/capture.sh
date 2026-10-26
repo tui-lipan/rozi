@@ -109,7 +109,7 @@ scene() {
 # clip.py plays STEPS in real time, and encodes the recording as NAME.mp4 with a NAME-poster.webp.
 # STEPS use clip.py's syntax. The variables are those of `scene`, plus POSTER, the second of the
 # clip shown before it plays (default: its last frame), and GIF, a repository path that also
-# receives the clip as a GIF.
+# receives the clip as a GIF in a terminal window (frame.sh).
 clip() {
   local name=$1 viewport=$2 settle=$3 steps=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
@@ -137,11 +137,7 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   fi
   magick "$sandbox/poster.png" -quality 90 -define webp:method=6 "$out/$name-poster.webp"
   if [[ -n ${GIF:-} ]]; then
-    # From the same frames: 1440 wide at 20 fps, one palette per scene change, and no dither,
-    # which would speckle the flat pane backgrounds.
-    ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
-      -vf "fps=20,scale=1440:-1:flags=area,split[a][b];[a]palettegen=max_colors=256:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
-      "$repo/$GIF"
+    "$here/frame.sh" "$frames/frames.ffconcat" "$repo/$GIF" "rozi — ~/src/rozi"
   fi
   mkdir -p "$preview"
   cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"

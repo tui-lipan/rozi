@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout cycles, the sidebars open, a theme previews, and the view slides between workspaces" width="860">
+  <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout changes, a pane floats, is dragged around, and goes fullscreen, each sidebar opens, a theme previews, and the view slides between workspaces" width="960">
 </p>
 
 rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other

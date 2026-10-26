@@ -7,56 +7,58 @@ focus=120x34
 # The hero shot: an editor, Git, a system monitor, and a shell in one workspace.
 scene workspace "$wide" 5000 "wait:10"
 
-# The README and landing page demo: panes tile as they open, the layouts cycle, the docks open, a
-# theme previews, and the workspaces slide. It closes back to the lone editor it starts on, so the
-# loop has no seam.
+# The README and landing page demo, at a brisk pace: panes tile as they open, the layouts change, a
+# pane floats and is dragged around, goes fullscreen, each sidebar opens, a theme previews, and the
+# workspaces slide. It closes back to the lone editor it starts on, so the loop has no seam.
 others='rozi list-panes --format json | python3 -c "import json, sys; d = sorted(p[\"id\"] for p in json.load(sys.stdin)[\"data\"] if p[\"workspace\"] == 1); print(*d[1:])"'
-PROFILE=demo POSTER=9 GIF=assets/demo.gif clip hero "$wide" 5000 "sleep:900
-key:M-Enter
-sleep:500
-type:lazygit
-key:Enter
-sleep:1300
-key:M-Enter
-sleep:500
-type:yazi
-key:Enter
-sleep:1300
-key:M-Enter
-sleep:500
-type:git log --oneline -20
-key:Enter
+PROFILE=demo POSTER=5 GIF=assets/demo.gif clip hero "$wide" 5000 "sleep:600
+run:rozi split --focus --cwd \"\$HOME/src/rozi\" lazygit >/dev/null
+sleep:300
+run:rozi split --focus --cwd \"\$HOME/src/rozi\" yazi >/dev/null
+sleep:300
+run:rozi split --focus --cwd \"\$HOME/src/rozi\" --title log 'git --no-pager log --oneline --decorate --color=always -40; exec bash' >/dev/null
+sleep:1000
+key:M-m
+sleep:850
+key:M-m
+sleep:1000
+key:M-t
+sleep:550
+float:42,13,450
+float:118,13,500
+float:80,31,450
+sleep:350
+key:M-f
+sleep:1100
+key:M-f
+sleep:450
+key:M-t
+sleep:800
+run:rozi run-action toggle-left-sidebar >/dev/null
+sleep:1000
+run:rozi run-action toggle-right-sidebar >/dev/null
 sleep:1500
-key:M-m
-sleep:1200
-key:M-m
-sleep:1200
-key:M-m
-sleep:1400
-key:M-b
-sleep:2400
-key:M-b
+run:rozi run-action toggle-left-sidebar >/dev/null
+sleep:120
+run:rozi run-action toggle-right-sidebar >/dev/null
 sleep:700
 run:rozi run-action choose-theme >/dev/null
-sleep:900
-key:Up
 sleep:650
 key:Up
-sleep:650
+sleep:550
 key:Up
-sleep:650
-key:Up
-sleep:900
-key:Escape
 sleep:800
+key:Escape
+sleep:600
 key:M-2
-sleep:1500
+sleep:1100
 key:M-1
-sleep:1000
+sleep:700
 run:rozi layout set --workspace 1 dwindle >/dev/null
-sleep:900
-run:for id in \$($others); do rozi pane close --target \$id >/dev/null; sleep 0.45; done
-sleep:1400"
+sleep:600
+run:for id in \$($others); do rozi pane close --target \$id >/dev/null; sleep 0.25; done
+sleep:1100" '[sidebar]
+layout = { left = { width = 34, panel_count = 2, panels = [{ weight = 1.0, tabs = ["files"] }, { weight = 1.0, tabs = ["git"] }] }, right = { width = 34, panel_count = 2, panels = [{ weight = 1.0, tabs = ["panes"] }, { weight = 1.0, tabs = ["sessions"] }] } }'
 
 # One workspace, six themes. Programs in panes use ANSI colors, so each theme recolors them too.
 for theme in catppuccin-mocha tokyo-night gruvbox-dark nord rose-pine-dawn; do

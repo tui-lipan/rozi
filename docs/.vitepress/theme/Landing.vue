@@ -412,7 +412,7 @@ const HERO_CLIP = [
     src: heroClip,
     poster: heroPoster,
     label: "rozi",
-    alt: "An editor alone in rozi. Three new panes tile beside it as lazygit, btop, and git log open. The layout cycles through Master, Grid, and Columns, the sidebars open and close, a theme previews and is put back, and the view slides to a second workspace and back before the panes close again.",
+    alt: "An editor alone in rozi. Lazygit, yazi, and a git log tile beside it, the layout changes to Master and Grid, and the log floats, is dragged around the screen, and goes fullscreen. The left sidebar opens, then the right, a theme previews and is put back, and the view slides to a second workspace and back before the panes close again.",
   },
 ];
 

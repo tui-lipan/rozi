@@ -337,6 +337,9 @@ pub(crate) fn activate_discovered_session(
     ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
+    if ctx.state.remote.session_is_killing(&entry) {
+        return Update::none();
+    }
     // The footer omits Enter on the session already in the foreground. Repeating that destination
     // is not an error, and it is not worth a toast.
     if session_row_is_current(&ctx.state, &entry) {
@@ -715,6 +718,9 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    if ctx.state.remote.session_is_killing(&entry) {
+        return Update::none();
+    }
     let last_seen = session_row_is_last_seen(&entry);
     let armed = picker.pending_kill == Some(index);
     if !armed {
@@ -726,12 +732,17 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
         return crate::ops::confirm::arm(ctx);
     }
     clear_pending_session_arms(ctx);
+    let remote_shutdown =
+        !last_seen && entry.remote_target.is_some() && !session_row_is_current(&ctx.state, &entry);
     let update = if last_seen {
         forget_last_seen_session(ctx, &entry);
         Update::full()
     } else {
         kill_discovered_session(ctx, entry)
     };
+    if remote_shutdown {
+        return update;
+    }
     // Keep the picker open with the row gone and selection clamped; only close when the
     // list (and every other meaningful candidate) is empty.
     if ctx.state.show_session_picker {
@@ -761,7 +772,7 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
-    if !session_row_can_restart(&entry) {
+    if ctx.state.remote.session_is_killing(&entry) || !session_row_can_restart(&entry) {
         return Update::none();
     }
     let armed = picker.pending_restart == Some(index);
@@ -861,7 +872,21 @@ pub(crate) fn kill_discovered_session(
     {
         return kill_current_session(ctx);
     }
+    if ctx.state.remote.session_is_killing(&entry) {
+        return Update::none();
+    }
     let remote_config = ctx.state.config.remote.clone();
+    if let Some(target) = entry.remote_target.as_ref() {
+        ctx.state
+            .remote
+            .killing_sessions
+            .push((entry.name.clone(), target.clone()));
+        return Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
+            let result = shutdown_discovered_session(&entry, &remote_config)
+                .map_err(|error| error.to_string());
+            link.send(crate::Msg::RemoteSessionKilled { entry, result });
+        }));
+    }
     match shutdown_discovered_session(&entry, &remote_config) {
         Ok(()) => {
             // Drop any parked client attachment for the killed server so it cannot linger offline.
@@ -885,11 +910,42 @@ pub(crate) fn kill_discovered_session(
     }
 }
 
+pub(crate) fn remote_session_killed(
+    ctx: &mut Context<AppRoot>,
+    entry: DiscoveredSession,
+    result: std::result::Result<(), String>,
+) -> Update {
+    ctx.state.remote.killing_sessions.retain(|(name, target)| {
+        name != &entry.name || Some(target) != entry.remote_target.as_ref()
+    });
+    if let Err(error) = result {
+        crate::pane::pty_events::notify_error(ctx, "Kill failed", error);
+        return Update::full();
+    }
+    detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
+    if let Some(target) = entry.remote_target.as_ref() {
+        remove_cached_remote_session(ctx, &entry.name, target);
+    }
+    ctx.state
+        .sidebar
+        .sessions
+        .retain(|row| row.name != entry.name || row.remote_target != entry.remote_target);
+    ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
+    if ctx.state.show_session_picker {
+        return refresh_picker_after_kill(ctx);
+    }
+    Update::full()
+}
+
 pub(crate) fn remove_cached_remote_session(
     ctx: &mut Context<AppRoot>,
     session_name: &str,
     target: &crate::session::remote::RemoteTarget,
 ) {
+    ctx.state
+        .remote
+        .live_sessions
+        .retain(|row| row.name != session_name || row.remote_target.as_ref() != Some(target));
     let Some(mut sessions) =
         crate::session::host_sessions_for(&ctx.state.remote.session_cache, target)
             .map(|sessions| sessions.to_vec())

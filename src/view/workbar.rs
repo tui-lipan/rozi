@@ -692,7 +692,7 @@ fn pointer_badge(ctx: &Context<AppRoot>, badge: Element, action: Action) -> Elem
         .on_click(ctx.link().callback(move |_| Msg::RunAction(action)))
         .hover_effect(VisualEffect::transform_bg(crate::view::hover_lift()))
         .child(badge)
-        .into()
+        .pointer_shape(PointerShape::Pointer)
 }
 
 fn substitute_placeholders(ctx: &Context<AppRoot>, literal: &str) -> String {
@@ -757,7 +757,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
             } else {
                 label
             };
-            let mut tab = Tab::new(label);
+            let mut tab = Tab::new(label).pointer_shape(PointerShape::Pointer);
             // `static` colors the marked tab without moving it; only `pulse` breathes. The active
             // tab is never restyled - its solid `active_style` pill already reads as current, and
             // the pane border carries the alert on the workspace you are looking at.
@@ -1441,6 +1441,28 @@ mod tests {
             collaboration_status(&state, &theme).unwrap().0,
             " READ ONLY "
         );
+    }
+
+    #[test]
+    fn pointing_hands_are_limited_to_workspace_tabs_and_action_badges() {
+        on_large_stack(|| {
+            use tui_lipan::PointerShape;
+            let mut backend = attached_backend();
+            backend.state_mut().config.workbar.right[0].segment =
+                WorkbarSegment::Text("STATIC".into());
+            let (width, cells) = frame_cells(&mut backend);
+            for label in ["rozi", "dev", " 2 "] {
+                let (x, y) = find_run(&cells, width, label).expect("clickable label");
+                assert_eq!(
+                    backend.pointer_shape_at(x, y),
+                    Some(PointerShape::Pointer),
+                    "{label}"
+                );
+            }
+            let (x, y) = find_run(&cells, width, "STATIC").expect("plain badge");
+            assert_eq!(backend.pointer_shape_at(x, y), None);
+            assert_eq!(backend.pointer_shape_at(50, 0), None, "blank workbar space");
+        });
     }
 
     #[test]

@@ -139,6 +139,7 @@ struct FileConfig {
 #[serde(default)]
 struct CursorFileConfig {
     blink: Option<String>,
+    pointer: Option<String>,
 }
 
 pub(crate) fn parse_extensions_config(text: &str) -> Result<ExtensionsFileConfig, toml::de::Error> {
@@ -944,6 +945,12 @@ fn load_config_from_text_with_extensions(
     config.input = input;
     apply_animations(&mut config.animations, parsed.animations, &mut warnings);
 
+    if let Some(pointer) = parsed.cursor.pointer {
+        match pointer.parse() {
+            Ok(pointer) => config.cursor.pointer = pointer,
+            Err(warning) => warnings.push(warning),
+        }
+    }
     if let Some(blink) = parsed.cursor.blink {
         match blink.parse() {
             Ok(blink) => config.cursor.blink = blink,
@@ -4061,6 +4068,26 @@ command = "open"
 #[cfg(test)]
 mod cursor_tests {
     use super::*;
+
+    #[test]
+    fn mouse_pointer_modes_load_and_invalid_values_warn() {
+        for mode in super::super::MousePointer::all() {
+            let loaded = load_config_from_text(
+                &format!("[cursor]\npointer = \"{}\"", mode.id()),
+                Path::new("config.toml"),
+            );
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.config.cursor.pointer, *mode);
+        }
+        let loaded =
+            load_config_from_text("[cursor]\npointer = \"wrong\"", Path::new("config.toml"));
+        assert_eq!(
+            loaded.config.cursor.pointer,
+            super::super::MousePointer::All
+        );
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].contains("cursor.pointer"));
+    }
 
     #[test]
     fn cursor_blink_values_load_and_invalid_values_warn() {

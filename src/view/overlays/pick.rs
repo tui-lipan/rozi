@@ -179,6 +179,11 @@ pub(crate) fn pick_overlay(ctx: &Context<AppRoot>) -> Element {
                     description_style
                 },
             )
+            .pointer_shape(if disabled_reason.is_some() {
+                PointerShape::Default
+            } else {
+                PointerShape::Pointer
+            })
             .into()
         }))
         .on_select(

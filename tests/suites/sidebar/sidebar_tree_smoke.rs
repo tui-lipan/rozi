@@ -1075,3 +1075,71 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
         .join()
         .expect("vim jump completes");
 }
+
+#[test]
+fn file_rows_and_sidebar_tabs_follow_the_mouse_pointer_preference() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            rozi::test_support::isolate_user_dirs();
+            let root = tempfile::tempdir().unwrap();
+            std::fs::write(root.path().join("pointer-fixture.txt"), "fixture\n").unwrap();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar.shown = [true, false];
+                state.config.animations.enabled = false;
+                state.config.nerd_icons = false;
+                let tab = SidebarTab::Tree {
+                    view: SidebarTreeView::Files,
+                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+                };
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                state.current_mut().workspaces[0].panes[0].terminal.cwd =
+                    Some(root.path().to_string_lossy().into_owned());
+            }
+            assert!(pump_until(&mut backend, |backend| sidebar_rows(
+                backend, 32
+            )
+            .iter()
+            .any(|row| row.contains("pointer-fixture.txt"))));
+            let rows = sidebar_rows(&backend, 32);
+            let (y, row) = rows
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("pointer-fixture.txt"))
+                .unwrap();
+            let x = row.chars().position(|c| c == 'p').unwrap() as u16;
+            let y = y as u16;
+            assert_eq!(
+                backend.pointer_shape_at(x, y),
+                Some(tui_lipan::PointerShape::Pointer)
+            );
+            let tab_y = rows.iter().position(|row| row.contains("Files")).unwrap() as u16;
+            let tab_x = rows[tab_y as usize].chars().position(|c| c == 'F').unwrap() as u16;
+            assert_eq!(
+                backend.pointer_shape_at(tab_x, tab_y),
+                Some(tui_lipan::PointerShape::Pointer)
+            );
+            for mode in [
+                rozi::config::MousePointer::Panes,
+                rozi::config::MousePointer::Off,
+            ] {
+                backend.state_mut().config.cursor.pointer = mode;
+                backend.render();
+                assert_eq!(backend.pointer_shape_at(x, y), None);
+                assert_eq!(backend.pointer_shape_at(tab_x, tab_y), None);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

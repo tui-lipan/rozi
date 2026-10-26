@@ -2275,6 +2275,17 @@ mod tests {
             let frame = backend.capture_frame().plain_text();
             assert!(frame.contains("Removing…"), "{frame}");
             assert!(!frame.contains("again to remove"), "{frame}");
+            let rows = backend.capture_frame().to_fixed_grid_lines();
+            let (y, row) = rows
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.contains("Removing…"))
+                .unwrap();
+            let x = row[..row.find("feat").unwrap()].chars().count();
+            assert_eq!(
+                backend.pointer_shape_at(x as u16, y as u16),
+                Some(tui_lipan::PointerShape::Default)
+            );
             let operation = backend.state().worktree_operation.as_ref().unwrap();
             let (epoch, request_id) = (operation.epoch, operation.request_id);
             backend
@@ -2289,6 +2300,10 @@ mod tests {
             backend.render();
             assert!(!backend.capture_frame().plain_text().contains("removing…"));
             assert!(backend.state().worktree_operation.is_none());
+            assert_eq!(
+                backend.pointer_shape_at(x as u16, y as u16),
+                Some(tui_lipan::PointerShape::Pointer)
+            );
         });
     }
     #[test]

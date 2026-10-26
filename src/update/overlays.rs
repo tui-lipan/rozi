@@ -1507,6 +1507,39 @@ mod tests {
     }
 
     #[test]
+    fn mouse_pointer_is_saved_from_settings_and_cancel_restores_policy() {
+        on_large_stack(|| {
+            let _config = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().config.cursor.pointer = crate::config::MousePointer::All;
+            let action = crate::state::SettingsAction::CycleMousePointer;
+            backend.update_level(Msg::SettingsActivate(action)).unwrap();
+            assert_eq!(
+                backend.state().settings_choice.as_ref().unwrap().options,
+                ["Off", "Pane apps only", "Rozi and pane apps"]
+            );
+            backend.update_level(Msg::SettingsChoicePick(1)).unwrap();
+            assert_eq!(
+                backend.state().config.cursor.pointer,
+                crate::config::MousePointer::Panes
+            );
+            assert_eq!(
+                crate::config::load_config().config.cursor.pointer,
+                crate::config::MousePointer::Panes
+            );
+            backend.update_level(Msg::SettingsActivate(action)).unwrap();
+            backend.update_level(Msg::SettingsChoiceSelect(0)).unwrap();
+            backend.update_level(Msg::SettingsChoiceCancel).unwrap();
+            assert_eq!(
+                backend.state().config.cursor.pointer,
+                crate::config::MousePointer::Panes
+            );
+            assert!(backend.state().show_settings);
+        });
+    }
+
+    #[test]
     fn cursor_blink_is_saved_from_settings() {
         on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();

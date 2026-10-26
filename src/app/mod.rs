@@ -376,6 +376,7 @@ impl Component for AppRoot {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {
+        ctx.set_pointer_mode(ctx.state.config.cursor.pointer.runtime());
         let host_color_generation = ctx.host_terminal_color_generation();
         if host_color_generation > self.render_host_terminal_color_generation.get() {
             self.render_host_terminal_color_generation

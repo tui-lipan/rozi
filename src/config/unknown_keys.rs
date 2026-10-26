@@ -252,7 +252,7 @@ pub(super) fn collect_unknown_keys(table: &Table) -> Vec<String> {
 fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_named_table(table, "", "shell_integration", &["mode"], unknown);
     collect_named_table(table, "", "environment", &["forward"], unknown);
-    collect_named_table(table, "", "cursor", &["blink"], unknown);
+    collect_named_table(table, "", "cursor", &["blink", "pointer"], unknown);
     collect_named_table(table, "", "input", INPUT_KEYS, unknown);
     collect_named_table(table, "", "animations", ANIMATION_KEYS, unknown);
     collect_named_table(table, "", "theme", &["name"], unknown);

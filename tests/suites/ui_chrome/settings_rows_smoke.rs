@@ -1153,7 +1153,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 20, "Pane close"),
+            (SettingsTab::General, 21, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 20, "Bell urgency"),
@@ -1409,5 +1409,50 @@ fn settings_caret_obeys_global_blink_policy_through_timer_ticks() {
                 assert_eq!(caret.blinking, blinking);
             }
         }
+    });
+}
+
+#[test]
+fn settings_search_results_have_pointer_feedback_and_follow_the_global_mode() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        type_query(&mut backend, "Mouse pointer");
+        let frame = rendered_rows(&mut backend);
+        assert!(frame.contains("Rozi and pane apps"), "{frame}");
+        let rows = backend.capture_frame().to_fixed_grid_lines();
+        let (y, row) = rows
+            .iter()
+            .enumerate()
+            .rfind(|(_, row)| row.contains("Mouse pointer"))
+            .unwrap();
+        let x = row.chars().position(|c| c == 'M').unwrap() as u16;
+        assert_eq!(
+            backend.pointer_shape_at(x, y as u16),
+            Some(tui_lipan::PointerShape::Pointer)
+        );
+        backend.state_mut().config.cursor.pointer = rozi::config::MousePointer::Panes;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(x, y as u16), None);
+    });
+}
+
+#[test]
+fn unavailable_settings_rows_keep_the_normal_pointer() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 40);
+        backend.state_mut().config.animations.enabled = false;
+        type_query(&mut backend, "Workspace switching");
+        rendered_rows(&mut backend);
+        let rows = backend.capture_frame().to_fixed_grid_lines();
+        let (y, row) = rows
+            .iter()
+            .enumerate()
+            .rfind(|(_, row)| row.contains("Workspace switching"))
+            .unwrap();
+        let x = row.chars().position(|c| c == 'W').unwrap() as u16;
+        assert_eq!(
+            backend.pointer_shape_at(x, y as u16),
+            Some(tui_lipan::PointerShape::Default)
+        );
     });
 }

@@ -73,6 +73,14 @@ Ghostty is set to `3` and rozi to `3`, one notch scrolls nine lines, so lower on
 scrolling is too fast. A program that tracks the mouse, such as an editor, receives the wheel
 itself and scrolls by its own step.
 
+On terminals that support mouse pointer shapes, the pointer follows the pane application under
+the mouse, including an unfocused pane. Choose **Mouse pointer** in Settings to enable feedback for
+**Rozi and pane apps**, follow **Pane apps only**, or turn it **Off**. Text selection uses a text pointer, clickable controls use
+a pointing hand, and pane splits and sidebar dividers show resize arrows. Plain pane borders and
+title areas use the normal pointer. Moving a pane shows a grabbing hand. Right-drag resizing shows
+the directional arrow for the grabbed corner: northwest, northeast, southwest, or southeast.
+Other terminals keep their usual pointer.
+
 rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
 the program does not fall behind. Presses, releases, and wheel events are always sent.
 

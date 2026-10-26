@@ -870,17 +870,24 @@ impl SessionServer {
     /// A client attached over SSH cannot open a path on this machine. The server then reads the
     /// file itself and forwards the pixels inline, so a child that chose files before that client
     /// arrived keeps drawing for everyone.
+    ///
+    /// Inline relay sends a replaced image as edits of what changed only while every attached
+    /// client can apply them. Pane output is encoded once for all clients, so one older client
+    /// returns everyone to whole frames.
     pub(super) fn image_media(&self) -> ImageMedia {
-        let reachable = self
-            .clients
-            .iter()
-            .all(|client| !client.attached || client.shares_filesystem);
+        let mut attached = self.clients.iter().filter(|client| client.attached);
+        let reachable = attached.clone().all(|client| client.shares_filesystem);
+        let edits = attached.all(|client| {
+            client
+                .capabilities
+                .supports(protocol::GRAPHICS_ROOT_FRAME_EDITS)
+        });
         ImageMedia {
             policy: GraphicsMediaPolicy::default(),
-            relay: if reachable {
-                tui_lipan::GraphicsRelayPolicy::NamedAsFiles
-            } else {
-                tui_lipan::GraphicsRelayPolicy::All
+            relay: match (reachable, edits) {
+                (true, _) => tui_lipan::GraphicsRelayPolicy::NamedAsFiles,
+                (false, true) => tui_lipan::GraphicsRelayPolicy::AllWithEdits,
+                (false, false) => tui_lipan::GraphicsRelayPolicy::All,
             },
         }
     }

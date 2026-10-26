@@ -26,6 +26,9 @@ pub const AGENT_SUMMARIES: &str = "agent-summaries";
 /// The checkouts each session works in, in the same [`super::ServerMessage::SessionInfo`] reply.
 /// See [`super::ProjectSummary`].
 pub const PROJECT_SUMMARIES: &str = "project-summaries";
+/// The client applies Kitty root-frame edits (`a=f,r=1`) in pane output, so the server may relay a
+/// replaced image as edits of what changed. A client without it would keep the previous frame.
+pub const GRAPHICS_ROOT_FRAME_EDITS: &str = "graphics-root-frame-edits";
 
 /// An open set of capability names. Unknown ones deserialize and are dropped during negotiation,
 /// so a future peer offering more than this build knows is downgraded rather than refused.
@@ -37,10 +40,15 @@ impl Capabilities {
     /// Everything this build can do.
     pub fn current() -> Self {
         Self(
-            [RUNTIME_METRICS, AGENT_SUMMARIES, PROJECT_SUMMARIES]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+            [
+                RUNTIME_METRICS,
+                AGENT_SUMMARIES,
+                PROJECT_SUMMARIES,
+                GRAPHICS_ROOT_FRAME_EDITS,
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
         )
     }
 

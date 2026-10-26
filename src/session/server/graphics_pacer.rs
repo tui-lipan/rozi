@@ -59,16 +59,27 @@ impl GraphicsPacer {
         self.read_in_flight = false;
     }
 
-    pub fn observe(&mut self, now: Instant, sequence: u64, class: OutputClass) {
-        let OutputClass::IndependentGraphics {
+    /// Record one output transaction. `whole_frame` says the producer replaced an image whole,
+    /// which a dependent transaction can still be when it relays only what changed.
+    pub fn observe(&mut self, now: Instant, sequence: u64, class: OutputClass, whole_frame: bool) {
+        let (OutputClass::IndependentGraphics {
             image, incarnation, ..
-        } = class
+        }
+        | OutputClass::DependentGraphics {
+            image, incarnation, ..
+        }) = class
         else {
             let answer_until = self.answer_until;
             self.reset();
             self.answer_until = answer_until;
             return;
         };
+        if !whole_frame {
+            let answer_until = self.answer_until;
+            self.reset();
+            self.answer_until = answer_until;
+            return;
+        }
         if self
             .last_observation
             .is_some_and(|last| now.saturating_duration_since(last) > MAXIMUM_HOLD)
@@ -213,12 +224,13 @@ mod tests {
         let now = Instant::now();
         let mut pacer = streaming(now - Duration::from_secs(1));
         pacer.input(now);
-        pacer.observe(now, 9, OutputClass::Ordered);
+        pacer.observe(now, 9, OutputClass::Ordered, false);
         for sequence in 10..18 {
             pacer.observe(
                 now + Duration::from_millis((sequence - 10) * 5),
                 sequence,
                 independent(),
+                true,
             );
         }
         assert_eq!(
@@ -238,29 +250,49 @@ mod tests {
     fn streaming(now: Instant) -> GraphicsPacer {
         let mut pacer = GraphicsPacer::default();
         for n in 0..8 {
-            pacer.observe(now + Duration::from_millis(n * 5), n + 1, independent());
+            pacer.observe(
+                now + Duration::from_millis(n * 5),
+                n + 1,
+                independent(),
+                true,
+            );
         }
         pacer
     }
 
+    fn dependent() -> OutputClass {
+        OutputClass::DependentGraphics {
+            image: 7,
+            incarnation: 1,
+            revision: 2,
+        }
+    }
+
     #[test]
     fn ordered_and_dependent_output_immediately_remove_pacing() {
-        for class in [
-            OutputClass::Ordered,
-            OutputClass::DependentGraphics {
-                image: 7,
-                incarnation: 1,
-                revision: 2,
-            },
-        ] {
+        for class in [OutputClass::Ordered, dependent()] {
             let now = Instant::now();
             let mut pacer = streaming(now);
-            pacer.observe(now + Duration::from_secs(1), 9, class);
+            pacer.observe(now + Duration::from_secs(1), 9, class, false);
             assert_eq!(
                 pacer.policy(now + Duration::from_secs(1), None),
                 ReadPolicy::Open
             );
         }
+    }
+
+    #[test]
+    fn whole_frames_relayed_as_edits_are_paced_like_independent_ones() {
+        let now = Instant::now();
+        let mut pacer = GraphicsPacer::default();
+        for n in 0..8 {
+            pacer.observe(now + Duration::from_millis(n * 5), n + 1, dependent(), true);
+        }
+        assert!(matches!(
+            pacer.policy(now + Duration::from_millis(40), None),
+            ReadPolicy::Credit { .. }
+        ));
+        assert!(pacer.frames_ahead() > 0);
     }
 
     #[test]

@@ -27,6 +27,18 @@ fn output_class(class: TerminalOutputClass) -> protocol::OutputClass {
     }
 }
 
+/// Whether the producer sent this as a whole frame, even when readers receive only its changes.
+/// Such a stream is paced like an independent one.
+fn whole_frame(class: TerminalOutputClass) -> bool {
+    matches!(
+        class,
+        TerminalOutputClass::Graphics {
+            dependency: GraphicsDependency::Independent | GraphicsDependency::EditsPrevious,
+            ..
+        }
+    )
+}
+
 #[derive(Default)]
 struct OutputStaging {
     output: Vec<ServerOutbound>,
@@ -161,8 +173,12 @@ impl SessionServer {
         pane.graphics_pacer.read_completed(continuation);
         for transaction in transactions {
             let metadata = pane.next_output_metadata(output_class(transaction.class));
-            pane.graphics_pacer
-                .observe(now, metadata.sequence, metadata.class);
+            pane.graphics_pacer.observe(
+                now,
+                metadata.sequence,
+                metadata.class,
+                whole_frame(transaction.class),
+            );
             staging.push(
                 pane_id,
                 wire_local(owner),

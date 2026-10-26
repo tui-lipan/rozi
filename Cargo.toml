@@ -76,7 +76,8 @@ exclude = [
 # policy, and deferred named-media preparation.
 # 0.30.0: immutable media ownership and trusted local snapshot adoption.
 # 0.31.0: OSC 22 and pointer-shape support.
-tui-lipan = { version = "0.31.0", features = [
+# 0.32.0: superseded-frame elision and opt-in root-frame edits for inline image relay.
+tui-lipan = { version = "0.32.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

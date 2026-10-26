@@ -127,7 +127,9 @@ On a `Last seen` row:
   the session later, it is listed again.
 
 To kill or restart a session on a remote host, connect the host first: press `Ctrl+R`, then connect
-the host and open its Sessions tab, or expand it in the Sessions sidebar.
+the host and open its Sessions tab, or expand it in the Sessions sidebar. In the Sessions picker,
+a remote session awaiting shutdown shows a spinner and `Killing…`. Its row disappears when shutdown succeeds; a failed
+shutdown keeps the row and reports the error.
 
 ## Scope: where an action happens
 

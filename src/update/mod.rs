@@ -444,6 +444,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::SessionPickerTab(index) => crate::ops::session::select_session_picker_tab(ctx, index),
         Msg::SessionPickerEphemeral => crate::ops::session::open_ephemeral_session(ctx),
         Msg::SessionPickerCreateFromQuery => prompts::session_picker_create_from_query(ctx),
+        Msg::RemoteSessionKilled { entry, result } => {
+            crate::ops::session::lifecycle::remote_session_killed(ctx, entry, result)
+        }
         Msg::SessionPickerKillSelected => prompts::session_picker_kill_selected(ctx),
         Msg::SessionPickerRestartSelected => prompts::session_picker_restart_selected(ctx),
         Msg::SessionPickerDisconnectAttachment => {

@@ -42,6 +42,7 @@ use crate::state::{ConnectionState, HostStatus, State};
 use crate::view::fg_only;
 
 /// Separates the fields of a description.
+pub(crate) const KILLING: &str = "Killing…";
 pub(crate) const SEPARATOR: &str = " · ";
 
 /// The name shown for a temporary session in place of its generated one. Lowercase because it sits

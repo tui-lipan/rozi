@@ -445,6 +445,10 @@ pub enum Msg {
     SessionPickerEphemeral,
     SessionPickerCreateFromQuery,
     SessionPickerKillSelected,
+    RemoteSessionKilled {
+        entry: crate::session::discovery::DiscoveredSession,
+        result: std::result::Result<(), String>,
+    },
     SessionPickerRestartSelected,
     SessionPickerDisconnectAttachment,
     SessionPickerDisconnectHost,

@@ -75,7 +75,7 @@ exclude = [
 # 0.29.0: runtime `Context::set_title`, `TestBackend::host_title`, consuming Kitty media relay
 # policy, and deferred named-media preparation.
 # 0.30.0: immutable media ownership and trusted local snapshot adoption.
-tui-lipan = { version = "0.30.0", features = [
+tui-lipan = { version = "0.31.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

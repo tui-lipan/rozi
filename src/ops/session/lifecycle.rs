@@ -924,7 +924,7 @@ pub(crate) fn remote_session_killed(
     }
     detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
     if let Some(target) = entry.remote_target.as_ref() {
-        remove_cached_remote_session(ctx, &entry.name, target);
+        remove_killed_remote_session(ctx, &entry.name, target);
     }
     ctx.state
         .sidebar
@@ -935,6 +935,20 @@ pub(crate) fn remote_session_killed(
         return refresh_picker_after_kill(ctx);
     }
     Update::full()
+}
+
+pub(crate) fn remove_killed_remote_session(
+    ctx: &mut Context<AppRoot>,
+    session_name: &str,
+    target: &crate::session::remote::RemoteTarget,
+) {
+    // A snapshot already in flight may still list this session. Cancel its monitor so queued
+    // metadata fails the generation check; hosts::sync starts a fresh monitor after this update.
+    ctx.state
+        .remote
+        .monitors
+        .retain(|monitor| &monitor.target != target);
+    remove_cached_remote_session(ctx, session_name, target);
 }
 
 pub(crate) fn remove_cached_remote_session(

@@ -571,7 +571,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>) -> Update {
     }
     enter_sessionless(ctx);
     if let Some((session_name, target)) = killed_identity {
-        crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &session_name, &target);
+        crate::ops::session::lifecycle::remove_killed_remote_session(ctx, &session_name, &target);
     }
     if picker_was_open {
         return refresh_picker_after_kill(ctx);

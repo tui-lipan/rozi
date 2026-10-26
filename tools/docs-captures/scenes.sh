@@ -38,9 +38,7 @@ run:rozi run-action toggle-left-sidebar >/dev/null
 sleep:1000
 run:rozi run-action toggle-right-sidebar >/dev/null
 sleep:1500
-run:rozi run-action toggle-left-sidebar >/dev/null
-sleep:120
-run:rozi run-action toggle-right-sidebar >/dev/null
+key:M-b
 sleep:700
 run:rozi run-action choose-theme >/dev/null
 sleep:650

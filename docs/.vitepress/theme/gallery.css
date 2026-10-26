@@ -196,6 +196,23 @@
     background: #06070f;
 }
 
+/* A bare clip carries its own window and backdrop (tools/docs-captures/frame.sh); its edges fade
+   into the page, inside the backdrop's margin so the window itself is never faded. */
+.rz-clips-bare {
+    margin: 0;
+}
+.rz-clips-bare video {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 2760 / 1708;
+    background: #06070f;
+    mask-image:
+        linear-gradient(to right, transparent, #000 3%, #000 97%, transparent),
+        linear-gradient(to bottom, transparent, #000 4%, #000 94%, transparent);
+    mask-composite: intersect;
+}
+
 /* Steps: a numbered track under the frame. The active step carries a
    progress bar while autoplay runs, so the reader can see it will move. */
 .rz-gallery .rz-gallery-steps {

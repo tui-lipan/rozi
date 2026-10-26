@@ -12,11 +12,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
  * way.
  *
  * `v-model:active` shares the selected clip's index, so a page can show its config beside the frame.
+ *
+ * `bare` drops the window frame and tabs, for a single clip that was recorded with its own window.
  */
 type Clip = { src: string; poster: string; label: string; alt: string };
 
-const props = withDefaults(defineProps<{ clips: Clip[]; title?: string }>(), {
+const props = withDefaults(defineProps<{ clips: Clip[]; title?: string; bare?: boolean }>(), {
   title: "rozi",
+  bare: false,
 });
 
 const active = defineModel<number>("active", { default: 0 });
@@ -75,7 +78,22 @@ onBeforeUnmount(() => observer?.disconnect());
 </script>
 
 <template>
-  <figure ref="root" class="rz-gallery rz-clips">
+  <figure v-if="bare" ref="root" class="rz-clips-bare">
+    <video
+      ref="video"
+      :key="current.src"
+      :src="current.src"
+      :poster="current.poster"
+      :aria-label="current.alt"
+      :controls="still"
+      muted
+      loop
+      playsinline
+      preload="metadata"
+      @loadeddata="sync"
+    ></video>
+  </figure>
+  <figure v-else ref="root" class="rz-gallery rz-clips">
     <div v-if="clips.length > 1" class="rz-gallery-tabs" role="tablist" :aria-label="title">
       <button
         v-for="(clip, index) in clips"

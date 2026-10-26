@@ -11,7 +11,7 @@ scene workspace "$wide" 5000 "wait:10"
 # pane floats and is dragged around, goes fullscreen, each sidebar opens, a theme previews, and the
 # workspaces slide. It closes back to the lone editor it starts on, so the loop has no seam.
 others='rozi list-panes --format json | python3 -c "import json, sys; d = sorted(p[\"id\"] for p in json.load(sys.stdin)[\"data\"] if p[\"workspace\"] == 1); print(*d[1:])"'
-PROFILE=demo POSTER=5 GIF=assets/demo.gif clip hero "$wide" 5000 "sleep:600
+PROFILE=demo POSTER=5 FRAME="rozi — ~/src/rozi" GIF=assets/demo.gif clip hero "$wide" 5000 "sleep:600
 run:rozi split --focus --cwd \"\$HOME/src/rozi\" lazygit >/dev/null
 sleep:300
 run:rozi split --focus --cwd \"\$HOME/src/rozi\" yazi >/dev/null

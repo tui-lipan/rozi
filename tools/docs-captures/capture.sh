@@ -108,8 +108,9 @@ scene() {
 # Runs rozi in a real terminal of VIEWPORT, records the whole UI with `rozi record start ui` while
 # clip.py plays STEPS in real time, and encodes the recording as NAME.mp4 with a NAME-poster.webp.
 # STEPS use clip.py's syntax. The variables are those of `scene`, plus POSTER, the second of the
-# clip shown before it plays (default: its last frame), and GIF, a repository path that also
-# receives the clip as a GIF in a terminal window (frame.sh).
+# clip shown before it plays (default: its last frame); FRAME, a window title that puts the MP4
+# in a terminal window with frame.sh; and GIF, a repository path that also receives the clip as a
+# GIF in that window.
 clip() {
   local name=$1 viewport=$2 settle=$3 steps=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
@@ -125,11 +126,15 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   stop_sessions
 
   sandbox_env "$bin" record export "$rec" --to png-frames "$frames" --scale 2 >/dev/null 2>&1
-  # Constant 60 fps at level 5.1, which browsers hardware-decode. Variable rate lets
-  # one short gap advertise thousands of frames a second, and the motion then stutters.
-  ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
-    -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2,fps=60" -c:v libx264 -preset veryslow -tune animation -crf 24 \
-    -pix_fmt yuv420p -level:v 5.1 -movflags +faststart "$out/$name.mp4"
+  if [[ -n ${FRAME:-} ]]; then
+    "$here/frame.sh" "$frames/frames.ffconcat" "$out/$name.mp4" "$FRAME"
+  else
+    # Constant 60 fps at level 5.1, which browsers hardware-decode. Variable rate lets
+    # one short gap advertise thousands of frames a second, and the motion then stutters.
+    ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
+      -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2,fps=60" -c:v libx264 -preset veryslow -tune animation -crf 24 \
+      -pix_fmt yuv420p -level:v 5.1 -movflags +faststart "$out/$name.mp4"
+  fi
   if [[ -n ${POSTER:-} ]]; then
     ffmpeg -loglevel error -y -ss "$POSTER" -i "$out/$name.mp4" -frames:v 1 "$sandbox/poster.png"
   else
@@ -137,7 +142,7 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
   fi
   magick "$sandbox/poster.png" -quality 90 -define webp:method=6 "$out/$name-poster.webp"
   if [[ -n ${GIF:-} ]]; then
-    "$here/frame.sh" "$frames/frames.ffconcat" "$repo/$GIF" "rozi — ~/src/rozi"
+    "$here/frame.sh" "$frames/frames.ffconcat" "$repo/$GIF" "${FRAME:-rozi}"
   fi
   mkdir -p "$preview"
   cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"

@@ -40,7 +40,7 @@ checkout are never read or written.
 | --- | --- |
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
 | `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
-| `frame.sh` | Encodes a clip as a GIF of a terminal window with a title bar, shadow, and glow |
+| `frame.sh` | Encodes a clip as an MP4 or GIF of a terminal window with a title bar, shadow, and glow |
 | `sandbox/profiles/` | Workspaces the scenes launch: `demo` (the README and landing page demo), `dev` (the workspace shot), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
 | `sandbox/home/.bashrc` | A short prompt and no history file |
@@ -80,9 +80,10 @@ and written as a constant 60 fps MP4, without the recording indicator. A variabl
 lets one short gap advertise thousands of frames a second, and browsers then stutter through
 the motion. The recording starts after `SETTLE_MS` and stops after the last step, so the clip
 holds exactly the steps. Set `POSTER` to the second shown before the clip plays; the default
-is its last frame. Set `GIF` to a repository path to also write the clip as a GIF, framed as a
-terminal window by `frame.sh`; the `hero` clip writes `assets/demo.gif` for the repository README
-this way. A blinking dot may be in its off phase at a given second, so check the poster in
+is its last frame. Set `FRAME` to a window title to record the MP4 inside a terminal window with
+a title bar, shadow, and glow (`frame.sh`), and `GIF` to a repository path to also write the clip
+as a GIF in that window. The `hero` clip uses both: its MP4 plays on the landing page and
+`assets/demo.gif` is the repository README's demo. A blinking dot may be in its off phase at a given second, so check the poster in
 `/tmp/rzc-preview` after each run.
 
 rozi runs under tmux, which answers terminal queries as a terminal emulator does. Through a bare

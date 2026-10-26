@@ -373,14 +373,7 @@ html.rozi-intro-pending .lp {
 .lp-hero-stage {
     width: min(1400px, calc(100vw - 32px));
     margin-inline: calc(50% - min(700px, 50vw - 16px));
-    margin-block: 8px 28px;
-}
-/* The hero's window sits in the same rose and violet bloom as the README GIF. */
-.lp-hero-stage .rz-gallery-window {
-    box-shadow:
-        0 40px 110px -36px color-mix(in srgb, #982bf2 70%, transparent),
-        -40px -10px 120px -50px color-mix(in srgb, #fd4a80 60%, transparent),
-        0 18px 40px -20px rgb(0 0 0 / 0.8);
+    margin-block: 0 12px;
 }
 .lp-eyebrow {
     margin: 0 0 14px;

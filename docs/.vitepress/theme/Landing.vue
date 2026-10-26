@@ -576,9 +576,9 @@ restart = "on-failure"`);
       </section>
 
       <!-- Breaks out past --lp-max, so the recording's terminal text stays
-           readable. -->
+           readable. The clip is recorded in its own window. -->
       <div class="lp-hero-stage">
-        <ClipGallery :clips="HERO_CLIP" title="~/src/rozi — demo" />
+        <ClipGallery :clips="HERO_CLIP" bare />
       </div>
 
       <ul class="lp-facts">

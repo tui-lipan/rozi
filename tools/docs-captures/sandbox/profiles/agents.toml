@@ -1,0 +1,26 @@
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+name = "agents"
+layout = "master"
+focused_pane = 0
+
+[[workspaces.panes]]
+id = 0
+name = "claude"
+cwd = "~/src/rozi"
+argv = ["claude", "explain"]
+
+[[workspaces.panes]]
+id = 1
+name = "claude"
+cwd = "~/src/rozi-sidebar"
+argv = ["claude", "edit"]
+
+[[workspaces.panes]]
+id = 2
+name = "codex"
+cwd = "~/src/shop"
+argv = ["codex", "tests"]

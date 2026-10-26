@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""A stand-in coding agent for the agents clip: `claude SCRIPT` or `codex SCRIPT`.
+
+It draws the screens Claude Code and Codex really draw in each state - the footers and the approval
+dialog come from tests/fixtures/agents/ - so rozi's ordinary screen detection reads it exactly as
+it reads the real program, without a login, a network, or a bill. It waits at its prompt until
+$HOME/.agents-go exists, so every agent in a clip starts together.
+
+SCRIPT is one of:
+  explain   answers a question and finishes
+  edit      works, stops on an approval dialog until Enter, then finishes
+  tests     runs a longer task and finishes
+"""
+import os
+import select
+import shutil
+import sys
+import termios
+import time
+import tty
+
+AGENT = os.path.basename(sys.argv[0])
+SCRIPT = sys.argv[1] if len(sys.argv) > 1 else "explain"
+CWD = os.getcwd().replace(os.environ.get("HOME", "~"), "~", 1)
+
+DIM, RESET, BOLD = "\x1b[2m", "\x1b[0m", "\x1b[1m"
+ORANGE, GREEN, BLUE, GRAY = "\x1b[38;2;215;119;87m", "\x1b[32m", "\x1b[38;2;130;170;255m", "\x1b[90m"
+SPIN = "·✢✳✶✻✽"
+
+STORIES = {
+    "explain": {
+        "prompt": "Explain how the dwindle layout places a new pane",
+        "lines": [
+            "Reading src/layout/tiling.rs",
+            "A new pane splits the focused tile along its longer side.",
+            "The new pane takes the second half, so focus moves right or down.",
+            "Wide tiles split side by side; tall tiles split top and bottom.",
+            "The ratio starts at 50/50 and a drag on the divider changes it.",
+        ],
+        "work": 7.5,
+    },
+    "edit": {
+        "prompt": "Add a width setting for each sidebar dock",
+        "lines": [
+            "Reading src/sidebar/docks.rs",
+            "Each dock keeps its width in the layout table.",
+            "Adding a `width` key that Settings can change.",
+        ],
+        "work": 2.6,
+        "ask": "src/sidebar/docks.rs",
+        "after": [
+            "Updated src/sidebar/docks.rs with a per-dock width.",
+            "Settings now lists Left width and Right width.",
+        ],
+        "finish": 2.4,
+    },
+    "tests": {
+        "prompt": "Run the test suite and fix anything that fails",
+        "lines": [
+            "Ran cargo test --workspace",
+            "1 failed: handlers::orders::rejects_empty_cart",
+            "The handler returned 200 for an empty cart; it should be 422.",
+            "Patched src/handlers/orders.rs to validate the cart first.",
+            "Ran cargo test --workspace: 214 passed",
+        ],
+        "work": 9.0,
+    },
+}
+story = STORIES[SCRIPT]
+
+
+def size():
+    cols, rows = shutil.get_terminal_size((100, 30))
+    return max(cols, 40), max(rows, 12)
+
+
+def wrap(text, width):
+    out, line = [], ""
+    for word in text.split(" "):
+        if line and len(line) + 1 + len(word) > width:
+            out.append(line)
+            line = word
+        else:
+            line = f"{line} {word}" if line else word
+    return out + [line]
+
+
+def transcript(shown, width):
+    """The conversation so far, wrapped to the pane."""
+    lines = []
+    if AGENT == "claude":
+        lines += [f" {ORANGE}✻{RESET} {BOLD}Claude Code{RESET}", f"   {GRAY}{CWD}{RESET}", ""]
+        lines += [f"{GRAY}>{RESET} {story['prompt']}", ""]
+        for text in shown:
+            first, *rest = wrap(text, width - 4)
+            lines.append(f"{ORANGE}●{RESET} {first}")
+            lines += [f"  {more}" for more in rest]
+    else:
+        lines += [f" {BOLD}>_ OpenAI Codex{RESET} {GRAY}(v0.162.1){RESET}", f"    {GRAY}{CWD}{RESET}", ""]
+        lines += [f"{GRAY}›{RESET} {story['prompt']}", ""]
+        for text in shown:
+            first, *rest = wrap(text, width - 4)
+            lines.append(f"{GRAY}•{RESET} {first}")
+            lines += [f"  {more}" for more in rest]
+    return lines
+
+
+def footer(state, elapsed, width):
+    """The status rows each agent really draws, from tests/fixtures/agents/."""
+    rule = GRAY + "─" * width + RESET
+    if AGENT == "claude":
+        if state == "working":
+            spin = SPIN[int(elapsed * 6) % len(SPIN)]
+            tokens = f"{0.3 + elapsed * 0.21:.1f}k"
+            status = f"{ORANGE}{spin} Pondering…{RESET} {GRAY}({int(elapsed)}s · ↓ {tokens} tokens){RESET}"
+            hint = "esc to interrupt"
+        elif state == "done":
+            status, hint = f"{ORANGE}✻{RESET} {GRAY}Cooked for {int(elapsed)}s{RESET}", "? for shortcuts"
+        else:
+            status, hint = "", "? for shortcuts"
+        return [status, rule, f"{GRAY}❯{RESET} ", rule, f"  {GRAY}⏸ manual mode on · {hint}{RESET}"]
+    if state == "working":
+        status = f"{GRAY}•{RESET} {BOLD}Working{RESET} {GRAY}({int(elapsed)}s • esc to interrupt){RESET}"
+    else:
+        status = ""
+    return [status, "", f"{GRAY}›{RESET} {GRAY}Ask Codex to do anything{RESET}", "",
+            f"  {GRAY}gpt-5.6-luna medium · {CWD}{RESET}"]
+
+
+def dialog(width):
+    """Claude's approval dialog, as tests/fixtures/agents/claude.toml records it."""
+    rule = GRAY + "─" * width + RESET
+    return [rule, f" {BOLD}Edit file{RESET}", "", f"  Update({story['ask']})", "",
+            " Do you want to make this edit to docks.rs?", f" {BLUE}❯ 1. Yes{RESET}",
+            "   2. Yes, allow all edits during this session", "   3. No", "",
+            f" {GRAY}Esc to cancel · Tab to amend{RESET}"]
+
+
+def draw(state, shown, elapsed):
+    cols, rows = size()
+    width = cols - 1
+    bottom = dialog(width) if state == "blocked" else footer(state, elapsed, width)
+    body = transcript(shown, width) if state != "waiting" else transcript([], width)[:3]
+    room = rows - len(bottom)
+    body = body[-room:] if len(body) > room else body + [""] * (room - len(body))
+    frame = "\x1b[?2026h\x1b[H" + "\r\n".join(line + "\x1b[K" for line in body + bottom) + "\x1b[?2026l"
+    sys.stdout.write(frame)
+    sys.stdout.flush()
+
+
+def pressed_enter(timeout):
+    ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    if not ready:
+        return False
+    return b"\r" in os.read(sys.stdin.fileno(), 64) or False
+
+
+def main():
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J")
+    go = os.path.join(os.environ["HOME"], ".agents-go")
+    try:
+        while not os.path.exists(go):
+            draw("waiting", [], 0)
+            time.sleep(0.1)
+        start = time.monotonic()
+        lines, shown = story["lines"], []
+        while (elapsed := time.monotonic() - start) < story["work"]:
+            shown = lines[: 1 + int(elapsed / story["work"] * len(lines))]
+            draw("working", shown, elapsed)
+            time.sleep(1 / 15)
+        shown = list(lines)
+        if "ask" in story:
+            while True:
+                draw("blocked", shown, 0)
+                if pressed_enter(0.1):
+                    break
+            resumed = time.monotonic()
+            while (since := time.monotonic() - resumed) < story["finish"]:
+                part = story["after"][: 1 + int(since / story["finish"] * len(story["after"]))]
+                draw("working", shown + part, time.monotonic() - start)
+                time.sleep(1 / 15)
+            shown += story["after"]
+        took = time.monotonic() - start
+        while True:
+            draw("done", shown, took)
+            time.sleep(0.2)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+if __name__ == "__main__":
+    main()

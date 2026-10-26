@@ -7,6 +7,12 @@ import InstallTabs from "./InstallTabs.vue";
 import { highlightToml } from "./toml";
 import heroClip from "../../assets/captures/hero.mp4";
 import heroPoster from "../../assets/captures/hero-poster.webp";
+import clipAgents from "../../assets/captures/agents.mp4";
+import posterAgents from "../../assets/captures/agents-poster.webp";
+import clipRemote from "../../assets/captures/remote.mp4";
+import posterRemote from "../../assets/captures/remote-poster.webp";
+import clipGraphics from "../../assets/captures/graphics.mp4";
+import posterGraphics from "../../assets/captures/graphics-poster.webp";
 import captureClip from "../../assets/captures/record-demo.mp4";
 import capturePoster from "../../assets/captures/record-demo-poster.webp";
 import shotWorkspace from "../../assets/captures/workspace.webp";
@@ -51,6 +57,52 @@ const facts: [string, string][] = [
   [String(stats.commands), "rebindable commands"],
   [String(stats.agents), "agents detected"],
   ["3", "supported platforms"],
+];
+
+/* The three things a screenshot of panes cannot show, each recorded working. */
+const showcase = [
+  {
+    eyebrow: "Coding agents",
+    title: "See which agent needs you",
+    body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or done. Activity groups them by repository and branch, and the Agents view, on Alt+A, lists the one waiting on you first: Enter takes you there. ${stats.agents} agents are built in.`,
+    link: "/agents",
+    linkText: "Agent detection",
+    window: "~/src — agents",
+    clip: {
+      src: clipAgents,
+      poster: posterAgents,
+      label: "Agents",
+      alt: "Claude Code in two checkouts of rozi and Codex in a shop service, grouped in the Activity sidebar by repository and branch. One stops to ask before editing a file and turns blocked; the Agents view lists it first, Enter jumps to it and approves, and all three finish.",
+    },
+  },
+  {
+    eyebrow: "Remote sessions",
+    title: "Other machines, same rozi",
+    body: "Open a host from Sessions and its sessions sit beside your local ones. The panes run on the host; your theme, keys, and clipboard stay with you. rozi installs itself there if you allow it and reconnects after a dropped link.",
+    link: "/remote",
+    linkText: "Remote sessions",
+    window: "~/src/rozi — dev → workbox",
+    clip: {
+      src: clipRemote,
+      poster: posterRemote,
+      label: "Remote",
+      alt: "The Sessions picker opens Remote hosts, connects to workbox, and attaches to its api session: a shell whose prompt names workbox, an editor, and a git log. git status runs there, and Sessions then shows Local and workbox tabs side by side.",
+    },
+  },
+  {
+    eyebrow: "Real pixels",
+    title: "Images and a whole browser, in a pane",
+    body: "Programs that draw with the Kitty graphics protocol show real images: plots, previews, even terminal-browser. They stay in place under overlays and follow the pane when it moves or fills the screen.",
+    link: "/terminal",
+    linkText: "Terminal features",
+    window: "~/src/rozi — media",
+    clip: {
+      src: clipGraphics,
+      poster: posterGraphics,
+      label: "Graphics",
+      alt: "The rozi logo as an image beside the rozi website in terminal-browser. The page scrolls, both pictures dim behind the command palette, and the browser fills the screen and renders again at the larger size.",
+    },
+  },
 ];
 
 /* Two sentences each. The card is a claim and a link, not a paragraph - the
@@ -569,6 +621,27 @@ restart = "on-failure"`);
           <b>{{ value }}</b><span>{{ label }}</span>
         </li>
       </ul>
+
+      <section class="lp-section lp-showcase">
+        <header class="lp-head">
+          <h2>See it work</h2>
+          <p class="lp-head-note">Recorded by rozi · real panes, real programs</p>
+        </header>
+        <article
+          v-for="(item, index) in showcase"
+          :key="item.title"
+          class="lp-show"
+          :class="{ flip: index % 2 === 1 }"
+        >
+          <div class="lp-show-copy">
+            <p class="lp-eyebrow">{{ item.eyebrow }}</p>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.body }}</p>
+            <a class="lp-more" :href="withBase(item.link)">{{ item.linkText }} →</a>
+          </div>
+          <ClipGallery :clips="[item.clip]" :title="item.window" />
+        </article>
+      </section>
 
       <section class="lp-section">
         <header class="lp-head">

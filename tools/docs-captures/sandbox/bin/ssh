@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# A stand-in for ssh in the remote clip: every host is this machine, under its own home and XDG
+# directories in the sandbox's `remote/`, so a remote session is a separate set of sessions that
+# rozi reaches the way it reaches any host - probe, attach, list - only without a network.
+#
+# It reads ssh's options as ssh does, then runs the remote command with /bin/sh, as sshd hands a
+# command to the login shell.
+set -euo pipefail
+sandbox=$(cd "$(dirname "$0")/.." && pwd)
+remote=$sandbox/remote
+
+while (($#)); do
+  case $1 in
+    --) shift; break ;;
+    -[BbcDEeFIiJLlmOopQRSWw]) shift 2 ;;
+    -[BbcDEeFIiJLlmOopQRSWw]?*) shift ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+(($#)) || { echo "ssh: no host" >&2; exit 255; }
+shift
+(($#)) || { echo "ssh: an interactive login is not supported here" >&2; exit 255; }
+
+cd "$remote/home"
+exec env -i PATH="$sandbox/bin:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 TERM="${TERM:-xterm-256color}" \
+  COLORTERM=truecolor HOME="$remote/home" XDG_CONFIG_HOME="$remote/config" \
+  XDG_STATE_HOME="$remote/state" XDG_CACHE_HOME="$remote/cache" XDG_DATA_HOME="$remote/data" \
+  XDG_RUNTIME_DIR="$remote/run" SHELL=/bin/bash /bin/sh -c "$*"

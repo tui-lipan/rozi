@@ -24,8 +24,8 @@ The script builds a release rozi with `--features ui-snapshot`: clips need relea
 smoothly. A later plain `cargo build --release` replaces that binary with one that cannot write
 PNGs, so drop `SKIP_BUILD` after one.
 
-The `image-effects` clip also needs `terminal-browser` on `PATH` and a network connection: it
-shows the live rozi.tui-lipan.dev in a pane.
+The `image-effects` and `graphics` clips also need `terminal-browser` on `PATH` and a network
+connection: they show the live rozi.tui-lipan.dev in a pane.
 
 ## Isolation
 
@@ -41,10 +41,12 @@ checkout are never read or written.
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
 | `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
 | `frame.sh` | Encodes a clip as a terminal window: an MP4 with a title bar, or a GIF that adds a shadow and glow |
-| `sandbox/profiles/` | Workspaces the scenes launch: `demo` (the README and landing page demo), `dev` (the workspace shot), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
+| `sandbox/profiles/` | Workspaces the scenes launch: `demo` (the README and landing page demo), `dev` (the workspace shot), `agents` (coding agents), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
 | `sandbox/home/.bashrc` | A short prompt and no history file |
 | `sandbox/bin/icat` | Shows a PNG in a pane with the Kitty graphics protocol: `icat FILE [COLS ROWS]` |
+| `sandbox/bin/fake-agent` | Run as `claude` or `codex`: draws the screens those agents draw in each state, from `tests/fixtures/agents/`, so detection reads it like the real program |
+| `sandbox/bin/ssh` | Stands in for `ssh` in the `remote` clip: every host is this machine under the sandbox's `remote/` home |
 | `sandbox/demo-change.sh` | The uncommitted edit applied to the demo checkout |
 
 ## Add a scene

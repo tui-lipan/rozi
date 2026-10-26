@@ -56,6 +56,13 @@ stop_sessions() {
   for session in $names; do
     sandbox_env "$bin" sessions kill "$session" >/dev/null 2>&1 || true
   done
+  # Sessions on the stand-in remote host (sandbox/bin/ssh), which live under the sandbox's remote/.
+  [[ -d $sandbox/remote ]] || return 0
+  names=$("$sandbox/bin/ssh" workbox "rozi sessions list --format json" 2>/dev/null |
+    python3 -c 'import json, sys; print(" ".join(s["name"] for s in json.load(sys.stdin)))' || true)
+  for session in $names; do
+    "$sandbox/bin/ssh" workbox "rozi sessions kill $session" >/dev/null 2>&1 || true
+  done
 }
 
 prepare_sandbox() {

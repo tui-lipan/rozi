@@ -282,3 +282,97 @@ key:w
 sleep:2400
 run:terminal-browser shutdown >/dev/null 2>&1 || true" '[animations]
 pane_close_style = "particles"'
+
+# Coding agents across three checkouts, grouped in Activity by repository and branch. The agents
+# are sandbox/bin/fake-agent, which draws the screens the real Claude Code and Codex draw, so
+# detection reads them as it reads the real programs. One stops for approval: the Agents view lists
+# it first, Enter jumps to it, and Enter approves.
+agents_setup='
+r=$sandbox/home/src
+sandbox_env git -C $r/rozi worktree add -q -b feat/sidebar-docks $r/rozi-sidebar
+mkdir -p $r/shop/src/handlers
+printf "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n" > $r/shop/Cargo.toml
+printf "pub fn orders() {}\n" > $r/shop/src/handlers/orders.rs
+sandbox_env git -C $r/shop init -q -b main
+sandbox_env git -C $r/shop add -A
+sandbox_env git -C $r/shop -c user.name=shop -c user.email=shop@example.invalid commit -q -m "Start the shop"
+'
+PROFILE=agents POSTER=5.6 SETUP=$agents_setup clip agents "$wide" 5000 "sleep:900
+run:touch \$HOME/.agents-go
+sleep:3800
+key:M-a
+sleep:1300
+key:Enter
+sleep:1100
+key:Enter
+sleep:8000" '[sidebar]
+startup = true
+layout = { left = { width = 40, panel_count = 1, panels = [{ weight = 1.0, tabs = ["activity", "agents"] }] } }'
+
+# Sessions on another machine. sandbox/bin/ssh stands in for ssh: the host `workbox` is this
+# machine under its own home in the sandbox's remote/, so rozi probes, lists, and attaches to it
+# exactly as it would over a network. Its prompt names the host. A session server starts empty, so
+# the shell is split in first: the first pane has focus when a client attaches.
+remote_setup='
+r=$sandbox/remote
+mkdir -p $r/home/src $r/config/rozi $r/state $r/cache $r/data $r/run
+chmod 700 $r/run
+cp -a $sandbox/home/src/rozi $r/home/src/rozi
+cp $sandbox/home/.bashrc $r/home/.bashrc
+cat >> $r/home/.bashrc <<'"'"'RC'"'"'
+PS1=$'"'"'\\[\e[32m\\]workbox\\[\e[0m\\] \\[\e[34m\\]\\w\\[\e[0m\\] \\[\e[35m\\]❯\\[\e[0m\\] '"'"'
+RC
+printf "cwd = \"~/src/rozi\"\nshell = \"bash\"\n\n[updates]\ncheck = false\n" > $r/config/rozi/config.toml
+ssh=$sandbox/bin/ssh
+for s in api deploy; do $ssh workbox "rozi --session $s --server >/dev/null 2>&1 &"; done
+sleep 1.5
+$ssh workbox "rozi --session api split" >/dev/null
+$ssh workbox "rozi --session api split --argv nvim src/session/remote/connect.rs" >/dev/null
+$ssh workbox "rozi --session api split \"git --no-pager log --oneline --decorate --color=always -14; exec bash\"" >/dev/null
+$ssh workbox "rozi --session deploy split --argv nvim Cargo.toml" >/dev/null
+sleep 0.5
+'
+SETUP=$remote_setup POSTER=8 clip remote "$wide" 5000 "sleep:800
+key:M-s
+sleep:1100
+key:C-r
+sleep:1000
+key:Enter
+sleep:1800
+key:Enter
+sleep:2600
+type:git status --short
+key:Enter
+sleep:1600
+key:M-s
+sleep:2200
+key:Escape
+sleep:700" '[remote]
+install = "never"
+
+[remote.hosts.workbox]
+host = "workbox"'
+
+# Real pixels in a pane: the rozi logo as an image beside the live website in terminal-browser. The
+# page scrolls, both pictures dim behind the command palette, and the browser fills the screen and
+# renders again at the new size. The logo pane is never hidden and shown again, which re-shows its
+# image at a lower resolution. The settle lets the site load.
+PROFILE=media POSTER=3.2 clip graphics "$wide" 17000 "sleep:900
+key:PageDown
+sleep:1100
+key:PageDown
+sleep:1300
+key:C-a
+type:p
+sleep:1500
+key:Escape
+sleep:800
+key:PageUp
+sleep:1200
+key:M-f
+sleep:2200
+key:PageDown
+sleep:1500
+key:PageDown
+sleep:1600
+run:terminal-browser shutdown >/dev/null 2>&1 || true"

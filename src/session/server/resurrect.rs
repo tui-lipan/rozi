@@ -1,4 +1,5 @@
 use super::*;
+use crate::pane::launch::REPLAY_PROMPT_WAIT;
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::fs::File;
@@ -21,11 +22,6 @@ const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// Rozi never interprets the value, but it did arrive from outside, so it is bounded rather than
 /// trusted to be sane.
 const MAX_NATIVE_SESSION: usize = 256;
-
-/// How long a restored pane's captured command waits for the shell's input-ready marker before
-/// being typed anyway. Shell integration can be disabled, and some prompt themes replace the
-/// end-of-prompt marker. Give those shells time to start without leaving restoration inert.
-const FOREGROUND_PROMPT_WAIT: Duration = Duration::from_secs(3);
 
 /// A command a restored pane was observed running, waiting for that pane's new shell to be ready
 /// to receive it. See [`SessionServer::flush_pending_foreground`].
@@ -944,7 +940,7 @@ impl SessionServer {
     /// "Ready" is the shell's end-of-prompt report (`OSC 133 B`, surfaced as
     /// [`PaneCommandPhase::Input`]). The earlier `OSC 133 A` only starts prompt rendering;
     /// sending input then can echo it before the prompt and display it twice. A pane with no
-    /// input-ready marker falls back to writing after [`FOREGROUND_PROMPT_WAIT`]. The bytes
+    /// input-ready marker falls back to writing after [`REPLAY_PROMPT_WAIT`]. The bytes
     /// then take the same path a client's keystrokes do; to the shell this is indistinguishable
     /// from someone typing fast.
     ///
@@ -968,7 +964,7 @@ impl SessionServer {
                 continue;
             }
             let prompted = pane.runtime.command_phase == protocol::PaneCommandPhase::Input;
-            let fallback = pending.waiting_since.elapsed() >= FOREGROUND_PROMPT_WAIT;
+            let fallback = pending.waiting_since.elapsed() >= REPLAY_PROMPT_WAIT;
             if prompted || fallback {
                 ready.push(pending);
             } else {
@@ -2587,7 +2583,7 @@ mod tests {
             pane.runtime.command_phase = phase;
             server.panes.insert(1, pane);
             server.replay_foreground_command(1, 1, "cursor-agent");
-            server.pending_foreground[0].waiting_since = Instant::now() - FOREGROUND_PROMPT_WAIT;
+            server.pending_foreground[0].waiting_since = Instant::now() - REPLAY_PROMPT_WAIT;
 
             server.flush_pending_foreground();
             assert!(server.pending_foreground.is_empty());

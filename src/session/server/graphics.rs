@@ -16,11 +16,13 @@ fn output_class(class: TerminalOutputClass) -> protocol::OutputClass {
                 incarnation: source.incarnation,
                 revision: revision.0,
             },
-            GraphicsDependency::DependsOnPrevious => protocol::OutputClass::DependentGraphics {
-                image: source.producer_image_id,
-                incarnation: source.incarnation,
-                revision: revision.0,
-            },
+            GraphicsDependency::DependsOnPrevious | GraphicsDependency::EditsPrevious => {
+                protocol::OutputClass::DependentGraphics {
+                    image: source.producer_image_id,
+                    incarnation: source.incarnation,
+                    revision: revision.0,
+                }
+            }
         },
     }
 }

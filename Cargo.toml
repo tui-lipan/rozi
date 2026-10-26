@@ -75,8 +75,8 @@ exclude = [
 # 0.29.0: runtime `Context::set_title`, `TestBackend::host_title`, consuming Kitty media relay
 # policy, and deferred named-media preparation.
 # 0.30.0: immutable media ownership and trusted local snapshot adoption.
-# OSC 22 and pointer-shape support. Replace this revision with its crates.io release before merging.
-tui-lipan = { version = "0.30.0", git = "https://github.com/tui-lipan/tui-lipan", rev = "1688af1b77c8b01e93aad64d1b072b8ee274f624", features = [
+# 0.31.0: OSC 22 and pointer-shape support.
+tui-lipan = { version = "0.31.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

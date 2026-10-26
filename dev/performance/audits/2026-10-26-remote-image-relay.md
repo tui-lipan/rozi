@@ -171,6 +171,12 @@ frames/s. Caching that frame is a possible follow-up.
   limit.
 - Rozi pacer tests cover pacing a whole-frame stream relayed as edits, and dropping pacing for
   other dependent output.
+- Review follow-up `bf3c7e9` narrows when each optimization applies, so the image budget evicts
+  exactly what applying every command would. Bursts now require frames of one size separated only
+  by text. Edits require the replacement to be the first graphics command of its batch. Frame-data
+  continuation chunks also repeat `a=f`. These rows were not remeasured. Every measured workload
+  already met the narrower conditions: after two start-up probes, the producer logs held only
+  consecutive 1768x901 replacements of image 1.
 
 ## Limitations
 

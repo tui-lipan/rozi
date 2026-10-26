@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="A rozi session opening, splitting, resizing, and arranging terminal panes" width="860">
+  <img src="assets/demo.gif" alt="A recording of rozi: new panes tile beside an editor, the layout cycles, the sidebars open, a theme previews, and the view slides between workspaces" width="860">
 </p>
 
 rozi arranges panes as you open them, keeps named sessions running after you leave, reaches other

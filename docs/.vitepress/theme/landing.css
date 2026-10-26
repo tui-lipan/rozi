@@ -373,17 +373,7 @@ html.rozi-intro-pending .lp {
 .lp-hero-stage {
     width: min(1400px, calc(100vw - 32px));
     margin-inline: calc(50% - min(700px, 50vw - 16px));
-    /* Proportional, because what it is spending is: the picture's own margin
-       scales with the box, so a fixed pull that clears it at 1400 across eats
-       into the picture itself on a phone - which showed up as the composition
-       creeping over the CTA buttons. Roughly 34px at full width. */
-    margin-block: calc(min(1400px, 100vw - 32px) * -0.024);
-    /* The pull puts the box over the bottom of the CTA row, and the box paints
-       nothing there - the mask has already faded it out - so the buttons look
-       untouched while the picture quietly eats their clicks. It is a picture of
-       a terminal, not a terminal (see RoziStage.vue), so it has no business
-       taking a pointer at all. */
-    pointer-events: none;
+    margin-block: 8px 28px;
 }
 .lp-eyebrow {
     margin: 0 0 14px;
@@ -1316,11 +1306,6 @@ html.rozi-intro-pending .lp {
     /* The authored scene leaves 260px around its 1400px terminal plate. Scale
        the scene past the viewport and let .lp clip those decorative margins,
        so the terminal itself fills roughly 93% of a phone screen. */
-    .lp-hero-stage {
-        width: 128vw;
-        margin-inline: calc(50% - 64vw);
-        margin-block: calc(128vw * -0.024);
-    }
     .lp-features,
     .lp-examples {
         grid-template-columns: minmax(0, 1fr);

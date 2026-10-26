@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────────────
-   Two cuts of one composition.
+   The intro's cut of the composition.
 
    `nat` is authored time and is not free to change. The piece's opening is
    pinned to absolute authored seconds - `rozi` is typed at 0.9, the accent
@@ -12,41 +12,8 @@
 import type { Cues, Scene } from "./runtime";
 
 /**
- * The hero loop: boot, split, fill with work, then keep going - drag the
- * column split, and trade the two right-hand panes. Those last two acts are
- * the window-manager half of the pitch, so the loop is where they belong
- * rather than the title sequence.
- */
-export const HERO_SCENES: Scene[] = [
-    { name: "Boot", dur: 2.0, nat: 2.4 },
-    { name: "Split", dur: 3.0, nat: 3.2 },
-    // Ends 0.7s after the last agent line lands. Any longer and the loop
-    // visibly waits for its next move.
-    { name: "Agents", dur: 4.6, nat: 4.6 },
-    // Long enough for the split to travel out, sit for a beat, and come back.
-    { name: "Resize", dur: 2.2, nat: 2.2 },
-    { name: "Swap", dur: 1.2, nat: 1.2 },
-    // Keep a quarter-second beat between the compact closing acts. Longer
-    // sections made the loop appear to drop to half speed after the sidebar
-    // left, even though the movement tweens themselves had not changed.
-    { name: "Hide", dur: 0.85, nat: 0.85 },
-    { name: "Float", dur: 1.0, nat: 1.0 },
-    { name: "Drag", dur: 1.05, nat: 1.05 },
-    // In, held, and back out.
-    { name: "Full", dur: 2.6, nat: 2.6 },
-];
-
-/**
- * The hero stops before the logo resolve - the page already has a wordmark
- * two inches above it. Parking the three remaining cues past the end of time
- * holds that whole act on its first frame, where it is invisible and free,
- * without the piece needing a mode flag.
- */
-export const HERO_CUES: Cues = { Tile: 9000, Mark: 9000, Name: 9000 };
-
-/**
- * The mirror image: the intro keeps the logo resolve and parks the two layout
- * acts, which would only delay the title it exists to deliver.
+ * The intro keeps the logo resolve and parks the layout acts, which would
+ * only delay the title it exists to deliver.
  */
 export const CINEMATIC_CUES: Cues = {
     Resize: 9000,

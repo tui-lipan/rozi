@@ -19,7 +19,7 @@ sandbox=/tmp/rzc
 base=/tmp/rzc-base
 only=" $* "
 
-for tool in nvim lazygit btop eza bat bash git magick ffmpeg python3 tmux; do
+for tool in nvim lazygit btop yazi eza bat bash git magick ffmpeg python3 tmux; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -31,8 +31,12 @@ mkdir -p "$out"
 if [[ ! -d $base/.git ]]; then
   rm -rf "$base"
   git clone --quiet --depth 40 "file://$repo" "$base"
-  # Captures show the checkout's branch; keep it the same whichever branch they run from.
+  # Captures show the checkout's branch; keep it the same whichever branch they run from, and drop
+  # the clone's remote and source branch so `git log` decorations do not name them either.
+  source_branch=$(git -C "$base" branch --show-current)
   git -C "$base" checkout --quiet -B master
+  [[ $source_branch == master ]] || git -C "$base" branch --quiet -D "$source_branch"
+  git -C "$base" remote remove origin
   git -C "$base" config user.name "rozi docs"
   git -C "$base" config user.email docs@example.invalid
 fi
@@ -104,7 +108,8 @@ scene() {
 # Runs rozi in a real terminal of VIEWPORT, records the whole UI with `rozi record start ui` while
 # clip.py plays STEPS in real time, and encodes the recording as NAME.mp4 with a NAME-poster.webp.
 # STEPS use clip.py's syntax. The variables are those of `scene`, plus POSTER, the second of the
-# clip shown before it plays (default: its last frame).
+# clip shown before it plays (default: its last frame), and GIF, a repository path that also
+# receives the clip as a GIF.
 clip() {
   local name=$1 viewport=$2 settle=$3 steps=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0
@@ -131,6 +136,13 @@ run:rozi record stop --ui >/dev/null" -- "$bin" \
     ffmpeg -loglevel error -y -sseof -0.1 -i "$out/$name.mp4" -frames:v 1 -update 1 "$sandbox/poster.png"
   fi
   magick "$sandbox/poster.png" -quality 90 -define webp:method=6 "$out/$name-poster.webp"
+  if [[ -n ${GIF:-} ]]; then
+    # From the same frames: 1440 wide at 20 fps, one palette per scene change, and no dither,
+    # which would speckle the flat pane backgrounds.
+    ffmpeg -loglevel error -y -f concat -safe 0 -i "$frames/frames.ffconcat" \
+      -vf "fps=20,scale=1440:-1:flags=area,split[a][b];[a]palettegen=max_colors=256:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
+      "$repo/$GIF"
+  fi
   mkdir -p "$preview"
   cp "$out/$name.mp4" "$sandbox/poster.png" "$preview/" && mv "$preview/poster.png" "$preview/$name-poster.png"
   echo "recorded $name"

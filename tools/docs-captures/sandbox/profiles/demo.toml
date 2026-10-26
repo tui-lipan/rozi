@@ -1,0 +1,30 @@
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+name = "code"
+layout = "dwindle"
+
+[[workspaces.panes]]
+id = 0
+name = "editor"
+cwd = "~/src/rozi"
+argv = ["nvim", "src/layout/mod.rs"]
+
+[[workspaces]]
+index = 1
+name = "docs"
+layout = "columns"
+
+[[workspaces.panes]]
+id = 10
+name = "guide"
+cwd = "~/src/rozi"
+command = "bat --style=plain --color=always --paging=never --theme=ansi docs/getting-started.md"
+
+[[workspaces.panes]]
+id = 11
+name = "tree"
+cwd = "~/src/rozi"
+command = "eza --tree --level 2 --icons=always --color=always src | head -40"

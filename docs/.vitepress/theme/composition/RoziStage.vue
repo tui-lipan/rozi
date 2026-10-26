@@ -1,9 +1,8 @@
 <script setup lang="ts">
 /**
  * Fits the 1920x1080 composition into whatever box it is given and drives its
- * clock. Two consumers: the looping hero demo and the one-shot intro. They
- * differ only in the scene list and the fit, which is the whole point of
- * keeping the piece a function of time.
+ * clock, for the one-shot first-visit intro. The scene list and the fit are
+ * props, which is the whole point of keeping the piece a function of time.
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { withBase } from "vitepress";
@@ -13,7 +12,7 @@ import { clamp, deriveScenes, useClock, warp, type Cues, type Scene } from "./ru
 const props = withDefaults(
     defineProps<{
         scenes: Scene[];
-        /** Cues to pin outside the played range - see ACCENT/HERO_CUES below. */
+        /** Cues to pin outside the played range - see CINEMATIC_CUES in scenes.ts. */
         cueOverrides?: Cues;
         loop?: boolean;
         /** `width` fills the container; `contain` also fits the height. */
@@ -26,7 +25,7 @@ const props = withDefaults(
         ratio?: string;
         /** Authored frame to hold when motion is off or the screen is small. */
         staticAt?: number;
-        /** External pause, e.g. while the intro is on top of the hero. */
+        /** External pause, e.g. while the intro is leaving. */
         halted?: boolean;
         /** Dip to black across the seam so a looping piece does not jump cut. */
         fadeLoopEdges?: boolean;
@@ -107,8 +106,7 @@ onMounted(() => {
     ro = new ResizeObserver(measure);
     if (host.value) ro.observe(host.value);
 
-    // Respect the reader's motion preference on every viewport. Mobile screens
-    // still run the hero loop; the responsive crop keeps the composition useful.
+    // Respect the reader's motion preference on every viewport.
     reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     syncStill();
     reduced.addEventListener("change", syncStill);

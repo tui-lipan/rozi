@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { useData, withBase } from "vitepress";
 import { computed, onMounted, ref } from "vue";
-import RoziStage from "./composition/RoziStage.vue";
 import ClipGallery from "./ClipGallery.vue";
 import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
 import RoziIntro from "./RoziIntro.vue";
-import { HERO_CUES, HERO_SCENES } from "./composition/scenes";
 import { highlightToml } from "./toml";
+import heroClip from "../../assets/captures/hero.mp4";
+import heroPoster from "../../assets/captures/hero-poster.webp";
 import captureClip from "../../assets/captures/record-demo.mp4";
 import capturePoster from "../../assets/captures/record-demo-poster.webp";
 import shotWorkspace from "../../assets/captures/workspace.webp";
@@ -407,6 +407,15 @@ workspace_ms = 220`,
 const motionClip = ref(0);
 const motionCode = computed(() => highlightToml(MOTION_CLIPS[motionClip.value].code));
 
+const HERO_CLIP = [
+  {
+    src: heroClip,
+    poster: heroPoster,
+    label: "rozi",
+    alt: "An editor alone in rozi. Three new panes tile beside it as lazygit, btop, and git log open. The layout cycles through Master, Grid, and Columns, the sidebars open and close, a theme previews and is put back, and the view slides to a second workspace and back before the panes close again.",
+  },
+];
+
 const CAPTURE_CLIP = [
   {
     src: captureClip,
@@ -566,16 +575,10 @@ restart = "on-failure"`);
         </div>
       </section>
 
-      <!-- Breaks out past --lp-max: the composition is authored at 1920 wide,
-           and below roughly 1200 its terminal text stops being readable. -->
+      <!-- Breaks out past --lp-max, so the recording's terminal text stays
+           readable. -->
       <div class="lp-hero-stage">
-        <RoziStage
-          :scenes="HERO_SCENES"
-          :cue-overrides="HERO_CUES"
-          :halted="introPlaying"
-          ratio="1920 / 940"
-          fade-loop-edges
-        />
+        <ClipGallery :clips="HERO_CLIP" title="~/src/rozi — demo" />
       </div>
 
       <ul class="lp-facts">

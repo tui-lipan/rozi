@@ -18,7 +18,7 @@ go to `/tmp/rzc-preview` for review; only the WebP and MP4 files belong in the r
 
 - Linux or macOS with `bash`, `git`, and ImageMagick 7 (`magick`)
 - `python3`, `tmux`, and `ffmpeg` with libx264, for clips
-- `nvim`, `lazygit`, `btop`, `eza`, and `bat`, which fill the panes
+- `nvim`, `lazygit`, `btop`, `yazi`, `eza`, and `bat`, which fill the panes
 
 The script builds a release rozi with `--features ui-snapshot`: clips need release speed to play
 smoothly. A later plain `cargo build --release` replaces that binary with one that cannot write
@@ -40,7 +40,7 @@ checkout are never read or written.
 | --- | --- |
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
 | `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
-| `sandbox/profiles/` | Workspaces the scenes launch: `dev` (hero), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
+| `sandbox/profiles/` | Workspaces the scenes launch: `demo` (the README and landing page demo), `dev` (the workspace shot), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
 | `sandbox/home/.bashrc` | A short prompt and no history file |
 | `sandbox/bin/icat` | Shows a PNG in a pane with the Kitty graphics protocol: `icat FILE [COLS ROWS]` |
@@ -78,7 +78,8 @@ and written as a constant 60 fps MP4, without the recording indicator. A variabl
 lets one short gap advertise thousands of frames a second, and browsers then stutter through
 the motion. The recording starts after `SETTLE_MS` and stops after the last step, so the clip
 holds exactly the steps. Set `POSTER` to the second shown before the clip plays; the default
-is its last frame. A blinking dot may be in its off phase at a given second, so check the
+is its last frame. Set `GIF` to a repository path to also write the clip as a GIF; the `hero` clip
+writes `assets/demo.gif` for the repository README this way. A blinking dot may be in its off phase at a given second, so check the
 poster in `/tmp/rzc-preview` after each run.
 
 rozi runs under tmux, which answers terminal queries as a terminal emulator does. Through a bare

@@ -196,8 +196,8 @@
     background: #06070f;
 }
 
-/* A bare clip carries its own window and backdrop (tools/docs-captures/frame.sh); its edges fade
-   into the page, inside the backdrop's margin so the window itself is never faded. */
+/* A bare clip is recorded as a window - title bar and terminal - by tools/docs-captures/frame.sh.
+   The page gives it the corners, border, shadow, and glow, which spread freely past its edges. */
 .rz-clips-bare {
     margin: 0;
 }
@@ -205,12 +205,14 @@
     display: block;
     width: 100%;
     height: auto;
-    aspect-ratio: 2760 / 1708;
-    background: #06070f;
-    mask-image:
-        linear-gradient(to right, transparent, #000 3%, #000 97%, transparent),
-        linear-gradient(to bottom, transparent, #000 4%, #000 94%, transparent);
-    mask-composite: intersect;
+    aspect-ratio: 2560 / 1500;
+    border-radius: 10px;
+    background: #0f0d16;
+    box-shadow:
+        0 0 0 1px #3b3150,
+        0 24px 48px -18px rgb(0 0 0 / 0.85),
+        -60px -30px 140px -40px color-mix(in srgb, #fd4a80 55%, transparent),
+        60px 50px 160px -40px color-mix(in srgb, #982bf2 65%, transparent);
 }
 
 /* Steps: a numbered track under the frame. The active step carries a

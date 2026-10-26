@@ -32,7 +32,7 @@ page renamed out from under a cross-reference.
 
 | Path | What it is |
 |------|------------|
-| `config.ts` | Site metadata, sidebar, search, the intro's pre-paint gate |
+| `config.ts` | Site metadata, sidebar, search |
 | `repoLinks.ts` | Rewrites links that leave `docs/` into GitHub URLs (see below) |
 | `theme/style.css` | Doc-page theme; palette derived from the app icon |
 | `theme/landing.css` | Landing page chrome |
@@ -41,72 +41,15 @@ page renamed out from under a cross-reference.
 | `theme/InstallTabs.vue` | The hero's tabbed install box — see below |
 | `theme/ConfigTabs.vue` | The landing's tabbed `config.toml` samples — see below |
 | `theme/toml.ts` | Colours the landing's TOML samples, which Shiki never sees |
-| `theme/RoziIntro.vue` | First-visit intro overlay |
-| `theme/composition/` | The animated rozi window — see below |
 | `../public/` | Favicons, `og-image.png`, `CNAME`, web manifest, plus the two generated installer copies |
 
-### The composition
+### The hero
 
-`theme/composition/` holds one 1920×1080 animation, played two ways.
-
-| Path | What it is |
-|------|------------|
-| `RoziScene.jsx` | The drawing: a pure function of authored time `T` |
-| `runtime.ts` | Easings, the tween, the scene warp, the `px()` style shim, the rAF clock |
-| `scenes.ts` | The two cuts and their cue tables |
-| `RoziStage.vue` | Scales the scene into a box and drives its clock |
-
-The scene is ported from a React piece and stays JSX, which is why `config.ts`
-loads `@vitejs/plugin-vue-jsx`. Two differences from React to keep in mind when
-editing it: Vue does not append `px` to bare numbers in a style object, hence
-`px()` at every `style={}`, and vendor-prefixed properties are written as
-hyphenated string keys.
-
-A scene carries `dur` (how long it plays) and `nat` (how much authored time it
-covers). Splitting those is what lets the same piece run as a 12.8s intro and an
-11.4s hero loop without the cues moving. The opening is the exception: it is
-pinned to absolute authored seconds, so `Boot` must always cover 2.4 of them.
-
-The two cuts park each other's acts past the end of time rather than carrying a
-mode flag: the hero pushes `Tile`/`Mark`/`Name` out to 9000 so the logo resolve
-holds on its first frame, and the intro does the same to the six layout acts. A
-parked act costs nothing and renders as if it had not started. **Adding an act
-to one cut means parking it in the other**, or its cue reads `undefined` and
-every value derived from it becomes `NaN`.
-
-Anything added to the loop has to keep its pace. The acts around it are
-continuously busy — text typing, panes snapping in on `easeOutBack`, a line of
-output every few tenths — so a move that eases in from rest and then holds still
-reads as a stall even when it is short. Lead in fast, decelerate, and keep the
-hold to about a second.
-
-The hero's `ratio` prop crops the piece shorter than 16:9 to cut its generous
-margin. That crop runs through the dot grid and the screen's drop shadow, which
-are both still faintly painted out there, so `.fit-width` fades its own top and
-bottom to avoid a hard seam across the page. **The two are coupled**: change the
-ratio and the mask stops have to be rechecked against the screen plate, which
-sits at composition y 170–930 of 1080 and must stay at full strength.
-
-The clock idles when the stage is off screen, the tab is hidden, or the intro is
-on top. Under `prefers-reduced-motion` the stage holds one frame and never starts. Hovering deliberately does *not* pause it, and the stage is
-not selectable — it is a picture of a terminal, not a terminal.
-
-### The first-visit intro
-
-`/` plays the full arc once per tab, then dissolves into a hero already showing
-the same lockup — mark left, wordmark right, same typeface and gradient — so the
-handoff lands on matching artwork rather than a resemblance. Changing one of the
-two means changing the other: `theme/Landing.vue`'s `.lp-lockup` and the closing
-frame of `RoziScene.jsx`. It is skipped on a deep link, under
-reduced motion, and on a viewport too small to read it; while it runs, a click,
-a scroll, Escape, or the skip button ends it.
-
-The decision is taken by an inline script in `config.ts` **before first paint** —
-Vue hydrates after the server-rendered HTML is already on screen, which is far
-too late to hide it without a flash. The script sets `rozi-intro-pending` on
-`<html>`; `landing.css` hides the page while it is there, `RoziIntro.vue` reads
-it back and removes it on dismissal. The script's 4s failsafe is load-bearing: if
-the bundle never arrives, that class must not leave the page invisible.
+The landing hero plays `assets/captures/hero.mp4`, a recording of the real rozi made by the
+`hero` clip in `tools/docs-captures/`; regenerate it there, never by hand. The video is the window
+alone — title bar and terminal — and `ClipGallery`'s `bare` mode gives it the rounded corners,
+border, shadow, and glow in CSS, so the glow can spread past the video's edges. The same run writes
+the repository README's `assets/demo.gif`, which carries that styling in the image itself.
 
 ### Links that leave `docs/`
 
@@ -184,9 +127,8 @@ is the only step.
 ## The background
 
 `.lp-bg` is one decorative layer spanning the whole landing page, behind
-everything: three wide colour blooms, the composition's dot grid carried a
-little past the picture's edge, and four pieces of the mark at 3–4% opacity
-bleeding off the sides. It is `aria-hidden`, `pointer-events: none`, and
+everything: three wide colour blooms, a faint dot grid behind the hero, and
+four pieces of the mark at 3–4% opacity bleeding off the sides. It is `aria-hidden`, `pointer-events: none`, and
 positioned in page percentages — at that opacity these are atmosphere, and
 atmosphere does not need to line up with a heading.
 
@@ -268,11 +210,6 @@ the facts strip, the extension author loop, the index section — is laid out
 with hairline rules instead. The two strips started out as rows of small
 filled boxes and read as keycaps nobody could press, which is unsurprising:
 that is the exact recipe `.lp kbd` uses.
-
-The hero composition is a picture and takes `pointer-events: none`. Its
-negative block margin puts it over the bottom of the CTA row, where its mask
-has already faded it to nothing — so without that line the buttons look
-untouched and quietly stop taking clicks.
 
 ## The counted facts
 

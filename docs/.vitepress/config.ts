@@ -1,7 +1,6 @@
 import { defineConfig } from "vitepress";
 import { fileURLToPath } from "node:url";
 import { copyFileSync, readFileSync } from "node:fs";
-import vueJsx from "@vitejs/plugin-vue-jsx";
 import { repoLinksPlugin } from "./repoLinks";
 
 const srcDir = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
@@ -169,28 +168,6 @@ export default defineConfig({
           "Your terminals, tiled like a window manager. Panes arrange themselves, sessions keep running, and everything changes live.",
       },
     ],
-    // Decide whether the landing intro plays before the browser paints, so the
-    // page underneath never flashes into view and back out. Vue is far too
-    // late for that - it hydrates after the server-rendered HTML is on screen.
-    // The failsafe matters: if the bundle never arrives, the class must not be
-    // allowed to leave the page hidden forever.
-    [
-      "script",
-      {},
-      `(function () {
-  try {
-    if (location.pathname.replace(/\\/$/, "") !== "") return;
-    if (location.hash) return;
-    if (sessionStorage.getItem("rozi:intro-seen")) return;
-    if (innerWidth < 900 || innerHeight < 560) return;
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    document.documentElement.classList.add("rozi-intro-pending");
-    setTimeout(function () {
-      document.documentElement.classList.remove("rozi-intro-pending");
-    }, 4000);
-  } catch (e) {}
-})();`,
-    ],
     ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
     [
       "link",
@@ -280,7 +257,7 @@ export default defineConfig({
 
   // The landing composition is ported from a React piece and is far more
   // legible as JSX than as a template full of `:style` bindings.
-  vite: { plugins: [vueJsx(), repoLinksPlugin(srcDir)] },
+  vite: { plugins: [repoLinksPlugin(srcDir)] },
 
   themeConfig: {
     logo: "/logo.svg",

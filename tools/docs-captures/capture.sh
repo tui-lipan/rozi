@@ -108,9 +108,9 @@ scene() {
 # Runs rozi in a real terminal of VIEWPORT, records the whole UI with `rozi record start ui` while
 # clip.py plays STEPS in real time, and encodes the recording as NAME.mp4 with a NAME-poster.webp.
 # STEPS use clip.py's syntax. The variables are those of `scene`, plus POSTER, the second of the
-# clip shown before it plays (default: its last frame); FRAME, a window title that puts the MP4
-# in a terminal window with frame.sh; and GIF, a repository path that also receives the clip as a
-# GIF in that window.
+# clip shown before it plays (default: its last frame); FRAME, a window title that records the MP4
+# as a terminal window with frame.sh; and GIF, a repository path that also receives the clip as a
+# GIF of that window with its shadow and glow.
 clip() {
   local name=$1 viewport=$2 settle=$3 steps=$4 extra=${5:-}
   [[ $only == "  " || $only == *" $name "* ]] || return 0

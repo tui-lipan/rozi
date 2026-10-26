@@ -15,33 +15,17 @@
     background: var(--vp-c-bg);
     /* The anchor for `.lp-bg`, which spans the whole page behind it. */
     position: relative;
-    /* The hero composition is wider than --lp-max and reaches past it. `clip`
+    /* The hero's glow reaches past the page edge on narrow screens. `clip`
        rather than `hidden` so it does not become a scroll container and break
        `position: sticky` on the topbar. */
     overflow-x: clip;
-    transition: opacity 0.7s ease 0.05s;
-}
-
-/* ── Intro handoff ───────────────────────────────────────────────────
-   The class is set by the pre-paint script in config.ts, before the browser
-   has drawn anything, and removed when the intro dissolves. Uncovering the
-   page and fading the overlay at once is what makes the two read as one move.
-   ───────────────────────────────────────────────────────────────────── */
-
-html.rozi-intro-pending {
-    overflow: hidden;
-}
-html.rozi-intro-pending .lp {
-    opacity: 0;
-    transition: none;
 }
 
 /* ── Background decoration ───────────────────────────────────────────────
    The page is a column of rules and plates on one flat colour, which reads as
    thin over seven thousand pixels. This layer gives it depth without giving
    it pattern: the mark at a size where nobody reads it as a logo, the bloom
-   the hero lockup already sits in, and the composition's own dot grid carried
-   a little way past the picture's edge.
+   the hero lockup already sits in, and a faint dot grid behind the hero.
 
    Everything here is decoration - `aria-hidden` in the markup, untouchable,
    and behind the page's own stacking. The two shapes come from
@@ -101,9 +85,8 @@ html.rozi-intro-pending .lp {
     );
 }
 
-/* The composition paints a dot grid of its own behind the terminal plate.
-   This is the same grid on the page around it, faded out before it reaches
-   the first section so the two read as one surface rather than two. */
+/* A faint dot grid behind the hero, faded out before it reaches the first
+   section. */
 .lp-bg-grid {
     top: 0;
     left: 0;
@@ -143,10 +126,7 @@ html.rozi-intro-pending .lp {
    bleeding off the same edge read as one thing repeated rather than as
    texture, which is what the first pass did.
 
-   The first one has to clear the composition: the stage is the one element on
-   the page that paints an opaque background edge to edge, and it ends around
-   24% of the page at every width, so anything above that gets a corner sliced
-   off. */
+   The first one sits below the hero, so the demo never covers part of it. */
 .lp-bg-mark.m1 {
     top: 26.5%;
     right: -190px;
@@ -354,26 +334,17 @@ html.rozi-intro-pending .lp {
 
 /* ── Hero ────────────────────────────────────────────────────────────── */
 
-/* Centred copy above a full-width composition. The piece is authored at
-   1920x1080 and its terminal text stops meaning anything much below 1200
-   across, so it gets the page's whole width rather than half of it. */
+/* Centred copy above the recorded demo. */
 .lp-hero {
     max-width: 880px;
     margin: 0 auto;
     text-align: center;
     padding: 64px 0 4px;
 }
-/* The composition keeps its own margin inside the 1920x940 crop - the screen
-   plate sits at composition y 170-930 of 1080 - so roughly 70 scaled pixels
-   above and 58 below this box are picture, not page. The negative block
-   margin spends that instead of stacking page space on top of it. Cropping
-   the ratio tighter would do the same thing to the picture, but the mask
-   stops are tied to the plate and would have to move with it; this does not
-   touch the composition at all. */
+/* Wider than the copy, so the recording's terminal text stays readable, with room for its glow. */
 .lp-hero-stage {
-    width: min(1400px, calc(100vw - 32px));
-    margin-inline: calc(50% - min(700px, 50vw - 16px));
-    margin-block: 0 12px;
+    width: min(1080px, calc(100vw - 32px));
+    margin: 28px auto 64px;
 }
 .lp-eyebrow {
     margin: 0 0 14px;
@@ -393,7 +364,7 @@ html.rozi-intro-pending .lp {
     display: block;
     width: 120px;
     height: 120px;
-    /* The same violet bloom the intro leaves the mark sitting in. */
+    /* A violet bloom under the mark. */
     filter: drop-shadow(0 16px 38px rgba(152, 43, 242, 0.38));
 }
 .lp-wordmark {
@@ -1415,11 +1386,6 @@ html.rozi-intro-pending .lp {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    /* The composition holds a single frame of its own accord (see
-       RoziStage.vue); this is only about the page around it. */
-    .lp {
-        transition: none;
-    }
     .lp-cta-btn,
     .lp-cta-btn::after {
         transition: none;

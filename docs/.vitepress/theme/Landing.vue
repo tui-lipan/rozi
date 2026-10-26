@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { useData, withBase } from "vitepress";
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import ClipGallery from "./ClipGallery.vue";
 import ConfigTabs from "./ConfigTabs.vue";
 import InstallTabs from "./InstallTabs.vue";
-import RoziIntro from "./RoziIntro.vue";
 import { highlightToml } from "./toml";
 import heroClip from "../../assets/captures/hero.mp4";
 import heroPoster from "../../assets/captures/hero-poster.webp";
@@ -30,14 +29,6 @@ import clipWorkspaces from "../../assets/captures/workspace-switch.mp4";
 import posterWorkspaces from "../../assets/captures/workspace-switch-poster.webp";
 import clipImages from "../../assets/captures/image-effects.mp4";
 import posterImages from "../../assets/captures/image-effects-poster.webp";
-
-/* The pre-paint script in config.ts has already decided this and hidden the
-   page accordingly; reading its class back is what keeps the two in step. */
-const introPlaying = ref(false);
-onMounted(() => {
-  introPlaying.value =
-    document.documentElement.classList.contains("rozi-intro-pending");
-});
 
 // From Cargo.toml via config.ts - see NavTitleMeta.vue.
 const { theme } = useData();
@@ -466,12 +457,6 @@ restart = "on-failure"`);
 
 <template>
   <div class="lp">
-    <!-- Outside .lp's subtree: the page is faded out while the intro runs, and
-         the overlay must not fade with it. -->
-    <Teleport to="body">
-      <RoziIntro v-if="introPlaying" @done="introPlaying = false" />
-    </Teleport>
-
     <!-- Decoration only: the mark at a size where it reads as texture rather
          than as a logo, plus the bloom the hero lockup already sits in. Behind
          everything, out of the accessibility tree, and untouchable. -->
@@ -535,8 +520,6 @@ restart = "on-failure"`);
       <section class="lp-hero">
         <div class="lp-hero-copy">
           <p class="lp-eyebrow">Tiling terminal multiplexer</p>
-          <!-- Same lockup the intro lands on, so the handoff is a match rather
-               than a resemblance. -->
           <div class="lp-lockup">
             <img
               class="lp-mark"

@@ -22,10 +22,9 @@ const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// trusted to be sane.
 const MAX_NATIVE_SESSION: usize = 256;
 
-/// How long a restored pane's captured command waits for that pane's shell to report a prompt
-/// before being typed anyway. Only reached by a pane with no shell integration to report one, so
-/// the value is a bound on the wait rather than the wait itself: long enough that a slow `rc` file
-/// has finished, short enough that a restored session is not visibly inert.
+/// How long a restored pane's captured command waits for the shell's input-ready marker before
+/// being typed anyway. Shell integration can be disabled, and some prompt themes replace the
+/// end-of-prompt marker. Give those shells time to start without leaving restoration inert.
 const FOREGROUND_PROMPT_WAIT: Duration = Duration::from_secs(3);
 
 /// A command a restored pane was observed running, waiting for that pane's new shell to be ready
@@ -942,11 +941,10 @@ impl SessionServer {
 
     /// Type each queued command into its pane once that pane's shell is ready for it.
     ///
-    /// "Ready" is the shell's own prompt report (`OSC 133 A`, surfaced as
-    /// [`PaneCommandPhase::Prompt`]): past that point the shell is reading the terminal and
-    /// nothing else is. Shell integration is not universal - `cmd.exe` has no `133;B`, and a user
-    /// may have turned injection off - so a pane that never reports one falls back to writing
-    /// after [`FOREGROUND_PROMPT_WAIT`], by which point any ordinary shell is long up. The bytes
+    /// "Ready" is the shell's end-of-prompt report (`OSC 133 B`, surfaced as
+    /// [`PaneCommandPhase::Input`]). The earlier `OSC 133 A` only starts prompt rendering;
+    /// sending input then can echo it before the prompt and display it twice. A pane with no
+    /// input-ready marker falls back to writing after [`FOREGROUND_PROMPT_WAIT`]. The bytes
     /// then take the same path a client's keystrokes do; to the shell this is indistinguishable
     /// from someone typing fast.
     ///
@@ -969,11 +967,9 @@ impl SessionServer {
             if pane.generation != pending.generation {
                 continue;
             }
-            let prompted = matches!(
-                pane.runtime.command_phase,
-                protocol::PaneCommandPhase::Prompt | protocol::PaneCommandPhase::Input
-            );
-            if prompted || pending.waiting_since.elapsed() >= FOREGROUND_PROMPT_WAIT {
+            let prompted = pane.runtime.command_phase == protocol::PaneCommandPhase::Input;
+            let fallback = pending.waiting_since.elapsed() >= FOREGROUND_PROMPT_WAIT;
+            if prompted || fallback {
                 ready.push(pending);
             } else {
                 waiting.push(pending);
@@ -2449,7 +2445,11 @@ mod tests {
             return;
         }
         let root = tempfile::tempdir().unwrap();
-        fs::write(root.path().join(".bashrc"), "PS1='$ '\n").unwrap();
+        fs::write(
+            root.path().join(".bashrc"),
+            "PS1='$(while [ ! -f \"$HOME/prompt-ready\" ]; do sleep 0.01; done)$ '\n",
+        )
+        .unwrap();
         // Keep the real Bash parser and PTY, but isolate its startup files in a minimal HOME.
         // The executable basename also exercises Bash integration detection during restore.
         let bash = root.path().join("bash");
@@ -2487,9 +2487,21 @@ mod tests {
         assert_eq!(server.restore().unwrap(), 1);
         assert_eq!(server.pending_foreground.len(), 1);
 
-        // Wait for semantic readiness, without flushing the queue or allowing its timeout to
-        // stand in for integration. This checks the cause rather than asserting startup speed.
+        // Hold Bash between the start and end of prompt rendering. No replay bytes may be sent
+        // while prompt expansion still owns the terminal.
         let deadline = Instant::now() + Duration::from_secs(10);
+        while server.panes[&1].runtime.command_phase != protocol::PaneCommandPhase::Prompt {
+            server.drain_pty_events();
+            assert!(
+                Instant::now() < deadline,
+                "restored Bash never started its prompt"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.flush_pending_foreground();
+        assert_eq!(server.pending_foreground.len(), 1);
+        fs::write(root.path().join("prompt-ready"), "").unwrap();
+
         while server.panes[&1].runtime.command_phase != protocol::PaneCommandPhase::Input {
             server.drain_pty_events();
             assert!(
@@ -2517,6 +2529,15 @@ mod tests {
             server.panes[&1].runtime.command_phase,
             protocol::PaneCommandPhase::Input
         );
+        let text = server
+            .panes
+            .get_mut(&1)
+            .unwrap()
+            .screen_without_change()
+            .render_snapshot()
+            .text;
+        assert!(text.contains("$ printf restored-command"), "{text:?}");
+        assert_eq!(text.matches("restored-command").count(), 1, "{text:?}");
         assert!(server.panes[&1].launch.is_none());
     }
 
@@ -2547,7 +2568,30 @@ mod tests {
         server.panes.get_mut(&1).unwrap().runtime.command_phase =
             protocol::PaneCommandPhase::Prompt;
         server.flush_pending_foreground();
+        assert_eq!(server.pending_foreground.len(), 1);
+
+        server.panes.get_mut(&1).unwrap().runtime.command_phase = protocol::PaneCommandPhase::Input;
+        server.flush_pending_foreground();
         assert!(server.pending_foreground.is_empty());
+    }
+
+    #[test]
+    fn a_queued_command_without_an_input_marker_uses_the_fallback() {
+        let mut server =
+            SessionServer::new_named_with_settings("fallback", ServerSettings::default());
+        for phase in [
+            protocol::PaneCommandPhase::Unknown,
+            protocol::PaneCommandPhase::Prompt,
+        ] {
+            let mut pane = test_pane();
+            pane.runtime.command_phase = phase;
+            server.panes.insert(1, pane);
+            server.replay_foreground_command(1, 1, "cursor-agent");
+            server.pending_foreground[0].waiting_since = Instant::now() - FOREGROUND_PROMPT_WAIT;
+
+            server.flush_pending_foreground();
+            assert!(server.pending_foreground.is_empty());
+        }
     }
 
     /// The pane the command belonged to is gone the moment its generation moves; typing an old

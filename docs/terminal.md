@@ -241,7 +241,8 @@ scroll with the terminal and belong to the screen (main or alternate) they were 
 When a program redraws an image faster than a client can show it, such as a browser playing a
 video, rozi shows the most recent frame and skips the ones in between, so the picture stays current
 instead of falling behind. Over SSH, only the parts of an image that changed are sent, so a mostly
-still page costs a fraction of a full redraw.
+still page costs a fraction of a full redraw. While a client from an older rozi release is attached
+to the session, every client receives whole images instead.
 
 Limits:
 

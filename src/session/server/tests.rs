@@ -287,6 +287,39 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
     assert_eq!(server.image_media(), shared);
 }
 
+/// Inline relay sends a replaced image as edits only while every attached client can apply them.
+/// One older client, which would keep showing the previous frame, sends everyone whole frames.
+#[test]
+fn inline_relay_sends_edits_only_while_every_client_applies_them() {
+    let mut server = SessionServer::new_named("dev");
+    let attach = |server: &mut SessionServer, capabilities| {
+        let (client, stream) = add_client(server);
+        server.handle_message(
+            client,
+            ClientMessage::Attach {
+                capabilities,
+                session: server.session_name.clone(),
+                protocol_version: PROTOCOL_VERSION,
+                min_protocol_version: PROTOCOL_VERSION,
+                label: "over-ssh".into(),
+                read_only: false,
+                shares_filesystem: false,
+                expected_server_nonce: None,
+            },
+        );
+        (client, stream)
+    };
+    let relay = |server: &SessionServer| server.image_media().relay;
+    let (_current, _current_stream) = attach(&mut server, Some(protocol::Capabilities::current()));
+    assert_eq!(relay(&server), tui_lipan::GraphicsRelayPolicy::AllWithEdits);
+
+    let (older, _older_stream) = attach(&mut server, None);
+    assert_eq!(relay(&server), tui_lipan::GraphicsRelayPolicy::All);
+
+    server.remove_client(older);
+    assert_eq!(relay(&server), tui_lipan::GraphicsRelayPolicy::AllWithEdits);
+}
+
 /// Attach a client that is looking at this session from another machine.
 fn attach_remote_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (remote, stream) = add_client(server);

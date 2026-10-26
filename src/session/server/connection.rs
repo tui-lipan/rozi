@@ -1351,9 +1351,10 @@ impl SessionServer {
                 },
             )];
         }
-        // Complete named output for existing recipients before this reader joins the common
-        // representation. The new reader's baseline replay carries pixels.
-        while self.media.has_named_output() {
+        // Complete output encoded for the existing recipients, named files or frame edits, before
+        // this reader joins the common representation. The new reader's baseline replay carries
+        // pixels.
+        while self.media.has_reader_specific_output() {
             self.pump_media_output();
         }
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());

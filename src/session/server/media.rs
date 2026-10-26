@@ -108,10 +108,21 @@ impl Drop for MediaWorker {
 }
 
 impl MediaPipeline {
-    pub(super) fn has_named_output(&self) -> bool {
-        self.output
-            .as_ref()
-            .is_some_and(|o| o.transactions.iter().any(|t| !t.media.is_empty()))
+    /// Whether staged output only suits the readers it was encoded for: it names server files, or
+    /// edits frames that a reader joining now might not be able to apply.
+    pub(super) fn has_reader_specific_output(&self) -> bool {
+        self.output.as_ref().is_some_and(|o| {
+            o.transactions.iter().any(|t| {
+                !t.media.is_empty()
+                    || matches!(
+                        t.class,
+                        tui_lipan::TerminalOutputClass::Graphics {
+                            dependency: tui_lipan::GraphicsDependency::EditsPrevious,
+                            ..
+                        }
+                    )
+            })
+        })
     }
 
     pub(super) fn client_fenced(&self, client_id: ClientId) -> bool {

@@ -195,11 +195,7 @@ pub(crate) fn pane_runtime_changed(
         if local {
             return Update::none();
         }
-        let at_prompt = matches!(
-            state.command_phase,
-            crate::session::protocol::PaneCommandPhase::Prompt
-                | crate::session::protocol::PaneCommandPhase::Input
-        );
+        let input_ready = state.command_phase == crate::session::protocol::PaneCommandPhase::Input;
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
             if let Some(pane) = attachment.find_pane_mut(pane_id)
                 && pane.pty_generation == generation
@@ -207,7 +203,7 @@ pub(crate) fn pane_runtime_changed(
             {
                 apply_pane_runtime_state(pane, agents.clone(), state);
             }
-            if at_prompt {
+            if input_ready {
                 flush_attachment_replay_input(attachment, pane_id, generation);
             }
         }
@@ -216,11 +212,7 @@ pub(crate) fn pane_runtime_changed(
             .observe_records(&agents, crate::state::FirstSighting::New);
         return Update::none();
     }
-    let at_prompt = matches!(
-        state.command_phase,
-        crate::session::protocol::PaneCommandPhase::Prompt
-            | crate::session::protocol::PaneCommandPhase::Input
-    );
+    let input_ready = state.command_phase == crate::session::protocol::PaneCommandPhase::Input;
     let mut transition = None;
     let mut edges = None;
     let mut title = None;
@@ -340,9 +332,9 @@ pub(crate) fn pane_runtime_changed(
             }
         }
     }
-    // The shell reached its first prompt: deliver any queued replay input now, so readline
+    // The shell finished rendering its prompt: deliver queued replay input now, so readline
     // echoes it exactly once at the prompt (see `flush_replay_input`).
-    if at_prompt {
+    if input_ready {
         flush_replay_input(ctx, pane_id, generation);
     }
     // An agent that just started working is the moment a row first gains an elapsed time, and the

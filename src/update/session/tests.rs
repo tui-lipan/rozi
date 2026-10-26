@@ -3642,3 +3642,120 @@ fn attachment_keeps_the_remote_path_family_across_disconnect() {
         .join()
         .expect("path family test completes");
 }
+
+#[test]
+fn restored_replay_waits_for_input_readiness_in_current_and_background_attachments() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            use crate::session::client::ClientOutbound;
+            use crate::session::protocol::PaneCommandPhase;
+
+            for background in [false, true] {
+                for use_fallback in [false, true] {
+                    let mut backend = TestBackend::new(crate::AppRoot::default());
+                    let (client, outbound) = SessionClient::test_channel();
+                    let epoch = backend.state().runtime_epoch;
+                    let pane_id = backend.state().current().workspaces[0].panes[0].id;
+                    let generation = 7;
+                    {
+                        let attachment = backend.state_mut().current_mut();
+                        attachment.workspaces[0].panes[0].pty_generation = generation;
+                        attachment.session_client = Some(client);
+                        attachment
+                            .pending_replay_inputs
+                            .insert((pane_id, generation), "printf restored-command".into());
+                    }
+                    if background {
+                        backend
+                            .state_mut()
+                            .park_current(epoch, crate::state::Attachment::new());
+                        backend.state_mut().runtime_epoch = epoch + 1;
+                    }
+                    let runtime = |sequence, command_phase| Msg::SessionPaneRuntimeChanged {
+                        epoch,
+                        pane_id,
+                        local: false,
+                        generation,
+                        agents: Vec::new(),
+                        state: PaneRuntimeState {
+                            sequence,
+                            command_phase,
+                            ..PaneRuntimeState::default()
+                        },
+                    };
+                    backend
+                        .dispatch(runtime(1, PaneCommandPhase::Prompt))
+                        .unwrap();
+                    let attachment = backend.state().attachment_for_epoch(epoch).unwrap();
+                    assert!(
+                        attachment
+                            .pending_replay_inputs
+                            .contains_key(&(pane_id, generation))
+                    );
+                    assert!(
+                        !outbound
+                            .try_iter()
+                            .any(|message| matches!(message, ClientOutbound::PaneInput { .. }))
+                    );
+
+                    if use_fallback {
+                        backend
+                            .dispatch(Msg::ReplayInputDeadline {
+                                epoch,
+                                pane_id,
+                                generation,
+                            })
+                            .unwrap();
+                    } else {
+                        backend
+                            .dispatch(runtime(2, PaneCommandPhase::Input))
+                            .unwrap();
+                    }
+                    // A subsequent readiness report or an already scheduled deadline must not
+                    // deliver the command a second time.
+                    backend
+                        .dispatch(runtime(3, PaneCommandPhase::Input))
+                        .unwrap();
+                    backend
+                        .dispatch(Msg::ReplayInputDeadline {
+                            epoch,
+                            pane_id,
+                            generation,
+                        })
+                        .unwrap();
+                    assert!(
+                        backend
+                            .state()
+                            .attachment_for_epoch(epoch)
+                            .unwrap()
+                            .pending_replay_inputs
+                            .is_empty()
+                    );
+                    let inputs: Vec<_> = outbound
+                        .try_iter()
+                        .filter_map(|message| match message {
+                            ClientOutbound::PaneInput {
+                                pane_id: target,
+                                generation: actual_generation,
+                                local,
+                                bytes,
+                                ..
+                            } => {
+                                assert_eq!(
+                                    (target, actual_generation, local),
+                                    (pane_id, generation, false)
+                                );
+                                Some(bytes)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(inputs, vec![b"printf restored-command\r".to_vec()]);
+                }
+            }
+        })
+        .expect("spawn replay readiness test")
+        .join()
+        .expect("replay readiness test completes");
+}

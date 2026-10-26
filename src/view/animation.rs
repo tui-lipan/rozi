@@ -1076,6 +1076,105 @@ mod tests {
         });
     }
 
+    /// Switching straight back to the session just left, while its layer is still retained beneath
+    /// the one that replaced it: the portal opens over the outgoing session again rather than the
+    /// revived layer surfacing from under it.
+    #[test]
+    fn a_portal_switch_back_mid_reveal_opens_a_new_portal() {
+        in_stack(|| {
+            let portal = || {
+                let mut backend = two_panes(1);
+                backend.state_mut().config.animations.session = anim::SessionAnimationStyle::Portal;
+                backend.render();
+                backend.advance(Duration::from_secs(1));
+                backend
+            };
+            // Another session takes the foreground; its predecessor's attachment is handed back.
+            let switch = |backend: &mut TestBackend<AppRoot>, attachment, epoch| {
+                let state = backend.state_mut();
+                let previous = std::mem::replace(&mut state.attachment, attachment);
+                state.runtime_epoch = epoch;
+                state.current_mut().epoch = epoch;
+                state.session_view_revision += 1;
+                backend.render();
+                previous
+            };
+            let mut backend = portal();
+            let duration = reveal_duration(&backend);
+            switch(&mut backend, crate::state::Attachment::new(), 99);
+            backend.advance(duration + Duration::from_secs(1));
+            let second = symbols(&backend);
+
+            // Switch away again, and back before the portal onto the other session settles.
+            let mut backend = portal();
+            let first = symbols(&backend);
+            let first_epoch = backend.state().runtime_epoch;
+            let first_attachment = switch(&mut backend, crate::state::Attachment::new(), 99);
+            backend.advance(duration / 4);
+            switch(&mut backend, first_attachment, first_epoch);
+            backend.advance(duration / 2);
+            let midway = symbols(&backend);
+
+            let width = usize::from(VIEWPORT_W);
+            let (cx, cy) = ((width - 1) as f32 / 2.0, (VIEWPORT_H - 1) as f32 / 2.0);
+            let centre: Vec<usize> = (0..first.len())
+                .filter(|&index| {
+                    let (x, y) = ((index % width) as f32, (index / width) as f32);
+                    (x - cx).hypot((y - cy) * 2.0) / cx.hypot(cy * 2.0) < 0.2
+                })
+                .filter(|&index| first[index] != second[index])
+                .collect();
+            assert!(
+                !centre.is_empty(),
+                "the two sessions must differ at the centre"
+            );
+            for index in centre {
+                assert_eq!(
+                    midway[index], first[index],
+                    "centre cell {index} shows the session switched back to"
+                );
+            }
+            assert_ne!(midway, first, "the portal is still opening midway");
+        });
+    }
+
+    /// Switching straight back mid-reveal settles on the reveal's own time for every style: the
+    /// session left behind does not stay on top while its retained layer exits.
+    #[test]
+    fn a_switch_back_mid_reveal_settles_on_its_own_reveal() {
+        for style in [
+            anim::SessionAnimationStyle::Off,
+            anim::SessionAnimationStyle::Fade,
+        ] {
+            in_stack(move || {
+                let mut backend = two_panes(1);
+                backend.state_mut().config.animations.session = style;
+                backend.render();
+                backend.advance(Duration::from_secs(1));
+                let first = symbols(&backend);
+                let first_epoch = backend.state().runtime_epoch;
+                let switch = |backend: &mut TestBackend<AppRoot>, attachment, epoch| {
+                    let state = backend.state_mut();
+                    let previous = std::mem::replace(&mut state.attachment, attachment);
+                    state.runtime_epoch = epoch;
+                    state.current_mut().epoch = epoch;
+                    state.session_view_revision += 1;
+                    backend.render();
+                    previous
+                };
+                let first_attachment = switch(&mut backend, crate::state::Attachment::new(), 99);
+                backend.advance(Duration::from_millis(60));
+                switch(&mut backend, first_attachment, first_epoch);
+                if let Some(reveal) =
+                    anim::session_reveal_transition(backend.state().config.animations)
+                {
+                    backend.advance(reveal.duration + Duration::from_millis(80));
+                }
+                assert_eq!(symbols(&backend), first, "{style:?} settles on the session");
+            });
+        }
+    }
+
     /// The real layer stack under a fade switch: the outgoing session is held beneath the incoming
     /// one, which crossfades in over it. Early on, the old session's text still shows wherever the
     /// two differ, rather than cutting straight to the new one.

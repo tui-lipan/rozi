@@ -210,6 +210,10 @@ pub struct State {
     /// holds the previous picture), and that layer's last fade stage. A dim layer mounted this frame
     /// starts where the dim is rather than where it ends.
     pub session_dim_layer: Cell<(Option<u64>, crate::layout::anim::FadeStage)>,
+    /// The attachment the session layer last showed, and that layer's key. The key advances on
+    /// every change of attachment, so switching back to a session whose layer is still retained
+    /// mounts a new layer above it instead of reviving the outgoing one beneath its successor.
+    pub(crate) session_layer_key: Cell<(u64, u64)>,
     /// Last [`Self::session_view_revision`] the view rendered, so the reveal starts exactly once.
     pub session_reveal_seen: Cell<Option<u64>>,
     pub(crate) session_reveal_started: Cell<Option<std::time::Duration>>,
@@ -638,6 +642,7 @@ impl State {
             workspace_slide: Cell::new(None),
             dim_targets: Cell::new((false, false)),
             session_dim_layer: Cell::new((None, crate::layout::anim::FadeStage::Running)),
+            session_layer_key: Cell::new((0, 0)),
             session_reveal_seen: Cell::new(None),
             session_reveal_started: Cell::new(None),
             dialog_dim_snapshot: Cell::new(None),

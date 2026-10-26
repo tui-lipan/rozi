@@ -239,9 +239,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         )),
         _ => None,
     };
-    // Keyed by attachment so a switch replaces the whole layer, and the outgoing one is retained
-    // frozen beneath its successor (see `animation::session_layer_exit`). A fresh attach still in
-    // its grace period draws nothing, so the previous session's last picture stands in for it.
+    // Keyed anew on every change of attachment so a switch replaces the whole layer, and the
+    // outgoing one is retained frozen beneath its successor (see `animation::session_layer_exit`).
+    // A fresh attach still in its grace period draws nothing, so the previous session's last
+    // picture stands in for it.
     let holding = crate::ops::session::holding_previous_view(&ctx.state);
     // The dim layer around the session content is new on a switch, and when a hold gives way to
     // the content: a new `Animated` takes the opacity it is given at once, so it starts where the
@@ -324,10 +325,22 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
         };
         layer.height(Length::Flex(1)).auto_exit(exit).into()
     };
+    let layer_key = {
+        let (epoch, key) = ctx.state.session_layer_key.get();
+        let key = if epoch == ctx.state.runtime_epoch {
+            key
+        } else {
+            key + 1
+        };
+        ctx.state
+            .session_layer_key
+            .set((ctx.state.runtime_epoch, key));
+        key
+    };
     // Alone in its own stack so a retained layer has no live sibling to be ordered against and
     // lands beneath the live one; in the root stack it would sit above it, over the new session.
     let workspace_layer: Element = ZStack::new()
-        .child(session_layer.key(format!("rozi-session-view-{}", ctx.state.runtime_epoch)))
+        .child(session_layer.key(format!("rozi-session-view-{layer_key}")))
         .key("rozi-session-views");
     let mut root = ZStack::new()
         // The always-mounted popup host is intentionally empty while no popup is open. Let an

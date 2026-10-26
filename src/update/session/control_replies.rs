@@ -1,3 +1,4 @@
+use crate::pane::launch::REPLAY_PROMPT_WAIT;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
@@ -369,29 +370,18 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>, epoch: u64) -> Upd
     Update::none()
 }
 
-/// How long a queued replay input waits for its pane's shell to report a prompt (OSC 133 A/B)
-/// before being written as plain type-ahead anyway - a shell without integration never reports
-/// one, and correctness does not depend on the prompt: type-ahead input is read whenever the
-/// shell gets there. Waiting only avoids the cosmetic double echo of injecting mid-startup
-/// (kernel tty echo first, readline's redraw second).
-pub(crate) const REPLAY_PROMPT_DEADLINE: std::time::Duration =
-    std::time::Duration::from_millis(800);
-
 pub(crate) fn replay_input_deadline_command(
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
 ) -> Command {
-    Command::after(
-        REPLAY_PROMPT_DEADLINE,
-        move |link: CommandLink<crate::Msg>| {
-            link.send(crate::Msg::ReplayInputDeadline {
-                epoch,
-                pane_id,
-                generation,
-            });
-        },
-    )
+    Command::after(REPLAY_PROMPT_WAIT, move |link: CommandLink<crate::Msg>| {
+        link.send(crate::Msg::ReplayInputDeadline {
+            epoch,
+            pane_id,
+            generation,
+        });
+    })
 }
 
 pub(crate) fn replay_input_deadline(

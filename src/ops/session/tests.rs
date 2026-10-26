@@ -2340,3 +2340,236 @@ fn forgetting_a_last_seen_row_drops_only_that_cached_observation() {
         .join()
         .expect("last-seen forget test completes");
 }
+
+#[test]
+fn remote_kill_result_updates_live_rows_without_waiting_for_host_monitor() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let _persist = crate::test_support::lock_persisted_state();
+            for succeeds in [true, false] {
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                let killed = session_row("dev", Some("workbox"));
+                let sibling = session_row("keep", Some("workbox"));
+                let elsewhere = session_row("dev", Some("otherbox"));
+                let target = killed.remote_target.clone().unwrap();
+                {
+                    let state = backend.state_mut();
+                    *state.current_mut() = crate::state::Attachment::new();
+                    state.command_link = None;
+                    for host in ["workbox", "otherbox"] {
+                        state
+                            .config
+                            .remote
+                            .hosts
+                            .insert(host.into(), crate::config::RemoteHostConfig::default());
+                    }
+                    state
+                        .remote
+                        .monitors
+                        .push(crate::session::remote::monitor::Monitor::dormant(
+                            target.clone(),
+                            7,
+                        ));
+                    state
+                        .remote
+                        .monitors
+                        .push(crate::session::remote::monitor::Monitor::dormant(
+                            elsewhere.remote_target.clone().unwrap(),
+                            8,
+                        ));
+                    state.show_session_picker = true;
+                    state.remote.live_sessions =
+                        vec![killed.clone(), sibling.clone(), elsewhere.clone()];
+                    state
+                        .remote
+                        .killing_sessions
+                        .push((killed.name.clone(), target.clone()));
+                    state.remote.hosts.seed(
+                        &state.config.remote,
+                        std::slice::from_ref(&target),
+                        &[],
+                        &[],
+                    );
+                    state.remote.hosts.get_mut(&target).unwrap().probe =
+                        crate::state::HostProbe::Reached;
+                    state
+                        .remote
+                        .hosts
+                        .get_mut(elsewhere.remote_target.as_ref().unwrap())
+                        .unwrap()
+                        .probe = crate::state::HostProbe::Reached;
+                    state.session_picker = Some(
+                        SessionPickerState::new(state.remote.live_sessions.clone())
+                            .on_tab(Some(target.clone())),
+                    );
+                    let cached = crate::ops::session::discovery::cached_sessions_for_target(
+                        &state.remote.live_sessions,
+                        &target,
+                    );
+                    crate::session::record_host_sessions(&target, cached.clone());
+                    crate::session::set_cached_host_sessions(
+                        &mut state.remote.session_cache,
+                        &target,
+                        cached,
+                    );
+                }
+                // A pending shutdown cannot be armed again or activated while awaiting its result.
+                backend
+                    .dispatch(crate::Msg::SessionPickerKillSelected)
+                    .unwrap();
+                backend
+                    .dispatch(crate::Msg::SessionPickerActivate(0))
+                    .unwrap();
+                assert!(
+                    backend
+                        .state()
+                        .session_picker
+                        .as_ref()
+                        .unwrap()
+                        .pending_kill
+                        .is_none()
+                );
+                assert!(backend.state().current().pending_session_attach.is_none());
+                backend.state_mut().command_link = None;
+                backend
+                    .dispatch(crate::Msg::RemoteSessionKilled {
+                        entry: killed.clone(),
+                        result: if succeeds {
+                            Ok(())
+                        } else {
+                            Err("shutdown refused".into())
+                        },
+                    })
+                    .unwrap();
+                assert_eq!(
+                    backend
+                        .state()
+                        .remote
+                        .monitors
+                        .iter()
+                        .any(|monitor| monitor.target == target),
+                    !succeeds
+                );
+                assert!(
+                    backend
+                        .state()
+                        .remote
+                        .monitors
+                        .iter()
+                        .any(|monitor| Some(&monitor.target) == elsewhere.remote_target.as_ref())
+                );
+                if succeeds {
+                    // Model sync replacing the canceled monitor without starting an SSH worker.
+                    backend.state_mut().remote.monitors.push(
+                        crate::session::remote::monitor::Monitor::dormant(target.clone(), 9),
+                    );
+                }
+                // This snapshot began before shutdown completed and arrived after its result.
+                backend
+                    .dispatch(crate::Msg::HostMetadata {
+                        target: target.clone(),
+                        generation: 7,
+                        rows: Ok(vec![killed.clone(), sibling.clone()]),
+                        agents: Vec::new(),
+                        projects: Vec::new(),
+                    })
+                    .unwrap();
+                let state = backend.state();
+                assert!(state.remote.killing_sessions.is_empty());
+                assert_eq!(state.remote.live_sessions.contains(&killed), !succeeds);
+                assert!(state.remote.live_sessions.contains(&sibling));
+                assert!(state.remote.live_sessions.contains(&elsewhere));
+                assert_eq!(
+                    state
+                        .sidebar
+                        .sessions
+                        .iter()
+                        .any(|row| row.name == killed.name
+                            && row.remote_target == killed.remote_target),
+                    !succeeds
+                );
+                let persisted = crate::session::read_host_session_cache();
+                assert_eq!(
+                    crate::session::host_sessions_for(&persisted, &target)
+                        .unwrap()
+                        .iter()
+                        .any(|row| row.name == killed.name),
+                    !succeeds
+                );
+                let picker = state.session_picker.as_ref().unwrap();
+                assert_eq!(picker.entries.contains(&killed), !succeeds);
+                let cached =
+                    crate::session::host_sessions_for(&state.remote.session_cache, &target)
+                        .unwrap();
+                assert_eq!(
+                    cached.iter().any(|session| session.name == "dev"),
+                    !succeeds
+                );
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn killing_current_remote_session_removes_its_live_snapshot_immediately() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let _persist = crate::test_support::lock_persisted_state();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            let killed = session_row("dev", Some("workbox"));
+            let sibling = session_row("keep", Some("workbox"));
+            {
+                let state = backend.state_mut();
+                *state.current_mut() = crate::state::Attachment::new();
+                state.current_mut().session_name = Some(killed.name.clone());
+                state.current_mut().remote_target = killed.remote_target.clone();
+                state.current_mut().remote_host = killed.host.clone();
+                state.current_mut().session_attached = true;
+                state.command_link = None;
+                state
+                    .remote
+                    .monitors
+                    .push(crate::session::remote::monitor::Monitor::dormant(
+                        killed.remote_target.clone().unwrap(),
+                        7,
+                    ));
+                state.remote.live_sessions = vec![killed.clone(), sibling.clone()];
+                state.show_session_picker = true;
+                state.session_picker =
+                    Some(SessionPickerState::new(state.remote.live_sessions.clone()));
+            }
+            backend
+                .dispatch(crate::Msg::SessionPickerKillSelected)
+                .unwrap();
+            backend
+                .dispatch(crate::Msg::SessionPickerKillSelected)
+                .unwrap();
+            backend
+                .dispatch(crate::Msg::HostMetadata {
+                    target: killed.remote_target.clone().unwrap(),
+                    generation: 7,
+                    rows: Ok(vec![killed.clone(), sibling.clone()]),
+                    agents: Vec::new(),
+                    projects: Vec::new(),
+                })
+                .unwrap();
+            assert!(!backend.state().remote.live_sessions.contains(&killed));
+            assert!(backend.state().remote.live_sessions.contains(&sibling));
+            assert!(
+                !backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .unwrap()
+                    .entries
+                    .contains(&killed)
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

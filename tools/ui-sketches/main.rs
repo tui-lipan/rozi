@@ -983,6 +983,21 @@ fn session_picker() {
             .collect(),
         ));
     }
+    backend
+        .state_mut()
+        .remote
+        .killing_sessions
+        .push(("dev".into(), RemoteTarget::Alias("workbox".into())));
+    backend.state_mut().session_picker.as_mut().unwrap().tab = SessionPickerTab::All;
+    for (width, height) in [(64, 22), (100, 30)] {
+        backend.set_viewport(viewport(width, height));
+        backend.render();
+        write_png(
+            &mut backend,
+            &format!("session-picker-killing-{width}x{height}"),
+        );
+    }
+    backend.state_mut().remote.killing_sessions.clear();
     for (name, tab, query) in [
         ("all", SessionPickerTab::All, ""),
         (

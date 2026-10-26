@@ -225,3 +225,232 @@ fn output_to_an_unrendered_pane_asks_for_no_frame_at_all() {
         );
     });
 }
+
+#[test]
+fn mouse_pointer_requests_follow_unfocused_panes_without_rebuilding_the_view() {
+    on_large_stack(|| {
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.pane.focus_on_hover = false;
+        backend.state_mut().current_mut().focused_pane = Some(OTHER_PANE);
+        backend.state_mut().current_mut().workspaces[0].focused_pane = Some(OTHER_PANE);
+        backend.update_level(output("ready\r\n")).unwrap();
+        backend.render();
+        let request = "\x1b]22;grab\x1b\\";
+        backend.update_level(output(request)).unwrap();
+        // Neither rendering nor mouse input has occurred since the request.
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        assert_eq!(backend.pointer_shape_at(65, 12), Some(PointerShape::Text));
+        assert_eq!(backend.state().current().focused_pane, Some(OTHER_PANE));
+        backend.update_level(output("\x1b]22;\x07")).unwrap();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}
+
+#[test]
+fn tiled_split_boundaries_request_resize_pointers() {
+    on_large_stack(|| {
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.render();
+        let resize_cells: Vec<_> = (20..60)
+            .filter(|&x| backend.pointer_shape_at(x, 12) == Some(PointerShape::EwResize))
+            .collect();
+        assert!(
+            !resize_cells.is_empty(),
+            "the vertical split exposes a resize pointer"
+        );
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}
+
+#[test]
+fn pane_chrome_does_not_keep_the_childs_hand_pointer() {
+    on_large_stack(|| {
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.state_mut().config.pane.border_mode = PaneBorderMode::Separate;
+        backend.update_level(output("\x1b]22;pointer\x07")).unwrap();
+        backend.render();
+        let key = backend.state().current().workspaces[0].panes[0]
+            .keys
+            .body
+            .clone();
+        let body = backend.rect_of_key(&key).unwrap();
+        assert_eq!(
+            backend.pointer_shape_at(15, 12),
+            Some(PointerShape::Pointer)
+        );
+        assert_eq!(
+            backend.pointer_shape_at(body.x as u16 + 2, body.y as u16),
+            None
+        );
+    });
+}
+
+#[test]
+fn pane_resize_pointers_distinguish_all_four_corners() {
+    on_large_stack(|| {
+        use rozi::state::{LayoutTarget, ResizeCorner, ResizeSession};
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        for (corner, expected) in [
+            (ResizeCorner::UpperLeft, PointerShape::NwResize),
+            (ResizeCorner::UpperRight, PointerShape::NeResize),
+            (ResizeCorner::LowerLeft, PointerShape::SwResize),
+            (ResizeCorner::LowerRight, PointerShape::SeResize),
+        ] {
+            backend.state_mut().resizing_pane = Some(ResizeSession {
+                id: PANE,
+                corner,
+                workspace: LayoutTarget::Workspace(0),
+                start_x: 15,
+                start_y: 12,
+                start_tile_tree: None,
+                start_split_ratios: Vec::new(),
+                start_floating_rect: None,
+                start_scrollable_width: None,
+                start_scratch_height: None,
+            });
+            backend.render();
+            assert_eq!(backend.pointer_shape_at(15, 12), Some(expected));
+            assert_eq!(backend.pointer_shape_at(65, 12), Some(PointerShape::Text));
+        }
+        backend.state_mut().resizing_pane = None;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}
+
+#[test]
+fn moving_pane_requests_grabbing_and_restores_text_after_release() {
+    on_large_stack(|| {
+        use rozi::state::MoveSession;
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.state_mut().moving_pane = Some(MoveSession {
+            id: PANE,
+            was_floating: false,
+            drag_rect: FloatRect {
+                x: 0.0,
+                y: 1.0,
+                w: 40.0,
+                h: 23.0,
+            },
+            pointer_x: 15,
+            pointer_y: 12,
+        });
+        backend.render();
+        assert_eq!(
+            backend.pointer_shape_at(15, 12),
+            Some(PointerShape::Grabbing)
+        );
+        backend.state_mut().moving_pane = None;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Text));
+    });
+}
+
+#[test]
+fn modifier_drag_pointers_are_active_before_button_release() {
+    on_large_stack(|| {
+        use tui_lipan::PointerShape;
+        use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
+        for (button, shape) in [
+            (MouseButton::Left, PointerShape::Grabbing),
+            (MouseButton::Right, PointerShape::NwResize),
+        ] {
+            let mut backend = backend();
+            backend.state_mut().config.animations.enabled = false;
+            backend.update_level(output("ready\r\n")).unwrap();
+            backend.render();
+            for (x, y, kind) in [
+                (10, 7, MouseKind::Down(button)),
+                (14, 9, MouseKind::Drag(button)),
+            ] {
+                backend
+                    .send_mouse(MouseEvent {
+                        x,
+                        y,
+                        kind,
+                        mods: KeyMods::ALT,
+                    })
+                    .unwrap();
+            }
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(shape),
+                "cursor must be active while {button:?} is held"
+            );
+            backend
+                .send_mouse(MouseEvent {
+                    x: 17,
+                    y: 10,
+                    kind: MouseKind::Drag(button),
+                    mods: KeyMods::ALT,
+                })
+                .unwrap();
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(shape),
+                "cursor must remain active through later drag events"
+            );
+            backend
+                .send_mouse(MouseEvent {
+                    x: 17,
+                    y: 10,
+                    kind: MouseKind::Up(button),
+                    mods: KeyMods::ALT,
+                })
+                .unwrap();
+            assert_eq!(
+                backend.pointer_shape(),
+                Some(PointerShape::Text),
+                "release restores content cursor"
+            );
+        }
+    });
+}
+
+#[test]
+fn mouse_pointer_modes_filter_pane_requests_and_chrome_at_runtime() {
+    on_large_stack(|| {
+        use rozi::config::MousePointer;
+        use tui_lipan::PointerShape;
+        let mut backend = backend();
+        backend.state_mut().config.animations.enabled = false;
+        backend.update_level(output("\x1b]22;grab\x07")).unwrap();
+        backend.render();
+        let split = (20..60)
+            .find(|&x| backend.pointer_shape_at(x, 12) == Some(PointerShape::EwResize))
+            .unwrap();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        backend.state_mut().config.cursor.pointer = MousePointer::Panes;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        assert_eq!(backend.pointer_shape_at(split, 12), None);
+        assert_eq!(
+            backend.pointer_shape_at(65, 12),
+            None,
+            "pane-only mode has no synthetic text fallback"
+        );
+        backend.state_mut().config.cursor.pointer = MousePointer::Off;
+        backend.render();
+        for y in 0..24 {
+            for x in 0..80 {
+                assert_eq!(backend.pointer_shape_at(x, y), None);
+            }
+        }
+        backend.state_mut().config.cursor.pointer = MousePointer::All;
+        backend.render();
+        assert_eq!(backend.pointer_shape_at(15, 12), Some(PointerShape::Grab));
+        assert_eq!(
+            backend.pointer_shape_at(split, 12),
+            Some(PointerShape::EwResize)
+        );
+    });
+}

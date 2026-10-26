@@ -637,3 +637,59 @@ fn local_repository_title_is_stable_across_worktrees_and_only_shows_a_host_when_
         assert!(frame.contains("Worktrees · repo · local"), "{frame}");
     });
 }
+
+#[test]
+fn branch_picker_only_advertises_available_branches_as_actionable() {
+    on_large_stack(|| {
+        use rozi::git::worktrees::WorktreeBranch;
+        use rozi::state::WorktreeFormState;
+        use tui_lipan::PointerShape;
+        let mut backend = picker();
+        let mut form = WorktreeFormState::new();
+        form.choosing_branch = true;
+        form.branches = vec![
+            WorktreeBranch {
+                name: "checked-branch".into(),
+                checkout: Some("/repo/checkout".into()),
+            },
+            WorktreeBranch {
+                name: "available-branch".into(),
+                checkout: None,
+            },
+        ];
+        backend.state_mut().worktree_picker.as_mut().unwrap().form = Some(form);
+        backend.render();
+        let rows = backend.capture_frame().to_fixed_grid_lines();
+        for (label, expected) in [
+            ("checked-branch", PointerShape::Default),
+            ("available-branch", PointerShape::Pointer),
+        ] {
+            let (y, row) = rows
+                .iter()
+                .enumerate()
+                .find(|(_, row)| row.contains(label))
+                .unwrap();
+            let x = row[..row.find(label).unwrap()].chars().count();
+            assert_eq!(
+                backend.pointer_shape_at(x as u16, y as u16),
+                Some(expected),
+                "{label}"
+            );
+        }
+        backend.dispatch(Msg::WorktreeBranchSelect(0)).unwrap();
+        backend.dispatch(Msg::WorktreeBranchActivate(0)).unwrap();
+        let form = backend
+            .state()
+            .worktree_picker
+            .as_ref()
+            .unwrap()
+            .form
+            .as_ref()
+            .unwrap();
+        assert!(
+            form.choosing_branch,
+            "unavailable rows remain selectable but cannot be chosen"
+        );
+        assert!(form.branch.text().is_empty());
+    });
+}

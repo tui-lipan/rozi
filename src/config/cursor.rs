@@ -57,4 +57,55 @@ impl FromStr for CursorBlink {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CursorConfig {
     pub blink: CursorBlink,
+    pub pointer: MousePointer,
+}
+
+/// Mouse pointer feedback for pane applications and rozi controls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MousePointer {
+    Off,
+    Panes,
+    #[default]
+    All,
+}
+
+impl MousePointer {
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Panes, Self::All]
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Panes => "panes",
+            Self::All => "all",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Panes => "Pane apps only",
+            Self::All => "Rozi and pane apps",
+        }
+    }
+    pub fn runtime(self) -> tui_lipan::PointerMode {
+        match self {
+            Self::Off => tui_lipan::PointerMode::Disabled,
+            Self::Panes => tui_lipan::PointerMode::Terminal,
+            Self::All => tui_lipan::PointerMode::Interactive,
+        }
+    }
+}
+
+impl FromStr for MousePointer {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "off" => Ok(Self::Off),
+            "panes" => Ok(Self::Panes),
+            "all" => Ok(Self::All),
+            _ => Err(format!(
+                "Ignored cursor.pointer {value:?}: expected off, panes, or all"
+            )),
+        }
+    }
 }

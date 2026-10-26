@@ -296,7 +296,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 } else {
                     item_style
                 };
-                items.push(picker_row(
+                let row = picker_row(
                     [Span::new(label).style(style)],
                     status,
                     if disabled_reason.is_some() {
@@ -304,7 +304,12 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                     } else {
                         description_style
                     },
-                ));
+                );
+                items.push(if disabled_reason.is_some() {
+                    row.pointer_shape(PointerShape::Default)
+                } else {
+                    row
+                });
                 targets.push(Some(item.value.0));
             }
         }

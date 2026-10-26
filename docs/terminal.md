@@ -73,6 +73,14 @@ Ghostty is set to `3` and rozi to `3`, one notch scrolls nine lines, so lower on
 scrolling is too fast. A program that tracks the mouse, such as an editor, receives the wheel
 itself and scrolls by its own step.
 
+On terminals that support mouse pointer shapes, the pointer follows the pane application under
+the mouse, including an unfocused pane. Choose **Mouse pointer** in Settings to enable feedback for
+**Rozi and pane apps**, follow **Pane apps only**, or turn it **Off**. Text selection uses a text pointer, clickable controls use
+a pointing hand, and pane splits and sidebar dividers show resize arrows. Plain pane borders and
+title areas use the normal pointer. Moving a pane shows a grabbing hand. Right-drag resizing shows
+the directional arrow for the grabbed corner: northwest, northeast, southwest, or southeast.
+Other terminals keep their usual pointer.
+
 rozi limits pointer-motion events sent to a mouse-tracking program to the configured frame rate, so
 the program does not fall behind. Presses, releases, and wheel events are always sent.
 
@@ -89,6 +97,11 @@ nothing.
 Right click does nothing clipboard-related by default, so it stays available to the pane program and
 to rozi. If you set `right_click`, it follows the same pointer rule as middle click, and
 `"copy-or-paste"` copies only a selection in the pane you click.
+
+A program that tracks the mouse, such as Codex or Claude Code, receives middle and right clicks
+itself and pastes from the clipboard of the machine it runs on. In a remote session that is the
+remote host, so the click usually pastes nothing. Hold `Shift` while you middle-click or right-click
+to paste your local clipboard with rozi instead; `Ctrl+V` works too.
 
 You can change all of these under [`[clipboard]`](configuration.md#clipboard); changes apply when
 the config reloads. If the system has no primary selection, regular clipboard copying still works,

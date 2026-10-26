@@ -361,7 +361,8 @@ fn session_picker_actions(ctx: &Context<AppRoot>) -> Vec<OverlayAction> {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Vec::new();
     };
-    let selected = selected_session(&ctx.state, picker);
+    let selected = selected_session(&ctx.state, picker)
+        .filter(|entry| !ctx.state.remote.session_is_killing(entry));
     let restorable = selected.is_some_and(crate::ops::session::session_row_is_restorable);
     let last_seen = selected.is_some_and(crate::ops::session::session_row_is_last_seen);
     let mut actions = Vec::new();
@@ -593,6 +594,12 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             SessionPresence::held(is_current, connection).discovered(&entry.status)
         })
         .collect();
+    let killing_entries: Vec<_> = picker
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| ctx.state.remote.session_is_killing(entry).then_some(index))
+        .collect();
     let ephemeral_entries = picker
         .entries
         .iter()
@@ -675,8 +682,16 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             None
         }
     });
-    let render_item = (!ephemeral_entries.is_empty()).then(|| {
+    let render_item = (!ephemeral_entries.is_empty() || !killing_entries.is_empty()).then(|| {
         Arc::new(move |item: &SearchItem<usize>, _hl: &SearchHighlight| {
+            if killing_entries.contains(&item.value) {
+                return Some(
+                    ListItem::from_spans([Span::new(item.label.to_string())])
+                        .description(vocabulary::KILLING)
+                        .description_style(description_style)
+                        .description_spinner(vocabulary::picker_circle_spinner(description_style)),
+                );
+            }
             ephemeral_entries.contains(&item.value).then(|| {
                 render_ephemeral_session_item(item, &ephemeral_style, &description_style)
                     .primary_truncate_description_first(false)

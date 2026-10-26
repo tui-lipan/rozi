@@ -76,6 +76,24 @@ its preference, editable controls use the theme default and panes use the framew
 `static` and `blinking` override blink requests throughout rozi. Programs still control cursor
 shape and visibility. This preference is independent of the animation switch.
 
+## Mouse pointer
+
+Choose **Mouse pointer** in Settings under General. Changes apply immediately and leave mouse
+clicks, selection, and dragging enabled. The host terminal must support mouse pointer shapes.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cursor.pointer` | string | `"all"` | `off`, `panes`, or `all`. |
+
+| Settings choice | Value | Behavior |
+| --- | --- | --- |
+| Off | `off` | Keep the normal arrow throughout rozi. |
+| Pane apps only | `panes` | Follow mouse pointer requests from the pane application under the mouse. |
+| Rozi and pane apps | `all` | Also show text pointers in editable fields, hands over actionable rows, files, tabs, and controls, and resize or grab pointers for pane and divider gestures. |
+
+Blank space, borders, headings, and disabled items keep the normal arrow. Terminal support varies;
+some hosts accept hover shapes but do not display shape changes during a held mouse drag.
+
 ## Reloading
 
 rozi watches the config file and applies changes without replacing panes or workspaces. If the new

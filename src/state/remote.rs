@@ -11,6 +11,8 @@ pub struct RemoteRuntimeState {
     /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
     /// reopening the picker so a late result can never match a newer request by accident.
     pub probe_epoch: u64,
+    /// Remote shutdowns awaiting their worker result, independent of picker lifetime.
+    pub killing_sessions: Vec<(String, crate::session::remote::RemoteTarget)>,
     /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
@@ -45,6 +47,17 @@ pub struct RemoteRuntimeState {
 }
 
 impl RemoteRuntimeState {
+    pub(crate) fn session_is_killing(
+        &self,
+        entry: &crate::session::discovery::DiscoveredSession,
+    ) -> bool {
+        entry.remote_target.as_ref().is_some_and(|target| {
+            self.killing_sessions
+                .iter()
+                .any(|(name, remote)| name == &entry.name && remote == target)
+        })
+    }
+
     pub(crate) fn mint_probe_epoch(&mut self) -> u64 {
         self.probe_epoch = self.probe_epoch.wrapping_add(1);
         self.probe_epoch

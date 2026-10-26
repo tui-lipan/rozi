@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Fallback wait for restored command input when shell integration or a prompt theme omits
+/// the input-ready marker. Both client profile replay and server resurrection use this policy.
+pub(crate) const REPLAY_PROMPT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// How a pane's initial child process is launched.
 ///
 /// Shell commands are intentionally distinct from direct argv. Direct execution never joins or

@@ -22,21 +22,21 @@
     color: var(--vp-c-text-2);
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 999px;
+    border-radius: var(--rz-radius);
     cursor: pointer;
     transition:
         color 0.15s,
-        border-color 0.15s,
-        background-color 0.15s;
+        border-color 0.15s;
 }
 .rz-gallery-tab:hover {
     color: var(--vp-c-text-1);
     border-color: var(--vp-c-border);
 }
+/* The site's picked look - see --rz-picked in style.css. */
 .rz-gallery-tab.active {
-    color: #fff;
-    background: var(--rozi-gradient);
-    border-color: transparent;
+    color: var(--vp-c-text-1);
+    background: var(--rz-picked);
+    border-color: var(--rz-ring);
 }
 .rz-gallery-tab:focus-visible,
 .rz-gallery-step:focus-visible,
@@ -131,7 +131,8 @@
     border-radius: 0 0 9px 9px;
     cursor: zoom-in;
 }
-/* The first image sizes the stage; the rest stack on top of it. */
+/* The first image sizes the stage; the rest stack on top of it. Switching
+   uses the same move as the clips below - see "Every clip's video". */
 .rz-gallery .rz-gallery-stage img {
     position: absolute;
     inset: 0;
@@ -142,7 +143,12 @@
     object-fit: cover;
     object-position: top left;
     opacity: 0;
-    transition: opacity 0.35s ease;
+    transform: scale(0.985);
+    filter: blur(3px);
+    transition:
+        opacity 0.7s ease,
+        transform 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+        filter 0.7s ease;
 }
 .rz-gallery .rz-gallery-stage img:first-child {
     position: relative;
@@ -150,24 +156,36 @@
     aspect-ratio: auto 16 / 9;
 }
 .rz-gallery .rz-gallery-stage img.active {
+    z-index: 1;
     opacity: 1;
+    transform: none;
+    filter: none;
+    animation: rz-stage-in 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Clips (`ClipGallery.vue`) use the same frame with one video in the stage. */
 .rz-clips .rz-clips-stage {
     cursor: default;
 }
-/* The dots and the badge share the space either side of the title equally,
-   so the title stays centred. On a phone the badge keeps only its dot. */
-.rz-clips .rz-gallery-dots,
-.rz-clips .rz-clips-badge {
+/* Every picture on the site is rozi's own output - stills from its renderer,
+   clips from `rozi record` - and every frame says so in its title bar: the
+   dots and the badge share the space either side of the title equally, so
+   the title stays centred. On a phone the badge keeps only its dot. */
+.rz-gallery-dots,
+.rz-gallery-end {
     flex: 1 1 0;
 }
-.rz-clips .rz-gallery-title {
+.rz-gallery-title {
     flex: 0 1 auto;
 }
-.rz-clips-badge {
+.rz-gallery-end {
+    display: inline-flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 10px;
+    min-width: 0;
+}
+.rz-gallery-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -176,30 +194,130 @@
     color: var(--vp-c-text-3);
     white-space: nowrap;
 }
-.rz-clips-badge i {
+.rz-gallery-badge i,
+.lp-proof i {
+    flex: none;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--vp-c-brand-1);
     box-shadow: 0 0 6px color-mix(in srgb, var(--vp-c-brand-1) 70%, transparent);
+    animation: rz-rec 2.4s ease-in-out infinite;
+}
+/* A recording light, breathing rather than blinking. */
+@keyframes rz-rec {
+    50% {
+        opacity: 0.35;
+        box-shadow: 0 0 2px color-mix(in srgb, var(--vp-c-brand-1) 40%, transparent);
+    }
 }
 @media (max-width: 480px) {
-    .rz-clips-badge {
+    .rz-gallery-badge {
         font-size: 0;
     }
 }
+/* Every clip's video is stacked in the stage; the first one sizes it. The
+   selected clip settles in from a touch closer and out of focus while the one
+   it replaces drifts back and fades. A player with `sheen` also sweeps a light
+   in the brand hues across the frame on each switch. */
 .rz-clips .rz-clips-stage video {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
+    height: 100%;
+    background: #06070f;
+    opacity: 0;
+    transform: scale(0.985);
+    filter: blur(3px);
+    pointer-events: none;
+    transition:
+        opacity 0.7s ease,
+        transform 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+        filter 0.7s ease;
+}
+.rz-clips .rz-clips-stage video:first-child {
+    position: relative;
     height: auto;
     aspect-ratio: 1920 / 1088;
-    background: #06070f;
+}
+.rz-clips .rz-clips-stage video.active {
+    z-index: 1;
+    opacity: 1;
+    transform: none;
+    filter: none;
+    pointer-events: auto;
+}
+/* Entering, the clip starts slightly enlarged and blurred; the class swap
+   above carries it to rest. */
+@keyframes rz-stage-in {
+    from {
+        opacity: 0;
+        transform: scale(1.03);
+        filter: blur(8px) saturate(1.4);
+    }
+}
+.rz-clips .rz-clips-stage video.active {
+    animation: rz-stage-in 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.rz-stage-sheen {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(
+        105deg,
+        transparent 30%,
+        color-mix(in srgb, #fd4a80 22%, transparent) 45%,
+        color-mix(in srgb, #982bf2 26%, transparent) 55%,
+        transparent 70%
+    );
+    mix-blend-mode: screen;
+    transform: translateX(-100%);
+    animation: rz-stage-sheen 0.9s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes rz-stage-sheen {
+    to {
+        transform: translateX(100%);
+    }
+}
+.rz-clips-title-enter-active,
+.rz-clips-title-leave-active {
+    transition:
+        opacity 0.2s ease,
+        transform 0.2s ease;
+}
+.rz-clips-title-enter-from {
+    opacity: 0;
+    transform: translateY(4px);
+}
+.rz-clips-title-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
 }
 
 /* A bare clip is recorded as a window - title bar and terminal - by tools/docs-captures/frame.sh.
    The page gives it the corners, border, shadow, and glow, which spread freely past its edges. */
 .rz-clips-bare {
+    position: relative;
     margin: 0;
+}
+/* The hero has no title bar to hold the full-screen button, so it sits on the
+   frame's corner - on phones only, where the recording is too small to read. */
+.rz-clips-full {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+    display: none;
+    color: var(--vp-c-text-2);
+    background: color-mix(in srgb, var(--vp-c-bg) 75%, transparent);
+    cursor: pointer;
+}
+@media (max-width: 720px) {
+    .rz-clips-full {
+        display: grid;
+    }
 }
 .rz-clips-bare video {
     display: block;
@@ -243,7 +361,7 @@
     text-align: left;
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 8px;
+    border-radius: var(--rz-radius);
     cursor: pointer;
     transition:
         color 0.15s,
@@ -253,9 +371,18 @@
     color: var(--vp-c-text-1);
     border-color: var(--vp-c-border);
 }
+/* While the steps play, the rule is a track the progress bar fills; once the
+   reader has taken over, it is the plain picked rule. */
 .rz-gallery-step.active {
     color: var(--vp-c-text-1);
-    border-color: color-mix(in srgb, var(--vp-c-brand-1) 60%, transparent);
+    background:
+        linear-gradient(var(--vp-c-divider), var(--vp-c-divider)) bottom / 100% 2px no-repeat,
+        var(--rz-glow),
+        var(--vp-c-bg-alt);
+    border-color: var(--rz-ring);
+}
+.rz-gallery-step.active:not(:has(.rz-gallery-progress)) {
+    background: var(--rz-picked);
 }
 .rz-gallery-step-num {
     display: grid;
@@ -285,17 +412,8 @@
     left: 0;
     height: 2px;
     width: 100%;
-    background: var(--rozi-gradient);
+    background: linear-gradient(90deg, #fd4a80, #982bf2);
     transform-origin: left;
-    animation: rz-gallery-progress linear forwards;
-}
-@keyframes rz-gallery-progress {
-    from {
-        transform: scaleX(0);
-    }
-    to {
-        transform: scaleX(1);
-    }
 }
 
 .rz-gallery-caption {
@@ -313,7 +431,7 @@
     overflow-x: auto;
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 8px;
+    border-radius: var(--rz-radius);
 }
 .rz-gallery .rz-gallery-caption code {
     padding: 0;
@@ -322,6 +440,33 @@
     color: var(--vp-c-text-2);
     background: none;
     white-space: pre;
+}
+
+/* A stack of alternatives in one grid cell - one per tab - so the tallest
+   sets the height and switching only crossfades, never reflows. Each item
+   keeps its own size, so a short one sits at the top of the space. */
+.rz-swap {
+    display: grid;
+    align-items: start;
+}
+.rz-swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+    transition:
+        opacity 0.3s ease,
+        transform 0.3s ease,
+        visibility 0s 0.3s;
+}
+.rz-swap > .active {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition:
+        opacity 0.3s ease,
+        transform 0.3s ease;
 }
 
 /* Full size. The dialog is the page's top layer, so the image can use the
@@ -347,7 +492,7 @@
 .rz-gallery-dialog img {
     max-width: 100%;
     max-height: 100%;
-    border-radius: 8px;
+    border-radius: var(--rz-radius);
     box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8);
     cursor: zoom-out;
 }
@@ -366,7 +511,25 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .rz-gallery .rz-gallery-stage img {
+    .rz-gallery .rz-gallery-stage img,
+    .rz-gallery .rz-gallery-stage img.active,
+    .rz-clips .rz-clips-stage video,
+    .rz-clips .rz-clips-stage video.active {
         transition: none;
+        animation: none;
+        transform: none;
+        filter: none;
+    }
+    .rz-swap > *,
+    .rz-swap > .active {
+        transform: none;
+        transition: none;
+    }
+    .rz-gallery-badge i,
+    .lp-proof i {
+        animation: none;
+    }
+    .rz-stage-sheen {
+        display: none;
     }
 }

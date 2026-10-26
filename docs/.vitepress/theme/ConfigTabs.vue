@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { withBase } from "vitepress";
 import { highlightToml } from "./toml";
 
@@ -8,11 +8,12 @@ import { highlightToml } from "./toml";
  * `config.toml` - taken from `examples/config.toml` and `examples/sidebar.toml`
  * rather than composed here - because a reader's next move is to paste it.
  *
- * **Every snippet is exactly thirteen lines.** That is what keeps the panel a
- * fixed height with nothing reserved: an earlier version padded the box out to
- * the tallest snippet, which bought a stable height at the price of a hundred
- * empty pixels under every shorter one. Thirteen is the number the longest
- * useful sample needs; trim a new one to fit rather than raising it.
+ * **Every snippet is exactly thirteen lines**, so no tab leaves empty space
+ * under its code. Every snippet and note is rendered, stacked in one cell, so
+ * the panel takes the height of the tallest and switching tabs never moves the
+ * page - but a longer snippet would grow the panel for all of them. Thirteen
+ * is the number the longest useful sample needs; trim a new one to fit rather
+ * than raising it.
  */
 type Surface = {
   id: string;
@@ -34,7 +35,6 @@ border_mode = "merged"      # neighbours share one seam
 border_style = "rounded"    # plain, double, thick
 titlebar = "integrated"
 workbar_powerline = true
-padding = [0, 1]
 
 [animations]
 pane_open_style = "portal"  # or "scale", "slide", "scan"
@@ -152,7 +152,6 @@ screen = { any_of = ["esc to interrupt"] }`,
 ];
 
 const active = ref(surfaces[0]);
-const highlighted = computed(() => highlightToml(active.value.code));
 </script>
 
 <template>
@@ -173,13 +172,27 @@ const highlighted = computed(() => highlightToml(active.value.code));
     </div>
 
     <!-- Constant strings from this file, escaped by the highlighter. -->
-    <div class="lp-snip-body">
-      <pre><code v-html="highlighted"></code></pre>
+    <div class="lp-snip-body rz-swap">
+      <pre
+        v-for="surface in surfaces"
+        :key="surface.id"
+        :class="{ active: surface.id === active.id }"
+        :aria-hidden="surface.id !== active.id"
+      ><code v-html="highlightToml(surface.code)"></code></pre>
     </div>
 
-    <p class="lp-snip-note">
-      <span>{{ active.note }}</span>
-      <a :href="withBase(active.doc)">Reference →</a>
-    </p>
+    <!-- Notes wrap to different lengths on a narrow screen; stacked too. -->
+    <div class="lp-snip-notes rz-swap">
+      <p
+        v-for="surface in surfaces"
+        :key="surface.id"
+        class="lp-snip-note"
+        :class="{ active: surface.id === active.id }"
+        :aria-hidden="surface.id !== active.id"
+      >
+        <span>{{ surface.note }}</span>
+        <a :href="withBase(surface.doc)">Reference →</a>
+      </p>
+    </div>
   </div>
 </template>

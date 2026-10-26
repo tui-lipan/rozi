@@ -59,11 +59,13 @@ const facts: [string, string][] = [
   ["3", "supported platforms"],
 ];
 
-/* The three things a screenshot of panes cannot show, each recorded working. */
+/* The three things a screenshot of panes cannot show, each recorded working. They share one
+   stage: the cards above it are its tabs, and the clips play through in turn. */
 const showcase = [
   {
     eyebrow: "Coding agents",
     title: "See which agent needs you",
+    blurb: "Working, blocked, or done, on every pane at a glance.",
     body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or done. Activity groups them by repository and branch, and the Agents view, on Alt+A, lists the one waiting on you first: Enter takes you there. ${stats.agents} agents are built in.`,
     link: "/agents",
     linkText: "Agent detection",
@@ -78,6 +80,7 @@ const showcase = [
   {
     eyebrow: "Remote sessions",
     title: "Other machines, same rozi",
+    blurb: "Sessions on another host, listed beside your local ones.",
     body: "Open a host from Sessions and its sessions sit beside your local ones. The panes run on the host; your theme, keys, and clipboard stay with you. rozi installs itself there if you allow it and reconnects after a dropped link.",
     link: "/remote",
     linkText: "Remote sessions",
@@ -92,7 +95,8 @@ const showcase = [
   {
     eyebrow: "Real pixels",
     title: "Images and a whole browser, in a pane",
-    body: "Programs that draw with the Kitty graphics protocol show real images: plots, previews, even terminal-browser. They stay in place under overlays and follow the pane when it moves or fills the screen.",
+    blurb: "Real pictures from any program that speaks the Kitty protocol.",
+    body: "Programs that draw with the Kitty graphics protocol show real images: plots, previews, even terminal-browser. They stay in place under overlays and follow the pane when it moves or fills the screen. On terminals such as Ghostty, rozi hands pictures straight through, so a live web page keeps up; others get iTerm2, sixel, or text-cell images.",
     link: "/terminal",
     linkText: "Terminal features",
     window: "~/src/rozi — media",
@@ -106,7 +110,9 @@ const showcase = [
 ];
 
 /* Two sentences each. The card is a claim and a link, not a paragraph - the
-   page under it is where the detail belongs. */
+   page under it is where the detail belongs. Only what no other section of
+   the page shows: agents, remote hosts, images, theming, and keys each have a
+   recording or a band of their own. */
 const features = [
   {
     title: "Panes arrange themselves",
@@ -121,22 +127,22 @@ const features = [
     linkText: "Sessions",
   },
   {
-    title: "Other machines over SSH",
-    body: "rozi --remote devbox opens a session on another machine, installs rozi there if you allow it, and reconnects after a dropped link. Remote sessions are listed next to local ones.",
-    link: "/remote",
-    linkText: "Remote sessions",
+    title: "A session per branch",
+    body: "Open a Git worktree from the Worktrees picker and rozi gives it a named session of its own, with its own shells and running processes. Move between branches without stashing; each row shows the branch's pull request and CI status.",
+    link: "/worktrees",
+    linkText: "Worktrees",
   },
   {
-    title: "Coding agents at a glance",
-    body: `rozi reads what coding-agent CLIs draw and marks each pane working, blocked, or finished, on its border, its workspace tab, and in the sidebar. ${stats.agents} agents are built in, and you can add your own.`,
-    link: "/agents",
-    linkText: "Agent detection",
+    title: "Share a session",
+    body: "Several clients can attach to one named session and see the same panes and layout, while each keeps its own focus, theme, and scrollback. One controls the layout and the others follow, or join read-only.",
+    link: "/shared-sessions",
+    linkText: "Shared sessions",
   },
   {
-    title: "Change it live",
-    body: "Themes, frames, layouts, and keys change from inside rozi, previewed as you browse. Your choice is saved to config.toml, and an edit to the file applies the moment you save it.",
-    link: "/customize",
-    linkText: "Customize rozi",
+    title: "Save a workspace as a profile",
+    body: "Arrange your panes once and save them with Ctrl+A, then O. rozi dev attaches to the dev session when it is running, or starts it from the profile: the same commands, directories, and layout.",
+    link: "/profiles",
+    linkText: "Profiles",
   },
   {
     title: "A complete terminal in every pane",
@@ -394,10 +400,9 @@ position = "right"`,
   },
 ];
 const themeShot = ref(0);
-const themeCode = computed(() => highlightToml(THEME_SHOTS[themeShot.value].code));
 
-/* "Motion": one clip per pane style, each opening an editor and closing it again, then the
-   workspace slide. The config beside the frame follows the selected tab. */
+/* "Motion": one clip per pane style, each opening an editor and closing it again, then images
+   caught in an effect and the workspace slide. The config beside the frame follows the selected tab. */
 const paneStyle = (style: string) => `[animations]
 pane_open_style = "${style}"
 pane_close_style = "${style}"`;
@@ -438,6 +443,13 @@ const MOTION_CLIPS = [
     code: paneStyle("scale"),
   },
   {
+    src: clipImages,
+    poster: posterImages,
+    label: "Images",
+    alt: "The rozi logo as an image beside the rozi website in terminal-browser. The command palette dims both pictures, then the browser pane bursts into particles.",
+    code: paneStyle("particles"),
+  },
+  {
     src: clipWorkspaces,
     poster: posterWorkspaces,
     label: "Workspaces",
@@ -448,7 +460,11 @@ workspace_ms = 220`,
   },
 ];
 const motionClip = ref(0);
-const motionCode = computed(() => highlightToml(MOTION_CLIPS[motionClip.value].code));
+
+const showClip = ref(0);
+const showProgress = ref(0);
+const showItem = computed(() => showcase[showClip.value]);
+const SHOW_CLIPS = showcase.map((item) => item.clip);
 
 const HERO_CLIP = [
   {
@@ -465,15 +481,6 @@ const CAPTURE_CLIP = [
     poster: capturePoster,
     label: "Recording",
     alt: "A rozi window with an editor and a shell. The command palette saves a screenshot of the editor pane. The shell shows the rozi logo as an image, then starts recording its own pane, marks the moment, and stops.",
-  },
-];
-
-const IMAGE_CLIP = [
-  {
-    src: clipImages,
-    poster: posterImages,
-    label: "Images",
-    alt: "The rozi logo as an image beside the rozi website in terminal-browser. The command palette dims both pictures, then the browser pane bursts into particles.",
   },
 ];
 
@@ -616,6 +623,16 @@ restart = "on-failure"`);
         <ClipGallery :clips="HERO_CLIP" bare />
       </div>
 
+      <!-- The hero clip's caption, and the claim every frame's badge repeats,
+           said once for the whole page. True by construction:
+           tools/docs-captures records the clips with `rozi record` and renders
+           the stills with rozi. -->
+      <p class="lp-proof">
+        <i aria-hidden="true"></i>Recorded by rozi itself, like every screenshot
+        and clip on this site.
+        <a :href="withBase('/recording')">See how →</a>
+      </p>
+
       <ul class="lp-facts">
         <li v-for="[value, label] in facts" :key="label">
           <b>{{ value }}</b><span>{{ label }}</span>
@@ -627,20 +644,48 @@ restart = "on-failure"`);
           <h2>See it work</h2>
           <p class="lp-head-note">Recorded by rozi · real panes, real programs</p>
         </header>
-        <article
-          v-for="(item, index) in showcase"
-          :key="item.title"
-          class="lp-show"
-          :class="{ flip: index % 2 === 1 }"
-        >
-          <div class="lp-show-copy">
-            <p class="lp-eyebrow">{{ item.eyebrow }}</p>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-            <a class="lp-more" :href="withBase(item.link)">{{ item.linkText }} →</a>
+        <!-- The cards are the stage's tabs. The playing one fills its rule as
+             the clip runs, then hands over to the next. -->
+        <div class="lp-spot-tabs" role="tablist" aria-label="See it work">
+          <button
+            v-for="(item, index) in showcase"
+            :key="item.title"
+            type="button"
+            role="tab"
+            class="lp-spot-tab"
+            :class="{ active: index === showClip }"
+            :aria-selected="index === showClip"
+            @click="showClip = index"
+          >
+            <span class="lp-spot-num">0{{ index + 1 }}</span>
+            <span class="lp-eyebrow">{{ item.eyebrow }}</span>
+            <b>{{ item.title }}</b>
+            <span class="lp-spot-blurb">{{ item.blurb }}</span>
+            <span class="lp-spot-rule" aria-hidden="true">
+              <i
+                :style="{
+                  transform: `scaleX(${index === showClip ? showProgress : 0})`,
+                }"
+              />
+            </span>
+          </button>
+        </div>
+        <ClipGallery
+          v-model:active="showClip"
+          :clips="SHOW_CLIPS"
+          :title="showItem.window"
+          :tabs="false"
+          advance
+          sheen
+          @progress="showProgress = $event"
+        />
+        <Transition name="lp-spot-swap" mode="out-in">
+          <div :key="showClip" class="lp-spot-caption">
+            <h3 class="lp-spot-title">{{ showItem.title }}</h3>
+            <p>{{ showItem.body }}</p>
+            <a class="lp-more" :href="withBase(showItem.link)">{{ showItem.linkText }} →</a>
           </div>
-          <ClipGallery :clips="[item.clip]" :title="item.window" />
-        </article>
+        </Transition>
       </section>
 
       <section class="lp-section">
@@ -679,8 +724,18 @@ restart = "on-failure"`);
             <a class="lp-more lp-more-next" :href="withBase('/themes')"
               >{{ stats.themes }} themes →</a
             >
-            <div class="lp-code lp-theme-code">
-              <pre><code v-html="themeCode"></code></pre>
+            <!-- Every tab's lines, stacked in one cell so the tallest sets
+                 its height and a switch never moves the page. -->
+            <div class="rz-swap lp-theme-code">
+              <div
+                v-for="(shot, index) in THEME_SHOTS"
+                :key="shot.label"
+                class="lp-code"
+                :class="{ active: index === themeShot }"
+                :aria-hidden="index !== themeShot"
+              >
+                <pre><code v-html="highlightToml(shot.code)"></code></pre>
+              </div>
             </div>
           </div>
           <CaptureGallery v-model:active="themeShot" title="~/src/rozi — dev">
@@ -695,9 +750,15 @@ restart = "on-failure"`);
           </CaptureGallery>
         </div>
 
-        <div class="lp-two lp-capture lp-capture-flip">
-          <div>
-            <h3 class="lp-h3">Rebind keys without a manual</h3>
+        <!-- Copy across the top, the flow full width under it: a step
+             through four screens reads best large, and it breaks up the
+             side-by-side bands around it. -->
+        <div class="lp-stack">
+          <div class="lp-stack-copy">
+            <div class="lp-stack-head">
+              <p class="lp-eyebrow">Keybindings</p>
+              <h3>Rebind keys without a manual</h3>
+            </div>
             <p class="lp-lead">
               <kbd>Ctrl+A</kbd> then <kbd>?</kbd> lists every key in effect.
               Pick a command, press the new chord, and rozi shows it before
@@ -707,10 +768,10 @@ restart = "on-failure"`);
             <p class="lp-lead">
               The prefix and the held modifier are rows in the same list, so
               moving from <kbd>Alt</kbd> to <kbd>Super</kbd> takes one change.
+              <a class="lp-more" :href="withBase('/keybindings#edit-keybindings-in-rozi')"
+                >Edit keybindings →</a
+              >
             </p>
-            <a class="lp-more" :href="withBase('/keybindings#edit-keybindings-in-rozi')"
-              >Edit keybindings →</a
-            >
           </div>
           <CaptureGallery mode="steps" title="Keybindings">
             <img src="../../assets/captures/keys-find.webp" alt="The Keybindings overlay filtered to new pane" data-label="Find it">
@@ -731,7 +792,8 @@ restart = "on-failure"`);
             <p class="lp-lead">
               Panes arrive and leave with one of five effects, chosen separately
               for opening and closing, and workspaces slide past one another as
-              you switch between them.
+              you switch between them. Pictures in panes take part too: a
+              portal clips them and particles scatter them.
             </p>
             <p class="lp-lead">
               Prefer a still screen? <code>[animations] enabled = false</code>
@@ -743,8 +805,16 @@ restart = "on-failure"`);
               :href="withBase('/layouts-and-panes#pane-open-and-close-animation-styles')"
               >Animation styles →</a
             >
-            <div class="lp-code lp-motion-code">
-              <pre><code v-html="motionCode"></code></pre>
+            <div class="rz-swap lp-motion-code">
+              <div
+                v-for="(clip, index) in MOTION_CLIPS"
+                :key="clip.label"
+                class="lp-code"
+                :class="{ active: index === motionClip }"
+                :aria-hidden="index !== motionClip"
+              >
+                <pre><code v-html="highlightToml(clip.code)"></code></pre>
+              </div>
             </div>
           </div>
           <ClipGallery
@@ -752,25 +822,18 @@ restart = "on-failure"`);
             :clips="MOTION_CLIPS"
             title="~/src/rozi — api"
           />
-        </div>
-
-        <div class="lp-two lp-capture lp-capture-flip">
-          <div>
-            <h3 class="lp-h3">Pictures that move with their panes</h3>
-            <p class="lp-lead">
-              Programs can draw real images with the Kitty graphics protocol: a
-              logo, a plot, a whole web page in terminal-browser. They take part
-              in every effect, so a closing portal clips them, particles scatter
-              them, and an open picker dims them along with the text around them.
-            </p>
-            <p class="lp-lead">
-              On Kitty-protocol terminals such as Ghostty, rozi passes pictures
-              straight to the terminal wherever it can, so even a live web page
-              keeps up. Other terminals get iTerm2, sixel, or text-cell images.
-            </p>
-            <a class="lp-more" :href="withBase('/terminal#images')">Images in panes →</a>
+          <!-- Stacked, the lines follow the clip and its tabs, as the themes
+               gallery's caption does, rather than sitting above them. -->
+          <div class="rz-swap lp-motion-code-under">
+            <div
+              v-for="(clip, index) in MOTION_CLIPS"
+              :key="clip.label"
+              class="lp-code"
+              :class="{ active: index === motionClip }"
+            >
+              <pre><code v-html="highlightToml(clip.code)"></code></pre>
+            </div>
           </div>
-          <ClipGallery :clips="IMAGE_CLIP" title="~/src/rozi — media" />
         </div>
       </section>
 
@@ -906,6 +969,10 @@ restart = "on-failure"`);
               window instead for a demo, then replay it in a terminal or export a
               GIF, a video, or an asciinema cast.
             </p>
+            <p class="lp-lead">
+              <b>This page is the demo:</b> every picture and recording on it
+              came out of these commands.
+            </p>
             <div class="lp-code">
               <pre><code><span class="tk-comment"># one pane, as text with its colors</span>
 rozi capture-pane --target 3 --render ansi
@@ -940,9 +1007,11 @@ rozi record export ~/demo.rozirec --to png-frames frames</code></pre>
               <a :href="withBase(group.link)">{{ group.linkText }} →</a>
             </div>
             <p class="lp-area-names">
-              <template v-for="(name, i) in group.names" :key="name">
-                <span v-if="i" class="lp-dot" aria-hidden="true">·</span>{{ name }}
-              </template>
+              <span class="lp-names">
+                <span v-for="name in group.names" :key="name" class="lp-name"
+                  ><span class="lp-dot" aria-hidden="true">·</span>{{ name }}</span
+                >
+              </span>
             </p>
           </article>
         </div>

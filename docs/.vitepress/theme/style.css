@@ -37,6 +37,21 @@
     /* The icon gradient itself, for wordmarks and rules. */
     --rozi-gradient: linear-gradient(160deg, #fd4a80 0%, #982bf2 100%);
 
+    /* One look for everything you can pick: tabs, steps, cards, and pager
+       links. A plate with a hairline edge; the picked one gets a rose-tinted
+       edge, a gradient rule along its foot, and a little light rising off the
+       rule. Stack them as `background: var(--rz-picked)`. */
+    --rz-radius: 4px;
+    --rz-ring: color-mix(in srgb, var(--vp-c-brand-1) 45%, var(--vp-c-divider));
+    --rz-rule: linear-gradient(90deg, #fd4a80, #982bf2) bottom / 100% 2px no-repeat;
+    --rz-glow: linear-gradient(
+        to top,
+        color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent),
+        color-mix(in srgb, var(--vp-c-brand-1) 5%, transparent) 38%,
+        transparent 74%
+    );
+    --rz-picked: var(--rz-rule), var(--rz-glow), var(--vp-c-bg-alt);
+
     /* Semantic blocks */
     --vp-c-tip-1: #fd4a80;
     --vp-c-tip-2: #982bf2;
@@ -495,7 +510,7 @@ body {
     font-weight: 400 !important;
     color: var(--vp-c-text-2) !important;
     padding: 5px 10px !important;
-    border-radius: 3px !important;
+    border-radius: var(--rz-radius) !important;
     border: 1px solid transparent;
     transition:
         color 0.15s,
@@ -519,7 +534,7 @@ body {
 .DocSearch-Button {
     background: var(--vp-c-bg) !important;
     border: 1px solid var(--vp-c-divider) !important;
-    border-radius: 3px !important;
+    border-radius: var(--rz-radius) !important;
     box-sizing: border-box !important;
     height: auto !important;
     min-height: 0 !important;
@@ -638,7 +653,7 @@ body {
     font-size: 12px;
     text-decoration: none;
     border: 1px solid var(--vp-c-divider);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     transition:
         color 0.15s,
         border-color 0.15s;
@@ -664,7 +679,7 @@ body {
 .VPSocialLink {
     color: var(--vp-c-text-3) !important;
     border: 1px solid var(--vp-c-divider);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     padding: 5px 10px;
     transition:
         color 0.15s,
@@ -1042,7 +1057,7 @@ body {
     color: #c9a8ff;
     background: #1e1834;
     border-color: transparent;
-    border-radius: 4px;
+    border-radius: var(--rz-radius);
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
 }
@@ -1098,7 +1113,7 @@ body {
 .vp-doc div[class*="language-"] {
     background: var(--vp-code-block-bg) !important;
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     margin: 24px 0;
 }
 .vp-doc div[class*="language-"] pre {
@@ -1136,7 +1151,7 @@ body {
     border: 1px solid var(--vp-c-divider) !important;
     background-color: var(--vp-c-bg-alt) !important;
     background-size: 16px !important;
-    border-radius: 3px !important;
+    border-radius: var(--rz-radius) !important;
     transform: none !important;
 }
 .vp-doc div[class*="language-"] > button.copy:hover {
@@ -1328,7 +1343,7 @@ body {
     width: 100% !important;
     height: 100% !important;
     border: 1px solid var(--vp-c-divider) !important;
-    border-radius: 3px !important;
+    border-radius: var(--rz-radius) !important;
     padding: 12px 16px !important;
     background: var(--vp-c-bg-alt) !important;
     text-decoration: none !important;
@@ -1337,8 +1352,8 @@ body {
         background 0.15s;
 }
 .VPDocFooter .pager-link:hover {
-    border-color: var(--vp-c-brand-2) !important;
-    background: var(--vp-c-bg-soft) !important;
+    border-color: var(--rz-ring) !important;
+    background: var(--rz-picked) !important;
     text-decoration: none !important;
 }
 .VPDocFooter .pager-link.next {
@@ -1379,7 +1394,7 @@ body {
 .VPLocalSearchBox .shell {
     background: var(--vp-c-bg-alt) !important;
     border: 1px solid var(--vp-c-border) !important;
-    border-radius: 4px !important;
+    border-radius: var(--rz-radius) !important;
 }
 .VPLocalSearchBox input {
     font-family: var(--vp-font-family-base) !important;

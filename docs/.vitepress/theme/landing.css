@@ -214,7 +214,7 @@
     white-space: nowrap;
     color: var(--vp-c-text-2);
     text-decoration: none;
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     transition:
         color 0.15s,
         background 0.15s;
@@ -239,7 +239,7 @@
     color: var(--vp-c-text-3);
     text-decoration: none;
     border: 1px solid var(--vp-c-divider);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     transition:
         color 0.15s,
         border-color 0.15s;
@@ -346,48 +346,216 @@
     width: min(1080px, calc(100vw - 32px));
     margin: 28px auto 64px;
 }
-/* The showcase: one recording per row, wider than the page column so the terminal text in each
-   clip stays readable, with its copy alongside and the side alternating. */
+/* The showcase: three recordings on one stage, wider than the page column so
+   the terminal text in each clip stays readable. The cards above it are its
+   tabs; the playing one fills its rule as the clip runs. */
+/* The hero clip's caption: one quiet line under the frame, with the same
+   recording light the frames' badges carry. */
+.lp-proof {
+    max-width: 640px;
+    margin: -46px auto 34px;
+    padding: 0 16px;
+    font-family: var(--vp-font-family-mono);
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--vp-c-text-3);
+    text-align: center;
+}
+.lp-proof i {
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: 1px;
+}
+.lp-proof a {
+    margin-left: 4px;
+    color: var(--vp-c-text-2);
+    text-decoration: none;
+    white-space: nowrap;
+}
+.lp-proof a:hover {
+    color: var(--vp-c-brand-1);
+}
+
 .lp-showcase {
-    width: min(1360px, calc(100vw - 32px));
-    margin-inline: calc(50% - min(680px, 50vw - 16px));
+    width: min(1240px, calc(100vw - 32px));
+    margin-inline: calc(50% - min(620px, 50vw - 16px));
 }
-.lp-show {
+.lp-spot-tabs {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2.15fr);
-    gap: 48px;
-    align-items: center;
-    margin-top: 44px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin: 26px 0 22px;
 }
-.lp-show.flip {
-    grid-template-columns: minmax(0, 2.15fr) minmax(0, 1fr);
+.lp-spot-tab {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 18px 20px 20px;
+    font: inherit;
+    text-align: left;
+    color: var(--vp-c-text-2);
+    background: var(--vp-c-bg-alt);
+    border: 1px solid var(--vp-c-divider);
+    border-radius: var(--rz-radius);
+    overflow: hidden;
+    cursor: pointer;
+    opacity: 0.62;
+    transition:
+        opacity 0.2s,
+        border-color 0.2s,
+        transform 0.2s;
 }
-.lp-show.flip .lp-show-copy {
-    order: 2;
+.lp-spot-tab:hover {
+    opacity: 0.9;
+    border-color: var(--vp-c-border);
 }
-.lp-show-copy h3 {
-    margin: 0 0 12px;
-    font-size: 22px;
-    line-height: 1.3;
+.lp-spot-tab.active {
+    opacity: 1;
+    background: var(--rz-glow), var(--vp-c-bg-alt);
+    border-color: var(--rz-ring);
+    transform: translateY(-2px);
+}
+.lp-spot-tab:focus-visible {
+    outline: 2px solid var(--vp-c-brand-1);
+    outline-offset: 2px;
+}
+.lp-spot-tab .lp-eyebrow {
+    margin-bottom: 8px;
+}
+.lp-spot-tab.active .lp-eyebrow {
+    color: var(--vp-c-brand-1);
+}
+.lp-spot-num {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--vp-c-divider);
+}
+.lp-spot-tab.active .lp-spot-num {
+    background: var(--rozi-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.lp-spot-tab b {
+    font-size: 16px;
+    line-height: 1.35;
     color: var(--vp-c-text-1);
 }
-.lp-show-copy p:not(.lp-eyebrow) {
+.lp-spot-blurb {
+    margin-top: 6px;
+    font-size: 12.5px;
+    line-height: 1.6;
+}
+/* The progress rule along the card's foot, the same track the gallery steps
+   fill. Only the playing card shows it. */
+.lp-spot-rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: var(--vp-c-divider);
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.lp-spot-tab.active .lp-spot-rule {
+    opacity: 1;
+}
+.lp-spot-rule i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #fd4a80, #982bf2);
+    transform-origin: 0 50%;
+    transition: transform 0.3s linear;
+}
+.lp-showcase .rz-gallery {
+    margin: 0;
+}
+/* What the stage is showing, in a sentence or three, under the frame. */
+.lp-spot-caption {
+    display: flex;
+    align-items: baseline;
+    gap: 32px;
+    max-width: 980px;
+    margin: 22px auto 0;
+}
+.lp-spot-caption p {
+    flex: 1;
     margin: 0;
     font-size: 14px;
     line-height: 1.75;
     color: var(--vp-c-text-2);
 }
-.lp-show .rz-gallery {
+.lp-spot-caption .lp-more {
     margin: 0;
+    white-space: nowrap;
 }
-@media (max-width: 960px) {
-    .lp-show,
-    .lp-show.flip {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 20px;
+.lp-spot-swap-enter-active,
+.lp-spot-swap-leave-active {
+    transition:
+        opacity 0.25s ease,
+        transform 0.25s ease;
+}
+.lp-spot-swap-enter-from {
+    opacity: 0;
+    transform: translateY(6px);
+}
+.lp-spot-swap-leave-to {
+    opacity: 0;
+    transform: translateY(-6px);
+}
+/* The playing card's title, repeated over the caption - for phones, where
+   the cards shrink to a number and a name. */
+.lp-spot-title {
+    display: none;
+}
+@media (max-width: 760px) {
+    /* Three stacked cards pushed the recording a screen down. Stay one row:
+       the number and the eyebrow name the clip, and the title moves under
+       the frame, next to what it describes. */
+    .lp-spot-tabs {
+        gap: 6px;
+        margin: 18px 0 14px;
     }
-    .lp-show.flip .lp-show-copy {
-        order: 0;
+    .lp-spot-tab {
+        align-items: center;
+        padding: 10px 6px 12px;
+        text-align: center;
+    }
+    .lp-spot-tab.active {
+        transform: none;
+    }
+    .lp-spot-num {
+        position: static;
+        margin-bottom: 4px;
+        font-size: 20px;
+    }
+    .lp-spot-tab .lp-eyebrow {
+        margin: 0;
+        font-size: 9.5px;
+        letter-spacing: 0.08em;
+    }
+    .lp-spot-tab b,
+    .lp-spot-blurb {
+        display: none;
+    }
+    .lp-spot-caption {
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 16px;
+    }
+    .lp-spot-title {
+        display: block;
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.35;
+        color: var(--vp-c-text-1);
     }
 }
 .lp-eyebrow {
@@ -450,7 +618,7 @@
     margin: 28px auto 0;
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
 }
 .lp-install-tabs {
     display: flex;
@@ -483,7 +651,7 @@
 }
 .lp-install-tab.active {
     color: var(--vp-c-text-1);
-    border-bottom-color: var(--vp-c-brand-1);
+    background: var(--rz-rule);
 }
 
 /* Both tab rows glow off the active bar - see the shared rule further down. */
@@ -578,7 +746,7 @@
     color: var(--vp-c-text-3);
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     transition:
         color 0.15s,
         border-color 0.15s;
@@ -610,7 +778,7 @@
     padding: 3px;
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 /* A small action bar uses the same ruled plate and active rose badge as the
@@ -646,15 +814,16 @@
     left: 12px;
     right: 12px;
     bottom: 4px;
-    height: 1px;
-    background: var(--vp-c-brand-1);
+    height: 2px;
+    background: linear-gradient(90deg, #fd4a80, #982bf2);
     transform: scaleX(0);
     transform-origin: 50% 50%;
     transition: transform 0.2s ease;
 }
+/* Hovered, a button takes the light the site's picked tabs carry. */
 .lp-cta-btn:hover {
     color: var(--vp-c-text-1);
-    background: color-mix(in srgb, var(--vp-c-brand-1) 8%, transparent);
+    background: var(--rz-glow);
     transform: translateY(-1px);
 }
 .lp-cta-btn:hover::after {
@@ -738,11 +907,11 @@
     padding: 20px;
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 4px;
+    border-radius: var(--rz-radius);
     transition: border-color 0.15s;
 }
 .lp-feature:hover {
-    border-color: var(--vp-c-border);
+    border-color: var(--rz-ring);
 }
 .lp-feature h3 {
     margin: 0 0 10px;
@@ -832,7 +1001,7 @@
     color: var(--vp-c-text-1);
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
     padding: 2px 6px;
 }
 .lp kbd + kbd {
@@ -882,7 +1051,7 @@
 .lp-code {
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
 }
 .lp-code pre {
     margin: 0;
@@ -907,7 +1076,7 @@
     margin-top: 22px;
     background: var(--vp-code-block-bg);
     border: 1px solid var(--vp-c-border);
-    border-radius: 3px;
+    border-radius: var(--rz-radius);
 }
 .lp-snip-tabs {
     display: flex;
@@ -937,7 +1106,7 @@
 }
 .lp-snip-tab.active {
     color: var(--vp-c-text-1);
-    border-bottom-color: var(--vp-c-brand-1);
+    background: var(--rz-rule);
 }
 
 /* The active bar throws a little light up into its own tab, so which tab is
@@ -965,10 +1134,9 @@
         transparent 74%
     );
 }
-/* No reserved height: every snippet is exactly thirteen lines, so the panel is
-   already the same size on all seven tabs. Reserving the tallest instead left
-   a hundred empty pixels under the shorter ones, which is the resize traded
-   for a permanent hole - the same bargain the install box refuses. */
+/* Every snippet is exactly thirteen lines, and all of them are stacked in one
+   `.rz-swap` cell, so the panel is the same size on all seven tabs without
+   leaving empty space under a short one - see ConfigTabs.vue. */
 .lp-snip-body pre {
     margin: 0;
     padding: 16px;
@@ -1055,7 +1223,7 @@
     padding: 18px 20px;
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 4px;
+    border-radius: var(--rz-radius);
 }
 .lp-defs {
     margin: 0;
@@ -1092,14 +1260,14 @@
     text-decoration: none;
     background: var(--vp-c-bg-alt);
     border: 1px solid var(--vp-c-divider);
-    border-radius: 4px;
+    border-radius: var(--rz-radius);
     transition:
         background 0.15s,
         border-color 0.15s;
 }
 .lp-example:hover {
-    background: var(--vp-c-bg-soft);
-    border-color: var(--vp-c-border);
+    background: var(--rz-picked);
+    border-color: var(--rz-ring);
 }
 .lp-example b {
     font-family: var(--vp-font-family-mono);
@@ -1150,10 +1318,24 @@
     line-height: 1.9;
     color: var(--vp-c-text-2);
 }
-/* The separator is padded here rather than in the markup so a name never
-   breaks away from the dot that follows it. */
+/* A name never breaks inside itself, and the dot before it travels with it.
+   Every name has one, at a fixed width; the list is pulled left by that width
+   and the paragraph clips it, so the dot that starts each line - including a
+   wrapped one - falls outside and only dots between names show. */
+.lp-area-names {
+    overflow: hidden;
+}
+.lp-names {
+    display: block;
+    margin-left: -18px;
+}
+.lp-name {
+    white-space: nowrap;
+}
 .lp-dot {
-    padding: 0 7px;
+    display: inline-block;
+    width: 18px;
+    text-align: center;
     color: var(--vp-c-text-3);
 }
 
@@ -1334,9 +1516,10 @@
     .lp-facts {
         gap: 14px 0;
     }
+    /* Three to a row, so five read as 3 + 2 rather than leaving one alone. */
     .lp-facts li {
-        flex: 1 1 40%;
-        padding: 2px 8px;
+        flex: 0 0 33.3%;
+        padding: 2px 4px;
     }
     .lp-facts li + li {
         border-left: none;
@@ -1384,6 +1567,40 @@
     }
     .lp-section {
         padding-top: 40px;
+    }
+    .lp-features {
+        gap: 10px;
+    }
+    .lp-feature {
+        padding: 16px;
+    }
+    /* Two keys and a description do not fit across a phone: the keys take
+       one line and the description the line under them. */
+    .lp-keytable thead tr,
+    .lp-keytable tbody tr {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        column-gap: 10px;
+    }
+    .lp-keytable tbody tr {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--vp-c-divider);
+    }
+    .lp-keytable td {
+        padding: 0;
+        border-bottom: none;
+    }
+    .lp-keytable td:last-child {
+        grid-column: 1 / -1;
+        padding-top: 5px;
+    }
+    .lp-keytable th:last-child {
+        display: none;
+    }
+    .lp-keycell {
+        padding-right: 0 !important;
+        width: auto;
     }
 }
 
@@ -1455,16 +1672,9 @@
 
 /* ── Make it yours ───────────────────────────────────────────────────── */
 
-/* The second row mirrors the first: picture on the left. The copy comes
-   first in the markup so it still leads when the band stacks on a phone. */
-.lp-capture + .lp-capture {
+.lp-capture + .lp-capture,
+.lp-capture + .lp-stack {
     margin-top: 44px;
-}
-.lp-two.lp-capture-flip {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-}
-.lp-capture-flip > :first-child {
-    order: 2;
 }
 .lp-capture .rz-gallery {
     margin: 0;
@@ -1481,22 +1691,64 @@
 .lp-motion-code {
     margin-top: 28px;
 }
+.lp-capture .lp-motion-code-under {
+    display: none;
+}
 .lp-themes .rz-gallery-caption {
     display: none;
 }
 @media (max-width: 1000px) {
-    .lp-two.lp-capture-flip {
-        grid-template-columns: minmax(0, 1fr);
-    }
-    .lp-capture-flip > :first-child {
-        order: 0;
-    }
     /* Stacked, the copy sits above the tabs; the lines stay under the frame,
        next to what changes them. */
-    .lp-theme-code {
+    .lp-themes .lp-theme-code {
         display: none;
+    }
+    .lp-capture .lp-motion-code {
+        display: none;
+    }
+    .lp-capture .lp-motion-code-under {
+        display: grid;
     }
     .lp-themes .rz-gallery-caption {
         display: block;
+    }
+}
+
+/* ── Stacked band: copy across the top, the picture full width ──────────── */
+
+.lp-stack-copy {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 48px;
+    margin-bottom: 22px;
+}
+/* The band's own title, at the weight the showcase cards give theirs - the
+   small uppercase .lp-h3 is a label, and read as one here. */
+.lp-stack-head {
+    grid-column: 1 / -1;
+    margin-bottom: 14px;
+}
+.lp-stack-head .lp-eyebrow {
+    margin-bottom: 8px;
+    color: var(--vp-c-brand-1);
+}
+.lp-stack-head h3 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--vp-c-text-1);
+}
+.lp-stack-copy .lp-more {
+    display: block;
+    width: fit-content;
+    margin-top: 14px;
+}
+.lp-stack .rz-gallery {
+    margin: 0;
+}
+@media (max-width: 1000px) {
+    .lp-stack-copy {
+        grid-template-columns: minmax(0, 1fr);
     }
 }

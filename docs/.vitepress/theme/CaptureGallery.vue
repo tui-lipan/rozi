@@ -76,9 +76,7 @@ const shots = computed<Shot[]>(() =>
 
 const active = defineModel<number>("active", { default: 0 });
 const current = computed(() => shots.value[active.value]);
-const highlighted = computed(() =>
-  current.value?.code ? highlightToml(current.value.code) : "",
-);
+const captioned = computed(() => shots.value.some((shot) => shot.caption || shot.code));
 
 const root = ref<HTMLElement>();
 const tabs = ref<HTMLButtonElement[]>([]);
@@ -90,19 +88,22 @@ const tookOver = ref(false);
 const inView = ref(false);
 const hovering = ref(false);
 const reducedMotion = ref(true);
-const playing = computed(
-  () =>
-    props.mode === "steps" &&
-    !tookOver.value &&
-    !reducedMotion.value &&
-    inView.value &&
-    !hovering.value &&
-    !zoomed.value,
+/* Steps that advance on their own until the reader takes over. */
+const autoplay = computed(
+  () => props.mode === "steps" && !tookOver.value && !reducedMotion.value,
 );
+/* Hovering, zooming, or scrolling away pauses autoplay without losing its place. */
+const playing = computed(
+  () => autoplay.value && inView.value && !hovering.value && !zoomed.value,
+);
+/** How long the current step has been shown while playing, in ms. The progress
+ * rule is drawn from it, so a pause freezes the rule where it is. */
+const elapsed = ref(0);
 
 function select(index: number, byReader = true) {
   const count = shots.value.length;
   active.value = (index + count) % count;
+  elapsed.value = 0;
   if (byReader) tookOver.value = true;
 }
 
@@ -131,7 +132,18 @@ function onDialogKey(event: KeyboardEvent) {
   if (event.key === "ArrowLeft") select(active.value - 1);
 }
 
-let timer: ReturnType<typeof setInterval> | undefined;
+let frame = 0;
+let last = 0;
+
+function tick(now: number) {
+  if (playing.value) {
+    elapsed.value += Math.min(now - last, 100);
+    if (elapsed.value >= props.interval) select(active.value + 1, false);
+  }
+  last = now;
+  frame = requestAnimationFrame(tick);
+}
+
 let observer: IntersectionObserver | undefined;
 let motion: MediaQueryList | undefined;
 const onMotion = () => (reducedMotion.value = motion!.matches);
@@ -145,13 +157,11 @@ onMounted(() => {
     { threshold: [0, 0.6, 1] },
   );
   if (root.value) observer.observe(root.value);
-  timer = setInterval(() => {
-    if (playing.value) select(active.value + 1, false);
-  }, props.interval);
+  if (props.mode === "steps") frame = requestAnimationFrame(tick);
 });
 
 onBeforeUnmount(() => {
-  clearInterval(timer);
+  cancelAnimationFrame(frame);
   observer?.disconnect();
   motion?.removeEventListener("change", onMotion);
 });
@@ -193,17 +203,20 @@ onBeforeUnmount(() => {
       <div class="rz-gallery-bar">
         <span class="rz-gallery-dots" aria-hidden="true"><i /><i /><i /></span>
         <span class="rz-gallery-title">{{ title }}</span>
-        <button
-          type="button"
-          class="rz-gallery-zoom"
-          aria-label="View full size"
-          title="View full size"
-          @click="openZoom"
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />
-          </svg>
-        </button>
+        <span class="rz-gallery-end">
+          <span class="rz-gallery-badge"><i aria-hidden="true" />captured by rozi</span>
+          <button
+            type="button"
+            class="rz-gallery-zoom"
+            aria-label="View full size"
+            title="View full size"
+            @click="openZoom"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" />
+            </svg>
+          </button>
+        </span>
       </div>
       <button type="button" class="rz-gallery-stage" aria-label="View full size" @click="openZoom">
         <img
@@ -231,19 +244,27 @@ onBeforeUnmount(() => {
           <span class="rz-gallery-step-num">{{ index + 1 }}</span>
           <span class="rz-gallery-step-label">{{ shot.label }}</span>
           <span
-            v-if="index === active && playing"
-            :key="`${active}-progress`"
+            v-if="index === active && autoplay"
             class="rz-gallery-progress"
-            :style="{ animationDuration: `${interval}ms` }"
+            :style="{ transform: `scaleX(${Math.min(elapsed / interval, 1)})` }"
           />
         </button>
       </li>
     </ol>
 
-    <figcaption v-if="current.caption || current.code" class="rz-gallery-caption">
-      <p v-if="current.caption">{{ current.caption }}</p>
-      <!-- Constant strings from the page's markdown, escaped by the highlighter. -->
-      <pre v-if="current.code"><code v-html="highlighted"></code></pre>
+    <!-- Every shot's caption, stacked in one cell so the longest sets its
+         height and switching never moves the page under the reader. -->
+    <figcaption v-if="captioned" class="rz-gallery-caption rz-swap">
+      <div
+        v-for="(shot, index) in shots"
+        :key="shot.src"
+        :class="{ active: index === active }"
+        :aria-hidden="index !== active"
+      >
+        <p v-if="shot.caption">{{ shot.caption }}</p>
+        <!-- Constant strings from the page's markdown, escaped by the highlighter. -->
+        <pre v-if="shot.code"><code v-html="highlightToml(shot.code)"></code></pre>
+      </div>
     </figcaption>
 
     <dialog

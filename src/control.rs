@@ -1128,6 +1128,10 @@ pub struct PaneLayout {
     /// Rows, Scrollable, and Monocle lay panes out in; absent for a floating pane.
     pub order: Option<usize>,
     pub floating: bool,
+    /// A pinned pane is floating and moves with the controlling client to every workspace it
+    /// switches to.
+    #[serde(default)]
+    pub pinned: bool,
     /// A fullscreen pane covers the whole screen while it is fullscreen; `rect` stays the place it
     /// returns to.
     pub fullscreen: bool,
@@ -1205,6 +1209,7 @@ impl WorkspaceLayout {
                             }),
                             order: tiled.iter().position(|id| *id == pane.pane_id),
                             floating: pane.floating,
+                            pinned: pane.pinned,
                             fullscreen: pane.fullscreen,
                             rect: CellRect::from_float(rect),
                             rect_fraction: FractionRect::of_canvas(rect, canvas),

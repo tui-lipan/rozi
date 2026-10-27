@@ -35,7 +35,9 @@ pub(crate) use workbar::{
     UiRecordingChip, ui_recording_chip, ui_recording_label, workspace_tab_shows_recording,
 };
 pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
-pub(crate) use workspace::{WorkspaceLayer, render_workspace_panes, settled_active_pane_rects};
+pub(crate) use workspace::{
+    LayerPanes, WorkspaceLayer, render_workspace_panes, settled_active_pane_rects,
+};
 
 use tui_lipan::prelude::*;
 

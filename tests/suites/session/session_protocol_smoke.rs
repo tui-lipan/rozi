@@ -169,6 +169,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 replay: false,
                 keep_open: true,
                 floating: false,
+                pinned: false,
                 fullscreen: false,
                 rect: None,
                 scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,

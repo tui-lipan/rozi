@@ -61,6 +61,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::TogglePin,
+        label: "Pin",
+        category: "Panes",
+        // Shifted sibling of the floating toggle: pinning floats the pane first.
+        default_keys: &["shift-t"],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleFullscreen,
         label: "Fullscreen",
         category: "Panes",

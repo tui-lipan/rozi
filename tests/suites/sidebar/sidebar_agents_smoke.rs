@@ -627,15 +627,15 @@ fn published_sessions_render_under_one_cluster() {
             );
             // A titled session is named by its task and still says why it is blocked: task and
             // reason answer different questions, so neither hides the other. In a sidebar this
-            // narrow, a background session's reason gives its last columns to the marker.
+            // narrow, the reason yields columns to the run's time and to a background run's marker.
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
             assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
             assert!(
-                sidebar.iter().any(|line| line.contains("permission re")),
+                sidebar.iter().any(|line| line.contains("permission")),
                 "a titled session shows its reason beside its state: {sidebar:#?}"
             );
             // Until a title exists, the reason is all the row has.
-            assert!(sidebar.iter().any(|line| line.contains("answer requir")));
+            assert!(sidebar.iter().any(|line| line.contains("answer req")));
             // An id is an opaque handle and must never stand in for a missing title.
             assert!(!sidebar.iter().any(|line| line.contains("ses_")));
             // A slot with nothing to say about its work falls back to the state word, which is

@@ -2882,6 +2882,7 @@ fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
                     replay: false,
                     keep_open: false,
                     floating: false,
+                    pinned: false,
                     fullscreen: false,
                     rect: None,
                     scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,

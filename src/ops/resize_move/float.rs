@@ -2164,6 +2164,146 @@ mod tests {
             });
         }
 
+        /// A client taking control from a different workspace than the old controller's brings
+        /// the pinned panes over at once, publishes them there, and keeps carrying them.
+        #[test]
+        fn taking_control_gathers_pinned_panes_onto_the_new_controllers_workspace() {
+            in_test_stack(|| {
+                let (mut backend, rx) = shared_backend(false);
+                {
+                    let state = backend.state_mut();
+                    let mut pinned = Pane::new(
+                        3,
+                        100,
+                        FloatRect {
+                            x: 10.0,
+                            y: 4.0,
+                            w: 30.0,
+                            h: 10.0,
+                        },
+                    );
+                    pinned.opening = false;
+                    pinned.floating = true;
+                    pinned.pinned = true;
+                    state.current_mut().workspaces[1].panes.push(pinned);
+                }
+                let holds = |backend: &TestBackend<AppRoot>, index: usize| {
+                    backend.state().current().workspaces[index]
+                        .panes
+                        .iter()
+                        .any(|pane| pane.id == 3 && pane.pinned)
+                };
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::SwitchWorkspace(4)))
+                    .expect("follower looks elsewhere");
+                assert!(holds(&backend, 1), "a follower does not carry pinned panes");
+                {
+                    // A pane of its own already holds focus there, and the keyboard is elsewhere.
+                    let state = backend.state_mut();
+                    let mut own = Pane::new(4, 100, FloatRect::default());
+                    own.opening = false;
+                    own.terminal_active = true;
+                    let workspace = &mut state.current_mut().workspaces[4];
+                    workspace.panes.push(own);
+                    crate::layout::tiling::append_tiled_window(workspace, 4);
+                    workspace.focused_pane = Some(4);
+                    state.current_mut().focused_pane = Some(4);
+                    state.sidebar.focused = true;
+                }
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(Msg::SessionControllerChanged {
+                        epoch,
+                        controller: Some(1),
+                        reason: crate::session::protocol::ControllerChangeReason::Granted,
+                    })
+                    .expect("take control");
+                assert!(holds(&backend, 4));
+                assert!(!holds(&backend, 1));
+                assert_eq!(backend.state().focused_pane(), Some(4));
+                assert!(
+                    backend.state().sidebar.focused,
+                    "gathering a pin does not pull the keyboard out of the sidebar"
+                );
+                backend
+                    .dispatch(Msg::FlushLayoutCommit { epoch })
+                    .expect("flush the layout commit");
+                let published = control_messages(&rx)
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        ClientMessage::CommitLayout { layout, .. } => Some(layout),
+                        _ => None,
+                    })
+                    .next_back()
+                    .expect("the takeover publishes");
+                let workspace = published
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.panes.iter().any(|pane| pane.pane_id == 3))
+                    .expect("pinned pane placed");
+                assert_eq!(workspace.index, 4);
+                assert!(
+                    workspace
+                        .panes
+                        .iter()
+                        .any(|pane| pane.pane_id == 3 && pane.pinned)
+                );
+
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::SwitchWorkspace(5)))
+                    .expect("switch as controller");
+                assert!(holds(&backend, 5));
+            });
+        }
+
+        /// Taking control while looking at an empty workspace hands the arriving pin focus, in
+        /// state and in the framework, as switching to an empty workspace would.
+        #[test]
+        fn taking_control_on_an_empty_workspace_focuses_the_gathered_pin() {
+            in_test_stack(|| {
+                let (mut backend, _rx) = shared_backend(false);
+                {
+                    let state = backend.state_mut();
+                    let mut pinned = Pane::new(
+                        3,
+                        100,
+                        FloatRect {
+                            x: 10.0,
+                            y: 4.0,
+                            w: 30.0,
+                            h: 10.0,
+                        },
+                    );
+                    pinned.opening = false;
+                    pinned.terminal_active = true;
+                    pinned.floating = true;
+                    pinned.pinned = true;
+                    state.active_workspace_mut().panes.push(pinned);
+                }
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::SwitchWorkspace(5)))
+                    .expect("follower looks at an empty workspace");
+                assert_eq!(backend.state().focused_pane(), None);
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(Msg::SessionControllerChanged {
+                        epoch,
+                        controller: Some(1),
+                        reason: crate::session::protocol::ControllerChangeReason::Granted,
+                    })
+                    .expect("take control");
+                assert_eq!(backend.state().focused_pane(), Some(3));
+                backend.render();
+                let terminal = backend.state().current().workspaces[5].panes[0]
+                    .keys
+                    .terminal
+                    .clone();
+                assert_eq!(backend.focused_key(), Some(&terminal));
+            });
+        }
+
         /// A lease lost mid-gesture abandons the gesture's liveness with it. When this client
         /// controls again, its republish is an ordinary revision that followers animate.
         #[test]

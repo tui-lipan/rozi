@@ -228,6 +228,7 @@ fn large_layout() -> SharedLayout {
                             replay: false,
                             keep_open: offset % 3 == 0,
                             floating: offset == 15,
+                            pinned: false,
                             fullscreen: false,
                             rect: (offset == 15).then_some(FracRect {
                                 x: 0.15,

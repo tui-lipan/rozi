@@ -376,7 +376,7 @@ fn unbind_keeps_the_highlight_on_the_next_row() {
             send(&mut backend, KeyCode::Down);
             assert_eq!(
                 selected(&backend).as_deref(),
-                Some("toggle-fullscreen"),
+                Some("toggle-pin"),
                 "Down should step from the neighbor, not from Prefix"
             );
         })

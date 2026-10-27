@@ -642,6 +642,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             let enabled = focused_pane(state).is_some_and(|pane| pane.floating);
             enable_disable_label("floating", enabled)
         }
+        Action::TogglePin => if focused_pane(state).is_some_and(|pane| pane.pinned) {
+            "Unpin pane"
+        } else {
+            "Pin pane"
+        }
+        .to_string(),
         Action::ToggleFullscreen => {
             let enabled = focused_pane(state).is_some_and(|pane| pane.fullscreen);
             enable_disable_label("fullscreen", enabled)

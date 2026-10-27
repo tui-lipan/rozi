@@ -1265,22 +1265,25 @@ pub(super) fn compact_status_parts<'a>(
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 ///
 /// Beneath a cluster, which already names the agent, a run is titled by what it works on, with its
-/// state and the reason for it on the detail line. It carries no badge unless the cluster spans
-/// workspaces, and then only where it sits.
+/// state, its elapsed time, and the reason for it on the detail line. It carries no badge unless
+/// the cluster spans workspaces, and then only where it sits.
 fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
     let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &state.theme);
     let duration = row_duration(row).map(|(text, _)| text);
     let muted = super::super::fg_only(&state.theme.muted).dim();
     if let Some(child) = child {
+        // A run's title is what it works on, often long enough to truncate anything riding after
+        // it, so its time joins the state it measures, which the detail line never truncates.
+        let mut label = row_status_label(status, row.finished_unseen);
+        if let Some(duration) = duration.as_deref() {
+            label = format!("{label} {duration}");
+        }
         let mut content = Row::new(child.label)
             .active(row_is_active(state, row))
             .glyph(status_icon(glyph, color, spinner))
             .title_style(run_title_style(&state.theme, row))
-            .detail(
-                row_status_label(status, row.finished_unseen),
-                Style::new().fg(color),
-            );
+            .detail(label, Style::new().fg(color));
         if let Some(reason) = row.reason.as_deref() {
             let budget = activity_budget(
                 state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
@@ -1299,9 +1302,6 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
         );
         if !badge.is_empty() {
             content = content.badge_text(badge, muted);
-        }
-        if let Some(duration) = duration {
-            content = content.meta(duration, Style::new().fg(color));
         }
         return mark_background_run(content, state, row);
     }
@@ -3039,6 +3039,44 @@ mod tests {
         let targets = item_targets(&rows);
         assert!(matches!(targets[0].1, RowTarget::TreeToggle(_)));
         assert_eq!(targets[1], (2, blocked));
+    }
+
+    /// A run's title is what it works on and runs long, so its time rides with its state on the
+    /// detail line rather than after the title, where truncation would take it first.
+    #[test]
+    fn a_cluster_run_shows_its_time_beside_its_state() {
+        let state = State::new(crate::config::Config::default(), Theme::default());
+        let run = AgentRow {
+            pane_id: 1,
+            workspace_index: 0,
+            pane_index: 0,
+            title: "Claude Code".into(),
+            status: Some("working".into()),
+            activity: None,
+            age: Some(std::time::Duration::from_secs(9 * 60 + 22)),
+            run: None,
+            cwd: None,
+            cwd_host: None,
+            project_root: None,
+            subpath: None,
+            branch: None,
+            repository: None,
+            finished_unseen: false,
+            slot: None,
+            identity: Some(AgentIdentity::new("claude", "Claude Code")),
+            task: Some("a task title long enough to fill the sidebar".into()),
+            reason: Some("Thinking".into()),
+            order: 0,
+            screen_title: None,
+        };
+        let child = ClusterChild {
+            label: "a task title long enough to fill the sidebar".into(),
+            show_workspace: false,
+        };
+
+        let content = agent_row(&state, &run, Some(child));
+        assert_eq!(content.meta_text(), None);
+        assert_eq!(content.detail_texts(), ["Working 9m22s", "Thinking"]);
     }
 
     /// Runs are named by their task, else what their terminal says, else the agent - numbered

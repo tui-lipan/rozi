@@ -1907,6 +1907,7 @@ impl SessionServer {
             replay: false,
             keep_open,
             floating: placement.float.is_some(),
+            pinned: false,
             fullscreen: placement.fullscreen,
             // A floating pane must carry a rect, and `SpawnFloat::rect` is the one implementation
             // of where a float lands. It works in canvas cells, so it is run against the canvas
@@ -2151,6 +2152,7 @@ mod tests {
                     replay: false,
                     keep_open: false,
                     floating: false,
+                    pinned: false,
                     fullscreen: false,
                     rect: None,
                     scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -2170,6 +2172,7 @@ mod tests {
             replay: false,
             keep_open: false,
             floating: rect.is_some(),
+            pinned: false,
             fullscreen: false,
             rect,
             scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,

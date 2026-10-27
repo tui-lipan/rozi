@@ -68,6 +68,7 @@ fn golden_layout_commit_json_shape() {
                 replay: false,
                 keep_open: false,
                 floating: false,
+                pinned: false,
                 fullscreen: false,
                 rect: None,
                 scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -123,6 +124,7 @@ fn golden_layout_commit_json_shape() {
                         "replay": false,
                         "keep_open": false,
                         "floating": false,
+                        "pinned": false,
                         "fullscreen": false,
                         "rect": null,
                         "scrollable_width": 0.44999998807907104

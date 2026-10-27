@@ -26,6 +26,7 @@ Press these command keys after the `Ctrl+A` prefix, or hold `Alt` while pressing
 | Grow or shrink | `=` or `-` |
 | Enter resize mode | `r` |
 | Toggle floating | `t` |
+| Pin or unpin | `T` |
 | Toggle fullscreen | `f` |
 | Promote to master | `.` |
 | Rename the pane | `N` |
@@ -114,11 +115,19 @@ choose which pane is visible. Hidden panes keep running.
 
 To maximize one pane briefly without changing the workspace layout, use fullscreen instead.
 
-## Floating and fullscreen panes
+## Floating, pinned, and fullscreen panes
 
 Press `t` to move the focused pane between the tiled layout and a floating rectangle.
 `Shift+Enter` opens a new floating shell near the pointer, or centered if rozi has not seen the
 pointer yet.
+
+Press `T` to pin the focused pane. A pinned pane floats above every workspace: it comes with you
+when you switch workspaces, keeps its position, and is labeled `pinned` in its title. Pinning a tiled
+pane floats it first, and pinning a fullscreen pane ends fullscreen. Press `T` again to unpin it on
+the workspace you are on. Returning it to the tiled layout with `t`, making it fullscreen with `f`,
+or moving it to a workspace with `Shift+1` through `Shift+9` or `rozi pane move` also unpins it.
+Killing a workspace leaves a pinned pane open. When you switch to a workspace, focus goes to the
+pane you last used there, not to the pinned pane.
 
 To move a pane with the mouse, hold the modifier (`Alt` by default) and left-drag. Right-drag to
 resize.

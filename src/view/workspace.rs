@@ -48,6 +48,27 @@ pub(crate) struct WorkspaceLayer<'a> {
     /// Distinguishes the two layers' transition keys and pane index badges.
     pub scratch: bool,
     pub viewport_changed: bool,
+    /// Which of the workspace's panes this layer draws.
+    pub panes: LayerPanes,
+}
+
+/// Which panes a [`WorkspaceLayer`] draws. Pinned panes get a layer of their own above the
+/// workspace pages, so a workspace slide moves everything except them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LayerPanes {
+    All,
+    Unpinned,
+    Pinned,
+}
+
+impl LayerPanes {
+    fn includes(self, pane: &crate::state::Pane) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unpinned => !pane.pinned,
+            Self::Pinned => pane.pinned,
+        }
+    }
 }
 
 impl WorkspaceLayer<'_> {
@@ -150,6 +171,10 @@ fn layer_drag(
 }
 
 fn tiled_resize_strips_enabled(ctx: &Context<AppRoot>, layer: &WorkspaceLayer<'_>) -> bool {
+    // The pinned layer holds no tiles; its page below carries their strips.
+    if layer.panes == LayerPanes::Pinned {
+        return false;
+    }
     if layer.scratch || ctx.state.current().shared.is_none() {
         return true;
     }
@@ -223,6 +248,9 @@ pub(crate) fn render_workspace_panes(
         )
         .is_some()
     }) {
+        if !layer.panes.includes(pane) {
+            continue;
+        }
         // Floating geometry is stored in canvas-origin coordinates; translate it by the (possibly
         // negative) letterbox origin so a follower's floats sit inside the centered canvas. This is
         // a no-op for the controller and local sessions, where `bounds` starts at the origin.
@@ -1025,7 +1053,11 @@ pub(crate) fn workspace_pages(
         let mut page = Canvas::new()
             .width(Length::Px(content_viewport.w))
             .height(Length::Px(content_viewport.h));
-        if workspace.panes.iter().all(|pane| pane.closing) {
+        if workspace
+            .panes
+            .iter()
+            .all(|pane| pane.closing || pane.pinned)
+        {
             page = page.child_at(
                 canvas_rect_to_root(super::empty_workspace_rect(bounds), top_offset).to_rect(),
                 super::workspace_empty_panel(ctx),
@@ -1044,6 +1076,7 @@ pub(crate) fn workspace_pages(
                 float_origin: (bounds.x, bounds.y),
                 scratch: false,
                 viewport_changed,
+                panes: LayerPanes::Unpinned,
             },
         );
         let mut page = ZStack::new().passthrough(true).child(page);
@@ -1090,6 +1123,38 @@ pub(crate) fn workspace_pages(
                 h: height,
             },
             page,
+        );
+    }
+    let active = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+    if active.panes.iter().any(|pane| pane.pinned) {
+        // Drawn in root space over the pages, so it stays put while they slide underneath.
+        let pinned = render_workspace_panes(
+            ctx,
+            Canvas::new()
+                .width(Length::Px(content_viewport.w))
+                .height(Length::Px(content_viewport.h)),
+            &WorkspaceLayer {
+                workspace: active,
+                bounds,
+                floating_bounds: bounds,
+                visible_bounds: Some(local_bounds),
+                top_gap: ctx.state.workspace_top_gap(),
+                fullscreen_bounds: root_bounds,
+                float_origin: (bounds.x, bounds.y),
+                scratch: false,
+                viewport_changed,
+                panes: LayerPanes::Pinned,
+            },
+        );
+        // Passthrough on the parent lets clicks beside the pinned panes reach the page below.
+        pages = pages.passthrough(true).child_at(
+            Rect {
+                x: 0,
+                y: 0,
+                w: content_viewport.w,
+                h: content_viewport.h,
+            },
+            pinned,
         );
     }
     pages.into()
@@ -1274,5 +1339,141 @@ mod divider_tests {
         assert!(middle.h > start.h && middle.h < end.h);
         assert_eq!(start.x + start.w / 2.0, settled.x + settled.w / 2.0);
         assert_eq!(start.y + start.h / 2.0, settled.y + settled.h / 2.0);
+    }
+}
+
+#[cfg(test)]
+mod pinned_layer_tests {
+    use tui_lipan::TestBackend;
+    use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+    use tui_lipan::prelude::*;
+
+    use crate::input::Action;
+    use crate::layout::tiling::append_tiled_window;
+    use crate::state::Pane;
+    use crate::{AppRoot, Msg};
+
+    fn pinned_badge_position(backend: &mut TestBackend<AppRoot>) -> Option<(usize, usize)> {
+        backend.render();
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| line.find("pinned").map(|column| (row, column)))
+    }
+
+    #[test]
+    fn a_pinned_pane_holds_still_while_the_workspace_slides() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let mut pinned = Pane::new(
+                        2,
+                        100,
+                        FloatRect {
+                            x: 20.0,
+                            y: 6.0,
+                            w: 40.0,
+                            h: 12.0,
+                        },
+                    );
+                    pinned.opening = false;
+                    pinned.floating = true;
+                    pinned.floating_rect_initialized = true;
+                    pinned.pinned = true;
+                    state.current_mut().workspaces[0].panes.push(pinned);
+                    let mut other = Pane::new(3, 100, FloatRect::default());
+                    other.opening = false;
+                    let workspace = &mut state.current_mut().workspaces[1];
+                    workspace.panes.push(other);
+                    append_tiled_window(workspace, 3);
+                }
+                let settled = pinned_badge_position(&mut backend).expect("pinned pane drawn");
+
+                backend
+                    .dispatch(Msg::RunAction(Action::SwitchWorkspace(1)))
+                    .expect("switch workspace");
+                assert!(
+                    backend.state().current().workspaces[1]
+                        .panes
+                        .iter()
+                        .any(|p| p.id == 2)
+                );
+                assert_eq!(pinned_badge_position(&mut backend), Some(settled));
+            })
+            .expect("spawn pinned slide test")
+            .join()
+            .expect("pinned slide test completes");
+    }
+
+    #[test]
+    fn clicks_beside_a_pinned_pane_reach_the_tiles_beneath() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    state.window_focused = true;
+                    let workspace = &mut state.current_mut().workspaces[0];
+                    workspace.panes[0].opening = false;
+                    let mut tiled = Pane::new(3, 100, FloatRect::default());
+                    tiled.opening = false;
+                    workspace.panes.push(tiled);
+                    append_tiled_window(workspace, 3);
+                    let mut pinned = Pane::new(
+                        2,
+                        100,
+                        FloatRect {
+                            x: 30.0,
+                            y: 6.0,
+                            w: 30.0,
+                            h: 10.0,
+                        },
+                    );
+                    pinned.opening = false;
+                    pinned.floating = true;
+                    pinned.floating_rect_initialized = true;
+                    pinned.pinned = true;
+                    workspace.panes.push(pinned);
+                    workspace.focused_pane = Some(2);
+                    state.current_mut().focused_pane = Some(2);
+                }
+                backend.render();
+                for kind in [
+                    MouseKind::Down(MouseButton::Left),
+                    MouseKind::Up(MouseButton::Left),
+                ] {
+                    backend
+                        .send_mouse(MouseEvent {
+                            x: 90,
+                            y: 25,
+                            kind,
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("click a tile");
+                }
+                backend.render();
+                assert_eq!(backend.state().focused_pane(), Some(3));
+            })
+            .expect("spawn pinned click test")
+            .join()
+            .expect("pinned click test completes");
     }
 }

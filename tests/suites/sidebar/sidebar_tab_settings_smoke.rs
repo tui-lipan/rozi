@@ -6,12 +6,7 @@ use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::{TestBackend, prelude::*};
 
 fn on_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .unwrap()
-        .join()
-        .unwrap();
+    rozi::test_support::on_deeper_stack(test);
 }
 
 fn backend() -> TestBackend<AppRoot> {

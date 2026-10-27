@@ -9,12 +9,9 @@ use tui_lipan::prelude::{
 
 #[test]
 fn discovered_extension_command_is_registered_and_dispatched() {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(discovered_extension_command_is_registered_and_dispatched_inner)
-        .unwrap()
-        .join()
-        .unwrap();
+    rozi::test_support::on_deeper_stack(
+        discovered_extension_command_is_registered_and_dispatched_inner,
+    );
 }
 
 fn discovered_extension_command_is_registered_and_dispatched_inner() {
@@ -255,12 +252,7 @@ fn discovered_extension_command_is_registered_and_dispatched_inner() {
 /// still running and still right, and one that restarts them falls back to the manifest.
 #[test]
 fn command_visibility_follows_the_extension_generation_across_real_reloads() {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(command_visibility_follows_the_extension_generation_inner)
-        .unwrap()
-        .join()
-        .unwrap();
+    rozi::test_support::on_deeper_stack(command_visibility_follows_the_extension_generation_inner);
 }
 
 fn command_visibility_follows_the_extension_generation_inner() {

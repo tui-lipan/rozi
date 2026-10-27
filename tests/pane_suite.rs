@@ -2,8 +2,6 @@
 mod alert_border_smoke;
 #[path = "suites/pane/bench_setup_sanity.rs"]
 mod bench_setup_sanity;
-#[path = "suites/pane/border_merge_smoke.rs"]
-mod border_merge_smoke;
 #[path = "suites/pane/border_modes_smoke.rs"]
 mod border_modes_smoke;
 #[path = "suites/pane/fullscreen_focus_smoke.rs"]
@@ -20,8 +18,6 @@ mod pane_reveal_smoke;
 mod pane_slide_smoke;
 #[path = "suites/pane/pane_titlebar_modes_smoke.rs"]
 mod pane_titlebar_modes_smoke;
-#[path = "suites/pane/scratchpad_border_merge_smoke.rs"]
-mod scratchpad_border_merge_smoke;
 #[path = "suites/pane/scratchpad_slide_smoke.rs"]
 mod scratchpad_slide_smoke;
 #[path = "suites/pane/workspace_slide_smoke.rs"]

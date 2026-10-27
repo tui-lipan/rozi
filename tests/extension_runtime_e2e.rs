@@ -160,328 +160,309 @@ fn attach_local_session(backend: &mut TestBackend<AppRoot>) {
 #[test]
 fn a_placed_service_runs_from_its_bundle_and_reaches_the_ui_only_as_itself() {
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            const EXTENSION_ID: &str = "placed-e2e";
-            // Every test here loads the shared config; hold it so none sees another's edits.
-            let _config = rozi::test_support::lock_config_file();
-            let out = tempfile::Builder::new()
-                .prefix("rozi-placed")
-                .tempdir_in("/tmp")
-                .unwrap();
-            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
-            write_extension(&root, EXTENSION_ID, out.path());
+    rozi::test_support::on_deeper_stack(|| {
+        const EXTENSION_ID: &str = "placed-e2e";
+        // Every test here loads the shared config; hold it so none sees another's edits.
+        let _config = rozi::test_support::lock_config_file();
+        let out = tempfile::Builder::new()
+            .prefix("rozi-placed")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+        write_extension(&root, EXTENSION_ID, out.path());
 
-            let mut backend =
-                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
-            assert!(
-                backend
-                    .state()
-                    .config
-                    .extension_placements
-                    .contains_key(EXTENSION_ID),
-                "fixture has placed contributions"
-            );
-            // Nothing runs until a session is attached: the service is placed on each host *with a
-            // session*, and there is none yet.
-            backend.render();
-            let _ = backend.pump();
-            assert!(backend.state().extension_runtime.processes.is_empty());
-
-            attach_local_session(&mut backend);
-            pump_until(
-                &mut backend,
-                Duration::from_secs(15),
-                "the worker",
-                |backend| running_pid(backend, EXTENSION_ID).is_some(),
-            );
-            let pid = running_pid(&backend, EXTENSION_ID).unwrap();
-            let report = report_dir(out.path(), pid);
-            pump_until(&mut backend, Duration::from_secs(30), "the probe", |_| {
-                report.join("done").exists()
-            });
-
-            let env = read(&report.join("env"));
-            let mut env = env.lines();
-            let bundle_dir = env.next().unwrap().to_string();
-            let digest = backend.state().config.extension_placements[EXTENSION_ID]
-                .bundle_digest()
-                .to_string();
-            assert!(
-                bundle_dir.ends_with(&digest),
-                "runs from the bundle, not the installation: {bundle_dir}"
-            );
-            assert_ne!(Path::new(&bundle_dir), root.as_path());
-            assert_eq!(
-                std::fs::canonicalize(env.next().unwrap()).unwrap(),
-                std::fs::canonicalize(&bundle_dir).unwrap()
-            );
-            assert!(env.next().unwrap().contains("extension-bridge-"));
-
-            // Its own credential reaches the UI, through the bridge.
-            assert_eq!(
-                read(&report.join("panes.code")).trim(),
-                "0",
-                "{}",
-                read(&report.join("panes.err"))
-            );
-            let panes: serde_json::Value =
-                serde_json::from_str(&read(&report.join("panes"))).unwrap();
-            assert_eq!(panes["data"].as_array().map(Vec::len), Some(1), "{panes}");
-            // Running an action that would start something on the client is refused.
-            assert_ne!(read(&report.join("denied.code")).trim(), "0");
-            assert!(
-                read(&report.join("denied.err")).contains("not permitted"),
-                "{}",
-                read(&report.join("denied.err"))
-            );
-            // A forged credential is nobody, and so is none at all over the bridge.
-            assert_ne!(read(&report.join("forged.code")).trim(), "0");
-            assert!(read(&report.join("forged.err")).contains("credential"));
-            assert_ne!(read(&report.join("bare.code")).trim(), "0");
-
-            // `extensions status` tells where it runs, under which generation and bundle.
-            let socket = backend.state().control_socket_path.clone().unwrap();
-            let mut status = std::process::Command::new(env!("CARGO_BIN_EXE_rozi"))
-                .args(["extensions", "status", "--json"])
-                .env("ROZI_SOCKET", &socket)
-                .env_remove("ROZI_PANE")
-                .env_remove("ROZI_EXTENSION")
-                .env_remove("ROZI_EXTENSION_CREDENTIAL")
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            pump_until(
-                &mut backend,
-                Duration::from_secs(10),
-                "extensions status",
-                |_| status.try_wait().unwrap().is_some(),
-            );
-            let mut text = String::new();
-            std::io::Read::read_to_string(status.stdout.as_mut().unwrap(), &mut text).unwrap();
-            let report: serde_json::Value = serde_json::from_str(&text).unwrap();
-            let instance = report["data"]["instances"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|instance| instance["extension"] == EXTENSION_ID)
-                .unwrap_or_else(|| panic!("{report}"))
-                .clone();
-            assert_eq!(instance["placement"], "each-host");
-            assert_eq!(instance["host"], "local");
-            assert_eq!(instance["status"], "running");
-            assert_eq!(instance["pid"], pid);
-            assert_eq!(instance["bundle"], digest.as_str());
-            assert_eq!(
-                instance["generation"],
-                backend.state().extension_generations[EXTENSION_ID].as_str()
-            );
-            assert_eq!(report["data"]["runtimes"][0]["status"], "ready");
-
-            // Editing the installed files is a new bundle and a new generation: the old worker
-            // stops and a new one runs the new files.
-            let generation = backend.state().extension_generations[EXTENSION_ID].clone();
-            let probe = root.join("bin/probe");
-            executable(&probe, &format!("{PROBE}# edited\n"));
+        let mut backend = CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
+        assert!(
             backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
-                .unwrap();
-            pump_until(
-                &mut backend,
-                Duration::from_secs(15),
-                "the new generation",
-                |backend| backend.state().extension_generations[EXTENSION_ID] != generation,
-            );
-            wait_dead(&mut backend, pid);
-            pump_until(
-                &mut backend,
-                Duration::from_secs(15),
-                "the new worker",
-                |backend| running_pid(backend, EXTENSION_ID).is_some_and(|new| new != pid),
-            );
-            let new_pid = running_pid(&backend, EXTENSION_ID).unwrap();
-            let new_digest = backend.state().config.extension_placements[EXTENSION_ID]
-                .bundle_digest()
-                .to_string();
-            assert_ne!(new_digest, digest);
-            let new_report = report_dir(out.path(), new_pid);
-            pump_until(
-                &mut backend,
-                Duration::from_secs(30),
-                "the new probe",
-                |_| new_report.join("done").exists(),
-            );
-            assert!(
-                read(&new_report.join("env"))
-                    .lines()
-                    .next()
-                    .unwrap()
-                    .ends_with(&new_digest)
-            );
+                .state()
+                .config
+                .extension_placements
+                .contains_key(EXTENSION_ID),
+            "fixture has placed contributions"
+        );
+        // Nothing runs until a session is attached: the service is placed on each host *with a
+        // session*, and there is none yet.
+        backend.render();
+        let _ = backend.pump();
+        assert!(backend.state().extension_runtime.processes.is_empty());
 
-            // Leaving the client leaves nothing running.
-            drop(backend);
-            let deadline = Instant::now() + Duration::from_secs(15);
-            while alive(new_pid) {
-                assert!(Instant::now() < deadline, "worker outlived its client");
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        attach_local_session(&mut backend);
+        pump_until(
+            &mut backend,
+            Duration::from_secs(15),
+            "the worker",
+            |backend| running_pid(backend, EXTENSION_ID).is_some(),
+        );
+        let pid = running_pid(&backend, EXTENSION_ID).unwrap();
+        let report = report_dir(out.path(), pid);
+        pump_until(&mut backend, Duration::from_secs(30), "the probe", |_| {
+            report.join("done").exists()
+        });
+
+        let env = read(&report.join("env"));
+        let mut env = env.lines();
+        let bundle_dir = env.next().unwrap().to_string();
+        let digest = backend.state().config.extension_placements[EXTENSION_ID]
+            .bundle_digest()
+            .to_string();
+        assert!(
+            bundle_dir.ends_with(&digest),
+            "runs from the bundle, not the installation: {bundle_dir}"
+        );
+        assert_ne!(Path::new(&bundle_dir), root.as_path());
+        assert_eq!(
+            std::fs::canonicalize(env.next().unwrap()).unwrap(),
+            std::fs::canonicalize(&bundle_dir).unwrap()
+        );
+        assert!(env.next().unwrap().contains("extension-bridge-"));
+
+        // Its own credential reaches the UI, through the bridge.
+        assert_eq!(
+            read(&report.join("panes.code")).trim(),
+            "0",
+            "{}",
+            read(&report.join("panes.err"))
+        );
+        let panes: serde_json::Value = serde_json::from_str(&read(&report.join("panes"))).unwrap();
+        assert_eq!(panes["data"].as_array().map(Vec::len), Some(1), "{panes}");
+        // Running an action that would start something on the client is refused.
+        assert_ne!(read(&report.join("denied.code")).trim(), "0");
+        assert!(
+            read(&report.join("denied.err")).contains("not permitted"),
+            "{}",
+            read(&report.join("denied.err"))
+        );
+        // A forged credential is nobody, and so is none at all over the bridge.
+        assert_ne!(read(&report.join("forged.code")).trim(), "0");
+        assert!(read(&report.join("forged.err")).contains("credential"));
+        assert_ne!(read(&report.join("bare.code")).trim(), "0");
+
+        // `extensions status` tells where it runs, under which generation and bundle.
+        let socket = backend.state().control_socket_path.clone().unwrap();
+        let mut status = std::process::Command::new(env!("CARGO_BIN_EXE_rozi"))
+            .args(["extensions", "status", "--json"])
+            .env("ROZI_SOCKET", &socket)
+            .env_remove("ROZI_PANE")
+            .env_remove("ROZI_EXTENSION")
+            .env_remove("ROZI_EXTENSION_CREDENTIAL")
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        pump_until(
+            &mut backend,
+            Duration::from_secs(10),
+            "extensions status",
+            |_| status.try_wait().unwrap().is_some(),
+        );
+        let mut text = String::new();
+        std::io::Read::read_to_string(status.stdout.as_mut().unwrap(), &mut text).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let instance = report["data"]["instances"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|instance| instance["extension"] == EXTENSION_ID)
+            .unwrap_or_else(|| panic!("{report}"))
+            .clone();
+        assert_eq!(instance["placement"], "each-host");
+        assert_eq!(instance["host"], "local");
+        assert_eq!(instance["status"], "running");
+        assert_eq!(instance["pid"], pid);
+        assert_eq!(instance["bundle"], digest.as_str());
+        assert_eq!(
+            instance["generation"],
+            backend.state().extension_generations[EXTENSION_ID].as_str()
+        );
+        assert_eq!(report["data"]["runtimes"][0]["status"], "ready");
+
+        // Editing the installed files is a new bundle and a new generation: the old worker
+        // stops and a new one runs the new files.
+        let generation = backend.state().extension_generations[EXTENSION_ID].clone();
+        let probe = root.join("bin/probe");
+        executable(&probe, &format!("{PROBE}# edited\n"));
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+            .unwrap();
+        pump_until(
+            &mut backend,
+            Duration::from_secs(15),
+            "the new generation",
+            |backend| backend.state().extension_generations[EXTENSION_ID] != generation,
+        );
+        wait_dead(&mut backend, pid);
+        pump_until(
+            &mut backend,
+            Duration::from_secs(15),
+            "the new worker",
+            |backend| running_pid(backend, EXTENSION_ID).is_some_and(|new| new != pid),
+        );
+        let new_pid = running_pid(&backend, EXTENSION_ID).unwrap();
+        let new_digest = backend.state().config.extension_placements[EXTENSION_ID]
+            .bundle_digest()
+            .to_string();
+        assert_ne!(new_digest, digest);
+        let new_report = report_dir(out.path(), new_pid);
+        pump_until(
+            &mut backend,
+            Duration::from_secs(30),
+            "the new probe",
+            |_| new_report.join("done").exists(),
+        );
+        assert!(
+            read(&new_report.join("env"))
+                .lines()
+                .next()
+                .unwrap()
+                .ends_with(&new_digest)
+        );
+
+        // Leaving the client leaves nothing running.
+        drop(backend);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while alive(new_pid) {
+            assert!(Instant::now() < deadline, "worker outlived its client");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
 }
 
 #[test]
 fn a_command_placed_on_the_active_session_runs_in_its_focused_pane_directory() {
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            let _config = rozi::test_support::lock_config_file();
-            let out = tempfile::Builder::new()
-                .prefix("rozi-placed-cmd")
-                .tempdir_in("/tmp")
-                .unwrap();
-            let root = extensions_dir(&PlatformEnv::from_process()).join("placed-cmd");
-            std::fs::create_dir_all(&root).unwrap();
-            std::fs::write(
-                root.join("extension.toml"),
-                format!(
-                    "[extension]\nid = \"placed-cmd\"\napi = 1\n\
+    rozi::test_support::on_deeper_stack(|| {
+        let _config = rozi::test_support::lock_config_file();
+        let out = tempfile::Builder::new()
+            .prefix("rozi-placed-cmd")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let root = extensions_dir(&PlatformEnv::from_process()).join("placed-cmd");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("extension.toml"),
+            format!(
+                "[extension]\nid = \"placed-cmd\"\napi = 1\n\
                      [[commands]]\nid = \"where\"\nshell = \"pwd -P > '{}/where'\"\n\
                      placement = \"active-session\"\n",
-                    out.path().display()
-                ),
-            )
+                out.path().display()
+            ),
+        )
+        .unwrap();
+        let mut backend = CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
+        let index = backend
+            .state()
+            .config
+            .commands
+            .iter()
+            .position(|command| command.id == "placed-cmd.where")
+            .expect("command loaded");
+
+        // Without a session there is nowhere to run it, and it does not run here instead.
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::RunNamedCommand(index)))
             .unwrap();
-            let mut backend =
-                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
-            let index = backend
-                .state()
-                .config
-                .commands
-                .iter()
-                .position(|command| command.id == "placed-cmd.where")
-                .expect("command loaded");
+        assert!(backend.state().extension_workers.is_empty());
 
-            // Without a session there is nowhere to run it, and it does not run here instead.
-            backend
-                .dispatch(Msg::RunAction(rozi::input::Action::RunNamedCommand(index)))
-                .unwrap();
-            assert!(backend.state().extension_workers.is_empty());
-
-            let project = tempfile::tempdir().unwrap();
-            attach_local_session(&mut backend);
-            {
-                let state = backend.state_mut();
-                let focused = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(focused);
-                state.current_mut().workspaces[0].focused_pane = Some(focused);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd =
-                    Some(project.path().display().to_string());
-            }
-            backend
-                .dispatch(Msg::RunAction(rozi::input::Action::RunNamedCommand(index)))
-                .unwrap();
-            let target = out.path().join("where");
-            pump_until(&mut backend, Duration::from_secs(30), "the command", |_| {
-                read(&target).ends_with('\n')
-            });
-            assert_eq!(
-                read(&target).trim(),
-                std::fs::canonicalize(project.path())
-                    .unwrap()
-                    .display()
-                    .to_string()
-            );
-            pump_until(
-                &mut backend,
-                Duration::from_secs(10),
-                "the command to exit",
-                |backend| {
-                    !backend
-                        .state()
-                        .extension_workers
-                        .iter()
-                        .any(|worker| worker.extension.id == "placed-cmd")
-                },
-            );
-            assert!(
+        let project = tempfile::tempdir().unwrap();
+        attach_local_session(&mut backend);
+        {
+            let state = backend.state_mut();
+            let focused = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(focused);
+            state.current_mut().workspaces[0].focused_pane = Some(focused);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd =
+                Some(project.path().display().to_string());
+        }
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::RunNamedCommand(index)))
+            .unwrap();
+        let target = out.path().join("where");
+        pump_until(&mut backend, Duration::from_secs(30), "the command", |_| {
+            read(&target).ends_with('\n')
+        });
+        assert_eq!(
+            read(&target).trim(),
+            std::fs::canonicalize(project.path())
+                .unwrap()
+                .display()
+                .to_string()
+        );
+        pump_until(
+            &mut backend,
+            Duration::from_secs(10),
+            "the command to exit",
+            |backend| {
                 !backend
                     .state()
                     .extension_workers
                     .iter()
-                    .any(|worker| worker.extension.id == "placed-cmd"),
-                "credential revoked on exit"
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+                    .any(|worker| worker.extension.id == "placed-cmd")
+            },
+        );
+        assert!(
+            !backend
+                .state()
+                .extension_workers
+                .iter()
+                .any(|worker| worker.extension.id == "placed-cmd"),
+            "credential revoked on exit"
+        );
+    });
 }
 
 #[test]
 fn disabling_a_placed_extension_stops_its_workers_and_revokes_their_credentials() {
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            const EXTENSION_ID: &str = "placed-off";
-            let _config = rozi::test_support::lock_config_file();
-            let out = tempfile::Builder::new()
-                .prefix("rozi-placed-off")
-                .tempdir_in("/tmp")
-                .unwrap();
-            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
-            write_extension(&root, EXTENSION_ID, out.path());
-            std::fs::write(rozi::config::config_path(), "").unwrap();
-            let mut backend =
-                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
-            attach_local_session(&mut backend);
-            pump_until(
-                &mut backend,
-                Duration::from_secs(15),
-                "the worker",
-                |backend| running_pid(backend, EXTENSION_ID).is_some(),
-            );
-            let pid = running_pid(&backend, EXTENSION_ID).unwrap();
-            let ours = |backend: &TestBackend<AppRoot>| {
-                backend
-                    .state()
-                    .extension_runtime
-                    .instances
-                    .iter()
-                    .filter(|instance| instance.extension == EXTENSION_ID)
-                    .map(|instance| instance.status.clone())
-                    .collect::<Vec<_>>()
-            };
-            assert!(matches!(
-                ours(&backend)[..],
-                [InstanceStatus::Running { .. }]
-            ));
-
-            std::fs::write(
-                rozi::config::config_path(),
-                format!("[extensions]\ndisabled = [\"{EXTENSION_ID}\"]\n"),
-            )
+    rozi::test_support::on_deeper_stack(|| {
+        const EXTENSION_ID: &str = "placed-off";
+        let _config = rozi::test_support::lock_config_file();
+        let out = tempfile::Builder::new()
+            .prefix("rozi-placed-off")
+            .tempdir_in("/tmp")
             .unwrap();
+        let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+        write_extension(&root, EXTENSION_ID, out.path());
+        std::fs::write(rozi::config::config_path(), "").unwrap();
+        let mut backend = CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
+        attach_local_session(&mut backend);
+        pump_until(
+            &mut backend,
+            Duration::from_secs(15),
+            "the worker",
+            |backend| running_pid(backend, EXTENSION_ID).is_some(),
+        );
+        let pid = running_pid(&backend, EXTENSION_ID).unwrap();
+        let ours = |backend: &TestBackend<AppRoot>| {
             backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
-                .unwrap();
-            wait_dead(&mut backend, pid);
-            assert!(
-                !backend
-                    .state()
-                    .extension_workers
-                    .iter()
-                    .any(|worker| worker.extension.id == EXTENSION_ID)
-            );
-            assert!(ours(&backend).is_empty());
-            std::fs::write(rozi::config::config_path(), "").unwrap();
-        })
-        .unwrap()
-        .join()
+                .state()
+                .extension_runtime
+                .instances
+                .iter()
+                .filter(|instance| instance.extension == EXTENSION_ID)
+                .map(|instance| instance.status.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(matches!(
+            ours(&backend)[..],
+            [InstanceStatus::Running { .. }]
+        ));
+
+        std::fs::write(
+            rozi::config::config_path(),
+            format!("[extensions]\ndisabled = [\"{EXTENSION_ID}\"]\n"),
+        )
         .unwrap();
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+            .unwrap();
+        wait_dead(&mut backend, pid);
+        assert!(
+            !backend
+                .state()
+                .extension_workers
+                .iter()
+                .any(|worker| worker.extension.id == EXTENSION_ID)
+        );
+        assert!(ours(&backend).is_empty());
+        std::fs::write(rozi::config::config_path(), "").unwrap();
+    });
 }

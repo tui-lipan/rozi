@@ -155,160 +155,149 @@ impl Drop for CleanupBackend {
 fn retired_generation_is_fenced_across_all_extension_control_surfaces() {
     let _lock = TEST_LOCK.lock().unwrap();
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
-            write_manifest(&root, "a");
+    rozi::test_support::on_large_stack(|| {
+        let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+        write_manifest(&root, "a");
 
-            let mut backend =
-                CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
-            if !backend
-                .state()
-                .config
-                .active_extensions
-                .contains(EXTENSION_ID)
-            {
-                let diagnostic = Command::new(env!("CARGO_BIN_EXE_rozi"))
-                    .args(["extensions", "check", root.to_str().unwrap(), "--json"])
-                    .output()
-                    .unwrap();
-                panic!(
-                    "fixture extension was not loaded: {}\n{}",
-                    String::from_utf8_lossy(&diagnostic.stdout),
-                    String::from_utf8_lossy(&diagnostic.stderr)
-                );
-            }
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                backend.state().control_socket_path.is_some()
-                    && backend
-                        .state()
-                        .services
-                        .running
-                        .contains_key("generation-e2e.watch")
-            });
-            let socket = backend.state().control_socket_path.clone().unwrap();
-            let token_a = backend.state().extension_generations[EXTENSION_ID].clone();
-            let pid_a = backend.state().services.running["generation-e2e.watch"]
-                .child
-                .id();
-
-            backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+        let mut backend = CleanupBackend(TestBackend::new(rozi::test_support::configured_app()));
+        if !backend
+            .state()
+            .config
+            .active_extensions
+            .contains(EXTENSION_ID)
+        {
+            let diagnostic = Command::new(env!("CARGO_BIN_EXE_rozi"))
+                .args(["extensions", "check", root.to_str().unwrap(), "--json"])
+                .output()
                 .unwrap();
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                backend.state().services.running["generation-e2e.watch"]
+            panic!(
+                "fixture extension was not loaded: {}\n{}",
+                String::from_utf8_lossy(&diagnostic.stdout),
+                String::from_utf8_lossy(&diagnostic.stderr)
+            );
+        }
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
+            backend.state().control_socket_path.is_some()
+                && backend
+                    .state()
+                    .services
+                    .running
+                    .contains_key("generation-e2e.watch")
+        });
+        let socket = backend.state().control_socket_path.clone().unwrap();
+        let token_a = backend.state().extension_generations[EXTENSION_ID].clone();
+        let pid_a = backend.state().services.running["generation-e2e.watch"]
+            .child
+            .id();
+
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+            .unwrap();
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
+            backend.state().services.running["generation-e2e.watch"]
+                .child
+                .id()
+                == pid_a
+        });
+        assert_eq!(
+            backend.state().extension_generations[EXTENSION_ID],
+            token_a,
+            "unchanged reload rotated the fencing token"
+        );
+
+        write_manifest(&root, "b");
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+            .unwrap();
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
+            backend.state().extension_generations[EXTENSION_ID] != token_a
+                && backend.state().services.running["generation-e2e.watch"]
                     .child
                     .id()
-                    == pid_a
-            });
-            assert_eq!(
-                backend.state().extension_generations[EXTENSION_ID],
-                token_a,
-                "unchanged reload rotated the fencing token"
-            );
+                    != pid_a
+        });
+        let token_b = backend.state().extension_generations[EXTENSION_ID].clone();
 
-            write_manifest(&root, "b");
-            backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
-                .unwrap();
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                backend.state().extension_generations[EXTENSION_ID] != token_a
-                    && backend.state().services.running["generation-e2e.watch"]
-                        .child
-                        .id()
-                        != pid_a
+        for args in [
+            &["notify", "stale"][..],
+            &["publish"][..],
+            &["pick"][..],
+            &["subscribe"][..],
+        ] {
+            expect_cli_exit(&mut backend, &socket, &token_a, args, false);
+        }
+        expect_cli_exit(
+            &mut backend,
+            &socket,
+            &token_b,
+            &["notify", "current"],
+            true,
+        );
+        expect_cli_exit(&mut backend, &socket, &token_b, &["publish"], true);
+        expect_cli_stream_accepted(&mut backend, &socket, &token_b, &["pick"]);
+        let mut subscription =
+            open_cli_stream(&mut backend, &socket, &token_b, &["subscribe"], |backend| {
+                !backend.state().extension_subscriptions.is_empty()
             });
-            let token_b = backend.state().extension_generations[EXTENSION_ID].clone();
 
-            for args in [
-                &["notify", "stale"][..],
-                &["publish"][..],
-                &["pick"][..],
-                &["subscribe"][..],
-            ] {
-                expect_cli_exit(&mut backend, &socket, &token_a, args, false);
-            }
-            expect_cli_exit(
-                &mut backend,
-                &socket,
-                &token_b,
-                &["notify", "current"],
-                true,
-            );
-            expect_cli_exit(&mut backend, &socket, &token_b, &["publish"], true);
-            expect_cli_stream_accepted(&mut backend, &socket, &token_b, &["pick"]);
-            let mut subscription =
-                open_cli_stream(&mut backend, &socket, &token_b, &["subscribe"], |backend| {
-                    !backend.state().extension_subscriptions.is_empty()
-                });
-
-            write_manifest(&root, "a");
-            backend
-                .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
-                .unwrap();
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                let token = &backend.state().extension_generations[EXTENSION_ID];
-                token != &token_a && token != &token_b
-            });
-            pump_until(&mut backend, Duration::from_secs(5), |_| {
-                subscription.try_wait().unwrap().is_some()
-            });
-            assert!(
-                subscription.wait().unwrap().success(),
-                "retired subscription did not close cleanly"
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        write_manifest(&root, "a");
+        backend
+            .dispatch(Msg::RunAction(rozi::input::Action::ReloadExtensions))
+            .unwrap();
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
+            let token = &backend.state().extension_generations[EXTENSION_ID];
+            token != &token_a && token != &token_b
+        });
+        pump_until(&mut backend, Duration::from_secs(5), |_| {
+            subscription.try_wait().unwrap().is_some()
+        });
+        assert!(
+            subscription.wait().unwrap().success(),
+            "retired subscription did not close cleanly"
+        );
+    });
 }
 
 #[test]
 fn running_client_automatically_reloads_when_extension_store_revision_changes() {
     let _lock = TEST_LOCK.lock().unwrap();
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
-            write_manifest(&root, "initial");
+    rozi::test_support::on_large_stack(|| {
+        let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+        write_manifest(&root, "initial");
 
-            let mut backend = CleanupBackend(TestBackend::new(
-                rozi::test_support::configured_app_without_control(),
-            ));
+        let mut backend = CleanupBackend(TestBackend::new(
+            rozi::test_support::configured_app_without_control(),
+        ));
 
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                backend
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
+            backend
+                .state()
+                .services
+                .running
+                .contains_key("generation-e2e.watch")
+        });
+        let token_1 = backend.state().extension_generations[EXTENSION_ID].clone();
+        let pid_1 = backend.state().services.running["generation-e2e.watch"]
+            .child
+            .id();
+
+        // Modify the service manifest on disk and bump the extension store revision
+        write_manifest(&root, "updated");
+        rozi::config::extension_store_revision::bump().unwrap();
+
+        // The running client's watcher detects the revision bump and reloads automatically
+        pump_until(&mut backend, Duration::from_secs(10), |backend| {
+            backend.state().extension_generations.get(EXTENSION_ID) != Some(&token_1)
+                && backend
                     .state()
                     .services
                     .running
-                    .contains_key("generation-e2e.watch")
-            });
-            let token_1 = backend.state().extension_generations[EXTENSION_ID].clone();
-            let pid_1 = backend.state().services.running["generation-e2e.watch"]
-                .child
-                .id();
-
-            // Modify the service manifest on disk and bump the extension store revision
-            write_manifest(&root, "updated");
-            rozi::config::extension_store_revision::bump().unwrap();
-
-            // The running client's watcher detects the revision bump and reloads automatically
-            pump_until(&mut backend, Duration::from_secs(10), |backend| {
-                backend.state().extension_generations.get(EXTENSION_ID) != Some(&token_1)
-                    && backend
-                        .state()
-                        .services
-                        .running
-                        .get("generation-e2e.watch")
-                        .map(|w| w.child.id())
-                        != Some(pid_1)
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+                    .get("generation-e2e.watch")
+                    .map(|w| w.child.id())
+                    != Some(pid_1)
+        });
+    });
 }
 
 #[test]
@@ -324,64 +313,59 @@ fn failed_extension_update_run_reconciles_deferred_store_changes() {
 fn check_store_reload_after_update_run(succeeded: bool) {
     let _lock = TEST_LOCK.lock().unwrap();
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
-            write_manifest(&root, "before-run");
-            let mut backend = CleanupBackend(TestBackend::new(
-                rozi::test_support::configured_app_without_control(),
-            ));
-            pump_until(&mut backend, Duration::from_secs(5), |backend| {
-                backend
-                    .state()
-                    .services
-                    .running
-                    .contains_key("generation-e2e.watch")
-            });
-            let token = backend.state().extension_generations[EXTENSION_ID].clone();
-            let run = 42;
-            backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
-                id: run,
-                pending: [EXTENSION_ID.to_string()].into(),
-            });
-
-            // Either this worker or another client has changed the store. A watcher wakeup must
-            // not restart services between individual updates in this run.
-            write_manifest(&root, "during-run");
-            rozi::config::extension_store_revision::bump().unwrap();
-            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
-            assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
-
-            let result = if succeeded {
-                Ok(true.into())
-            } else {
-                Err("remote unreachable".to_string())
-            };
+    rozi::test_support::on_large_stack(move || {
+        let root = extensions_dir(&PlatformEnv::from_process()).join(EXTENSION_ID);
+        write_manifest(&root, "before-run");
+        let mut backend = CleanupBackend(TestBackend::new(
+            rozi::test_support::configured_app_without_control(),
+        ));
+        pump_until(&mut backend, Duration::from_secs(5), |backend| {
             backend
-                .dispatch(Msg::ExtensionsUpdateFinished {
-                    run,
-                    id: EXTENSION_ID.to_string(),
-                    result: result.clone(),
-                })
-                .unwrap();
-            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
-            assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
+                .state()
+                .services
+                .running
+                .contains_key("generation-e2e.watch")
+        });
+        let token = backend.state().extension_generations[EXTENSION_ID].clone();
+        let run = 42;
+        backend.state_mut().extension_update = Some(rozi::state::ExtensionUpdateRun {
+            id: run,
+            pending: [EXTENSION_ID.to_string()].into(),
+        });
 
-            backend
-                .dispatch(Msg::ExtensionsUpdatesFinished {
-                    run,
-                    results: vec![(EXTENSION_ID.to_string(), result)],
-                })
-                .unwrap();
-            assert!(backend.state().extension_update.is_none());
-            assert_ne!(backend.state().extension_generations[EXTENSION_ID], token);
-            assert!(!rozi::config::extension_store_revision::changed_since_last_scan());
-            let settled = backend.state().extension_generations[EXTENSION_ID].clone();
-            backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
-            assert_eq!(backend.state().extension_generations[EXTENSION_ID], settled);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        // Either this worker or another client has changed the store. A watcher wakeup must
+        // not restart services between individual updates in this run.
+        write_manifest(&root, "during-run");
+        rozi::config::extension_store_revision::bump().unwrap();
+        backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+        assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
+
+        let result = if succeeded {
+            Ok(true.into())
+        } else {
+            Err("remote unreachable".to_string())
+        };
+        backend
+            .dispatch(Msg::ExtensionsUpdateFinished {
+                run,
+                id: EXTENSION_ID.to_string(),
+                result: result.clone(),
+            })
+            .unwrap();
+        backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+        assert_eq!(backend.state().extension_generations[EXTENSION_ID], token);
+
+        backend
+            .dispatch(Msg::ExtensionsUpdatesFinished {
+                run,
+                results: vec![(EXTENSION_ID.to_string(), result)],
+            })
+            .unwrap();
+        assert!(backend.state().extension_update.is_none());
+        assert_ne!(backend.state().extension_generations[EXTENSION_ID], token);
+        assert!(!rozi::config::extension_store_revision::changed_since_last_scan());
+        let settled = backend.state().extension_generations[EXTENSION_ID].clone();
+        backend.dispatch(Msg::ExtensionStoreChanged).unwrap();
+        assert_eq!(backend.state().extension_generations[EXTENSION_ID], settled);
+    });
 }

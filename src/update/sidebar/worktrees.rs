@@ -244,15 +244,6 @@ mod tests {
     const REPO: &str = "/src/repo";
     const LINKED: &str = "/src/repo-worktrees/feat";
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     fn tree(path: &str, linked: bool) -> crate::git::worktrees::WorktreeInfo {
         crate::git::worktrees::WorktreeInfo {
             path: path.into(),
@@ -332,7 +323,7 @@ mod tests {
 
     #[test]
     fn the_tab_follows_the_focused_repository_and_caches_its_checkouts() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let requests = sent_worktree_requests(&outbound);
@@ -360,7 +351,7 @@ mod tests {
 
     #[test]
     fn a_new_attachment_retries_status_and_drops_the_old_reply() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let old_epoch = backend.state().runtime_epoch;
@@ -395,7 +386,7 @@ mod tests {
     /// repository instead of loading it again.
     #[test]
     fn opening_a_checkouts_session_keeps_the_list_on_screen() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -450,7 +441,7 @@ mod tests {
     /// repository's checkouts, which no pane on screen points at any more.
     #[test]
     fn closing_every_pane_drops_the_list_instead_of_holding_it() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -486,7 +477,7 @@ mod tests {
     /// A stale lock does not hide the ✕: its removal asks the host to lift the lock first.
     #[test]
     fn a_stale_locked_checkout_is_removed_with_its_lock_lifted() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -509,7 +500,7 @@ mod tests {
     /// sent until the second press, which removes without forcing.
     #[test]
     fn the_picker_arms_a_clean_removal_before_sending_it() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let _ = sent_worktree_requests(&outbound);
@@ -542,7 +533,7 @@ mod tests {
     /// In the picker, Ctrl+K on a stale lock arms before it removes, and Ctrl+U unlocks any lock.
     #[test]
     fn the_picker_arms_a_stale_removal_and_unlocks_on_request() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let _ = sent_worktree_requests(&outbound);
@@ -605,7 +596,7 @@ mod tests {
 
     #[test]
     fn a_checkout_is_removed_on_the_second_press_and_a_dirty_one_rearms_to_force() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -685,7 +676,7 @@ mod tests {
     #[test]
     fn a_checkout_opens_as_the_configured_kind_and_ctrl_opens_the_other() {
         use crate::config::WorktreeOpen;
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             for (default, plain_pane, ctrl_pane) in [
                 (WorktreeOpen::Session, false, true),
                 (WorktreeOpen::Pane, true, false),
@@ -730,7 +721,7 @@ mod tests {
     #[test]
     fn ctrl_enter_on_a_checkout_opens_the_other_kind() {
         use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             backend.set_viewport(Rect {
                 x: 0,
@@ -769,7 +760,7 @@ mod tests {
     #[test]
     fn a_hovered_checkout_names_its_click_beside_the_close_and_ctrl_names_the_other() {
         use tui_lipan::prelude::{KeyMods, Rect};
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             backend.set_viewport(Rect {
                 x: 0,
@@ -857,7 +848,7 @@ mod tests {
     /// Ctrl+click has no second meaning on a row that is not a checkout.
     #[test]
     fn ctrl_activating_another_row_does_what_a_plain_activation_does() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -876,7 +867,7 @@ mod tests {
     /// A click on the body of a row that is being removed must not open the vanishing checkout.
     #[test]
     fn a_checkout_being_removed_cannot_be_opened() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);
@@ -919,7 +910,7 @@ mod tests {
 
     #[test]
     fn a_failed_sidebar_refresh_keeps_checkouts_visible_and_schedules_a_retry() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = backend();
             nudge(&mut backend);
             let (id, _) = sent_worktree_requests(&outbound).remove(0);

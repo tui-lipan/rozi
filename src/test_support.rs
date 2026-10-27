@@ -241,6 +241,47 @@ pub fn isolate_user_dirs() -> &'static Path {
     scratch_root()
 }
 
+const LARGE_TEST_STACK: usize = 8 * 1024 * 1024;
+const DEEPER_TEST_STACK: usize = 16 * 1024 * 1024;
+
+/// Run `body` on an 8 MiB stack and return whatever it returns.
+///
+/// A full `AppRoot` view is deeper than the default test-thread stack. Call
+/// [`isolate_user_dirs`] and any config or persisted-state lock inside `body`: that closure is
+/// the thread that touches them.
+#[doc(hidden)]
+pub fn on_large_stack<T>(body: impl FnOnce() -> T + Send + 'static) -> T
+where
+    T: Send + 'static,
+{
+    on_stack(LARGE_TEST_STACK, body)
+}
+
+/// Run `body` on a 16 MiB stack. Nested pane, border, and animation renders need the extra room.
+#[doc(hidden)]
+pub fn on_deeper_stack<T>(body: impl FnOnce() -> T + Send + 'static) -> T
+where
+    T: Send + 'static,
+{
+    on_stack(DEEPER_TEST_STACK, body)
+}
+
+fn on_stack<T>(stack_size: usize, body: impl FnOnce() -> T + Send + 'static) -> T
+where
+    T: Send + 'static,
+{
+    match std::thread::Builder::new()
+        .name("rozi-test".into())
+        .stack_size(stack_size)
+        .spawn(body)
+        .expect("spawn test thread")
+        .join()
+    {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 /// A per-test directory carrying the private permissions an endpoint parent must have.
 ///
 /// Endpoints live in a directory the platform layer requires to be private to the current user -

@@ -97,18 +97,10 @@ fn list_gap_after_tabs(frame: &str) -> usize {
 
 /// Rendering the full app tree needs more stack than a default test thread has, same as
 /// `sidebar_toggle_smoke`.
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn settings smoke thread")
-        .join()
-        .expect("settings smoke completes");
-}
 
 #[test]
 fn settings_lists_both_effect_rows_with_their_current_modes() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
@@ -132,7 +124,7 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
 
 #[test]
 fn settings_marks_multi_value_rows_with_an_ellipsis() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         let frame = rendered_rows(&mut backend);
         assert!(
@@ -172,7 +164,7 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
 
 #[test]
 fn settings_rows_report_their_disabled_reasons() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
@@ -219,7 +211,7 @@ fn settings_rows_report_their_disabled_reasons() {
 /// effect controls in their shared Highlights group.
 #[test]
 fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(70, 24);
         backend.state_mut().config.workbar.alert.mode = AlertMode::Off;
         type_query(&mut backend, "attention");
@@ -235,7 +227,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 
 #[test]
 fn settings_all_keeps_every_control_available() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         backend
             .state_mut()
@@ -374,7 +366,7 @@ fn settings_all_keeps_every_control_available() {
 
 #[test]
 fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         let general = rendered_rows(&mut backend);
@@ -451,7 +443,7 @@ fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
 
 #[test]
 fn settings_matches_keybindings_chrome_without_hints() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
         backend.state_mut().settings_selected = Some(SettingsAction::ToggleAnimations);
         let frame = rendered_rows(&mut backend);
@@ -483,7 +475,7 @@ fn settings_matches_keybindings_chrome_without_hints() {
 /// The behavioral group sits last and reads `[session]`, which no other row does.
 #[test]
 fn settings_reports_startup_and_session_values() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
@@ -510,7 +502,7 @@ fn settings_reports_startup_and_session_values() {
 /// Sidebar chrome lives in its own group, so a shared label with Workbar cannot hide a miswire.
 #[test]
 fn settings_reports_sidebar_values() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 160);
         {
             let state = backend.state_mut();
@@ -557,7 +549,7 @@ fn settings_reports_sidebar_values() {
 /// still answers to the phrase a user would type for it, with no alias spelling that phrase out.
 #[test]
 fn settings_search_combines_section_and_row_terms() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         for (query, heading, label) in [
             ("floating border", "Panes › Borders", "Floating"),
             ("focused titlebar", "Panes › Titlebar", "Focused"),
@@ -586,7 +578,7 @@ fn settings_search_combines_section_and_row_terms() {
 
 #[test]
 fn settings_filtered_duplicate_labels_keep_their_group_headers() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
         type_query(&mut backend, "blocked");
         let frame = rendered_rows(&mut backend);
@@ -609,7 +601,7 @@ fn settings_filtered_duplicate_labels_keep_their_group_headers() {
 
 #[test]
 fn settings_search_does_not_leave_a_double_gap_under_the_tabs() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(80, 24);
         type_query(&mut backend, "bg");
         let later = rendered_rows(&mut backend);
@@ -632,7 +624,7 @@ fn settings_search_does_not_leave_a_double_gap_under_the_tabs() {
 
 #[test]
 fn picker_tab_strip_and_selection_caps_follow_pane_config() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         let theme = backend.state().theme.clone();
@@ -693,7 +685,7 @@ fn picker_tab_strip_and_selection_caps_follow_pane_config() {
 
 #[test]
 fn picker_border_style_changes_settings_frame_glyphs() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         let rounded = rendered_rows(&mut backend);
         assert!(
@@ -720,7 +712,7 @@ fn picker_border_style_changes_settings_frame_glyphs() {
 /// switch's gating is unit-tested beside `SettingsAction::disabled_reason`.
 #[test]
 fn animation_rows_are_found_by_search_and_read_their_value() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::layout::anim::{PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle};
         let cases = [
             ("workspace switching", "Workspace switching", "Enabled"),
@@ -754,7 +746,7 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
 /// it.
 #[test]
 fn the_workspace_animation_toggle_saves_and_keeps_its_row_selected() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::state::SettingsAction::ToggleWorkspaceAnimation;
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
@@ -786,7 +778,7 @@ fn key_mods(backend: &mut TestBackend<AppRoot>, code: KeyCode, mods: KeyMods) {
 
 #[test]
 fn settings_searches_globally_and_escape_restores_browse_selection() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
@@ -818,7 +810,7 @@ fn settings_searches_globally_and_escape_restores_browse_selection() {
 
 #[test]
 fn settings_tabs_remember_their_highlighted_row() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         backend
@@ -881,7 +873,7 @@ fn settings_tabs_remember_their_highlighted_row() {
 
 #[test]
 fn settings_up_and_down_wrap_around_the_list() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_selected = Some(SettingsAction::Theme);
         backend.render();
@@ -918,7 +910,7 @@ fn settings_up_and_down_wrap_around_the_list() {
 
 #[test]
 fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         backend.render();
@@ -967,7 +959,7 @@ fn settings_arrows_switch_tabs_and_enter_opens_a_choice_picker() {
 
 #[test]
 fn settings_choice_lists_every_option() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(80, 30);
         backend
             .dispatch(rozi::Msg::SettingsActivate(SettingsAction::CycleWhichKey))
@@ -986,7 +978,7 @@ fn settings_choice_lists_every_option() {
 
 #[test]
 fn clipboard_settings_do_not_apply_unconfirmed_choices() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(90, 45);
         backend.state_mut().config.clipboard.copy_on_select = CopyOnSelect::Disabled;
         backend.state_mut().config.clipboard.middle_click_paste = MiddleClickPaste::Disabled;
@@ -1022,7 +1014,7 @@ fn clipboard_settings_do_not_apply_unconfirmed_choices() {
 
 #[test]
 fn settings_empty_search_does_not_edit_a_stale_selection() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         type_query(&mut backend, "nothing_matches_this_setting_123");
         let frame = rendered_rows(&mut backend);
@@ -1040,7 +1032,7 @@ fn settings_empty_search_does_not_edit_a_stale_selection() {
 
 #[test]
 fn merged_visibility_rows_render_save_and_restore_on_cancel() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::state::{PaneTitlebarMode, SettingsAction};
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
@@ -1150,7 +1142,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
 
 #[test]
 fn settings_categories_cover_all_controls_and_keep_motion_together() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
             (SettingsTab::General, 21, "Pane close"),
@@ -1174,7 +1166,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
 
 #[test]
 fn deleting_the_query_restores_category_and_selection() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         backend.state_mut().settings_navigation.tab = SettingsTab::Panes;
         backend.state_mut().settings_selected = Some(SettingsAction::CycleBorderMode);
@@ -1196,7 +1188,7 @@ fn deleting_the_query_restores_category_and_selection() {
 
 #[test]
 fn sessions_show_current_sleep_policy_as_boolean_row() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
         backend
@@ -1222,7 +1214,7 @@ fn sessions_show_current_sleep_policy_as_boolean_row() {
 
 #[test]
 fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         backend.state_mut().settings_navigation.tab = SettingsTab::Sessions;
         backend.state_mut().current_mut().remote_target =
@@ -1249,7 +1241,7 @@ fn remote_sleep_policy_row_shows_host_configuration_instead_of_local_value() {
 
 #[test]
 fn pane_open_and_close_save_independently_and_drop_the_legacy_key() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::layout::anim::PaneAnimationStyle;
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 35);
@@ -1318,7 +1310,7 @@ fn pane_open_and_close_save_independently_and_drop_the_legacy_key() {
 
 #[test]
 fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let _guard = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 40);
         let mut checked = 0;
@@ -1392,7 +1384,7 @@ fn behavior_choices_wait_for_confirmation_and_cancel_preserves_current_config() 
 
 #[test]
 fn settings_caret_obeys_global_blink_policy_through_timer_ticks() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 35);
         for (policy, blinking) in [
             (rozi::config::CursorBlink::Static, false),
@@ -1414,7 +1406,7 @@ fn settings_caret_obeys_global_blink_policy_through_timer_ticks() {
 
 #[test]
 fn settings_search_results_have_pointer_feedback_and_follow_the_global_mode() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         type_query(&mut backend, "Mouse pointer");
         let frame = rendered_rows(&mut backend);
@@ -1438,7 +1430,7 @@ fn settings_search_results_have_pointer_feedback_and_follow_the_global_mode() {
 
 #[test]
 fn unavailable_settings_rows_keep_the_normal_pointer() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 40);
         backend.state_mut().config.animations.enabled = false;
         type_query(&mut backend, "Workspace switching");

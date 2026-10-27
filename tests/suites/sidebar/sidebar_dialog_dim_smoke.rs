@@ -50,41 +50,36 @@ fn cells(backend: &TestBackend<AppRoot>) -> (Color, Color) {
 
 #[test]
 fn modal_dim_covers_the_sidebar_as_well_as_the_workspace() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend();
-            let (sidebar_lit, workspace_lit) = cells(&backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend();
+        let (sidebar_lit, workspace_lit) = cells(&backend);
 
-            backend.state_mut().keybindings = Some(rozi::state::KeybindingsState::default());
-            backend.render();
-            let (sidebar_dimmed, workspace_dimmed) = cells(&backend);
+        backend.state_mut().keybindings = Some(rozi::state::KeybindingsState::default());
+        backend.render();
+        let (sidebar_dimmed, workspace_dimmed) = cells(&backend);
 
-            assert_ne!(
-                sidebar_lit, sidebar_dimmed,
-                "the sidebar should dim behind a modal dialog"
-            );
-            assert_ne!(
-                workspace_lit, workspace_dimmed,
-                "the workspace should dim behind a modal dialog"
-            );
-            let backdrop = backend.state().theme.surface.backdrop;
-            assert!(
-                (sidebar_dimmed.luminance() - backdrop.luminance()).abs()
-                    < (sidebar_lit.luminance() - backdrop.luminance()).abs(),
-                "the dimmed sidebar should sit closer to the backdrop: \
+        assert_ne!(
+            sidebar_lit, sidebar_dimmed,
+            "the sidebar should dim behind a modal dialog"
+        );
+        assert_ne!(
+            workspace_lit, workspace_dimmed,
+            "the workspace should dim behind a modal dialog"
+        );
+        let backdrop = backend.state().theme.surface.backdrop;
+        assert!(
+            (sidebar_dimmed.luminance() - backdrop.luminance()).abs()
+                < (sidebar_lit.luminance() - backdrop.luminance()).abs(),
+            "the dimmed sidebar should sit closer to the backdrop: \
                  lit={sidebar_lit:?} dimmed={sidebar_dimmed:?} backdrop={backdrop:?}"
-            );
+        );
 
-            backend.state_mut().keybindings = None;
-            backend.render();
-            assert_eq!(
-                cells(&backend),
-                (sidebar_lit, workspace_lit),
-                "closing the dialog should restore both layers"
-            );
-        })
-        .expect("spawn sidebar dim smoke thread")
-        .join()
-        .expect("sidebar dim smoke completes");
+        backend.state_mut().keybindings = None;
+        backend.render();
+        assert_eq!(
+            cells(&backend),
+            (sidebar_lit, workspace_lit),
+            "closing the dialog should restore both layers"
+        );
+    });
 }

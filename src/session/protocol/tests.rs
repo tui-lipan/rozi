@@ -135,22 +135,14 @@ fn golden_layout_commit_json_shape() {
     );
 }
 
-#[test]
-fn protocol_frame_round_trips() {
-    let msg = ClientMessage::Attach {
-        capabilities: None,
-        session: "dev".into(),
-        protocol_version: PROTOCOL_VERSION,
-        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-        label: "alice".into(),
-        read_only: false,
-        shares_filesystem: true,
-        expected_server_nonce: None,
-    };
+fn assert_frame_round_trip<T>(message: &T)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
     let mut buf = Vec::new();
-    write_frame(&mut buf, &msg).unwrap();
-    let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
-    assert_eq!(decoded, msg);
+    write_frame(&mut buf, message).unwrap();
+    let decoded: T = read_frame(&mut &buf[..]).unwrap();
+    assert_eq!(&decoded, message);
 }
 
 #[test]
@@ -174,20 +166,6 @@ fn pane_meta_from_older_peer_defaults_original_user() {
 
     let decoded: PaneMeta = serde_json::from_value(value).unwrap();
     assert_eq!(decoded.original_user, None);
-}
-
-#[test]
-fn session_origin_shape_round_trips() {
-    let msg = ClientMessage::SetSessionOrigin {
-        origin: crate::session::origin::SessionOrigin {
-            profile: Some("work".into()),
-            ..Default::default()
-        },
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &msg).unwrap();
-    let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
-    assert_eq!(decoded, msg);
 }
 
 #[test]
@@ -241,22 +219,11 @@ fn drag_messages_round_trip() {
         ClientMessage::DragUpdate { pane_id: 3, rect },
         ClientMessage::DragEnd,
     ] {
-        let mut buf = Vec::new();
-        write_frame(&mut buf, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(),
-            message
-        );
+        assert_frame_round_trip(&message);
     }
 
     for drag in [Some(crate::state::RemoteDrag { pane_id: 3, rect }), None] {
-        let message = ServerMessage::DragChanged { author: 7, drag };
-        let mut buf = Vec::new();
-        write_frame(&mut buf, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
-            message
-        );
+        assert_frame_round_trip(&ServerMessage::DragChanged { author: 7, drag });
     }
 }
 
@@ -685,21 +652,33 @@ fn golden_request_control_and_pong_json_shape() {
 }
 
 #[test]
-fn grant_control_and_input_lock_round_trip() {
-    for message in [
+fn client_messages_round_trip() {
+    let messages = [
+        ClientMessage::Attach {
+            capabilities: None,
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+            label: "alice".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        },
+        ClientMessage::SetSessionOrigin {
+            origin: crate::session::origin::SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            },
+        },
         ClientMessage::GrantControl { to: 7 },
         ClientMessage::DeclineControl { to: 7 },
         ClientMessage::EvictClient { target: 7 },
         ClientMessage::RequestControl,
         ClientMessage::SetControlTakeover { allowed: true },
         ClientMessage::SetInputLock { locked: true },
-    ] {
-        let mut bytes = Vec::new();
-        write_frame(&mut bytes, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ClientMessage>(&mut &bytes[..]).unwrap(),
-            message
-        );
+    ];
+    for message in messages {
+        assert_frame_round_trip(&message);
     }
 }
 

@@ -6,15 +6,6 @@ use rozi::session::remote::RemoteTarget;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
-}
-
 fn running(name: &str, clients: u32, target: &RemoteTarget) -> DiscoveredSession {
     DiscoveredSession {
         name: name.to_string(),
@@ -61,7 +52,7 @@ fn rendered_lines(backend: &mut TestBackend<AppRoot>) -> String {
 /// user somebody else is on every session they have ever opened on the host.
 #[test]
 fn a_remote_session_this_client_holds_is_not_reported_as_shared() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let target = RemoteTarget::Alias("localhost".to_string());
         let mut backend = host_sessions_backend(&target, vec![running("dev", 1, &target)]);
 
@@ -88,7 +79,7 @@ fn a_remote_session_this_client_holds_is_not_reported_as_shared() {
 /// is on still reports the someone else.
 #[test]
 fn a_session_we_hold_still_reports_the_other_client_on_it() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let target = RemoteTarget::Alias("localhost".to_string());
         let mut backend = host_sessions_backend(&target, vec![running("dev", 2, &target)]);
         backend.state_mut().current_mut().session_name = Some("dev".to_string());

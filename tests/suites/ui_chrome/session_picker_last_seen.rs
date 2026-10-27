@@ -22,12 +22,7 @@ const VIEWPORT: Rect = Rect {
 
 /// Rendering the app recurses deeply enough to overflow a default test stack.
 fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn render thread")
-        .join()
-        .expect("render thread completes");
+    rozi::test_support::on_deeper_stack(body);
 }
 
 fn last_seen(name: &str, panes: usize, target: &RemoteTarget) -> DiscoveredSession {

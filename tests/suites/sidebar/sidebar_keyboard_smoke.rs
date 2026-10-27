@@ -122,31 +122,26 @@ fn backend_with_sessions() -> TestBackend<AppRoot> {
 
 #[test]
 fn focus_sidebar_then_escape_is_a_round_trip() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            assert!(
-                !backend.state().sidebar.focused,
-                "the sidebar starts as a passive readout"
-            );
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        assert!(
+            !backend.state().sidebar.focused,
+            "the sidebar starts as a passive readout"
+        );
 
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-            assert!(backend.state().sidebar.focused);
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+        assert!(backend.state().sidebar.focused);
 
-            let _ = backend.send_key(key(KeyCode::Esc));
-            settle(&mut backend);
-            assert!(
-                !backend.state().sidebar.focused,
-                "Escape hands the keyboard back to the pane"
-            );
-        })
-        .expect("spawn round trip thread")
-        .join()
-        .expect("round trip completes");
+        let _ = backend.send_key(key(KeyCode::Esc));
+        settle(&mut backend);
+        assert!(
+            !backend.state().sidebar.focused,
+            "Escape hands the keyboard back to the pane"
+        );
+    });
 }
 
 fn backend_with_explorer() -> TestBackend<AppRoot> {
@@ -206,154 +201,129 @@ fn click(backend: &mut TestBackend<AppRoot>, x: u16, y: u16) {
 
 #[test]
 fn pointer_focused_explorer_escape_returns_to_the_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_explorer();
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_explorer();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+        backend.send_key(key(KeyCode::Esc)).expect("leave sidebar");
+        settle(&mut backend);
+        let pane_focus = backend.focused_key().cloned().expect("pane has focus");
+
+        let (x, y) = explorer_input_position(&backend);
+        click(&mut backend, x, y);
+        settle(&mut backend);
+        assert!(
             backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-            backend.send_key(key(KeyCode::Esc)).expect("leave sidebar");
-            settle(&mut backend);
-            let pane_focus = backend.focused_key().cloned().expect("pane has focus");
+                .focused_key()
+                .is_some_and(|key| key.as_ref().ends_with("-explorer"))
+        );
+        assert!(!backend.state().sidebar.focused);
 
-            let (x, y) = explorer_input_position(&backend);
-            click(&mut backend, x, y);
-            settle(&mut backend);
-            assert!(
-                backend
-                    .focused_key()
-                    .is_some_and(|key| key.as_ref().ends_with("-explorer"))
-            );
-            assert!(!backend.state().sidebar.focused);
-
-            backend.send_key(key(KeyCode::Esc)).expect("leave explorer");
-            settle(&mut backend);
-            assert_eq!(backend.focused_key(), Some(&pane_focus));
-            assert!(!backend.state().sidebar.focused);
-        })
-        .expect("spawn pointer explorer escape thread")
-        .join()
-        .expect("pointer explorer escape completes");
+        backend.send_key(key(KeyCode::Esc)).expect("leave explorer");
+        settle(&mut backend);
+        assert_eq!(backend.focused_key(), Some(&pane_focus));
+        assert!(!backend.state().sidebar.focused);
+    });
 }
 
 #[test]
 fn slash_focused_explorer_escape_returns_to_sidebar_tree() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_explorer();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_explorer();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
+        backend
+            .send_key(key(KeyCode::Char('/')))
+            .expect("open explorer from tree");
+        settle(&mut backend);
+        assert!(
             backend
-                .send_key(key(KeyCode::Char('/')))
-                .expect("open explorer from tree");
-            settle(&mut backend);
-            assert!(
-                backend
-                    .focused_key()
-                    .is_some_and(|key| key.as_ref().ends_with("-explorer"))
-            );
-            assert!(backend.state().sidebar.focused);
-            assert!(backend.state().sidebar.explorer_entered_from_tree);
+                .focused_key()
+                .is_some_and(|key| key.as_ref().ends_with("-explorer"))
+        );
+        assert!(backend.state().sidebar.focused);
+        assert!(backend.state().sidebar.explorer_entered_from_tree);
 
-            backend.send_key(key(KeyCode::Esc)).expect("return to tree");
-            settle(&mut backend);
-            assert!(backend.focused().is_some());
-            assert!(
-                backend
-                    .focused_key()
-                    .is_none_or(|key| !key.as_ref().ends_with("-explorer"))
-            );
-            assert!(backend.state().sidebar.focused);
-        })
-        .expect("spawn keyboard explorer escape thread")
-        .join()
-        .expect("keyboard explorer escape completes");
+        backend.send_key(key(KeyCode::Esc)).expect("return to tree");
+        settle(&mut backend);
+        assert!(backend.focused().is_some());
+        assert!(
+            backend
+                .focused_key()
+                .is_none_or(|key| !key.as_ref().ends_with("-explorer"))
+        );
+        assert!(backend.state().sidebar.focused);
+    });
 }
 
 #[test]
 fn enter_in_explorer_enables_sidebar_tree_mode() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_explorer();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-            backend
-                .send_key(key(KeyCode::Char('/')))
-                .expect("open explorer");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_explorer();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+        backend
+            .send_key(key(KeyCode::Char('/')))
+            .expect("open explorer");
+        settle(&mut backend);
 
+        backend
+            .send_key(key(KeyCode::Enter))
+            .expect("commit explorer");
+        settle(&mut backend);
+        assert!(
             backend
-                .send_key(key(KeyCode::Enter))
-                .expect("commit explorer");
-            settle(&mut backend);
-            assert!(
-                backend
-                    .focused_key()
-                    .is_some_and(|key| key.as_ref().ends_with("-tree"))
-            );
-            assert!(backend.state().sidebar.focused);
-            assert!(!backend.state().sidebar.explorer_entered_from_tree);
-        })
-        .expect("spawn explorer Enter thread")
-        .join()
-        .expect("explorer Enter completes");
+                .focused_key()
+                .is_some_and(|key| key.as_ref().ends_with("-tree"))
+        );
+        assert!(backend.state().sidebar.focused);
+        assert!(!backend.state().sidebar.explorer_entered_from_tree);
+    });
 }
 
 #[test]
 fn clicking_tree_outside_pointer_focused_explorer_returns_to_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_explorer();
-            let input_y = explorer_input_position(&backend).1;
-            click(&mut backend, 2, input_y);
-            settle(&mut backend);
-            assert!(!backend.state().sidebar.focused);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_explorer();
+        let input_y = explorer_input_position(&backend).1;
+        click(&mut backend, 2, input_y);
+        settle(&mut backend);
+        assert!(!backend.state().sidebar.focused);
 
-            click(&mut backend, 2, input_y.saturating_add(2));
-            settle(&mut backend);
-            assert!(!backend.state().sidebar.focused);
-            assert!(
-                backend
-                    .focused_key()
-                    .is_some_and(|key| key.as_ref().starts_with("rozi-terminal-"))
-            );
-        })
-        .expect("spawn outside-click explorer thread")
-        .join()
-        .expect("outside-click explorer completes");
+        click(&mut backend, 2, input_y.saturating_add(2));
+        settle(&mut backend);
+        assert!(!backend.state().sidebar.focused);
+        assert!(
+            backend
+                .focused_key()
+                .is_some_and(|key| key.as_ref().starts_with("rozi-terminal-"))
+        );
+    });
 }
 
 /// `focus-sidebar` reveals a hidden sidebar rather than silently doing nothing — otherwise the
 /// binding would appear dead whenever the panel happened to be closed.
 #[test]
 fn focus_sidebar_reveals_a_hidden_sidebar() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().sidebar.hide_all();
-            backend.render();
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.state_mut().sidebar.hide_all();
+        backend.render();
 
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-            assert!(backend.state().sidebar_shown());
-            assert!(backend.state().sidebar.focused);
-        })
-        .expect("spawn reveal thread")
-        .join()
-        .expect("reveal completes");
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+        assert!(backend.state().sidebar_shown());
+        assert!(backend.state().sidebar.focused);
+    });
 }
 
 /// Moving down and pressing Enter focuses the pane on that row. The list holds three panes split
@@ -361,600 +331,530 @@ fn focus_sidebar_reveals_a_hidden_sidebar() {
 /// without ever landing on it.
 #[test]
 fn arrow_keys_skip_headers_and_enter_activates_the_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            // Row order is: [Workspace 1] first, second, + New pane, [Workspace 2] third. Three
-            // steps down from the first selectable row lands on `third` only if headers were
-            // skipped and the add-pane row was stepped through.
-            for _ in 0..3 {
-                let _ = backend.send_key(key(KeyCode::Down));
-                settle(&mut backend);
-            }
-            let _ = backend.send_key(key(KeyCode::Enter));
+        // Row order is: [Workspace 1] first, second, + New pane, [Workspace 2] third. Three
+        // steps down from the first selectable row lands on `third` only if headers were
+        // skipped and the add-pane row was stepped through.
+        for _ in 0..3 {
+            let _ = backend.send_key(key(KeyCode::Down));
             settle(&mut backend);
+        }
+        let _ = backend.send_key(key(KeyCode::Enter));
+        settle(&mut backend);
 
-            assert_eq!(
-                backend.state().current().focused_pane,
-                Some(3),
-                "two steps down from the first row reaches the third pane, so both workspace \
+        assert_eq!(
+            backend.state().current().focused_pane,
+            Some(3),
+            "two steps down from the first row reaches the third pane, so both workspace \
                  headers were stepped over rather than selected"
-            );
-            assert_eq!(
-                backend.state().current().active_workspace,
-                1,
-                "activating a row in another workspace switches to it, exactly as a click does"
-            );
-        })
-        .expect("spawn navigation thread")
-        .join()
-        .expect("navigation completes");
+        );
+        assert_eq!(
+            backend.state().current().active_workspace,
+            1,
+            "activating a row in another workspace switches to it, exactly as a click does"
+        );
+    });
 }
 
 /// `x` is the keyboard equivalent of the row ✕: first press arms, second commits. Moving the
 /// cursor in between abandons the arming, the same as the pointer path.
 #[test]
 fn x_twice_closes_the_selected_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            let id = backend
+        let id = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("backend_with_panes focuses pane 1, the first selectable row");
+        let _ = backend.send_key(key(KeyCode::Char('x')));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.pending_row_close,
+            Some(rozi::state::SidebarClose::Pane(id)),
+            "the first x arms the confirmation"
+        );
+        assert!(
+            backend
                 .state()
                 .current()
-                .focused_pane
-                .expect("backend_with_panes focuses pane 1, the first selectable row");
-            let _ = backend.send_key(key(KeyCode::Char('x')));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.pending_row_close,
-                Some(rozi::state::SidebarClose::Pane(id)),
-                "the first x arms the confirmation"
-            );
-            assert!(
-                backend
-                    .state()
-                    .current()
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| &workspace.panes)
-                    .any(|pane| pane.id == id && !pane.closing),
-                "arming leaves the pane alone"
-            );
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.panes)
+                .any(|pane| pane.id == id && !pane.closing),
+            "arming leaves the pane alone"
+        );
 
-            let _ = backend.send_key(key(KeyCode::Char('x')));
-            settle(&mut backend);
-            assert!(
-                backend.state().sidebar.pending_row_close.is_none(),
-                "the second x consumes the arming"
-            );
-            assert!(
-                backend
-                    .state()
-                    .current()
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| &workspace.panes)
-                    .any(|pane| pane.id == id && pane.closing),
-                "the confirming x closes the pane"
-            );
-        })
-        .expect("spawn close thread")
-        .join()
-        .expect("close completes");
+        let _ = backend.send_key(key(KeyCode::Char('x')));
+        settle(&mut backend);
+        assert!(
+            backend.state().sidebar.pending_row_close.is_none(),
+            "the second x consumes the arming"
+        );
+        assert!(
+            backend
+                .state()
+                .current()
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.panes)
+                .any(|pane| pane.id == id && pane.closing),
+            "the confirming x closes the pane"
+        );
+    });
 }
 
 /// Tab cycles sidebar tabs instead of the focus ring. The sidebar is outside that ring by design,
 /// which is what frees Tab up for this.
 #[test]
 fn tab_cycles_sidebar_tabs_while_focused() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs =
-                vec![SidebarTab::Panes, SidebarTab::activity()];
-            backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
+        backend.state_mut().sidebar.panels[0].tabs =
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            let _ = backend.send_key(key(KeyCode::Tab));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("activity")),
-                "Tab moves to the next sidebar tab"
-            );
-            assert!(
-                backend.state().sidebar.focused,
-                "cycling keeps the keyboard in the sidebar"
-            );
-        })
-        .expect("spawn tab cycle thread")
-        .join()
-        .expect("tab cycle completes");
+        let _ = backend.send_key(key(KeyCode::Tab));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.active_tab(),
+            Some(&SidebarTabId::new("activity")),
+            "Tab moves to the next sidebar tab"
+        );
+        assert!(
+            backend.state().sidebar.focused,
+            "cycling keeps the keyboard in the sidebar"
+        );
+    });
 }
 
 #[test]
 fn left_and_right_do_not_cycle_non_tree_sidebar_tabs() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs =
-                vec![SidebarTab::Panes, SidebarTab::activity()];
-            backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
+        backend.state_mut().sidebar.panels[0].tabs =
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            let _ = backend.send_key(key(KeyCode::Right));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("panes")),
-                "horizontal arrows belong to the active row widget, not tab cycling"
-            );
+        let _ = backend.send_key(key(KeyCode::Right));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.active_tab(),
+            Some(&SidebarTabId::new("panes")),
+            "horizontal arrows belong to the active row widget, not tab cycling"
+        );
 
-            let _ = backend.send_key(key(KeyCode::Left));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("panes"))
-            );
-        })
-        .expect("spawn arrow tab cycle thread")
-        .join()
-        .expect("arrow navigation completes");
+        let _ = backend.send_key(key(KeyCode::Left));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.active_tab(),
+            Some(&SidebarTabId::new("panes"))
+        );
+    });
 }
 
 #[test]
 fn alt_left_and_right_reorder_sidebar_tabs() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().config.sidebar.tabs =
-                vec![SidebarTab::Panes, SidebarTab::activity()];
-            backend.state_mut().sidebar.panels[0].tabs =
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
-            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("activity"));
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
+        backend.state_mut().sidebar.panels[0].tabs =
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")];
+        backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("activity"));
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            let _ = backend.send_key(modified_key(
-                KeyCode::Left,
-                KeyMods {
-                    alt: true,
-                    ..KeyMods::NONE
-                },
-            ));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.panels[0].tabs,
-                vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")]
-            );
+        let _ = backend.send_key(modified_key(
+            KeyCode::Left,
+            KeyMods {
+                alt: true,
+                ..KeyMods::NONE
+            },
+        ));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.panels[0].tabs,
+            vec![SidebarTabId::new("activity"), SidebarTabId::new("panes")]
+        );
 
-            let _ = backend.send_key(modified_key(
-                KeyCode::Right,
-                KeyMods {
-                    alt: true,
-                    ..KeyMods::NONE
-                },
-            ));
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().sidebar.panels[0].tabs,
-                vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")]
-            );
-        })
-        .expect("spawn tab reorder thread")
-        .join()
-        .expect("tab reorder completes");
+        let _ = backend.send_key(modified_key(
+            KeyCode::Right,
+            KeyMods {
+                alt: true,
+                ..KeyMods::NONE
+            },
+        ));
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().sidebar.panels[0].tabs,
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("activity")]
+        );
+    });
 }
 
 #[test]
 fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            {
-                let state = backend.state_mut();
-                state.sidebar.panels = vec![
-                    rozi::state::SidebarPanelState {
-                        tabs: vec![SidebarTabId::new("panes")],
-                        active_tab: Some(SidebarTabId::new("panes")),
-                        ..Default::default()
-                    },
-                    rozi::state::SidebarPanelState {
-                        home: 1,
-                        tabs: vec![SidebarTabId::new("activity")],
-                        active_tab: Some(SidebarTabId::new("activity")),
-                        ..Default::default()
-                    },
-                ];
-                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
-            }
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-
-            let _ = backend.send_key(modified_key(
-                KeyCode::Down,
-                KeyMods {
-                    ctrl: true,
-                    ..KeyMods::NONE
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        {
+            let state = backend.state_mut();
+            state.sidebar.panels = vec![
+                rozi::state::SidebarPanelState {
+                    tabs: vec![SidebarTabId::new("panes")],
+                    active_tab: Some(SidebarTabId::new("panes")),
+                    ..Default::default()
                 },
-            ));
-            settle(&mut backend);
-            assert_eq!(backend.state().sidebar.active_panel_index(), 1);
-            assert!(backend.state().sidebar.focused);
-
-            let _ = backend.send_key(modified_key(
-                KeyCode::Up,
-                KeyMods {
-                    ctrl: true,
-                    ..KeyMods::NONE
+                rozi::state::SidebarPanelState {
+                    home: 1,
+                    tabs: vec![SidebarTabId::new("activity")],
+                    active_tab: Some(SidebarTabId::new("activity")),
+                    ..Default::default()
                 },
-            ));
-            settle(&mut backend);
-            assert_eq!(backend.state().sidebar.active_panel_index(), 0);
-        })
-        .expect("spawn panel navigation thread")
-        .join()
-        .expect("panel navigation completes");
+            ];
+            state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::activity()];
+        }
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+
+        let _ = backend.send_key(modified_key(
+            KeyCode::Down,
+            KeyMods {
+                ctrl: true,
+                ..KeyMods::NONE
+            },
+        ));
+        settle(&mut backend);
+        assert_eq!(backend.state().sidebar.active_panel_index(), 1);
+        assert!(backend.state().sidebar.focused);
+
+        let _ = backend.send_key(modified_key(
+            KeyCode::Up,
+            KeyMods {
+                ctrl: true,
+                ..KeyMods::NONE
+            },
+        ));
+        settle(&mut backend);
+        assert_eq!(backend.state().sidebar.active_panel_index(), 0);
+    });
 }
 
 #[test]
 fn keyboard_tab_cycling_scrolls_the_active_top_tab_into_view() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            let launcher = |name: &str, label: &str| SidebarTab::Launcher {
-                name: SidebarTabId::new(name),
-                label: label.into(),
-                env: Vec::new(),
-                entries: vec![SidebarLauncherEntry {
-                    label: "Action".into(),
-                    group: None,
-                    action: UserCommandAction::Send("true".into()),
-                }],
-            };
-            backend.state_mut().config.sidebar.tabs = vec![
-                SidebarTab::Panes,
-                launcher("build", "Build"),
-                launcher("sessions-long", "Sessions"),
-                launcher("deployment", "Deployment"),
-            ];
-            backend.state_mut().sidebar.panels[0].tabs = vec![
-                SidebarTabId::new("panes"),
-                SidebarTabId::new("build"),
-                SidebarTabId::new("sessions-long"),
-                SidebarTabId::new("deployment"),
-            ];
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        let launcher = |name: &str, label: &str| SidebarTab::Launcher {
+            name: SidebarTabId::new(name),
+            label: label.into(),
+            env: Vec::new(),
+            entries: vec![SidebarLauncherEntry {
+                label: "Action".into(),
+                group: None,
+                action: UserCommandAction::Send("true".into()),
+            }],
+        };
+        backend.state_mut().config.sidebar.tabs = vec![
+            SidebarTab::Panes,
+            launcher("build", "Build"),
+            launcher("sessions-long", "Sessions"),
+            launcher("deployment", "Deployment"),
+        ];
+        backend.state_mut().sidebar.panels[0].tabs = vec![
+            SidebarTabId::new("panes"),
+            SidebarTabId::new("build"),
+            SidebarTabId::new("sessions-long"),
+            SidebarTabId::new("deployment"),
+        ];
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+
+        for _ in 0..3 {
+            let _ = backend.send_key(key(KeyCode::Tab));
             settle(&mut backend);
+        }
 
-            for _ in 0..3 {
-                let _ = backend.send_key(key(KeyCode::Tab));
-                settle(&mut backend);
-            }
-
-            assert_eq!(
-                backend.state().sidebar.active_tab(),
-                Some(&SidebarTabId::new("deployment"))
-            );
-            let top = &backend.capture_frame().to_fixed_grid_lines()[0];
-            assert!(
-                top.chars()
-                    .take(32)
-                    .collect::<String>()
-                    .contains("Deployment"),
-                "horizontal tab navigation keeps the active tab visible: {top:?}"
-            );
-        })
-        .expect("spawn tab visibility thread")
-        .join()
-        .expect("tab visibility completes");
+        assert_eq!(
+            backend.state().sidebar.active_tab(),
+            Some(&SidebarTabId::new("deployment"))
+        );
+        let top = &backend.capture_frame().to_fixed_grid_lines()[0];
+        assert!(
+            top.chars()
+                .take(32)
+                .collect::<String>()
+                .contains("Deployment"),
+            "horizontal tab navigation keeps the active tab visible: {top:?}"
+        );
+    });
 }
 
 #[test]
 fn keyboard_row_navigation_scrolls_the_cursor_into_view() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 80,
-                h: 10,
-            });
-            let panes = (1..=12)
-                .map(|id| {
-                    let mut pane = pane(id);
-                    pane.title = format!("pane-{id}");
-                    pane
-                })
-                .collect();
-            backend.state_mut().current_mut().workspaces[0].panes = panes;
-            backend.state_mut().current_mut().workspaces[1]
-                .panes
-                .clear();
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 10,
+        });
+        let panes = (1..=12)
+            .map(|id| {
+                let mut pane = pane(id);
+                pane.title = format!("pane-{id}");
+                pane
+            })
+            .collect();
+        backend.state_mut().current_mut().workspaces[0].panes = panes;
+        backend.state_mut().current_mut().workspaces[1]
+            .panes
+            .clear();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
+
+        let _ = backend.send_key(key(KeyCode::End));
+        settle(&mut backend);
+
+        assert!(
             backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
-
-            let _ = backend.send_key(key(KeyCode::End));
-            settle(&mut backend);
-
-            assert!(
-                backend
-                    .capture_frame()
-                    .to_fixed_grid()
-                    .contains("+ New pane"),
-                "vertical row navigation keeps the cursor row visible"
-            );
-        })
-        .expect("spawn row visibility thread")
-        .join()
-        .expect("row visibility completes");
+                .capture_frame()
+                .to_fixed_grid()
+                .contains("+ New pane"),
+            "vertical row navigation keeps the cursor row visible"
+        );
+    });
 }
 
 #[test]
 fn page_navigation_uses_the_visible_row_count() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            // How far one PageDown moves the cursor, from the first row, in a sidebar this tall.
-            let page = |height: u16| {
-                let mut backend = backend_with_panes();
-                backend.state_mut().current_mut().workspaces[0].panes =
-                    (1..=12).map(pane).collect();
-                backend.state_mut().current_mut().workspaces[1]
-                    .panes
-                    .clear();
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: height,
-                });
-                backend.render();
-                backend
-                    .dispatch(Msg::RunAction(Action::FocusSidebar))
-                    .unwrap();
-                settle(&mut backend);
-                let _ = backend.send_key(key(KeyCode::Home));
-                settle(&mut backend);
-                let start = backend.state().sidebar.panels[0].cursor;
-                let _ = backend.send_key(key(KeyCode::PageDown));
-                settle(&mut backend);
-                backend.state().sidebar.panels[0].cursor - start
-            };
-            let short_page = page(10);
-            let tall_page = page(30);
+    rozi::test_support::on_large_stack(|| {
+        // How far one PageDown moves the cursor, from the first row, in a sidebar this tall.
+        let page = |height: u16| {
+            let mut backend = backend_with_panes();
+            backend.state_mut().current_mut().workspaces[0].panes = (1..=12).map(pane).collect();
+            backend.state_mut().current_mut().workspaces[1]
+                .panes
+                .clear();
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: height,
+            });
+            backend.render();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .unwrap();
+            settle(&mut backend);
+            let _ = backend.send_key(key(KeyCode::Home));
+            settle(&mut backend);
+            let start = backend.state().sidebar.panels[0].cursor;
+            let _ = backend.send_key(key(KeyCode::PageDown));
+            settle(&mut backend);
+            backend.state().sidebar.panels[0].cursor - start
+        };
+        let short_page = page(10);
+        let tall_page = page(30);
 
-            assert!(short_page > 0);
-            assert!(
-                tall_page > short_page,
-                "a taller sidebar should page across more rows: {short_page} -> {tall_page}"
-            );
-        })
-        .expect("spawn page navigation thread")
-        .join()
-        .expect("page navigation completes");
+        assert!(short_page > 0);
+        assert!(
+            tall_page > short_page,
+            "a taller sidebar should page across more rows: {short_page} -> {tall_page}"
+        );
+    });
 }
 
 /// The active row's accent bar runs the full height of the row. A two-line entry gets `▍` on both
 /// its title and its detail line, not a tick beside the first one.
 #[test]
 fn the_active_row_marker_spans_every_line_of_the_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_sessions();
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_sessions();
+        settle(&mut backend);
 
-            let lines = backend.capture_frame().to_fixed_grid_lines();
-            let marked: Vec<usize> = lines
-                .iter()
-                .enumerate()
-                .filter(|(_, line)| line.starts_with('▍'))
-                .map(|(index, _)| index)
-                .collect();
-            assert_eq!(
-                marked.len(),
-                2,
-                "the current session's two-line row carries the marker on both lines: {marked:?}"
-            );
-            assert_eq!(
-                marked[1],
-                marked[0] + 1,
-                "the two marked lines are the same row, not two different ones"
-            );
-        })
-        .expect("spawn marker thread")
-        .join()
-        .expect("marker completes");
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let marked: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.starts_with('▍'))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(
+            marked.len(),
+            2,
+            "the current session's two-line row carries the marker on both lines: {marked:?}"
+        );
+        assert_eq!(
+            marked[1],
+            marked[0] + 1,
+            "the two marked lines are the same row, not two different ones"
+        );
+    });
 }
 
 /// The keyboard cursor highlights the whole row, both lines of it.
 #[test]
 fn the_cursor_highlight_covers_both_lines_of_a_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_sessions();
-            // The hover lift tinted toward the active border: close enough to hover to mean "about
-            // to act on this", distinct enough to find in SIDEBAR mode without a pointer.
-            let theme = &backend.state().theme;
-            let selection = theme
-                .surface
-                .element
-                .elevate_by(0.08)
-                .blend_toward(theme.border_active, 0.25);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_sessions();
+        // The hover lift tinted toward the active border: close enough to hover to mean "about
+        // to act on this", distinct enough to find in SIDEBAR mode without a pointer.
+        let theme = &backend.state().theme;
+        let selection = theme
+            .surface
+            .element
+            .elevate_by(0.08)
+            .blend_toward(theme.border_active, 0.25);
 
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            let frame = backend.capture_frame();
-            let height = frame.to_fixed_grid_lines().len() as u16;
-            // Column 2 is inside the row body, past the marker gutter and its separating cell.
-            let highlighted: Vec<u16> = (1..height)
-                .filter(|row| frame.cell(2, *row).bg == selection)
-                .collect();
-            assert_eq!(
-                highlighted.len(),
-                2,
-                "the cursor covers both lines of one row: {highlighted:?}"
-            );
-            assert_eq!(
-                highlighted[1],
-                highlighted[0] + 1,
-                "the highlighted lines are one row, not two"
-            );
-        })
-        .expect("spawn cursor thread")
-        .join()
-        .expect("cursor completes");
+        let frame = backend.capture_frame();
+        let height = frame.to_fixed_grid_lines().len() as u16;
+        // Column 2 is inside the row body, past the marker gutter and its separating cell.
+        let highlighted: Vec<u16> = (1..height)
+            .filter(|row| frame.cell(2, *row).bg == selection)
+            .collect();
+        assert_eq!(
+            highlighted.len(),
+            2,
+            "the cursor covers both lines of one row: {highlighted:?}"
+        );
+        assert_eq!(
+            highlighted[1],
+            highlighted[0] + 1,
+            "the highlighted lines are one row, not two"
+        );
+    });
 }
 
 #[test]
 fn keyboard_navigation_suppresses_stale_row_hover_until_the_pointer_moves() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend.state_mut().current_mut().workspaces[1].panes[0].title =
-                "pointer target".into();
-            settle(&mut backend);
-            let highlight = backend.state().theme.surface.element.elevate_by(0.08);
-            let target_row = backend
-                .capture_frame()
-                .to_fixed_grid_lines()
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend.state_mut().current_mut().workspaces[1].panes[0].title = "pointer target".into();
+        settle(&mut backend);
+        let highlight = backend.state().theme.surface.element.elevate_by(0.08);
+        let target_row = backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .position(|line| line.contains("pointer target"))
+            .expect("pointer target row") as u16;
+
+        let _ = backend.send_mouse(MouseEvent {
+            x: 4,
+            y: target_row,
+            kind: MouseKind::Moved,
+            mods: KeyMods::NONE,
+        });
+        settle(&mut backend);
+        // The row's ✕ is gated on the same hover as its lift, so it follows the same modality.
+        let shows_close = |backend: &TestBackend<AppRoot>| {
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            lines[target_row as usize..=target_row as usize + 1]
                 .iter()
-                .position(|line| line.contains("pointer target"))
-                .expect("pointer target row") as u16;
+                .any(|line| line.contains('✕'))
+        };
+        assert_eq!(
+            backend.capture_frame().cell(4, target_row).bg,
+            highlight,
+            "pointer movement highlights the row"
+        );
+        assert!(shows_close(&backend), "hover reveals the row's ✕");
 
-            let _ = backend.send_mouse(MouseEvent {
-                x: 4,
-                y: target_row,
-                kind: MouseKind::Moved,
-                mods: KeyMods::NONE,
-            });
-            settle(&mut backend);
-            // The row's ✕ is gated on the same hover as its lift, so it follows the same modality.
-            let shows_close = |backend: &TestBackend<AppRoot>| {
-                let lines = backend.capture_frame().to_fixed_grid_lines();
-                lines[target_row as usize..=target_row as usize + 1]
-                    .iter()
-                    .any(|line| line.contains('✕'))
-            };
-            assert_eq!(
-                backend.capture_frame().cell(4, target_row).bg,
-                highlight,
-                "pointer movement highlights the row"
-            );
-            assert!(shows_close(&backend), "hover reveals the row's ✕");
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        let _ = backend.send_key(key(KeyCode::Down));
+        settle(&mut backend);
+        assert_ne!(
+            backend.capture_frame().cell(4, target_row).bg,
+            highlight,
+            "keyboard navigation clears hover left at the old pointer position"
+        );
+        assert!(
+            !shows_close(&backend),
+            "a stale pointer does not keep the ✕ on screen"
+        );
 
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            let _ = backend.send_key(key(KeyCode::Down));
-            settle(&mut backend);
-            assert_ne!(
-                backend.capture_frame().cell(4, target_row).bg,
-                highlight,
-                "keyboard navigation clears hover left at the old pointer position"
-            );
-            assert!(
-                !shows_close(&backend),
-                "a stale pointer does not keep the ✕ on screen"
-            );
-
-            let _ = backend.send_mouse(MouseEvent {
-                x: 5,
-                y: target_row,
-                kind: MouseKind::Moved,
-                mods: KeyMods::NONE,
-            });
-            settle(&mut backend);
-            assert_eq!(
-                backend.capture_frame().cell(5, target_row).bg,
-                highlight,
-                "the next real pointer movement restores row hover"
-            );
-        })
-        .expect("spawn hover modality thread")
-        .join()
-        .expect("hover modality completes");
+        let _ = backend.send_mouse(MouseEvent {
+            x: 5,
+            y: target_row,
+            kind: MouseKind::Moved,
+            mods: KeyMods::NONE,
+        });
+        settle(&mut backend);
+        assert_eq!(
+            backend.capture_frame().cell(5, target_row).bg,
+            highlight,
+            "the next real pointer movement restores row hover"
+        );
+    });
 }
 
 /// `j`/`k` move the cursor alongside the arrows, matching resize and copy mode — and matching the
 /// file tree, whose widget keymap has always included them.
 #[test]
 fn vim_keys_move_the_cursor() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            // Down to the third pane, then back up one. `k` has to step over the workspace header
-            // that sits between the second and third panes, exactly as the arrows do.
-            for _ in 0..2 {
-                let _ = backend.send_key(key(KeyCode::Char('j')));
-                settle(&mut backend);
-            }
-            let _ = backend.send_key(key(KeyCode::Char('k')));
+        // Down to the third pane, then back up one. `k` has to step over the workspace header
+        // that sits between the second and third panes, exactly as the arrows do.
+        for _ in 0..2 {
+            let _ = backend.send_key(key(KeyCode::Char('j')));
             settle(&mut backend);
-            let _ = backend.send_key(key(KeyCode::Enter));
-            settle(&mut backend);
+        }
+        let _ = backend.send_key(key(KeyCode::Char('k')));
+        settle(&mut backend);
+        let _ = backend.send_key(key(KeyCode::Enter));
+        settle(&mut backend);
 
-            assert_eq!(
-                backend.state().current().focused_pane,
-                Some(2),
-                "two `j` then one `k` lands on the second pane, so both keys move the cursor and \
+        assert_eq!(
+            backend.state().current().focused_pane,
+            Some(2),
+            "two `j` then one `k` lands on the second pane, so both keys move the cursor and \
                  both step over headers"
-            );
-            assert!(
-                !backend.state().sidebar.focused,
-                "activating a pane row hands the keyboard to that pane — the point of pressing it"
-            );
-        })
-        .expect("spawn vim keys thread")
-        .join()
-        .expect("vim keys completes");
+        );
+        assert!(
+            !backend.state().sidebar.focused,
+            "activating a pane row hands the keyboard to that pane — the point of pressing it"
+        );
+    });
 }
 
 /// Hover-focus must not yank the keyboard out of the sidebar.
@@ -964,52 +864,47 @@ fn vim_keys_move_the_cursor() {
 /// the keyboard back before the click on the tab strip ever arrives.
 #[test]
 fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            assert!(
-                backend.state().config.pane.focus_on_hover,
-                "hover focus is on by default, which is what makes this reachable"
-            );
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        assert!(
+            backend.state().config.pane.focus_on_hover,
+            "hover focus is on by default, which is what makes this reachable"
+        );
 
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            settle(&mut backend);
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        settle(&mut backend);
 
-            // The pointer crosses a different pane on its way to the sidebar.
-            backend
-                .dispatch(Msg::HoverPane(2, KeyMods::NONE))
-                .expect("hover another pane");
-            settle(&mut backend);
+        // The pointer crosses a different pane on its way to the sidebar.
+        backend
+            .dispatch(Msg::HoverPane(2, KeyMods::NONE))
+            .expect("hover another pane");
+        settle(&mut backend);
 
-            assert_eq!(
-                backend.state().current().focused_pane,
-                Some(1),
-                "the hovered pane does not become focused while the sidebar owns the keyboard"
-            );
-            assert!(
-                backend.state().sidebar.focused,
-                "the sidebar keeps the keyboard across the pointer's transit"
-            );
+        assert_eq!(
+            backend.state().current().focused_pane,
+            Some(1),
+            "the hovered pane does not become focused while the sidebar owns the keyboard"
+        );
+        assert!(
+            backend.state().sidebar.focused,
+            "the sidebar keeps the keyboard across the pointer's transit"
+        );
 
-            // Leaving the sidebar restores the normal ambient behaviour.
-            let _ = backend.send_key(key(KeyCode::Esc));
-            settle(&mut backend);
-            backend
-                .dispatch(Msg::HoverPane(2, KeyMods::NONE))
-                .expect("hover again");
-            settle(&mut backend);
-            assert_eq!(
-                backend.state().current().focused_pane,
-                Some(2),
-                "with the keyboard back on the panes, hover focus works as configured"
-            );
-        })
-        .expect("spawn hover thread")
-        .join()
-        .expect("hover completes");
+        // Leaving the sidebar restores the normal ambient behaviour.
+        let _ = backend.send_key(key(KeyCode::Esc));
+        settle(&mut backend);
+        backend
+            .dispatch(Msg::HoverPane(2, KeyMods::NONE))
+            .expect("hover again");
+        settle(&mut backend);
+        assert_eq!(
+            backend.state().current().focused_pane,
+            Some(2),
+            "with the keyboard back on the panes, hover focus works as configured"
+        );
+    });
 }
 
 /// Hover feedback has to survive on rows that already have a background — the active pane's row and
@@ -1017,37 +912,32 @@ fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
 /// style of its own, precisely so those rows still respond to the pointer.
 #[test]
 fn hover_still_reads_on_active_and_selected_rows() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_panes();
-            settle(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_panes();
+        settle(&mut backend);
 
-            // The focused pane's row carries the active tint; find its first line by the marker.
-            let lines = backend.capture_frame().to_fixed_grid_lines();
-            let active_row = lines
-                .iter()
-                .position(|line| line.starts_with('▍'))
-                .expect("the focused pane's row is on screen") as u16;
-            let resting = backend.capture_frame().cell(4, active_row).bg;
+        // The focused pane's row carries the active tint; find its first line by the marker.
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let active_row = lines
+            .iter()
+            .position(|line| line.starts_with('▍'))
+            .expect("the focused pane's row is on screen") as u16;
+        let resting = backend.capture_frame().cell(4, active_row).bg;
 
-            let _ = backend.send_mouse(MouseEvent {
-                x: 4,
-                y: active_row,
-                kind: MouseKind::Moved,
-                mods: Default::default(),
-            });
-            settle(&mut backend);
-            let hovered = backend.capture_frame().cell(4, active_row).bg;
+        let _ = backend.send_mouse(MouseEvent {
+            x: 4,
+            y: active_row,
+            kind: MouseKind::Moved,
+            mods: Default::default(),
+        });
+        settle(&mut backend);
+        let hovered = backend.capture_frame().cell(4, active_row).bg;
 
-            assert_ne!(
-                hovered, resting,
-                "hovering the active row changes its background rather than being swallowed by it"
-            );
-        })
-        .expect("spawn hover style thread")
-        .join()
-        .expect("hover style completes");
+        assert_ne!(
+            hovered, resting,
+            "hovering the active row changes its background rather than being swallowed by it"
+        );
+    });
 }
 
 /// The hover lift has to add contrast on light themes too.
@@ -1057,141 +947,131 @@ fn hover_still_reads_on_active_and_selected_rows() {
 /// unconditionally would wash a light theme's rows toward white and make hover nearly invisible.
 #[test]
 fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            for dark in [true, false] {
-                let mut backend = backend_with_panes();
-                {
-                    let state = backend.state_mut();
-                    let surface = if dark {
-                        Color::Rgb(20, 22, 28)
-                    } else {
-                        Color::Rgb(240, 240, 245)
-                    };
-                    state.theme.surface.element = surface;
-                    state.theme.surface.backdrop = surface;
-                }
-                settle(&mut backend);
-
-                let lines = backend.capture_frame().to_fixed_grid_lines();
-                let row = lines
-                    .iter()
-                    .position(|line| line.starts_with('▍'))
-                    .expect("the focused pane's row is on screen") as u16;
-                let resting = backend.capture_frame().cell(4, row).bg;
-
-                let _ = backend.send_mouse(MouseEvent {
-                    x: 4,
-                    y: row,
-                    kind: MouseKind::Moved,
-                    mods: Default::default(),
-                });
-                settle(&mut backend);
-                let hovered = backend.capture_frame().cell(4, row).bg;
-
-                let luminance = |color: Color| match color {
-                    Color::Rgb(r, g, b) => {
-                        0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
-                    }
-                    _ => panic!("expected an rgb cell background, got {color:?}"),
-                };
-                let (resting, hovered) = (luminance(resting), luminance(hovered));
-                if dark {
-                    assert!(
-                        hovered > resting,
-                        "a dark theme lifts toward light: {resting} -> {hovered}"
-                    );
+    rozi::test_support::on_large_stack(|| {
+        for dark in [true, false] {
+            let mut backend = backend_with_panes();
+            {
+                let state = backend.state_mut();
+                let surface = if dark {
+                    Color::Rgb(20, 22, 28)
                 } else {
-                    assert!(
-                        hovered < resting,
-                        "a light theme lifts toward dark: {resting} -> {hovered}"
-                    );
-                }
+                    Color::Rgb(240, 240, 245)
+                };
+                state.theme.surface.element = surface;
+                state.theme.surface.backdrop = surface;
             }
-        })
-        .expect("spawn theme hover thread")
-        .join()
-        .expect("theme hover completes");
+            settle(&mut backend);
+
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            let row = lines
+                .iter()
+                .position(|line| line.starts_with('▍'))
+                .expect("the focused pane's row is on screen") as u16;
+            let resting = backend.capture_frame().cell(4, row).bg;
+
+            let _ = backend.send_mouse(MouseEvent {
+                x: 4,
+                y: row,
+                kind: MouseKind::Moved,
+                mods: Default::default(),
+            });
+            settle(&mut backend);
+            let hovered = backend.capture_frame().cell(4, row).bg;
+
+            let luminance = |color: Color| match color {
+                Color::Rgb(r, g, b) => {
+                    0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)
+                }
+                _ => panic!("expected an rgb cell background, got {color:?}"),
+            };
+            let (resting, hovered) = (luminance(resting), luminance(hovered));
+            if dark {
+                assert!(
+                    hovered > resting,
+                    "a dark theme lifts toward light: {resting} -> {hovered}"
+                );
+            } else {
+                assert!(
+                    hovered < resting,
+                    "a light theme lifts toward dark: {resting} -> {hovered}"
+                );
+            }
+        }
+    });
 }
 
 #[test]
 fn sidebar_width_drag_preserves_pane_focus() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            for shown in [[true, false], [false, true], [true, true]] {
-                let mut backend = backend_with_panes();
-                backend.state_mut().sidebar.shown = shown;
-                backend.render();
-                // Establish real widget focus, rather than only the app's focused pane ID.
-                backend
-                    .dispatch(Msg::RunAction(Action::FocusSidebar))
-                    .unwrap();
-                settle(&mut backend);
-                backend.send_key(key(KeyCode::Esc)).unwrap();
-                settle(&mut backend);
-                let pane_focus = backend.focused_key().cloned().expect("pane focus");
-                assert_eq!(
-                    pane_focus.as_ref(),
-                    backend.state().current().workspaces[0].panes[0]
-                        .keys
-                        .terminal
-                        .as_ref()
-                );
+    rozi::test_support::on_large_stack(|| {
+        for shown in [[true, false], [false, true], [true, true]] {
+            let mut backend = backend_with_panes();
+            backend.state_mut().sidebar.shown = shown;
+            backend.render();
+            // Establish real widget focus, rather than only the app's focused pane ID.
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .unwrap();
+            settle(&mut backend);
+            backend.send_key(key(KeyCode::Esc)).unwrap();
+            settle(&mut backend);
+            let pane_focus = backend.focused_key().cloned().expect("pane focus");
+            assert_eq!(
+                pane_focus.as_ref(),
+                backend.state().current().workspaces[0].panes[0]
+                    .keys
+                    .terminal
+                    .as_ref()
+            );
 
-                for (side, is_shown) in shown.into_iter().enumerate() {
-                    if !is_shown {
-                        continue;
-                    }
-                    // Find the divider on the tab bar: rows below it draw tree guides with the
-                    // same glyph.
-                    let frame = backend.capture_frame();
-                    let x = if side == 0 {
-                        (0..50).find(|x| frame.cell(*x, 0).symbol == "│")
-                    } else {
-                        (50..100).rev().find(|x| frame.cell(*x, 0).symbol == "│")
-                    }
-                    .expect("outer sidebar divider");
-                    let target = if side == 0 { x + 3 } else { x - 3 };
-                    for (x, kind) in [
-                        (x, MouseKind::Down(MouseButton::Left)),
-                        (target, MouseKind::Drag(MouseButton::Left)),
-                        (target, MouseKind::Up(MouseButton::Left)),
-                    ] {
-                        backend
-                            .send_mouse(MouseEvent {
-                                x,
-                                y: 3,
-                                kind,
-                                mods: KeyMods::NONE,
-                            })
-                            .unwrap();
-                        settle(&mut backend);
-                        assert_eq!(
-                            backend.focused_key(),
-                            Some(&pane_focus),
-                            "dock {side}, {kind:?}"
-                        );
-                    }
+            for (side, is_shown) in shown.into_iter().enumerate() {
+                if !is_shown {
+                    continue;
+                }
+                // Find the divider on the tab bar: rows below it draw tree guides with the
+                // same glyph.
+                let frame = backend.capture_frame();
+                let x = if side == 0 {
+                    (0..50).find(|x| frame.cell(*x, 0).symbol == "│")
+                } else {
+                    (50..100).rev().find(|x| frame.cell(*x, 0).symbol == "│")
+                }
+                .expect("outer sidebar divider");
+                let target = if side == 0 { x + 3 } else { x - 3 };
+                for (x, kind) in [
+                    (x, MouseKind::Down(MouseButton::Left)),
+                    (target, MouseKind::Drag(MouseButton::Left)),
+                    (target, MouseKind::Up(MouseButton::Left)),
+                ] {
+                    backend
+                        .send_mouse(MouseEvent {
+                            x,
+                            y: 3,
+                            kind,
+                            mods: KeyMods::NONE,
+                        })
+                        .unwrap();
+                    settle(&mut backend);
                     assert_eq!(
-                        backend
-                            .state()
-                            .config
-                            .sidebar
-                            .layout
-                            .dock(if side == 0 {
-                                rozi::config::SidebarPosition::Left
-                            } else {
-                                rozi::config::SidebarPosition::Right
-                            })
-                            .width,
-                        35
+                        backend.focused_key(),
+                        Some(&pane_focus),
+                        "dock {side}, {kind:?}"
                     );
                 }
+                assert_eq!(
+                    backend
+                        .state()
+                        .config
+                        .sidebar
+                        .layout
+                        .dock(if side == 0 {
+                            rozi::config::SidebarPosition::Left
+                        } else {
+                            rozi::config::SidebarPosition::Right
+                        })
+                        .width,
+                    35
+                );
             }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        }
+    });
 }

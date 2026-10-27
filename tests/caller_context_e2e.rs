@@ -493,34 +493,32 @@ fn a_headless_created_pane_discovers_a_later_ui_despite_missing_or_stale_sockets
     use tui_lipan::TestBackend;
 
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            let _discovery = DISCOVERY_UIS.lock().unwrap();
-            struct Ui(TestBackend<AppRoot>);
-            impl Drop for Ui {
-                fn drop(&mut self) {
-                    let _ = self.0.dispatch(Msg::RunAction(rozi::input::Action::Quit));
-                }
+    rozi::test_support::on_deeper_stack(|| {
+        let _discovery = DISCOVERY_UIS.lock().unwrap();
+        struct Ui(TestBackend<AppRoot>);
+        impl Drop for Ui {
+            fn drop(&mut self) {
+                let _ = self.0.dispatch(Msg::RunAction(rozi::input::Action::Quit));
             }
-            let files = tempfile::tempdir().unwrap();
-            let ready = files.path().join("ready");
-            let go = files.path().join("go");
-            let result = files.path().join("result");
-            let server = spawn_listener(ServerSettings::default());
-            // Give the child isolated user directories, but let the headless spawn policy supply its
-            // real pane/session identity and omit ROZI_SOCKET. Its environment predates the UI.
-            let mut argv = vec!["env".to_string()];
-            for (key, value) in cli().get_envs() {
-                if let Some(value) = value {
-                    argv.push(format!(
-                        "{}={}",
-                        key.to_str().unwrap(),
-                        value.to_str().unwrap()
-                    ));
-                }
+        }
+        let files = tempfile::tempdir().unwrap();
+        let ready = files.path().join("ready");
+        let go = files.path().join("go");
+        let result = files.path().join("result");
+        let server = spawn_listener(ServerSettings::default());
+        // Give the child isolated user directories, but let the headless spawn policy supply its
+        // real pane/session identity and omit ROZI_SOCKET. Its environment predates the UI.
+        let mut argv = vec!["env".to_string()];
+        for (key, value) in cli().get_envs() {
+            if let Some(value) = value {
+                argv.push(format!(
+                    "{}={}",
+                    key.to_str().unwrap(),
+                    value.to_str().unwrap()
+                ));
             }
-            argv.extend([
+        }
+        argv.extend([
                 "sh".into(),
                 "-c".into(),
                 r#"unset ROZI_CONFIG ROZI_EXTENSION ROZI_EXTENSION_CREDENTIAL
@@ -537,86 +535,84 @@ mv "$4.tmp" "$4"
                 go.to_string_lossy().into_owned(),
                 result.to_string_lossy().into_owned(),
             ]);
-            let spawned = run_session_control(
-                server.session(),
-                request(ControlCommand::NewPane {
-                    command: None,
-                    argv: Some(argv),
-                    local_cwd: None,
-                    cwd: None,
-                    title: None,
-                    keep_open: true,
-                    focus: false,
-                    workspace: None,
-                    size: None,
-                }),
-            )
-            .unwrap();
-            assert!(spawned.ok, "{spawned:?}");
-            let deadline = Instant::now() + common::io_timeout();
-            while !ready.exists() {
-                assert!(Instant::now() < deadline, "headless caller did not start");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            assert_eq!(std::fs::read_to_string(&ready).unwrap(), "unset");
-            let mut ui = Ui(TestBackend::new(rozi::test_support::configured_app()));
-            while ui.0.state().command_link.is_none() {
-                ui.0.pump().unwrap();
-                assert!(Instant::now() < deadline);
-            }
-            ui.0.dispatch(Msg::SidebarSessionActivate(DiscoveredSession {
-                name: server.session().into(),
-                status: DiscoveredSessionStatus::Running {
-                    panes: 1,
-                    clients: 0,
-                    has_layout: true,
-                },
-                origin: Default::default(),
-                ephemeral: false,
-                host: None,
-                remote_target: None,
-            }))
-            .unwrap();
-            loop {
-                ui.0.pump().unwrap();
-                let attachment = ui.0.state().current();
-                if attachment.session_attached
-                    && attachment.session_name.as_deref() == Some(server.session())
-                {
-                    break;
-                }
-                assert!(Instant::now() < deadline, "UI did not attach");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let direct = cli()
-                .args(["--session", server.session(), "split"])
-                .output()
-                .unwrap();
-            let reply: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
-            assert_eq!(
-                reply["code"], "not-controller",
-                "the UI holds layout authority"
-            );
-            std::fs::write(&go, "go").unwrap();
-            while !result.exists() {
-                ui.0.render();
-                ui.0.pump().unwrap();
-                assert!(Instant::now() < deadline, "caller split did not complete");
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let output = std::fs::read_to_string(&result).unwrap();
-            let reply: serde_json::Value = serde_json::from_str(&output).expect(&output);
-            assert_eq!(reply["ok"], true, "{reply}");
-            let stale_output = std::fs::read_to_string(result.with_extension("stale")).unwrap();
-            let stale_reply: serde_json::Value = serde_json::from_str(&stale_output).expect(&stale_output);
-            assert_eq!(stale_reply["ok"], true, "{stale_reply}");
-            let panes =
-                run_session_control(server.session(), request(ControlCommand::ListPanes)).unwrap();
-            assert_eq!(panes.data.unwrap().as_array().unwrap().len(), 3);
-        })
-        .unwrap()
-        .join()
+        let spawned = run_session_control(
+            server.session(),
+            request(ControlCommand::NewPane {
+                command: None,
+                argv: Some(argv),
+                local_cwd: None,
+                cwd: None,
+                title: None,
+                keep_open: true,
+                focus: false,
+                workspace: None,
+                size: None,
+            }),
+        )
         .unwrap();
+        assert!(spawned.ok, "{spawned:?}");
+        let deadline = Instant::now() + common::io_timeout();
+        while !ready.exists() {
+            assert!(Instant::now() < deadline, "headless caller did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(std::fs::read_to_string(&ready).unwrap(), "unset");
+        let mut ui = Ui(TestBackend::new(rozi::test_support::configured_app()));
+        while ui.0.state().command_link.is_none() {
+            ui.0.pump().unwrap();
+            assert!(Instant::now() < deadline);
+        }
+        ui.0.dispatch(Msg::SidebarSessionActivate(DiscoveredSession {
+            name: server.session().into(),
+            status: DiscoveredSessionStatus::Running {
+                panes: 1,
+                clients: 0,
+                has_layout: true,
+            },
+            origin: Default::default(),
+            ephemeral: false,
+            host: None,
+            remote_target: None,
+        }))
+        .unwrap();
+        loop {
+            ui.0.pump().unwrap();
+            let attachment = ui.0.state().current();
+            if attachment.session_attached
+                && attachment.session_name.as_deref() == Some(server.session())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "UI did not attach");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let direct = cli()
+            .args(["--session", server.session(), "split"])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
+        assert_eq!(
+            reply["code"], "not-controller",
+            "the UI holds layout authority"
+        );
+        std::fs::write(&go, "go").unwrap();
+        while !result.exists() {
+            ui.0.render();
+            ui.0.pump().unwrap();
+            assert!(Instant::now() < deadline, "caller split did not complete");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = std::fs::read_to_string(&result).unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&output).expect(&output);
+        assert_eq!(reply["ok"], true, "{reply}");
+        let stale_output = std::fs::read_to_string(result.with_extension("stale")).unwrap();
+        let stale_reply: serde_json::Value =
+            serde_json::from_str(&stale_output).expect(&stale_output);
+        assert_eq!(stale_reply["ok"], true, "{stale_reply}");
+        let panes =
+            run_session_control(server.session(), request(ControlCommand::ListPanes)).unwrap();
+        assert_eq!(panes.data.unwrap().as_array().unwrap().len(), 3);
+    });
 }
 
 /// A server started from inside a pane inherits that pane's rozi environment. None of it may reach

@@ -1464,15 +1464,6 @@ mod tests {
         HostKey::Remote(RemoteTarget::Alias(name.to_string()))
     }
 
-    fn on_test_thread(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     /// Two hosts, each with a launch of the same bundle waiting to stage.
     fn two_hosts() -> (TestBackend<AppRoot>, WorkerId, WorkerId) {
         let mut backend = TestBackend::new(AppRoot::default());
@@ -1589,7 +1580,7 @@ mod tests {
     /// The same bundle staging on two hosts: one host failing it fails only its own launch.
     #[test]
     fn a_staging_failure_on_one_host_leaves_another_host_staging_the_same_bundle_alone() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, on_pc, on_server) = two_hosts();
             report(
                 &mut backend,
@@ -1632,7 +1623,7 @@ mod tests {
                 failure: SpawnFailure::BundleMissing,
             },
         ] {
-            on_test_thread(move || {
+            crate::test_support::on_large_stack(move || {
                 let (mut backend, _, on_server) = two_hosts();
                 // Pretend the server's launch went out, so a restage would have something to send.
                 backend
@@ -1671,7 +1662,7 @@ mod tests {
 
     #[test]
     fn a_runtime_sending_what_only_a_client_sends_is_disconnected() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, _, _) = two_hosts();
             report(&mut backend, "pc", 1, Message::Kill { worker: 1 });
             assert!(matches!(
@@ -1690,7 +1681,7 @@ mod tests {
     /// backoff passes, and all of them are launched again under the new runtime.
     #[test]
     fn a_fatal_runtime_relaunches_every_service_it_ran_after_reconnecting() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let deadline = Instant::now() + Duration::from_secs(10);
             while backend.state().command_link.is_none() {

@@ -394,19 +394,10 @@ mod tests {
         std::fs::canonicalize(path).unwrap().display().to_string()
     }
 
-    fn on_test_thread(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     #[test]
     fn remote_extension_popups_never_send_the_client_state_directory() {
         for scratch_visible in [false, true] {
-            on_test_thread(move || {
+            crate::test_support::on_large_stack(move || {
                 let mut backend = settled_backend();
                 let state = backend.state_mut();
                 state.current_mut().session_attached = true;
@@ -477,7 +468,7 @@ mod tests {
     /// A local pane's directory is a directory here, so a client-run command starts in it.
     #[test]
     fn exec_from_a_local_pane_starts_in_its_directory() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let project = tempfile::tempdir().unwrap();
             let cwd = exec_cwd(false, &project.path().display().to_string());
             assert_eq!(cwd, canonical(project.path()));
@@ -488,7 +479,7 @@ mod tests {
     /// the client's own directory - instead of failing to start over a path from another machine.
     #[test]
     fn exec_from_a_remote_pane_whose_directory_is_missing_here_still_runs_on_the_client() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let cwd = exec_cwd(true, "/nonexistent/rozi/remote/project");
             assert_eq!(cwd, canonical(&std::env::current_dir().unwrap()));
         });
@@ -498,7 +489,7 @@ mod tests {
     /// look right and act on the wrong machine's files, so the client must not adopt it.
     #[test]
     fn exec_from_a_remote_pane_never_adopts_a_path_that_also_exists_here() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let same_path = tempfile::tempdir().unwrap();
             let cwd = exec_cwd(true, &same_path.path().display().to_string());
             assert_ne!(cwd, canonical(same_path.path()));
@@ -508,7 +499,7 @@ mod tests {
 
     #[test]
     fn an_extension_command_leaves_its_output_and_exit_in_the_extension_log() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = settled_backend();
             backend
                 .state_mut()
@@ -556,7 +547,7 @@ mod tests {
 
     #[test]
     fn a_config_command_leaves_no_extension_log() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let scratch = tempfile::tempdir().unwrap();
             let out = scratch.path().join("ran");
             let mut backend = settled_backend();

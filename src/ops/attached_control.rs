@@ -428,18 +428,9 @@ mod tests {
             .collect()
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     #[test]
     fn caller_context_distinguishes_the_displayed_and_background_sessions() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_instance =
@@ -474,7 +465,7 @@ mod tests {
 
     #[test]
     fn a_record_request_goes_to_the_session_pinned_to_a_pane_and_its_answer_comes_back() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             let (epoch, focused) = {
@@ -530,7 +521,7 @@ mod tests {
 
     #[test]
     fn an_agent_wait_goes_to_the_session_on_screen_and_needs_a_deadline() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             attach(backend.state_mut().current_mut(), client, "current");
@@ -558,7 +549,7 @@ mod tests {
 
     #[test]
     fn an_agent_reference_from_an_unattached_session_is_refused() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             attach(backend.state_mut().current_mut(), client, "current");
@@ -589,7 +580,7 @@ mod tests {
 
     #[test]
     fn agent_hooks_follow_the_calling_session_after_switching_away() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (background_client, background_outbound) = SessionClient::test_channel();
             let (current_client, current_outbound) = SessionClient::test_channel();
@@ -673,7 +664,7 @@ mod tests {
 
     #[test]
     fn a_stop_or_a_mark_run_inside_a_pane_names_that_pane() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             {
@@ -730,7 +721,7 @@ mod tests {
 
     #[test]
     fn a_record_request_the_session_could_not_take_never_leaves_the_ui() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let refused = ask(&mut backend, ControlCommand::RecordList);
             assert_eq!(
@@ -784,7 +775,7 @@ mod tests {
     /// its own. What A's pane asks for is A's business, not whatever is on screen.
     #[test]
     fn a_pane_in_a_background_session_is_answered_by_its_own_session() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client_a, outbound_a) = SessionClient::test_channel();
             let (client_b, outbound_b) = SessionClient::test_channel();
@@ -860,7 +851,7 @@ mod tests {
 
     #[test]
     fn a_scratch_pane_with_the_same_number_does_not_hide_the_session_pane() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, outbound) = SessionClient::test_channel();
             let shared = {

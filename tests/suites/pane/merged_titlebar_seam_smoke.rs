@@ -99,18 +99,9 @@ fn seam_row(frame: &CapturedFrame) -> u16 {
     row as u16
 }
 
-fn run<F: FnOnce() + Send + 'static>(body: F) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn merged titlebar seam test")
-        .join()
-        .expect("merged titlebar seam test completes");
-}
-
 #[test]
 fn merged_stacked_panes_keep_both_titlebars() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for mode in MODES {
             for title_style in CAPS {
                 // Both focus positions: the focused pane draws last, so focusing the *upper* pane
@@ -133,7 +124,7 @@ fn merged_stacked_panes_keep_both_titlebars() {
 
 #[test]
 fn seam_titlebar_matches_the_in_frame_titlebar_layout() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for mode in MODES {
             for title_style in CAPS {
                 let frame = render(mode, title_style, TOP);
@@ -177,7 +168,7 @@ fn seam_titlebar_matches_the_in_frame_titlebar_layout() {
 
 #[test]
 fn seam_titlebar_carries_the_same_focus_styling_as_an_in_frame_titlebar() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for mode in MODES {
             for title_style in CAPS {
                 // The top pane's row is never on a seam, so it is the reference rendering. Compare
@@ -212,7 +203,7 @@ fn seam_titlebar_carries_the_same_focus_styling_as_an_in_frame_titlebar() {
 #[test]
 fn side_by_side_tiles_below_a_seam_keep_their_titles_and_junction() {
     const TITLES: [&str; 3] = ["pane-aa", "pane-bb", "pane-cc"];
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for mode in MODES {
             for title_style in CAPS {
                 // Focus each tile in turn: the focused pane draws last, so this is what used to

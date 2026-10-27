@@ -871,12 +871,7 @@ mod tests {
     }
 
     fn in_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn test thread")
-            .join()
-            .expect("join test thread");
+        crate::test_support::on_large_stack(body);
     }
 
     const VIEWPORT_W: u16 = 80;

@@ -515,136 +515,130 @@ mod tests {
         use crate::Msg;
         use crate::state::Pane;
         use tui_lipan::TestBackend;
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                for suppressed in [
-                    "attended",
-                    "dnd",
-                    "follower",
-                    "disabled",
-                    "initial",
-                    "sound-throttled",
-                ] {
-                    let mut backend = TestBackend::new(AppRoot::default());
-                    let mut pane = Pane::new(7, 100, FloatRect::default());
-                    pane.pty_generation = 4;
-                    {
-                        let state = backend.state_mut();
-                        state.current_mut().workspaces[0].panes = vec![pane];
-                        state.current_mut().focused_pane = (suppressed == "attended").then_some(7);
-                        state.window_focused = true;
-                        state.do_not_disturb = suppressed == "dnd";
-                        // Exercise the real sound dispatch without desktop popups or audible playback.
-                        state.config.notifications.enabled = false;
-                        state.config.sounds.enabled = suppressed != "disabled";
-                        state.config.sounds.player =
-                            Some("/nonexistent-rozi-test-sound-player".into());
-                        let mut shared = crate::state::SharedSessionState::new(1);
-                        shared.controller = Some(if suppressed == "follower" { 2 } else { 1 });
-                        state.current_mut().shared = Some(shared);
-                        if suppressed == "sound-throttled" {
-                            state.sound_cues.insert(
-                                crate::platform::sound::Cue::Blocked,
-                                std::time::Instant::now(),
-                            );
-                        }
-                    }
-                    let epoch = backend.state().runtime_epoch;
-                    let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
-                    screen.set_program_status_enabled(true);
-                    screen.process_bytes(b"\x1b]7501;state=blocked\x07");
-                    let update = |initial, snapshot| Msg::SessionProgramStatusChanged {
-                        epoch,
-                        pane_id: 7,
-                        local: false,
-                        generation: 4,
-                        initial,
-                        snapshot,
-                    };
-                    backend
-                        .dispatch(update(
-                            suppressed == "initial",
-                            screen.program_status_snapshot(),
-                        ))
-                        .unwrap();
-                    assert!(
-                        backend.state().current().workspaces[0].panes[0]
-                            .terminal
-                            .program_status_notification_at
-                            .is_none(),
-                        "{suppressed}"
-                    );
-                    assert!(
-                        !backend
-                            .state()
-                            .sound_cues
-                            .contains_key(&crate::platform::sound::Cue::Error),
-                        "{suppressed}"
-                    );
-                    assert_eq!(
-                        backend
-                            .state()
-                            .sound_cues
-                            .contains_key(&crate::platform::sound::Cue::Blocked),
-                        suppressed == "sound-throttled"
-                    );
-                    if suppressed == "initial" {
-                        assert!(
-                            !backend.state().current().workspaces[0].panes[0]
-                                .terminal
-                                .program_status_attention
+        crate::test_support::on_large_stack(|| {
+            for suppressed in [
+                "attended",
+                "dnd",
+                "follower",
+                "disabled",
+                "initial",
+                "sound-throttled",
+            ] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let mut pane = Pane::new(7, 100, FloatRect::default());
+                pane.pty_generation = 4;
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().workspaces[0].panes = vec![pane];
+                    state.current_mut().focused_pane = (suppressed == "attended").then_some(7);
+                    state.window_focused = true;
+                    state.do_not_disturb = suppressed == "dnd";
+                    // Exercise the real sound dispatch without desktop popups or audible playback.
+                    state.config.notifications.enabled = false;
+                    state.config.sounds.enabled = suppressed != "disabled";
+                    state.config.sounds.player = Some("/nonexistent-rozi-test-sound-player".into());
+                    let mut shared = crate::state::SharedSessionState::new(1);
+                    shared.controller = Some(if suppressed == "follower" { 2 } else { 1 });
+                    state.current_mut().shared = Some(shared);
+                    if suppressed == "sound-throttled" {
+                        state.sound_cues.insert(
+                            crate::platform::sound::Cue::Blocked,
+                            std::time::Instant::now(),
                         );
                     }
-                    {
-                        let state = backend.state_mut();
-                        state.current_mut().focused_pane = None;
-                        state.do_not_disturb = false;
-                        state.config.sounds.enabled = true;
-                        state.sound_cues.clear();
-                        state.current_mut().shared.as_mut().unwrap().controller = Some(1);
-                    }
-                    // No sleep: the failure is well within the five-second OSC cooldown.
-                    screen.process_bytes(b"\x1b]7501;state=error\x07");
+                }
+                let epoch = backend.state().runtime_epoch;
+                let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+                screen.set_program_status_enabled(true);
+                screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+                let update = |initial, snapshot| Msg::SessionProgramStatusChanged {
+                    epoch,
+                    pane_id: 7,
+                    local: false,
+                    generation: 4,
+                    initial,
+                    snapshot,
+                };
+                backend
+                    .dispatch(update(
+                        suppressed == "initial",
+                        screen.program_status_snapshot(),
+                    ))
+                    .unwrap();
+                assert!(
+                    backend.state().current().workspaces[0].panes[0]
+                        .terminal
+                        .program_status_notification_at
+                        .is_none(),
+                    "{suppressed}"
+                );
+                assert!(
+                    !backend
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Error),
+                    "{suppressed}"
+                );
+                assert_eq!(
                     backend
-                        .dispatch(update(false, screen.program_status_snapshot()))
-                        .unwrap();
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked),
+                    suppressed == "sound-throttled"
+                );
+                if suppressed == "initial" {
                     assert!(
-                        backend.state().current().workspaces[0].panes[0]
+                        !backend.state().current().workspaces[0].panes[0]
                             .terminal
-                            .program_status_notification_at
-                            .is_some(),
-                        "{suppressed}"
-                    );
-                    assert!(
-                        backend
-                            .state()
-                            .sound_cues
-                            .contains_key(&crate::platform::sound::Cue::Error),
-                        "{suppressed}"
-                    );
-                    assert!(
-                        !backend
-                            .state()
-                            .sound_cues
-                            .contains_key(&crate::platform::sound::Cue::Blocked)
-                    );
-                    // A genuinely delivered error consumes the cooldown for subsequent transitions.
-                    screen.process_bytes(b"\x1b]7501;state=blocked\x07");
-                    backend
-                        .dispatch(update(false, screen.program_status_snapshot()))
-                        .unwrap();
-                    assert!(
-                        !backend
-                            .state()
-                            .sound_cues
-                            .contains_key(&crate::platform::sound::Cue::Blocked)
+                            .program_status_attention
                     );
                 }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().focused_pane = None;
+                    state.do_not_disturb = false;
+                    state.config.sounds.enabled = true;
+                    state.sound_cues.clear();
+                    state.current_mut().shared.as_mut().unwrap().controller = Some(1);
+                }
+                // No sleep: the failure is well within the five-second OSC cooldown.
+                screen.process_bytes(b"\x1b]7501;state=error\x07");
+                backend
+                    .dispatch(update(false, screen.program_status_snapshot()))
+                    .unwrap();
+                assert!(
+                    backend.state().current().workspaces[0].panes[0]
+                        .terminal
+                        .program_status_notification_at
+                        .is_some(),
+                    "{suppressed}"
+                );
+                assert!(
+                    backend
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Error),
+                    "{suppressed}"
+                );
+                assert!(
+                    !backend
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked)
+                );
+                // A genuinely delivered error consumes the cooldown for subsequent transitions.
+                screen.process_bytes(b"\x1b]7501;state=blocked\x07");
+                backend
+                    .dispatch(update(false, screen.program_status_snapshot()))
+                    .unwrap();
+                assert!(
+                    !backend
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked)
+                );
+            }
+        });
     }
 
     #[test]

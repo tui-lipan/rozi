@@ -37,15 +37,6 @@ fn sidebar_columns(backend: &mut TestBackend<AppRoot>) -> Vec<String> {
         .collect()
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn sidebar appearance smoke thread")
-        .join()
-        .expect("sidebar appearance smoke completes");
-}
-
 fn tab_then_body(lines: &[String]) -> (usize, usize) {
     let tab = lines
         .iter()
@@ -60,7 +51,7 @@ fn tab_then_body(lines: &[String]) -> (usize, usize) {
 
 #[test]
 fn sidebar_gap_inserts_one_row_between_the_tab_bar_and_its_list() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = sidebar_backend();
         let (tab, body) = tab_then_body(&sidebar_columns(&mut backend));
         assert_eq!(
@@ -81,7 +72,7 @@ fn sidebar_gap_inserts_one_row_between_the_tab_bar_and_its_list() {
 
 #[test]
 fn round_tab_style_caps_the_active_sidebar_tab() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = sidebar_backend();
         backend.state_mut().config.sidebar.tab_style = tui_lipan::prelude::CapStyle::Round;
         let lines = sidebar_columns(&mut backend);

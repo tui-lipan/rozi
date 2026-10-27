@@ -1411,76 +1411,71 @@ mod tests {
     /// key, which is the whole point of showing it on the pane the user was already sitting in.
     #[test]
     fn window_focus_gain_preserves_attention_until_a_key_answers_it() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::AppRoot;
-                use tui_lipan::{KeyCode, KeyEvent, KeyMods, TestBackend};
+        crate::test_support::on_large_stack(|| {
+            use crate::AppRoot;
+            use tui_lipan::{KeyCode, KeyEvent, KeyMods, TestBackend};
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                let pane_id = backend
-                    .state()
-                    .current()
-                    .focused_pane
-                    .expect("fresh pane focus");
-                let other_id = 2;
-                let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
-                backend.state_mut().current_mut().workspaces[0]
+            let mut backend = TestBackend::new(AppRoot::default());
+            let pane_id = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("fresh pane focus");
+            let other_id = 2;
+            let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(Pane::new(other_id, 100, rect));
+            for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+                pane.activity.has_unseen_output = true;
+                pane.activity.bell = true;
+                pane.terminal.finished_unseen = true;
+            }
+
+            backend
+                .set_window_focused(false)
+                .expect("lose host-window focus");
+            backend
+                .set_window_focused(true)
+                .expect("gain host-window focus");
+
+            {
+                let selected = backend.state().current().workspaces[0]
                     .panes
-                    .push(Pane::new(other_id, 100, rect));
-                for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
-                    pane.activity.has_unseen_output = true;
-                    pane.activity.bell = true;
-                    pane.terminal.finished_unseen = true;
-                }
-
-                backend
-                    .set_window_focused(false)
-                    .expect("lose host-window focus");
-                backend
-                    .set_window_focused(true)
-                    .expect("gain host-window focus");
-
-                {
-                    let selected = backend.state().current().workspaces[0]
-                        .panes
-                        .iter()
-                        .find(|pane| pane.id == pane_id)
-                        .expect("selected pane");
-                    assert!(selected.activity.has_unseen_output);
-                    assert!(selected.activity.bell);
-                    assert!(selected.terminal.finished_unseen);
-                }
-
-                backend
-                    .dispatch(crate::Msg::PaneKey(
-                        pane_id,
-                        KeyEvent {
-                            code: KeyCode::Char('x'),
-                            mods: KeyMods::NONE,
-                        },
-                    ))
-                    .expect("type into the focused pane");
-
-                let panes = &backend.state().current().workspaces[0].panes;
-                let selected = panes
                     .iter()
                     .find(|pane| pane.id == pane_id)
                     .expect("selected pane");
-                assert!(!selected.activity.has_unseen_output);
-                assert!(!selected.activity.bell);
-                assert!(!selected.terminal.finished_unseen);
-                let other = panes
-                    .iter()
-                    .find(|pane| pane.id == other_id)
-                    .expect("other pane");
-                assert!(other.activity.has_unseen_output);
-                assert!(other.activity.bell);
-                assert!(other.terminal.finished_unseen);
-            })
-            .expect("spawn focus lifecycle test")
-            .join()
-            .expect("focus lifecycle test completes");
+                assert!(selected.activity.has_unseen_output);
+                assert!(selected.activity.bell);
+                assert!(selected.terminal.finished_unseen);
+            }
+
+            backend
+                .dispatch(crate::Msg::PaneKey(
+                    pane_id,
+                    KeyEvent {
+                        code: KeyCode::Char('x'),
+                        mods: KeyMods::NONE,
+                    },
+                ))
+                .expect("type into the focused pane");
+
+            let panes = &backend.state().current().workspaces[0].panes;
+            let selected = panes
+                .iter()
+                .find(|pane| pane.id == pane_id)
+                .expect("selected pane");
+            assert!(!selected.activity.has_unseen_output);
+            assert!(!selected.activity.bell);
+            assert!(!selected.terminal.finished_unseen);
+            let other = panes
+                .iter()
+                .find(|pane| pane.id == other_id)
+                .expect("other pane");
+            assert!(other.activity.has_unseen_output);
+            assert!(other.activity.bell);
+            assert!(other.terminal.finished_unseen);
+        });
     }
 
     /// A focus change driven from off-screen (control socket, layout reconciliation) is not the user
@@ -1488,35 +1483,46 @@ mod tests {
     /// window comes back. Only focusing the pane with the window present answers it.
     #[test]
     fn background_programmatic_focus_preserves_attention_until_the_pane_is_focused_in_view() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::AppRoot;
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::AppRoot;
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                let target = 2;
-                let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
-                let mut pane = Pane::new(target, 100, rect);
-                pane.activity.has_unseen_output = true;
-                pane.activity.bell = true;
-                pane.terminal.finished_unseen = true;
-                backend.state_mut().current_mut().workspaces[0]
-                    .panes
-                    .push(pane);
-                let original = backend.state_mut().current_mut().workspaces[0]
-                    .panes
-                    .iter_mut()
-                    .find(|pane| pane.id != target)
-                    .expect("original pane");
-                original.activity.has_unseen_output = true;
-                original.activity.bell = true;
-                original.terminal.finished_unseen = true;
+            let mut backend = TestBackend::new(AppRoot::default());
+            let target = 2;
+            let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+            let mut pane = Pane::new(target, 100, rect);
+            pane.activity.has_unseen_output = true;
+            pane.activity.bell = true;
+            pane.terminal.finished_unseen = true;
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(pane);
+            let original = backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .iter_mut()
+                .find(|pane| pane.id != target)
+                .expect("original pane");
+            original.activity.has_unseen_output = true;
+            original.activity.bell = true;
+            original.terminal.finished_unseen = true;
 
-                backend
-                    .set_window_focused(false)
-                    .expect("lose host-window focus");
-                focus_pane(backend.state_mut(), target);
+            backend
+                .set_window_focused(false)
+                .expect("lose host-window focus");
+            focus_pane(backend.state_mut(), target);
+            let target_pane = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == target)
+                .expect("target pane");
+            assert!(target_pane.activity.has_unseen_output);
+            assert!(target_pane.activity.bell);
+            assert!(target_pane.terminal.finished_unseen);
+
+            backend
+                .set_window_focused(true)
+                .expect("gain host-window focus");
+            {
                 let target_pane = backend.state().current().workspaces[0]
                     .panes
                     .iter()
@@ -1525,44 +1531,28 @@ mod tests {
                 assert!(target_pane.activity.has_unseen_output);
                 assert!(target_pane.activity.bell);
                 assert!(target_pane.terminal.finished_unseen);
+            }
 
-                backend
-                    .set_window_focused(true)
-                    .expect("gain host-window focus");
-                {
-                    let target_pane = backend.state().current().workspaces[0]
-                        .panes
-                        .iter()
-                        .find(|pane| pane.id == target)
-                        .expect("target pane");
-                    assert!(target_pane.activity.has_unseen_output);
-                    assert!(target_pane.activity.bell);
-                    assert!(target_pane.terminal.finished_unseen);
-                }
-
-                // Clicking or navigating to the pane while the window is present: the deliberate
-                // focus act that does answer it.
-                focus_pane(backend.state_mut(), target);
-                let target_pane = backend.state().current().workspaces[0]
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == target)
-                    .expect("target pane");
-                assert!(!target_pane.activity.has_unseen_output);
-                assert!(!target_pane.activity.bell);
-                assert!(!target_pane.terminal.finished_unseen);
-                let original = backend.state().current().workspaces[0]
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id != target)
-                    .expect("original pane");
-                assert!(original.activity.has_unseen_output);
-                assert!(original.activity.bell);
-                assert!(original.terminal.finished_unseen);
-            })
-            .expect("spawn background focus test")
-            .join()
-            .expect("background focus test completes");
+            // Clicking or navigating to the pane while the window is present: the deliberate
+            // focus act that does answer it.
+            focus_pane(backend.state_mut(), target);
+            let target_pane = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == target)
+                .expect("target pane");
+            assert!(!target_pane.activity.has_unseen_output);
+            assert!(!target_pane.activity.bell);
+            assert!(!target_pane.terminal.finished_unseen);
+            let original = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id != target)
+                .expect("original pane");
+            assert!(original.activity.has_unseen_output);
+            assert!(original.activity.bell);
+            assert!(original.terminal.finished_unseen);
+        });
     }
 
     fn state_with_floating(placements: &[(PaneId, FloatRect)]) -> State {
@@ -2229,80 +2219,75 @@ mod tests {
 
     #[test]
     fn move_focused_into_occupied_scrollable_reveals_at_right_edge() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::AppRoot;
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::AppRoot;
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].panes.clear();
-                    state.current_mut().workspaces[0]
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].panes.clear();
+                state.current_mut().workspaces[0]
+                    .panes
+                    .push(Pane::new(10, 100, rect));
+                append_tiled_window(&mut state.current_mut().workspaces[0], 10);
+                state.current_mut().workspaces[0].focused_pane = Some(10);
+
+                state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[1].panes.clear();
+                for id in [1, 2, 3, 4] {
+                    state.current_mut().workspaces[1]
                         .panes
-                        .push(Pane::new(10, 100, rect));
-                    append_tiled_window(&mut state.current_mut().workspaces[0], 10);
-                    state.current_mut().workspaces[0].focused_pane = Some(10);
-
-                    state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[1].panes.clear();
-                    for id in [1, 2, 3, 4] {
-                        state.current_mut().workspaces[1]
-                            .panes
-                            .push(Pane::new(id, 100, rect));
-                        append_tiled_window(&mut state.current_mut().workspaces[1], id);
-                    }
-                    state.current_mut().active_workspace = 1;
-                    focus_pane(state, 4);
-                    state.current_mut().active_workspace = 0;
-                    state.current_mut().focused_pane = Some(10);
-                    state.animation = GeometryAnimation::None;
+                        .push(Pane::new(id, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[1], id);
                 }
-                backend.state_mut().current_mut().active_workspace = 1;
-                backend.render();
-                assert_eq!(
-                    backend.state().current().workspaces[1].scrollable_anchor,
-                    Some(4)
-                );
-                backend.state_mut().current_mut().active_workspace = 0;
-                backend.state_mut().current_mut().focused_pane = Some(10);
-                backend.state_mut().animation = GeometryAnimation::None;
+                state.current_mut().active_workspace = 1;
+                focus_pane(state, 4);
+                state.current_mut().active_workspace = 0;
+                state.current_mut().focused_pane = Some(10);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.state_mut().current_mut().active_workspace = 1;
+            backend.render();
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(4)
+            );
+            backend.state_mut().current_mut().active_workspace = 0;
+            backend.state_mut().current_mut().focused_pane = Some(10);
+            backend.state_mut().animation = GeometryAnimation::None;
 
-                move_focused_to_workspace(backend.state_mut(), 1);
-                assert_eq!(backend.state().current().active_workspace, 1);
-                assert_eq!(backend.state().current().focused_pane, Some(10));
-                assert_eq!(
-                    backend.state().animation,
-                    GeometryAnimation::None,
-                    "cross-workspace move stays instant"
-                );
-                assert_eq!(
-                    backend.state().current().workspaces[1].scrollable_reveal_edge,
-                    ScrollableRevealEdge::Right
-                );
-                assert_eq!(
-                    backend.state().current().workspaces[1].scrollable_anchor,
-                    Some(10)
-                );
-                backend.render();
-                assert_right_edge_aligned(backend.state(), 10);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+            move_focused_to_workspace(backend.state_mut(), 1);
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(backend.state().current().focused_pane, Some(10));
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "cross-workspace move stays instant"
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(10)
+            );
+            backend.render();
+            assert_right_edge_aligned(backend.state(), 10);
+        });
     }
 
     #[test]
@@ -2608,64 +2593,59 @@ mod tests {
 
     #[test]
     fn promote_scrollable_reveals_focused_under_preserved_non_focus_anchor() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2, 3, 4] {
-                        let mut pane = Pane::new(id, 100, rect);
-                        pane.scrollable_width = 0.30;
-                        state.current_mut().workspaces[0].panes.push(pane);
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    focus_pane(state, 4);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2, 3, 4] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    pane.scrollable_width = 0.30;
+                    state.current_mut().workspaces[0].panes.push(pane);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                backend
-                    .dispatch(Msg::FocusPane(3))
-                    .expect("visible under right");
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(4)
-                );
-                assert!(promote_focused_to_master(backend.state_mut()));
-                backend.state_mut().animation = GeometryAnimation::AxisChange;
-                assert_eq!(backend.state().current().focused_pane, Some(3));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(3)
-                );
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_reveal_edge,
-                    ScrollableRevealEdge::Left
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                backend.render();
-                assert_left_edge_aligned(backend.state(), 3);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+                focus_pane(state, 4);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            backend
+                .dispatch(Msg::FocusPane(3))
+                .expect("visible under right");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            assert!(promote_focused_to_master(backend.state_mut()));
+            backend.state_mut().animation = GeometryAnimation::AxisChange;
+            assert_eq!(backend.state().current().focused_pane, Some(3));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(3)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Left
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            backend.render();
+            assert_left_edge_aligned(backend.state(), 3);
+        });
     }
 
     fn set_reported_status(pane: &mut Pane, value: &str) {
@@ -2908,80 +2888,75 @@ mod tests {
 
     #[test]
     fn scrollable_focus_preserves_viewport_for_fully_visible_targets() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    state.current_mut().workspaces[0].tile_tree = None;
-                    for id in [1, 2, 3, 4] {
-                        state.current_mut().workspaces[0]
-                            .panes
-                            .push(Pane::new(id, 100, rect));
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                state.current_mut().workspaces[0].tile_tree = None;
+                for id in [1, 2, 3, 4] {
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(Pane::new(id, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
 
-                let before = placement_x(backend.state(), 1);
-                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(1),
-                    "fully visible focus materializes/preserves the pre-focus effective anchor"
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!(
-                    (placement_x(backend.state(), 1) - before).abs() < 1e-5,
-                    "fully visible focus must not shift placements"
-                );
+            let before = placement_x(backend.state(), 1);
+            backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1),
+                "fully visible focus materializes/preserves the pre-focus effective anchor"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!(
+                (placement_x(backend.state(), 1) - before).abs() < 1e-5,
+                "fully visible focus must not shift placements"
+            );
 
-                let before = placement_x(backend.state(), 1);
-                backend.dispatch(Msg::FocusPane(3)).expect("focus clipped");
-                assert_eq!(backend.state().current().focused_pane, Some(3));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(3)
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                assert!(
-                    (placement_x(backend.state(), 1) - before).abs() > 0.5,
-                    "partly/outside focus must scroll the strip"
-                );
-                assert_right_edge_aligned(backend.state(), 3);
-                let sibling = &backend.state().current().workspaces[0].panes[0];
-                let cfg = crate::layout::anim::geometry_transition_for_pane(
-                    backend.state(),
-                    sibling,
-                    false,
-                    None,
-                );
-                assert!(cfg.duration > std::time::Duration::ZERO);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+            let before = placement_x(backend.state(), 1);
+            backend.dispatch(Msg::FocusPane(3)).expect("focus clipped");
+            assert_eq!(backend.state().current().focused_pane, Some(3));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(3)
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert!(
+                (placement_x(backend.state(), 1) - before).abs() > 0.5,
+                "partly/outside focus must scroll the strip"
+            );
+            assert_right_edge_aligned(backend.state(), 3);
+            let sibling = &backend.state().current().workspaces[0].panes[0];
+            let cfg = crate::layout::anim::geometry_transition_for_pane(
+                backend.state(),
+                sibling,
+                false,
+                None,
+            );
+            assert!(cfg.duration > std::time::Duration::ZERO);
+        });
     }
 
     /// Directional focus sees one scratch content model but two presentation boxes: docked tiles
@@ -3043,571 +3018,536 @@ mod tests {
     /// the strip scrolled on every focus even when the target was already fully visible.
     #[test]
     fn scrollable_focus_in_the_scratchpad_preserves_a_fully_visible_target() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    state.scratch.layout_kind = LayoutKind::Scrollable;
-                    for id in [1, 2, 3, 4] {
-                        let mut pane = Pane::new(id, 100, FloatRect::default());
-                        pane.opening = false;
-                        state.scratch.panes.push(pane);
-                        append_tiled_window(&mut state.scratch, id);
-                    }
-                    state.scratch_visible = true;
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.scratch.layout_kind = LayoutKind::Scrollable;
+                for id in [1, 2, 3, 4] {
+                    let mut pane = Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    state.scratch.panes.push(pane);
+                    append_tiled_window(&mut state.scratch, id);
                 }
-                backend.render();
+                state.scratch_visible = true;
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
 
-                let placement_x = |state: &State, id: PaneId| {
-                    let viewport = state.last_viewport.get().expect("viewport");
-                    let bounds = state.layout_bounds(viewport);
-                    let placements = workspace_target_rects_with_visible_bounds(
-                        &state.scratch,
-                        bounds,
-                        bounds,
-                        state.layout_top_gap(),
-                        state.tile_gap(),
-                    );
-                    placement_for(&placements, id).expect("placement").x
-                };
-
-                let before = placement_x(backend.state(), 1);
-                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
-                assert_eq!(backend.state().scratch.focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().scratch.scrollable_anchor,
-                    Some(1),
-                    "a fully visible target keeps the strip where it is"
+            let placement_x = |state: &State, id: PaneId| {
+                let viewport = state.last_viewport.get().expect("viewport");
+                let bounds = state.layout_bounds(viewport);
+                let placements = workspace_target_rects_with_visible_bounds(
+                    &state.scratch,
+                    bounds,
+                    bounds,
+                    state.layout_top_gap(),
+                    state.tile_gap(),
                 );
-                assert!(
-                    (placement_x(backend.state(), 1) - before).abs() < 1e-5,
-                    "fully visible focus must not shift placements"
-                );
+                placement_for(&placements, id).expect("placement").x
+            };
 
-                // A target off the right edge still scrolls, exactly as in a workspace.
-                backend.dispatch(Msg::FocusPane(4)).expect("focus clipped");
-                assert_eq!(backend.state().scratch.scrollable_anchor, Some(4));
-                assert!((placement_x(backend.state(), 1) - before).abs() > 0.5);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+            let before = placement_x(backend.state(), 1);
+            backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+            assert_eq!(backend.state().scratch.focused_pane, Some(2));
+            assert_eq!(
+                backend.state().scratch.scrollable_anchor,
+                Some(1),
+                "a fully visible target keeps the strip where it is"
+            );
+            assert!(
+                (placement_x(backend.state(), 1) - before).abs() < 1e-5,
+                "fully visible focus must not shift placements"
+            );
+
+            // A target off the right edge still scrolls, exactly as in a workspace.
+            backend.dispatch(Msg::FocusPane(4)).expect("focus clipped");
+            assert_eq!(backend.state().scratch.scrollable_anchor, Some(4));
+            assert!((placement_x(backend.state(), 1) - before).abs() > 0.5);
+        });
     }
 
     #[test]
     fn scrollable_focus_from_right_scroll_preserves_visible_and_scrolls_clipped() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2, 3, 4] {
-                        let mut pane = Pane::new(id, 100, rect);
-                        // Narrow enough that panes 2 and 3 stay fully visible under a right
-                        // anchor on 4, while pane 1 stays left-clipped.
-                        pane.scrollable_width = 0.30;
-                        state.current_mut().workspaces[0].panes.push(pane);
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    focus_pane(state, 4);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2, 3, 4] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    // Narrow enough that panes 2 and 3 stay fully visible under a right
+                    // anchor on 4, while pane 1 stays left-clipped.
+                    pane.scrollable_width = 0.30;
+                    state.current_mut().workspaces[0].panes.push(pane);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(4)
+                focus_pane(state, 4);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            {
+                let visible = visible_tile(backend.state());
+                let p2 = placement_of(backend.state(), 2);
+                let p1 = placement_of(backend.state(), 1);
+                assert!(
+                    p2.x >= visible.x - 0.5 && p2.x + p2.w <= visible.x + visible.w + 0.5,
+                    "precondition: pane 2 fully visible"
                 );
-                {
-                    let visible = visible_tile(backend.state());
-                    let p2 = placement_of(backend.state(), 2);
-                    let p1 = placement_of(backend.state(), 1);
-                    assert!(
-                        p2.x >= visible.x - 0.5 && p2.x + p2.w <= visible.x + visible.w + 0.5,
-                        "precondition: pane 2 fully visible"
-                    );
-                    assert!(p1.x < visible.x - 0.5, "precondition: pane 1 left-clipped");
-                }
+                assert!(p1.x < visible.x - 0.5, "precondition: pane 1 left-clipped");
+            }
 
-                let before = placement_x(backend.state(), 4);
-                backend.dispatch(Msg::FocusPane(3)).expect("focus visible");
-                assert_eq!(backend.state().current().focused_pane, Some(3));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(4)
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
+            let before = placement_x(backend.state(), 4);
+            backend.dispatch(Msg::FocusPane(3)).expect("focus visible");
+            assert_eq!(backend.state().current().focused_pane, Some(3));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
 
-                // Adjacent still-visible pane to the left of 3 must not move the strip.
-                let before = placement_x(backend.state(), 4);
-                backend
-                    .dispatch(Msg::FocusPane(2))
-                    .expect("focus adjacent visible");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(4),
-                    "fully visible leftward focus keeps the right-scrolled anchor"
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
+            // Adjacent still-visible pane to the left of 3 must not move the strip.
+            let before = placement_x(backend.state(), 4);
+            backend
+                .dispatch(Msg::FocusPane(2))
+                .expect("focus adjacent visible");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4),
+                "fully visible leftward focus keeps the right-scrolled anchor"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
 
-                let before = placement_x(backend.state(), 4);
-                backend
-                    .dispatch(Msg::FocusPane(1))
-                    .expect("focus left-clipped");
-                assert_eq!(backend.state().current().focused_pane, Some(1));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(1)
-                );
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_reveal_edge,
-                    ScrollableRevealEdge::Left
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                assert!((placement_x(backend.state(), 4) - before).abs() > 0.5);
-                assert_left_edge_aligned(backend.state(), 1);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+            let before = placement_x(backend.state(), 4);
+            backend
+                .dispatch(Msg::FocusPane(1))
+                .expect("focus left-clipped");
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Left
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert!((placement_x(backend.state(), 4) - before).abs() > 0.5);
+            assert_left_edge_aligned(backend.state(), 1);
+        });
     }
 
     #[test]
     fn scrollable_focus_materializes_stale_none_anchor_without_scrolling() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2] {
-                        state.current_mut().workspaces[0]
-                            .panes
-                            .push(Pane::new(id, 100, rect));
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    state.current_mut().workspaces[0].focused_pane = Some(1);
-                    state.current_mut().focused_pane = Some(1);
-                    state.current_mut().workspaces[0].scrollable_anchor = None;
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2] {
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(Pane::new(id, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                let before = placement_x(backend.state(), 1);
-                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(1),
-                    "None/stale stored anchor must materialize the pre-focus effective fallback"
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+                state.current_mut().workspaces[0].focused_pane = Some(1);
+                state.current_mut().focused_pane = Some(1);
+                state.current_mut().workspaces[0].scrollable_anchor = None;
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            let before = placement_x(backend.state(), 1);
+            backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1),
+                "None/stale stored anchor must materialize the pre-focus effective fallback"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
+        });
     }
 
     #[test]
     fn scrollable_follower_letterbox_uses_local_visible_intersection() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::state::SharedSessionState;
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::state::SharedSessionState;
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                // Local viewport narrower than the controller canvas → letterbox overhang.
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 50,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().session_attached = true;
-                    let mut shared = SharedSessionState::new(1);
-                    shared.controller = Some(2);
-                    shared.canonical_canvas = Some((100, 28));
-                    state.current_mut().shared = Some(shared);
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2] {
-                        let mut pane = Pane::new(id, 100, rect);
-                        // Wide enough that pane 2 sits inside the canonical tile but past the
-                        // local visible edge when anchored on pane 1.
-                        pane.scrollable_width = 0.45;
-                        state.current_mut().workspaces[0].panes.push(pane);
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            // Local viewport narrower than the controller canvas → letterbox overhang.
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 50,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().session_attached = true;
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(2);
+                shared.canonical_canvas = Some((100, 28));
+                state.current_mut().shared = Some(shared);
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    // Wide enough that pane 2 sits inside the canonical tile but past the
+                    // local visible edge when anchored on pane 1.
+                    pane.scrollable_width = 0.45;
+                    state.current_mut().workspaces[0].panes.push(pane);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                let before = placement_of(backend.state(), 2);
-                assert!(
-                    before.x + before.w
-                        > visible_tile(backend.state()).x + visible_tile(backend.state()).w,
-                    "precondition: pane 2 must start locally clipped"
-                );
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            let before = placement_of(backend.state(), 2);
+            assert!(
+                before.x + before.w
+                    > visible_tile(backend.state()).x + visible_tile(backend.state()).w,
+                "precondition: pane 2 must start locally clipped"
+            );
 
-                backend
-                    .dispatch(Msg::FocusPane(2))
-                    .expect("focus locally clipped");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(2),
-                    "local letterbox clip must not count as fully visible"
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                let after = placement_of(backend.state(), 2);
-                assert!(
-                    (after.x - before.x).abs() > 0.5,
-                    "follower scroll must actually move placements"
-                );
-                assert_fully_in_visible(backend.state(), 2);
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            backend
+                .dispatch(Msg::FocusPane(2))
+                .expect("focus locally clipped");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(2),
+                "local letterbox clip must not count as fully visible"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            let after = placement_of(backend.state(), 2);
+            assert!(
+                (after.x - before.x).abs() > 0.5,
+                "follower scroll must actually move placements"
+            );
+            assert_fully_in_visible(backend.state(), 2);
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
 
-                // First pane starts left of the local viewport under canonical letterbox; focusing
-                // it must use negative scroll range to reveal it.
-                {
-                    let state = backend.state_mut();
-                    focus_pane(state, 2);
-                    state.animation = GeometryAnimation::None;
+            // First pane starts left of the local viewport under canonical letterbox; focusing
+            // it must use negative scroll range to reveal it.
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 2);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            let before_first = placement_of(backend.state(), 1);
+            assert!(
+                before_first.x < visible_tile(backend.state()).x - 0.5,
+                "precondition: first pane left-clipped by letterbox"
+            );
+            backend
+                .dispatch(Msg::FocusPane(1))
+                .expect("reveal first pane");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1)
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert_fully_in_visible(backend.state(), 1);
+            assert!((placement_of(backend.state(), 1).x - before_first.x).abs() > 0.5);
+
+            // Narrower panes with a third column so 1–2 stay preferred (no two-pane flex)
+            // and both fit inside the local visible interval under a left anchor.
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                for pane in &mut state.current_mut().workspaces[0].panes {
+                    pane.scrollable_width = 0.20;
                 }
-                backend.render();
-                let before_first = placement_of(backend.state(), 1);
-                assert!(
-                    before_first.x < visible_tile(backend.state()).x - 0.5,
-                    "precondition: first pane left-clipped by letterbox"
-                );
-                backend
-                    .dispatch(Msg::FocusPane(1))
-                    .expect("reveal first pane");
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(1)
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                assert_fully_in_visible(backend.state(), 1);
-                assert!((placement_of(backend.state(), 1).x - before_first.x).abs() > 0.5);
-
-                // Narrower panes with a third column so 1–2 stay preferred (no two-pane flex)
-                // and both fit inside the local visible interval under a left anchor.
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    for pane in &mut state.current_mut().workspaces[0].panes {
-                        pane.scrollable_width = 0.20;
-                    }
-                    let mut third = Pane::new(3, 100, rect);
-                    third.scrollable_width = 0.20;
-                    state.current_mut().workspaces[0].panes.push(third);
-                    append_tiled_window(&mut state.current_mut().workspaces[0], 3);
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
-                }
-                backend.render();
-                let before = placement_x(backend.state(), 1);
-                backend
-                    .dispatch(Msg::FocusPane(2))
-                    .expect("focus locally visible");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(1)
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+                let mut third = Pane::new(3, 100, rect);
+                third.scrollable_width = 0.20;
+                state.current_mut().workspaces[0].panes.push(third);
+                append_tiled_window(&mut state.current_mut().workspaces[0], 3);
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            let before = placement_x(backend.state(), 1);
+            backend
+                .dispatch(Msg::FocusPane(2))
+                .expect("focus locally visible");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1)
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
+        });
     }
 
     #[test]
     fn scrollable_focus_reveals_partly_left_clipped_local_pane() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2, 3, 4, 5] {
-                        let mut pane = Pane::new(id, 100, rect);
-                        pane.scrollable_width = 0.35;
-                        state.current_mut().workspaces[0].panes.push(pane);
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    // Anchor near the right so pane 2 straddles the left visible edge.
-                    focus_pane(state, 4);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2, 3, 4, 5] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    pane.scrollable_width = 0.35;
+                    state.current_mut().workspaces[0].panes.push(pane);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                let visible = visible_tile(backend.state());
-                let pane2 = placement_of(backend.state(), 2);
-                assert!(
-                    pane2.x < visible.x - 0.5 && pane2.x + pane2.w > visible.x + 0.5,
-                    "precondition: pane 2 partly left-clipped ({pane2:?} vs {visible:?})"
-                );
-                let before = pane2.x;
-                backend.dispatch(Msg::FocusPane(2)).expect("focus partial");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_anchor,
-                    Some(2)
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                assert!((placement_of(backend.state(), 2).x - before).abs() > 0.5);
-                assert_fully_in_visible(backend.state(), 2);
-                assert_left_edge_aligned(backend.state(), 2);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+                // Anchor near the right so pane 2 straddles the left visible edge.
+                focus_pane(state, 4);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            let visible = visible_tile(backend.state());
+            let pane2 = placement_of(backend.state(), 2);
+            assert!(
+                pane2.x < visible.x - 0.5 && pane2.x + pane2.w > visible.x + 0.5,
+                "precondition: pane 2 partly left-clipped ({pane2:?} vs {visible:?})"
+            );
+            let before = pane2.x;
+            backend.dispatch(Msg::FocusPane(2)).expect("focus partial");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(2)
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert!((placement_of(backend.state(), 2).x - before).abs() > 0.5);
+            assert_fully_in_visible(backend.state(), 2);
+            assert_left_edge_aligned(backend.state(), 2);
+        });
     }
 
     #[test]
     fn scrollable_focus_wide_pane_reaffirm_keeps_reveal_edge() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 40,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[0].panes.clear();
-                    for id in [1, 2] {
-                        let mut pane = Pane::new(id, 100, rect);
-                        // Wider than the local viewport so both edges stay clipped.
-                        pane.scrollable_width = 0.80;
-                        state.current_mut().workspaces[0].panes.push(pane);
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 40,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[0].panes.clear();
+                for id in [1, 2] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    // Wider than the local viewport so both edges stay clipped.
+                    pane.scrollable_width = 0.80;
+                    state.current_mut().workspaces[0].panes.push(pane);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
-                backend
-                    .dispatch(Msg::FocusPane(2))
-                    .expect("focus wide rightward");
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_reveal_edge,
-                    ScrollableRevealEdge::Right
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
-                backend.state_mut().animation = GeometryAnimation::None;
-                backend.dispatch(Msg::FocusPane(2)).expect("reaffirm");
-                assert_eq!(
-                    backend.state().current().workspaces[0].scrollable_reveal_edge,
-                    ScrollableRevealEdge::Right
-                );
-                assert_eq!(
-                    backend.state().animation,
-                    GeometryAnimation::None,
-                    "reaffirming a wide anchored pane must not re-arm"
-                );
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            backend
+                .dispatch(Msg::FocusPane(2))
+                .expect("focus wide rightward");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            backend.state_mut().animation = GeometryAnimation::None;
+            backend.dispatch(Msg::FocusPane(2)).expect("reaffirm");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "reaffirming a wide anchored pane must not re-arm"
+            );
+        });
     }
 
     #[test]
     fn focus_pane_anywhere_cross_workspace_finishes_instant() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use std::sync::mpsc;
+        crate::test_support::on_large_stack(|| {
+            use std::sync::mpsc;
 
-                use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
+            use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
-                    for id in [2, 3, 4] {
-                        state.current_mut().workspaces[0]
-                            .panes
-                            .push(Pane::new(id, 100, rect));
-                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
-                    }
-                    state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
-                    state.current_mut().workspaces[1]
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                for id in [2, 3, 4] {
+                    state.current_mut().workspaces[0]
                         .panes
-                        .push(Pane::new(10, 100, rect));
-                    append_tiled_window(&mut state.current_mut().workspaces[1], 10);
-                    state.current_mut().workspaces[1]
-                        .panes
-                        .push(Pane::new(11, 100, rect));
-                    append_tiled_window(&mut state.current_mut().workspaces[1], 11);
-                    focus_pane(state, 1);
-                    state.animation = GeometryAnimation::None;
+                        .push(Pane::new(id, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[0], id);
                 }
-                backend.render();
+                state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
+                state.current_mut().workspaces[1]
+                    .panes
+                    .push(Pane::new(10, 100, rect));
+                append_tiled_window(&mut state.current_mut().workspaces[1], 10);
+                state.current_mut().workspaces[1]
+                    .panes
+                    .push(Pane::new(11, 100, rect));
+                append_tiled_window(&mut state.current_mut().workspaces[1], 11);
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
 
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::Focus { target: 10 },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
-                        },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("cross-workspace focus");
-                assert!(response.recv().unwrap().ok);
-                assert_eq!(backend.state().current().active_workspace, 1);
-                assert_eq!(backend.state().current().focused_pane, Some(10));
-                assert_eq!(
-                    backend.state().animation,
-                    GeometryAnimation::None,
-                    "cross-workspace focus_pane_anywhere must finish instant"
-                );
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::Focus { target: 10 },
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("cross-workspace focus");
+            assert!(response.recv().unwrap().ok);
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(backend.state().current().focused_pane, Some(10));
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "cross-workspace focus_pane_anywhere must finish instant"
+            );
 
-                backend.state_mut().animation = GeometryAnimation::None;
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::Focus { target: 11 },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
-                        },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("same-workspace focus");
-                assert!(response.recv().unwrap().ok);
-                assert_eq!(backend.state().current().active_workspace, 1);
-                assert_eq!(backend.state().current().focused_pane, Some(11));
-                assert_eq!(
-                    backend.state().current().workspaces[1].scrollable_anchor,
-                    Some(10),
-                    "same-workspace fully visible focus preserves the viewport"
-                );
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-            })
-            .expect("spawn")
-            .join()
-            .expect("join");
+            backend.state_mut().animation = GeometryAnimation::None;
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::Focus { target: 11 },
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("same-workspace focus");
+            assert!(response.recv().unwrap().ok);
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(backend.state().current().focused_pane, Some(11));
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(10),
+                "same-workspace fully visible focus preserves the viewport"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+        });
     }
 }

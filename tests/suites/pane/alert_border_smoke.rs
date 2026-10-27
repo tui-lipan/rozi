@@ -63,18 +63,9 @@ fn detect_second_as_blocked(backend: &mut TestBackend<AppRoot>) {
     });
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn alert-border smoke test")
-        .join()
-        .expect("alert-border smoke test completes");
-}
-
 #[test]
 fn alerts_color_frames_and_dividers_but_never_none_mode() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         for mode in [
             PaneBorderMode::Separate,
@@ -128,7 +119,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
 
 #[test]
 fn focusing_finished_alert_clears_it_and_a_blocked_focused_pane_stays_marked() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = backend(PaneBorderMode::Separate);
         {
@@ -191,7 +182,7 @@ fn focusing_finished_alert_clears_it_and_a_blocked_focused_pane_stays_marked() {
 /// answered.
 #[test]
 fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let finished_color = Color::rgb(0, 255, 1);
         let blocked_color = Color::rgb(255, 0, 1);
@@ -266,7 +257,7 @@ fn the_focused_pane_marks_a_finished_run_and_a_blocked_agent() {
 #[test]
 fn alert_paint_chooses_between_the_frame_and_a_faint_content_tint() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let alert = Color::rgb(255, 0, 1);
         let render = |mode: PaneBorderMode, paint: PaneAlertPaint| {
@@ -455,7 +446,7 @@ fn a_fade_down(quarter: std::time::Duration) -> [(std::time::Duration, &'static 
 #[test]
 fn a_pulsing_content_tint_breathes_in_step_with_the_border() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = breathing_backend(PaneAlertPaint::Both);
@@ -504,7 +495,7 @@ fn a_pulsing_content_tint_breathes_in_step_with_the_border() {
 #[test]
 fn late_ticks_leave_the_tint_and_border_in_step() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = breathing_backend(PaneAlertPaint::Both);
@@ -554,7 +545,7 @@ fn late_ticks_leave_the_tint_and_border_in_step() {
 #[test]
 fn a_long_stall_catches_the_border_up_with_the_tint() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = breathing_backend(PaneAlertPaint::Both);
@@ -601,7 +592,7 @@ fn a_long_stall_catches_the_border_up_with_the_tint() {
 #[test]
 fn an_alert_beginning_on_a_calm_pane_starts_both_surfaces_together() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = backend(PaneBorderMode::Separate);
@@ -711,7 +702,7 @@ fn surfaces_of(backend: &mut TestBackend<AppRoot>, id: u32) -> (Color, Color) {
 #[test]
 fn a_pane_that_starts_alerting_mid_breath_joins_it_where_it_is() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = three_pane_backend();
@@ -768,7 +759,7 @@ fn a_pane_that_starts_alerting_mid_breath_joins_it_where_it_is() {
 #[test]
 fn clearing_an_alert_mid_breath_snaps_the_border_to_normal() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = three_pane_backend();
@@ -821,7 +812,7 @@ fn clearing_an_alert_mid_breath_snaps_the_border_to_normal() {
 #[test]
 fn switching_the_paint_to_cover_the_content_mid_breathe_joins_the_borders_beat() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = breathing_backend(PaneAlertPaint::Border);
@@ -875,7 +866,7 @@ fn blue_image(cols: u32, rows: u32) -> Vec<u8> {
 #[test]
 fn the_content_tint_leaves_inline_images_their_own_pixels() {
     use rozi::state::{AlertMode, PaneAlertPaint};
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let untouched = |backend: &mut TestBackend<AppRoot>, when: &str| {
             let (_, content_bg) = blocked_surfaces(backend);
@@ -917,7 +908,7 @@ fn the_content_tint_leaves_inline_images_their_own_pixels() {
 #[test]
 fn blocked_and_error_color_border_and_content_independently() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let warning = Color::rgb(255, 160, 0);
         let error = Color::rgb(255, 0, 0);
@@ -957,7 +948,7 @@ fn blocked_and_error_color_border_and_content_independently() {
 #[test]
 fn error_border_and_content_keep_the_existing_urgent_pulse_in_step() {
     use rozi::state::PaneAlertPaint;
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let ends = breathe_ends();
         let mut backend = breathing_backend(PaneAlertPaint::Both);

@@ -482,15 +482,10 @@ mod tests {
 
     /// Run on a worker thread with a large stack, matching the other `TestBackend` control tests.
     fn with_backend(body: impl FnOnce(&mut TestBackend<crate::AppRoot>) + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                body(&mut backend);
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+        crate::test_support::on_large_stack(move || {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            body(&mut backend);
+        });
     }
 
     fn attach(backend: &mut TestBackend<crate::AppRoot>) -> mpsc::Receiver<ClientOutbound> {

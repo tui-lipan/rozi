@@ -620,15 +620,6 @@ mod tests {
             .into_bytes()
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn search test")
-            .join()
-            .expect("search test completes");
-    }
-
     fn state_with_two_panes(second_count: usize) -> State {
         let mut state = State::new(crate::config::Config::default(), Theme::default());
         find_pane_mut(&mut state, 1)
@@ -854,7 +845,7 @@ mod tests {
 
     #[test]
     fn restart_clear_close_and_reopen_reject_stale_scan_epochs() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             let target = backend
                 .state()
@@ -1187,129 +1178,119 @@ mod tests {
 
     #[test]
     fn truncated_status_and_navigation_use_the_bounded_set() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = backend
-                    .state()
-                    .current()
-                    .focused_pane
-                    .expect("focused pane");
-                find_pane_mut(backend.state_mut(), target)
-                    .expect("target pane")
-                    .terminal
-                    .process_server_output(&output_lines(MAX_MATCHES + 1));
-                let epoch = begin_scan(backend.state_mut(), target, SearchScope::All, "needle");
-                drain_scan(backend.state_mut(), epoch, 317);
-                let search = backend.state().search.as_ref().expect("search state");
-                assert_eq!(search.matches.len(), MAX_MATCHES);
-                assert!(search.truncated);
-                assert_eq!(search.current, 0);
-                assert_eq!(search.status, "1 / 2000+ matches (all)");
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            find_pane_mut(backend.state_mut(), target)
+                .expect("target pane")
+                .terminal
+                .process_server_output(&output_lines(MAX_MATCHES + 1));
+            let epoch = begin_scan(backend.state_mut(), target, SearchScope::All, "needle");
+            drain_scan(backend.state_mut(), epoch, 317);
+            let search = backend.state().search.as_ref().expect("search state");
+            assert_eq!(search.matches.len(), MAX_MATCHES);
+            assert!(search.truncated);
+            assert_eq!(search.current, 0);
+            assert_eq!(search.status, "1 / 2000+ matches (all)");
+            backend.render();
 
-                backend
-                    .dispatch(crate::Msg::SearchNext(false))
-                    .expect("next match");
-                let search = backend.state().search.as_ref().expect("search state");
-                assert_eq!(search.current, 1);
-                assert_eq!(search.status, "2 / 2000+ matches (all)");
+            backend
+                .dispatch(crate::Msg::SearchNext(false))
+                .expect("next match");
+            let search = backend.state().search.as_ref().expect("search state");
+            assert_eq!(search.current, 1);
+            assert_eq!(search.status, "2 / 2000+ matches (all)");
 
-                backend
-                    .dispatch(crate::Msg::SearchNext(true))
-                    .expect("previous match");
-                assert_eq!(backend.state().search.as_ref().expect("search").current, 0);
-                backend
-                    .dispatch(crate::Msg::SearchNext(true))
-                    .expect("wrapped previous match");
-                let search = backend.state().search.as_ref().expect("search state");
-                assert_eq!(search.current, MAX_MATCHES - 1);
-                assert_eq!(search.status, "2000 / 2000+ matches (all)");
-            })
-            .expect("spawn search test")
-            .join()
-            .expect("search test completes");
+            backend
+                .dispatch(crate::Msg::SearchNext(true))
+                .expect("previous match");
+            assert_eq!(backend.state().search.as_ref().expect("search").current, 0);
+            backend
+                .dispatch(crate::Msg::SearchNext(true))
+                .expect("wrapped previous match");
+            let search = backend.state().search.as_ref().expect("search state");
+            assert_eq!(search.current, MAX_MATCHES - 1);
+            assert_eq!(search.status, "2000 / 2000+ matches (all)");
+        });
     }
 
     #[test]
     fn copy_mode_search_stays_on_its_target_pane_and_hands_off_that_match() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = backend
-                    .state()
-                    .current()
-                    .focused_pane
-                    .expect("focused pane");
-                let target_output = format!(
-                    "target needle\r\n{}",
-                    (0..40)
-                        .map(|index| format!("filler-{index}\r\n"))
-                        .collect::<String>()
-                );
-                find_pane_mut(backend.state_mut(), target)
-                    .expect("target pane")
-                    .terminal
-                    .process_server_output(target_output.as_bytes());
-                let mut other = Pane::new(2, 100, FloatRect::default());
-                other.opening = false;
-                other
-                    .terminal
-                    .process_server_output(b"other needle needle\r\n");
-                backend.state_mut().current_mut().workspaces[0]
-                    .panes
-                    .push(other);
-                backend.state_mut().copy_mode = Some(CopyModeState {
-                    target,
-                    navigation: TerminalCopyMode::new(0, 0, 0),
-                    search_matches: Vec::new(),
-                    search_current: 0,
-                    search_truncated: false,
-                });
-                let epoch = begin_scan(
-                    backend.state_mut(),
-                    target,
-                    SearchScope::FocusedPane,
-                    "needle",
-                );
-                backend
-                    .state_mut()
-                    .search
-                    .as_mut()
-                    .expect("search")
-                    .from_copy_mode = true;
-                drain_scan(backend.state_mut(), epoch, 11);
-                let search = backend.state().search.as_ref().expect("search state");
-                assert_eq!(search.scope, SearchScope::FocusedPane);
-                assert!(!search.matches.is_empty());
-                assert!(search.matches.iter().all(|matched| matched.pane == target));
-                let selected = search.matches[0].clone();
-                assert!(selected.offset > 0);
-                let copy = backend.state().copy_mode.as_ref().expect("copy mode");
-                assert_eq!(copy.navigation.cursor(), (0, 0));
-                assert_eq!(copy.navigation.scrollback_offset(), 0);
-                backend
-                    .dispatch(crate::Msg::SearchActivate(0))
-                    .expect("activate copy match");
-                let copy = backend.state().copy_mode.as_ref().expect("copy mode");
-                assert_eq!(
-                    copy.navigation.cursor(),
-                    (selected.line, selected.start_col)
-                );
-                assert_eq!(copy.navigation.scrollback_offset(), selected.offset);
-                assert_eq!(copy.search_matches.len(), 1);
-                assert!(!copy.search_truncated);
-            })
-            .expect("spawn copy search test")
-            .join()
-            .expect("copy search test completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            let target_output = format!(
+                "target needle\r\n{}",
+                (0..40)
+                    .map(|index| format!("filler-{index}\r\n"))
+                    .collect::<String>()
+            );
+            find_pane_mut(backend.state_mut(), target)
+                .expect("target pane")
+                .terminal
+                .process_server_output(target_output.as_bytes());
+            let mut other = Pane::new(2, 100, FloatRect::default());
+            other.opening = false;
+            other
+                .terminal
+                .process_server_output(b"other needle needle\r\n");
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(other);
+            backend.state_mut().copy_mode = Some(CopyModeState {
+                target,
+                navigation: TerminalCopyMode::new(0, 0, 0),
+                search_matches: Vec::new(),
+                search_current: 0,
+                search_truncated: false,
+            });
+            let epoch = begin_scan(
+                backend.state_mut(),
+                target,
+                SearchScope::FocusedPane,
+                "needle",
+            );
+            backend
+                .state_mut()
+                .search
+                .as_mut()
+                .expect("search")
+                .from_copy_mode = true;
+            drain_scan(backend.state_mut(), epoch, 11);
+            let search = backend.state().search.as_ref().expect("search state");
+            assert_eq!(search.scope, SearchScope::FocusedPane);
+            assert!(!search.matches.is_empty());
+            assert!(search.matches.iter().all(|matched| matched.pane == target));
+            let selected = search.matches[0].clone();
+            assert!(selected.offset > 0);
+            let copy = backend.state().copy_mode.as_ref().expect("copy mode");
+            assert_eq!(copy.navigation.cursor(), (0, 0));
+            assert_eq!(copy.navigation.scrollback_offset(), 0);
+            backend
+                .dispatch(crate::Msg::SearchActivate(0))
+                .expect("activate copy match");
+            let copy = backend.state().copy_mode.as_ref().expect("copy mode");
+            assert_eq!(
+                copy.navigation.cursor(),
+                (selected.line, selected.start_col)
+            );
+            assert_eq!(copy.navigation.scrollback_offset(), selected.offset);
+            assert_eq!(copy.search_matches.len(), 1);
+            assert!(!copy.search_truncated);
+        });
     }
 
     #[test]
     fn incomplete_copy_search_hands_off_discovered_matches_as_truncated() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             let target = backend
                 .state()
@@ -1360,88 +1341,83 @@ mod tests {
 
     #[test]
     fn copy_mode_tab_and_backtab_do_not_recompute_or_advertise_scope_changes() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = backend
-                    .state()
-                    .current()
-                    .focused_pane
-                    .expect("focused pane");
-                find_pane_mut(backend.state_mut(), target)
-                    .expect("target pane")
-                    .terminal
-                    .process_server_output(b"needle-one\r\nneedle-two\r\n");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("focused pane");
+            find_pane_mut(backend.state_mut(), target)
+                .expect("target pane")
+                .terminal
+                .process_server_output(b"needle-one\r\nneedle-two\r\n");
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::EnterCopyMode))
+                .expect("enter copy mode");
+            let epoch = begin_scan(
+                backend.state_mut(),
+                target,
+                SearchScope::FocusedPane,
+                "needle",
+            );
+            backend
+                .state_mut()
+                .search
+                .as_mut()
+                .expect("search")
+                .from_copy_mode = true;
+            drain_scan(backend.state_mut(), epoch, 1);
+            backend.render();
+            let rendered = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(!rendered.contains("pane tab"), "{rendered}");
+
+            find_pane_mut(backend.state_mut(), target)
+                .expect("target pane")
+                .terminal
+                .process_server_output(b"needle-added-after-search\r\n");
+            let (scope, current, status, matches, items, offset) = {
+                let search = backend.state().search.as_ref().expect("search");
+                (
+                    search.scope,
+                    search.current,
+                    search.status.clone(),
+                    search.matches.clone(),
+                    Arc::clone(&search.items),
+                    find_pane(backend.state(), target)
+                        .expect("target pane")
+                        .terminal
+                        .scrollback_offset(),
+                )
+            };
+
+            for code in [KeyCode::Tab, KeyCode::BackTab] {
                 backend
-                    .dispatch(crate::Msg::RunAction(crate::input::Action::EnterCopyMode))
-                    .expect("enter copy mode");
-                let epoch = begin_scan(
-                    backend.state_mut(),
-                    target,
-                    SearchScope::FocusedPane,
-                    "needle",
+                    .send_key(KeyEvent {
+                        code,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("scope key");
+                let search = backend.state().search.as_ref().expect("search");
+                assert_eq!(search.scope, scope);
+                assert_eq!(search.current, current);
+                assert_eq!(search.status, status);
+                assert_eq!(search.matches, matches);
+                assert!(Arc::ptr_eq(&search.items, &items));
+                assert_eq!(
+                    find_pane(backend.state(), target)
+                        .expect("target pane")
+                        .terminal
+                        .scrollback_offset(),
+                    offset
                 );
-                backend
-                    .state_mut()
-                    .search
-                    .as_mut()
-                    .expect("search")
-                    .from_copy_mode = true;
-                drain_scan(backend.state_mut(), epoch, 1);
-                backend.render();
-                let rendered = backend.capture_frame().to_fixed_grid_lines().join("\n");
-                assert!(!rendered.contains("pane tab"), "{rendered}");
-
-                find_pane_mut(backend.state_mut(), target)
-                    .expect("target pane")
-                    .terminal
-                    .process_server_output(b"needle-added-after-search\r\n");
-                let (scope, current, status, matches, items, offset) = {
-                    let search = backend.state().search.as_ref().expect("search");
-                    (
-                        search.scope,
-                        search.current,
-                        search.status.clone(),
-                        search.matches.clone(),
-                        Arc::clone(&search.items),
-                        find_pane(backend.state(), target)
-                            .expect("target pane")
-                            .terminal
-                            .scrollback_offset(),
-                    )
-                };
-
-                for code in [KeyCode::Tab, KeyCode::BackTab] {
-                    backend
-                        .send_key(KeyEvent {
-                            code,
-                            mods: KeyMods::NONE,
-                        })
-                        .expect("scope key");
-                    let search = backend.state().search.as_ref().expect("search");
-                    assert_eq!(search.scope, scope);
-                    assert_eq!(search.current, current);
-                    assert_eq!(search.status, status);
-                    assert_eq!(search.matches, matches);
-                    assert!(Arc::ptr_eq(&search.items, &items));
-                    assert_eq!(
-                        find_pane(backend.state(), target)
-                            .expect("target pane")
-                            .terminal
-                            .scrollback_offset(),
-                        offset
-                    );
-                }
-            })
-            .expect("spawn copy scope test")
-            .join()
-            .expect("copy scope test completes");
+            }
+        });
     }
 
     #[test]
     fn search_jump_scrollable_animation_policy_by_workspace() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,

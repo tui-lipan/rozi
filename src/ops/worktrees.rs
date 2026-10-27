@@ -1408,18 +1408,9 @@ mod tests {
     use crate::state::{WorktreeOperation, WorktreeOperationKind, WorktreePickerState};
     use crate::{AppRoot, Msg};
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     #[test]
     fn refreshed_worktree_lists_keep_the_nearest_visible_selection() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             for (query, selected, removed, expected) in [
                 ("", 3, Some(3), Some("keep/c")),
@@ -1484,7 +1475,7 @@ mod tests {
 
     #[test]
     fn hybrid_path_matches_support_open_remove_and_unlock() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::git::worktrees::{WorktreeInfo, WorktreeLock};
             use crate::session::client::ClientOutbound;
             use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
@@ -1618,7 +1609,7 @@ mod tests {
 
     #[test]
     fn pane_action_keeps_the_session_and_passes_host_paths_to_its_server() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::session::client::ClientOutbound;
             use crate::session::protocol::ClientMessage;
             use crate::session::remote::RemoteTarget;
@@ -1735,7 +1726,7 @@ mod tests {
 
     #[test]
     fn worktree_panes_require_layout_control_on_the_same_host() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             for denied in [
                 "read-only",
@@ -1807,7 +1798,7 @@ mod tests {
 
     #[test]
     fn a_create_finishing_after_a_session_switch_still_completes() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             let (client, _outbound) = SessionClient::test_channel();
@@ -1847,7 +1838,7 @@ mod tests {
 
     #[test]
     fn an_operation_whose_connection_is_gone_stops_blocking_new_ones() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             let (sent_on, _outbound) = SessionClient::test_channel();
@@ -1924,7 +1915,7 @@ mod tests {
 
     #[test]
     fn manual_status_refreshes_coalesce_and_run_after_pending_lookup() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::session::protocol::WorktreeRequest;
             for failed in [false, true] {
                 for (list_pending, sidebar_pending) in [(false, false), (true, false), (true, true)]
@@ -1986,7 +1977,7 @@ mod tests {
 
     #[test]
     fn status_failures_schedule_retries_only_for_transient_errors() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             for (message, retryable) in [
                 ("HTTP 500: Internal Server Error", true),
                 ("HTTP 429", true),
@@ -2033,7 +2024,7 @@ mod tests {
 
     #[test]
     fn failed_reads_preserve_rows_and_status_and_retry_until_recovered() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::git::pull_requests::{PullRequestStatus, WorkStatus};
             use crate::session::protocol::WorktreeRequest;
             let (mut backend, outbound) = reads_backend();
@@ -2115,7 +2106,7 @@ mod tests {
 
     #[test]
     fn picker_and_sidebar_share_one_status_request_and_both_finish() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::config::{SidebarTab, SidebarTabId};
             use crate::session::protocol::WorktreeRequest;
             let (mut backend, outbound) = reads_backend();
@@ -2184,7 +2175,7 @@ mod tests {
 
     #[test]
     fn branch_chooser_rejects_checked_out_branches_and_previews_available_ones() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::git::worktrees::WorktreeBranch;
             let (mut backend, outbound) = reads_backend();
             backend.dispatch(Msg::WorktreeNew).unwrap();
@@ -2266,7 +2257,7 @@ mod tests {
 
     #[test]
     fn worktree_removal_shows_progress_until_the_server_finishes() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = reads_backend();
             backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
             backend.dispatch(Msg::WorktreeRemoveSelected).unwrap();
@@ -2308,7 +2299,7 @@ mod tests {
     }
     #[test]
     fn authentication_failures_wait_for_manual_refresh_instead_of_retrying() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = reads_backend();
             backend.dispatch(Msg::WorktreeRefresh).unwrap();
             requests(&outbound);

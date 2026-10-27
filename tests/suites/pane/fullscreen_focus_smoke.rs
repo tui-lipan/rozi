@@ -77,29 +77,24 @@ fn fullscreen_ids(backend: &TestBackend<AppRoot>) -> Vec<u32> {
 /// the next keystroke went to a pane the user could not see. The new pane takes the fullscreen over.
 #[test]
 fn spawning_while_fullscreen_hands_the_screen_to_the_new_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend_with_fullscreen();
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend_with_fullscreen();
 
-            backend
-                .dispatch(Msg::RunAction(Action::Spawn))
-                .expect("spawn a pane");
-            settle(&mut backend);
+        backend
+            .dispatch(Msg::RunAction(Action::Spawn))
+            .expect("spawn a pane");
+        settle(&mut backend);
 
-            let focused = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("a spawn takes focus");
-            assert_ne!(focused, 1, "the spawned pane takes focus");
-            assert_eq!(
-                fullscreen_ids(&backend),
-                vec![focused],
-                "the focused pane must be the one covering the workspace"
-            );
-        })
-        .expect("spawn fullscreen thread")
-        .join()
-        .expect("fullscreen spawn completes");
+        let focused = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("a spawn takes focus");
+        assert_ne!(focused, 1, "the spawned pane takes focus");
+        assert_eq!(
+            fullscreen_ids(&backend),
+            vec![focused],
+            "the focused pane must be the one covering the workspace"
+        );
+    });
 }

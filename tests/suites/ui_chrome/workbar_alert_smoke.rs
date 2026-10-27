@@ -62,21 +62,12 @@ fn row_backgrounds(backend: &mut TestBackend<AppRoot>) -> Vec<Color> {
     frame.cells[..width].iter().map(|cell| cell.bg).collect()
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn workbar alert smoke thread")
-        .join()
-        .expect("workbar alert smoke completes");
-}
-
 /// `background` paint fills the tab and shapes it like the active one; `text` colors the label and
 /// leaves the fill alone. Asserted on the rendered row so a paint wired to the wrong channel — the
 /// easy mistake, since both end up in the same `Style` — cannot pass.
 #[test]
 fn the_two_paints_color_different_channels_on_screen() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let quiet_bg = row_backgrounds(&mut quiet_backend());
 
         let mut text = backend();
@@ -99,7 +90,7 @@ fn the_two_paints_color_different_channels_on_screen() {
 /// sitting flat beside it. Needs `Tab::capped`; without it the glyphs never appear.
 #[test]
 fn a_filled_marked_tab_is_end_capped_like_the_active_one() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         backend.state_mut().config.pane.workbar_tab_style = tui_lipan::prelude::CapStyle::Round;
         backend.render();
@@ -122,7 +113,7 @@ fn a_filled_marked_tab_is_end_capped_like_the_active_one() {
 
 #[test]
 fn a_marked_tab_paints_a_background_no_quiet_tab_uses() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let alert_row = row_backgrounds(&mut backend());
         let quiet_row = row_backgrounds(&mut quiet_backend());
 
@@ -160,7 +151,7 @@ fn alert_columns() -> (Vec<Color>, Vec<usize>) {
 
 #[test]
 fn hovering_a_marked_tab_keeps_its_alert_background() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let (resting, columns) = alert_columns();
         assert!(!columns.is_empty(), "the blocked tab painted nothing");
         let x = columns[columns.len() / 2];

@@ -125,46 +125,58 @@ mod tests {
 
     #[test]
     fn clipboard_path_event_sends_literal_text_to_the_remote_pane() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                crate::test_support::isolate_user_dirs();
-                let directory = tempfile::tempdir().unwrap();
-                let path = directory.path().join("photo.png");
-                std::fs::write(&path, b"local image bytes").unwrap();
-                let text = path.to_string_lossy().to_string();
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let (client, outbound) = crate::session::client::SessionClient::test_channel();
-                let (id, generation, modes) = {
-                    let state = backend.state_mut();
-                    state.current_mut().session_client = Some(client);
-                    state.current_mut().remote_target = Some(
-                        crate::session::remote::RemoteTarget::Alias("test-host".into()),
-                    );
-                    let pane = &mut state.current_mut().workspaces[0].panes[0];
-                    pane.opening = false;
-                    pane.terminal_active = true;
-                    (pane.id, pane.pty_generation, pane.terminal.snapshot().key_modes)
-                };
-                while outbound.try_recv().is_ok() {}
-                backend.dispatch(Msg::PanePaste(id, TerminalPasteEvent {
-                    content: ClipboardContent::Text(text.clone()),
-                    origin: PasteOrigin::Clipboard,
-                })).unwrap();
-                let messages: Vec<_> = outbound.try_iter().filter(|message| matches!(message,
-                    crate::session::client::ClientOutbound::PaneInput { .. }
-                    | crate::session::client::ClientOutbound::Control(
-                        crate::session::protocol::ClientMessage::Attachment { .. }
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("photo.png");
+            std::fs::write(&path, b"local image bytes").unwrap();
+            let text = path.to_string_lossy().to_string();
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let (client, outbound) = crate::session::client::SessionClient::test_channel();
+            let (id, generation, modes) = {
+                let state = backend.state_mut();
+                state.current_mut().session_client = Some(client);
+                state.current_mut().remote_target = Some(
+                    crate::session::remote::RemoteTarget::Alias("test-host".into()),
+                );
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+                (
+                    pane.id,
+                    pane.pty_generation,
+                    pane.terminal.snapshot().key_modes,
+                )
+            };
+            while outbound.try_recv().is_ok() {}
+            backend
+                .dispatch(Msg::PanePaste(
+                    id,
+                    TerminalPasteEvent {
+                        content: ClipboardContent::Text(text.clone()),
+                        origin: PasteOrigin::Clipboard,
+                    },
+                ))
+                .unwrap();
+            let messages: Vec<_> = outbound
+                .try_iter()
+                .filter(|message| {
+                    matches!(
+                        message,
+                        crate::session::client::ClientOutbound::PaneInput { .. }
+                            | crate::session::client::ClientOutbound::Control(
+                                crate::session::protocol::ClientMessage::Attachment { .. }
+                            )
                     )
-                )).collect();
-                assert_eq!(messages.len(), 1, "a text paste must not start an upload");
-                assert!(matches!(&messages[0], crate::session::client::ClientOutbound::PaneInput {
+                })
+                .collect();
+            assert_eq!(messages.len(), 1, "a text paste must not start an upload");
+            assert!(
+                matches!(&messages[0], crate::session::client::ClientOutbound::PaneInput {
                     pane_id, generation: actual_generation, bytes, ..
-                } if *pane_id == id && *actual_generation == generation && *bytes == encode_paste(&text, modes)));
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                } if *pane_id == id && *actual_generation == generation && *bytes == encode_paste(&text, modes))
+            );
+        });
     }
 
     fn remote_paste_backend() -> (tui_lipan::TestBackend<AppRoot>, PaneId) {
@@ -214,80 +226,42 @@ mod tests {
 
     #[test]
     fn accepted_remote_pastes_engage_temporary_sessions_and_return_to_live_view() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                for content in paste_contents() {
-                    let (mut backend, id) = remote_paste_backend();
-                    assert_eq!(
-                        backend.state().current().disposition(),
-                        crate::state::SessionDisposition::Discard
-                    );
-                    // Inspect admission without running the queued upload command. Transfer execution
-                    // and acknowledgement are exercised by the client/server protocol tests.
-                    backend.update_level(clipboard_event(id, content)).unwrap();
-                    let attachment = backend.state().current();
-                    assert!(attachment.engaged);
-                    assert_eq!(
-                        attachment.disposition(),
-                        crate::state::SessionDisposition::AskBeforeClosing
-                    );
-                    let pane = &attachment.workspaces[0].panes[0];
-                    assert_eq!(pane.terminal.scrollback_offset(), 0);
-                    assert!(!pane.activity.bell);
-                    assert!(!pane.activity.has_unseen_output);
-                    assert!(!pane.terminal.finished_unseen);
-                }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        crate::test_support::on_large_stack(|| {
+            for content in paste_contents() {
+                let (mut backend, id) = remote_paste_backend();
+                assert_eq!(
+                    backend.state().current().disposition(),
+                    crate::state::SessionDisposition::Discard
+                );
+                // Inspect admission without running the queued upload command. Transfer execution
+                // and acknowledgement are exercised by the client/server protocol tests.
+                backend.update_level(clipboard_event(id, content)).unwrap();
+                let attachment = backend.state().current();
+                assert!(attachment.engaged);
+                assert_eq!(
+                    attachment.disposition(),
+                    crate::state::SessionDisposition::AskBeforeClosing
+                );
+                let pane = &attachment.workspaces[0].panes[0];
+                assert_eq!(pane.terminal.scrollback_offset(), 0);
+                assert!(!pane.activity.bell);
+                assert!(!pane.activity.has_unseen_output);
+                assert!(!pane.terminal.finished_unseen);
+            }
+        });
     }
 
     #[test]
     fn blocked_remote_pastes_preserve_engagement_attention_and_scrollback() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                for read_only in [true, false] {
-                    for content in paste_contents() {
-                        let (mut backend, id) = remote_paste_backend();
-                        let mut shared = crate::state::SharedSessionState::new(2);
-                        shared.controller = Some(1);
-                        shared.read_only = read_only;
-                        shared.input_locked = !read_only;
-                        backend.state_mut().current_mut().shared = Some(shared);
-                        backend.update_level(clipboard_event(id, content)).unwrap();
-                        assert!(!backend.state().current().engaged);
-                        let pane = &backend.state().current().workspaces[0].panes[0];
-                        assert_eq!(pane.terminal.scrollback_offset(), 10);
-                        assert!(pane.activity.bell);
-                        assert!(pane.activity.has_unseen_output);
-                        assert!(pane.terminal.finished_unseen);
-                        assert!(backend.state().replaceable_toasts.values().any(|toast| {
-                            toast.content().contains(if read_only {
-                                "read-only"
-                            } else {
-                                "Input locked"
-                            })
-                        }));
-                    }
-                }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
-    #[test]
-    fn disconnected_remote_pastes_report_failure_without_acknowledging_input() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
+        crate::test_support::on_large_stack(|| {
+            for read_only in [true, false] {
                 for content in paste_contents() {
                     let (mut backend, id) = remote_paste_backend();
-                    backend.state_mut().current_mut().mark_disconnected();
-                    assert!(bridge_enabled(backend.state(), id));
+                    let mut shared = crate::state::SharedSessionState::new(2);
+                    shared.controller = Some(1);
+                    shared.read_only = read_only;
+                    shared.input_locked = !read_only;
+                    backend.state_mut().current_mut().shared = Some(shared);
                     backend.update_level(clipboard_event(id, content)).unwrap();
                     assert!(!backend.state().current().engaged);
                     let pane = &backend.state().current().workspaces[0].panes[0];
@@ -295,18 +269,41 @@ mod tests {
                     assert!(pane.activity.bell);
                     assert!(pane.activity.has_unseen_output);
                     assert!(pane.terminal.finished_unseen);
-                    assert!(
-                        backend
-                            .state()
-                            .replaceable_toasts
-                            .values()
-                            .any(|toast| toast.content().contains("session disconnected"))
-                    );
+                    assert!(backend.state().replaceable_toasts.values().any(|toast| {
+                        toast.content().contains(if read_only {
+                            "read-only"
+                        } else {
+                            "Input locked"
+                        })
+                    }));
                 }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn disconnected_remote_pastes_report_failure_without_acknowledging_input() {
+        crate::test_support::on_large_stack(|| {
+            for content in paste_contents() {
+                let (mut backend, id) = remote_paste_backend();
+                backend.state_mut().current_mut().mark_disconnected();
+                assert!(bridge_enabled(backend.state(), id));
+                backend.update_level(clipboard_event(id, content)).unwrap();
+                assert!(!backend.state().current().engaged);
+                let pane = &backend.state().current().workspaces[0].panes[0];
+                assert_eq!(pane.terminal.scrollback_offset(), 10);
+                assert!(pane.activity.bell);
+                assert!(pane.activity.has_unseen_output);
+                assert!(pane.terminal.finished_unseen);
+                assert!(
+                    backend
+                        .state()
+                        .replaceable_toasts
+                        .values()
+                        .any(|toast| toast.content().contains("session disconnected"))
+                );
+            }
+        });
     }
 
     #[test]

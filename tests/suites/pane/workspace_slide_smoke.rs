@@ -46,15 +46,6 @@ fn backend() -> TestBackend<AppRoot> {
     backend
 }
 
-fn run(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 fn switch(backend: &mut TestBackend<AppRoot>, index: usize) {
     backend
         .dispatch(Msg::RunAction(Action::SwitchWorkspace(index)))
@@ -79,7 +70,7 @@ fn terminal_rect(backend: &TestBackend<AppRoot>, id: u32) -> Rect {
 
 #[test]
 fn workspace_slide_carries_both_pages_and_keeps_terminal_width() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         let width = terminal_rect(&backend, 1).w;
         switch(&mut backend, 1);
@@ -114,7 +105,7 @@ fn workspace_slide_carries_both_pages_and_keeps_terminal_width() {
 
 #[test]
 fn workspace_slide_reverses_and_skips_intermediate_workspaces() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         switch(&mut backend, 4);
         backend.advance(Duration::from_millis(300));
@@ -129,7 +120,7 @@ fn workspace_slide_reverses_and_skips_intermediate_workspaces() {
 
 #[test]
 fn workspace_slide_snaps_when_disabled_or_resized() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for master in [false, true] {
             let mut backend = backend();
             switch(&mut backend, 1);
@@ -161,7 +152,7 @@ fn workspace_slide_snaps_when_disabled_or_resized() {
 
 #[test]
 fn workspace_slide_supports_floating_fullscreen_and_each_layout() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for layout in rozi::state::LayoutKind::all() {
             for (floating, fullscreen) in [(false, false), (true, false), (false, true)] {
                 let mut backend = backend();
@@ -186,7 +177,7 @@ fn workspace_slide_supports_floating_fullscreen_and_each_layout() {
 
 #[test]
 fn workspace_slide_handles_empty_pages_zero_duration_and_attachment_changes() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         switch(&mut backend, 2);
         backend.advance(Duration::from_secs(3));
@@ -210,7 +201,7 @@ fn workspace_slide_handles_empty_pages_zero_duration_and_attachment_changes() {
 
 #[test]
 fn workspace_slide_keeps_same_target_timing_and_can_animate_after_a_snap() {
-    run(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         switch(&mut backend, 1);
         backend.advance(Duration::from_millis(400));

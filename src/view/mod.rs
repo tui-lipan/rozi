@@ -778,278 +778,256 @@ mod grouped_search_tests {
 
     #[test]
     fn reconnecting_with_retained_panes_shows_progress_modal() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.set_viewport(tui_lipan::prelude::Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".into());
-                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: state.runtime_epoch,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        ),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".into());
+            state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: state.runtime_epoch,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                ),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+            backend.render();
 
-                let frame = backend.capture_frame().to_fixed_grid();
-                assert!(frame.contains("Session · dev"));
-                assert!(frame.contains("Reconnecting…"));
-                assert!(
-                    frame.contains("sessions"),
-                    "reconnecting overlay must advertise Esc → Sessions, got:\n{frame}"
-                );
-            })
-            .expect("spawn reconnect modal test")
-            .join()
-            .expect("reconnect modal test completes");
+            let frame = backend.capture_frame().to_fixed_grid();
+            assert!(frame.contains("Session · dev"));
+            assert!(frame.contains("Reconnecting…"));
+            assert!(
+                frame.contains("sessions"),
+                "reconnecting overlay must advertise Esc → Sessions, got:\n{frame}"
+            );
+        });
     }
 
     #[test]
     fn connection_modal_spacing_and_escape_flow() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::state::{ConnectionState, PendingSessionAttach};
-                use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-                use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
+        crate::test_support::on_large_stack(|| {
+            use crate::state::{ConnectionState, PendingSessionAttach};
+            use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+            use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
-                for (connection, lost, label) in [
-                    (ConnectionState::Unreachable, true, "Session lost"),
-                    (ConnectionState::Unreachable, false, "Offline"),
-                    (ConnectionState::Reconnecting, false, "Reconnecting…"),
-                    (ConnectionState::Reconnecting, true, "Recreating…"),
-                ] {
-                    for (w, h) in [(42, 12), (100, 30)] {
-                        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                        backend.set_viewport(Rect { x: 0, y: 0, w, h });
-                        let state = backend.state_mut();
-                        state.config.animations.enabled = false;
-                        state.show_session_picker = false;
-                        state.session_picker = None;
-                        state.current_mut().session_name = Some("test".into());
-                        state.current_mut().remote_target = Some(
-                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                        );
-                        state.current_mut().remote_host = Some("workbox".into());
-                        state.current_mut().connection = connection;
-                        state.current_mut().remote_session_lost = lost;
-                        let epoch = state.runtime_epoch;
-                        state.current_mut().pending_session_attach = (connection
-                            == ConnectionState::Reconnecting)
-                            .then(|| PendingSessionAttach {
-                                epoch,
-                                request: crate::state::AttachRequest::new(
-                                    "test",
-                                    crate::state::AttachMode::Reconnect,
-                                )
-                                .on_host(Some(
-                                    crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                                )),
-                                client: None,
-                                left: None,
-                                parked_epoch: None,
-                            });
-                        backend.render();
-                        let frame = backend.capture_frame().to_fixed_grid();
-                        let rows: Vec<_> = frame.lines().collect();
-                        let status = rows
-                            .iter()
-                            .position(|row| row.contains('│') && row.contains(label))
-                            .unwrap();
-                        let hints = rows
-                            .iter()
-                            .position(|row| row.contains("sessions Esc"))
-                            .unwrap();
-                        assert_eq!(hints, status + 2, "one blank row above hints:\n{frame}");
-                        let border = rows[hints].find('│').unwrap();
-                        let hint_text = &rows[hints][border + '│'.len_utf8()..];
-                        assert!(
-                            hint_text.starts_with(if connection == ConnectionState::Unreachable {
-                                if lost {
-                                    " recreate Enter"
-                                } else {
-                                    " reconnect Enter"
-                                }
+            for (connection, lost, label) in [
+                (ConnectionState::Unreachable, true, "Session lost"),
+                (ConnectionState::Unreachable, false, "Offline"),
+                (ConnectionState::Reconnecting, false, "Reconnecting…"),
+                (ConnectionState::Reconnecting, true, "Recreating…"),
+            ] {
+                for (w, h) in [(42, 12), (100, 30)] {
+                    let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+                    backend.set_viewport(Rect { x: 0, y: 0, w, h });
+                    let state = backend.state_mut();
+                    state.config.animations.enabled = false;
+                    state.show_session_picker = false;
+                    state.session_picker = None;
+                    state.current_mut().session_name = Some("test".into());
+                    state.current_mut().remote_target = Some(
+                        crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                    );
+                    state.current_mut().remote_host = Some("workbox".into());
+                    state.current_mut().connection = connection;
+                    state.current_mut().remote_session_lost = lost;
+                    let epoch = state.runtime_epoch;
+                    state.current_mut().pending_session_attach = (connection
+                        == ConnectionState::Reconnecting)
+                        .then(|| PendingSessionAttach {
+                            epoch,
+                            request: crate::state::AttachRequest::new(
+                                "test",
+                                crate::state::AttachMode::Reconnect,
+                            )
+                            .on_host(Some(
+                                crate::session::remote::RemoteTarget::Alias("workbox".into()),
+                            )),
+                            client: None,
+                            left: None,
+                            parked_epoch: None,
+                        });
+                    backend.render();
+                    let frame = backend.capture_frame().to_fixed_grid();
+                    let rows: Vec<_> = frame.lines().collect();
+                    let status = rows
+                        .iter()
+                        .position(|row| row.contains('│') && row.contains(label))
+                        .unwrap();
+                    let hints = rows
+                        .iter()
+                        .position(|row| row.contains("sessions Esc"))
+                        .unwrap();
+                    assert_eq!(hints, status + 2, "one blank row above hints:\n{frame}");
+                    let border = rows[hints].find('│').unwrap();
+                    let hint_text = &rows[hints][border + '│'.len_utf8()..];
+                    assert!(
+                        hint_text.starts_with(if connection == ConnectionState::Unreachable {
+                            if lost {
+                                " recreate Enter"
                             } else {
-                                " sessions Esc"
-                            }),
-                            "one column before hints:\n{frame}"
-                        );
-                        assert!(
-                            rows[hints + 1].contains('╰'),
-                            "no blank row below hints:\n{frame}"
-                        );
-
-                        let escape = KeyEvent {
-                            code: KeyCode::Esc,
-                            mods: KeyMods::NONE,
-                        };
-                        if w == 100 {
-                            let start = rows[hints].find("sessions Esc").unwrap();
-                            let x = rows[hints][..start].chars().count() as u16;
-                            for kind in [
-                                MouseKind::Down(MouseButton::Left),
-                                MouseKind::Up(MouseButton::Left),
-                            ] {
-                                backend
-                                    .send_mouse(MouseEvent {
-                                        x,
-                                        y: hints as u16,
-                                        kind,
-                                        mods: KeyMods::NONE,
-                                    })
-                                    .unwrap();
+                                " reconnect Enter"
                             }
                         } else {
-                            assert!(backend.send_key(escape).unwrap());
+                            " sessions Esc"
+                        }),
+                        "one column before hints:\n{frame}"
+                    );
+                    assert!(
+                        rows[hints + 1].contains('╰'),
+                        "no blank row below hints:\n{frame}"
+                    );
+
+                    let escape = KeyEvent {
+                        code: KeyCode::Esc,
+                        mods: KeyMods::NONE,
+                    };
+                    if w == 100 {
+                        let start = rows[hints].find("sessions Esc").unwrap();
+                        let x = rows[hints][..start].chars().count() as u16;
+                        for kind in [
+                            MouseKind::Down(MouseButton::Left),
+                            MouseKind::Up(MouseButton::Left),
+                        ] {
+                            backend
+                                .send_mouse(MouseEvent {
+                                    x,
+                                    y: hints as u16,
+                                    kind,
+                                    mods: KeyMods::NONE,
+                                })
+                                .unwrap();
                         }
-                        assert!(
-                            backend.state().show_session_picker,
-                            "Esc or its hint opens Sessions"
-                        );
-                        backend.render();
+                    } else {
                         assert!(backend.send_key(escape).unwrap());
-                        assert!(!backend.state().show_session_picker);
-                        assert!(
-                            backend.state().is_launcher(),
-                            "second Esc leaves the launcher"
-                        );
-                        let parked = backend
-                            .state()
-                            .background
-                            .values()
-                            .find(|attachment| attachment.session_name.as_deref() == Some("test"))
-                            .expect("offline screens retained in background");
-                        assert_eq!(parked.connection, ConnectionState::Unreachable);
-                        assert_eq!(parked.remote_session_lost, lost);
-                        assert!(parked.pending_session_attach.is_none());
-                        backend.render();
-                        assert!(
-                            !backend
-                                .capture_frame()
-                                .to_fixed_grid()
-                                .contains("Session · test")
-                        );
-                        if connection == ConnectionState::Reconnecting {
-                            crate::session::bootstrap::finish_cancelled_remote_attach(epoch);
-                        }
+                    }
+                    assert!(
+                        backend.state().show_session_picker,
+                        "Esc or its hint opens Sessions"
+                    );
+                    backend.render();
+                    assert!(backend.send_key(escape).unwrap());
+                    assert!(!backend.state().show_session_picker);
+                    assert!(
+                        backend.state().is_launcher(),
+                        "second Esc leaves the launcher"
+                    );
+                    let parked = backend
+                        .state()
+                        .background
+                        .values()
+                        .find(|attachment| attachment.session_name.as_deref() == Some("test"))
+                        .expect("offline screens retained in background");
+                    assert_eq!(parked.connection, ConnectionState::Unreachable);
+                    assert_eq!(parked.remote_session_lost, lost);
+                    assert!(parked.pending_session_attach.is_none());
+                    backend.render();
+                    assert!(
+                        !backend
+                            .capture_frame()
+                            .to_fixed_grid()
+                            .contains("Session · test")
+                    );
+                    if connection == ConnectionState::Reconnecting {
+                        crate::session::bootstrap::finish_cancelled_remote_attach(epoch);
                     }
                 }
-            })
-            .expect("spawn connection modal regression test")
-            .join()
-            .expect("connection modal regression test completes");
+            }
+        });
     }
 
     #[test]
     fn ssh_askpass_covers_the_reconnecting_overlay() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.state_mut().config.animations.picker =
-                    crate::layout::anim::PickerAnimationStyle::Off;
-                backend.set_viewport(tui_lipan::prelude::Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".into());
-                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: state.runtime_epoch,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                        )),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-                state.askpass = Some(crate::state::AskpassState::new(
-                    crate::state::AskpassPrompt {
-                        id: 1,
-                        session: "reconnect".into(),
-                        attach_epoch: Some(state.runtime_epoch),
-                        kind: crate::session::remote::AskpassKind::Secret,
-                        prompt: "user@workbox's password:".into(),
-                        error: None,
-                    },
-                ));
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().config.animations.picker =
+                crate::layout::anim::PickerAnimationStyle::Off;
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".into());
+            state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: state.runtime_epoch,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                )
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ))),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+            state.askpass = Some(crate::state::AskpassState::new(
+                crate::state::AskpassPrompt {
+                    id: 1,
+                    session: "reconnect".into(),
+                    attach_epoch: Some(state.runtime_epoch),
+                    kind: crate::session::remote::AskpassKind::Secret,
+                    prompt: "user@workbox's password:".into(),
+                    error: None,
+                },
+            ));
+            backend.render();
 
-                let frame = backend.capture_frame().to_fixed_grid();
-                assert!(
-                    frame.contains("SSH · user@workbox's password"),
-                    "askpass must be visible above reconnect chrome, got:\n{frame}"
-                );
-                assert!(
-                    !frame.contains("reconnecting"),
-                    "reconnect overlay must yield to askpass, got:\n{frame}"
-                );
-            })
-            .expect("spawn askpass-over-reconnect test")
-            .join()
-            .expect("askpass-over-reconnect test completes");
+            let frame = backend.capture_frame().to_fixed_grid();
+            assert!(
+                frame.contains("SSH · user@workbox's password"),
+                "askpass must be visible above reconnect chrome, got:\n{frame}"
+            );
+            assert!(
+                !frame.contains("reconnecting"),
+                "reconnect overlay must yield to askpass, got:\n{frame}"
+            );
+        });
     }
 
     #[test]
     fn unreachable_remote_session_shows_offline_modal() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.set_viewport(tui_lipan::prelude::Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let state = backend.state_mut();
-                state.show_session_picker = false;
-                state.session_picker = None;
-                state.current_mut().session_name = Some("dev".into());
-                state.current_mut().remote_host = Some("workbox".into());
-                state.current_mut().pending_session_attach = None;
-                state.current_mut().connection = crate::state::ConnectionState::Unreachable;
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let state = backend.state_mut();
+            state.show_session_picker = false;
+            state.session_picker = None;
+            state.current_mut().session_name = Some("dev".into());
+            state.current_mut().remote_host = Some("workbox".into());
+            state.current_mut().pending_session_attach = None;
+            state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+            backend.render();
 
-                let frame = backend.capture_frame().to_fixed_grid();
-                assert!(
-                    frame.contains("Session · dev"),
-                    "expected offline session modal, got:\n{frame}"
-                );
-                assert!(
-                    frame.contains("offline"),
-                    "expected offline token, got:\n{frame}"
-                );
-                assert!(
-                    frame.contains("reconnect"),
-                    "expected reconnect hint, got:\n{frame}"
-                );
-            })
-            .expect("spawn offline modal test")
-            .join()
-            .expect("offline modal test completes");
+            let frame = backend.capture_frame().to_fixed_grid();
+            assert!(
+                frame.contains("Session · dev"),
+                "expected offline session modal, got:\n{frame}"
+            );
+            assert!(
+                frame.contains("offline"),
+                "expected offline token, got:\n{frame}"
+            );
+            assert!(
+                frame.contains("reconnect"),
+                "expected reconnect hint, got:\n{frame}"
+            );
+        });
     }
 
     /// The modal's top-left corner glyph and its title cell, on the row carrying `title`.
@@ -1074,47 +1052,42 @@ mod grouped_search_tests {
 
     #[test]
     fn lost_remote_session_modal_uses_error_chrome() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.set_viewport(tui_lipan::prelude::Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let state = backend.state_mut();
-                state.show_session_picker = false;
-                state.session_picker = None;
-                state.current_mut().session_name = Some("dev".into());
-                state.current_mut().remote_host = Some("workbox".into());
-                state.current_mut().pending_session_attach = None;
-                state.current_mut().connection = crate::state::ConnectionState::Unreachable;
-                let error = state.theme.status.error;
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let state = backend.state_mut();
+            state.show_session_picker = false;
+            state.session_picker = None;
+            state.current_mut().session_name = Some("dev".into());
+            state.current_mut().remote_host = Some("workbox".into());
+            state.current_mut().pending_session_attach = None;
+            state.current_mut().connection = crate::state::ConnectionState::Unreachable;
+            let error = state.theme.status.error;
+            backend.render();
 
-                let frame = backend.capture_frame();
-                let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
-                assert_ne!(corner, error, "an offline session keeps the shared chrome");
-                assert_ne!(title, error, "an offline session keeps the shared chrome");
+            let frame = backend.capture_frame();
+            let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
+            assert_ne!(corner, error, "an offline session keeps the shared chrome");
+            assert_ne!(title, error, "an offline session keeps the shared chrome");
 
-                backend.state_mut().current_mut().remote_session_lost = true;
-                backend.render();
+            backend.state_mut().current_mut().remote_session_lost = true;
+            backend.render();
 
-                let frame = backend.capture_frame();
-                assert!(
-                    frame.to_fixed_grid().contains("Session lost"),
-                    "expected lost status, got:\n{}",
-                    frame.to_fixed_grid()
-                );
-                let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
-                assert_eq!(corner, error, "a lost session's border reads as an error");
-                assert_eq!(title, error, "a lost session's title reads as an error");
-            })
-            .expect("spawn lost modal test")
-            .join()
-            .expect("lost modal test completes");
+            let frame = backend.capture_frame();
+            assert!(
+                frame.to_fixed_grid().contains("Session lost"),
+                "expected lost status, got:\n{}",
+                frame.to_fixed_grid()
+            );
+            let (corner, title) = modal_corner_and_title_fg(&frame, "Session · dev");
+            assert_eq!(corner, error, "a lost session's border reads as an error");
+            assert_eq!(title, error, "a lost session's title reads as an error");
+        });
     }
 }
 
@@ -1293,19 +1266,13 @@ mod pane_layer_tests {
     }
 
     /// Full-app view tests need more stack space than the default test thread provides.
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test completes");
-    }
 
     #[test]
     fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_closing_pane_is_drawn_above_the_neighbour_taking_its_space_body);
+        crate::test_support::on_large_stack(
+            a_closing_pane_is_drawn_above_the_neighbour_taking_its_space_body,
+        );
     }
 
     fn a_closing_pane_is_drawn_above_the_neighbour_taking_its_space_body() {
@@ -1381,7 +1348,9 @@ mod pane_layer_tests {
     #[test]
     fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body);
+        crate::test_support::on_large_stack(
+            a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body,
+        );
     }
 
     fn a_smaller_follower_keeps_a_split_border_on_the_viewport_edge_body() {
@@ -1423,7 +1392,9 @@ mod pane_layer_tests {
     #[test]
     fn a_smaller_follower_keeps_equal_gaps_between_visible_columns() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_smaller_follower_keeps_equal_gaps_between_visible_columns_body);
+        crate::test_support::on_large_stack(
+            a_smaller_follower_keeps_equal_gaps_between_visible_columns_body,
+        );
     }
 
     fn a_smaller_follower_keeps_equal_gaps_between_visible_columns_body() {
@@ -1448,7 +1419,7 @@ mod pane_layer_tests {
     #[test]
     fn a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(
+        crate::test_support::on_large_stack(
             a_smaller_follower_keeps_visible_border_segments_without_reframing_clipped_edges_body,
         );
     }

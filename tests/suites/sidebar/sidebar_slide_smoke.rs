@@ -77,15 +77,6 @@ fn backend(position: SidebarPosition) -> TestBackend<AppRoot> {
     backend
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn sidebar-slide smoke test")
-        .join()
-        .expect("sidebar-slide smoke test completes");
-}
-
 fn set_visible(backend: &mut TestBackend<AppRoot>, visible: bool) {
     if visible {
         backend.state_mut().sidebar.show_restored();
@@ -117,7 +108,7 @@ fn pane_corners(backend: &mut TestBackend<AppRoot>) -> Vec<usize> {
 
 #[test]
 fn revealing_pushes_the_near_edge_and_leaves_the_far_edge_alone() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Left);
         assert_eq!(pane_corners(&mut backend), vec![0, usize::from(WIDTH) - 1]);
 
@@ -159,7 +150,7 @@ fn revealing_pushes_the_near_edge_and_leaves_the_far_edge_alone() {
 
 #[test]
 fn the_pane_column_gives_up_its_columns_steadily_rather_than_in_one_step() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Left);
         let viewport = backend.viewport();
         let width = |backend: &TestBackend<AppRoot>| backend.state().content_viewport(viewport).w;
@@ -206,7 +197,7 @@ fn panel_row(backend: &mut TestBackend<AppRoot>, columns: usize) -> Vec<char> {
 
 #[test]
 fn the_panel_slides_in_whole_rather_than_being_re_laid_out() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Left);
         let viewport = backend.viewport();
         // The splitter spends a column on its handle, so the panel is one short of the reservation.
@@ -244,7 +235,7 @@ fn the_panel_slides_in_whole_rather_than_being_re_laid_out() {
 
 #[test]
 fn a_right_dock_pushes_the_pane_column_the_other_way() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Right);
         set_visible(&mut backend, true);
 
@@ -272,7 +263,7 @@ fn a_right_dock_pushes_the_pane_column_the_other_way() {
 
 #[test]
 fn retracting_hands_the_columns_back_the_same_way() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Left);
         set_visible(&mut backend, true);
         backend.advance(Duration::from_millis(4_000));

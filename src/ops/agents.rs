@@ -421,15 +421,6 @@ mod tests {
         backend
     }
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn")
-            .join()
-            .expect("join");
-    }
-
     /// An agent in the session already on screen is a focus change and nothing else — no attach, no
     /// round trip, and the overlay is gone by the time the pane has the keyboard.
     /// The overview names where every agent runs in a form `agent-go` takes back, and a location
@@ -488,7 +479,7 @@ mod tests {
 
     #[test]
     fn a_row_in_this_session_goes_straight_to_its_pane() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[2, 3]);
             backend
                 .dispatch(Msg::AgentPickerActivate(AgentLocation::Here {
@@ -506,7 +497,7 @@ mod tests {
     /// nothing is left queued to fire on a later attach that happens to share the name.
     #[test]
     fn a_row_whose_session_is_gone_opens_nothing() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend
                 .dispatch(Msg::AgentPickerActivate(AgentLocation::OtherSession {
@@ -524,7 +515,7 @@ mod tests {
     fn parked_rows_activate_without_any_discovery_entry() {
         for remote in [false, true] {
             for entry_point in ["projects", "agents", "picker", "spec"] {
-                on_large_stack(move || {
+                crate::test_support::on_large_stack(move || {
                     use crate::session::protocol::{
                         AgentIdentity, DetectedAgent, DetectedAgentState,
                     };
@@ -697,7 +688,7 @@ mod tests {
     /// is on screen, named by host and session, with the state that makes it worth going to.
     #[test]
     fn the_overlay_lists_an_agent_on_another_machine() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -735,7 +726,7 @@ mod tests {
 
     #[test]
     fn the_overlay_lists_an_agent_in_another_local_session() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -807,7 +798,7 @@ mod tests {
 
     #[test]
     fn keyboard_tabs_scope_by_session_keep_focus_and_omit_repeated_location() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use crate::state::AgentPickerTab;
             let mut backend = tabbed_backend();
             assert_eq!(
@@ -894,7 +885,7 @@ mod tests {
 
     #[test]
     fn colliding_remote_targets_have_distinct_agent_tabs_rows_and_search() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tabbed_backend();
             backend.set_viewport(Rect {
                 x: 0,
@@ -969,7 +960,7 @@ mod tests {
 
     #[test]
     fn switching_tabs_keeps_query_and_selects_only_a_matching_agent() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tabbed_backend();
             backend
                 .dispatch(Msg::AgentPickerQueryChanged("Claude".into()))
@@ -995,7 +986,7 @@ mod tests {
 
     #[test]
     fn a_session_tab_keeps_its_identity_when_snapshots_change_and_can_be_empty() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = tabbed_backend();
             backend.dispatch(Msg::AgentPickerTab(1)).unwrap();
             let active = backend.state().agent_picker.as_ref().unwrap().tab.clone();
@@ -1027,7 +1018,7 @@ mod tests {
     /// a single row. Every refresh then put the cursor back on the first of them.
     #[test]
     fn the_cursor_stays_on_one_of_several_identically_named_agents_across_refreshes() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -1141,7 +1132,7 @@ mod tests {
     /// as the description needs.
     #[test]
     fn row_descriptions_follow_the_name_and_share_the_row_with_long_labels() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let long_session = "s".repeat(120);
             let long_label = format!("Codex {}", "l".repeat(120));
 
@@ -1178,7 +1169,7 @@ mod tests {
     /// hosts is a different fact from the same words on a client watching none.
     #[test]
     fn an_empty_view_says_how_far_it_looked() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend_with_panes(&[]);
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;

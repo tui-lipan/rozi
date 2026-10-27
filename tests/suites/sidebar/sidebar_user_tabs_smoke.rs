@@ -5,38 +5,33 @@ use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 
 fn sidebar_lines(tab: SidebarTab) -> Vec<String> {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                // Revealing the sidebar after the first frame is a real toggle, so it runs the
-                // real slide; these assertions are about the settled column, not a frame
-                // part-way through it.
-                state.config.animations.sidebar = false;
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-            }
-            backend.render();
-            backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .iter()
-                .map(|line| line.chars().take(32).collect())
-                .collect()
-        })
-        .expect("spawn user tabs smoke thread")
-        .join()
-        .expect("user tabs smoke completes")
+    rozi::test_support::on_large_stack(move || {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            // Revealing the sidebar after the first frame is a real toggle, so it runs the
+            // real slide; these assertions are about the settled column, not a frame
+            // part-way through it.
+            state.config.animations.sidebar = false;
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+        }
+        backend.render();
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .map(|line| line.chars().take(32).collect())
+            .collect()
+    })
 }
 
 /// A launcher entry renders in the same two-line row shape as the built-in tabs: an action glyph in
@@ -148,66 +143,61 @@ fn launcher_tab_without_entries_shows_a_muted_placeholder() {
 
 #[test]
 fn read_only_command_output_has_one_cell_of_leading_padding() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let tab_id = SidebarTabId::new("branches");
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 20,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.sidebar.tabs = vec![SidebarTab::Command {
-                    name: tab_id.clone(),
-                    label: "Branches".into(),
-                    command: "git branch --format='%(refname:short)'".into(),
-                    interval_secs: 30,
-                    on_click: None,
-                    group_prefix: None,
-                    env: Vec::new(),
-                    format: rozi::config::SidebarCommandFormat::Lines,
-                }];
-                state.sidebar.panels[0].tabs = vec![tab_id.clone()];
-                state.sidebar.panels[0].active_tab = Some(tab_id.clone());
-                state.sidebar.command_output.insert(
-                    tab_id,
-                    SidebarCommandOutput {
-                        epoch: 1,
-                        tree: None,
-                        cwd: None,
-                        rows: vec![SidebarCommandRow {
-                            raw: "master".into(),
-                            display: "master".into(),
-                            error: false,
-                            header: false,
-                        }],
-                    },
-                );
-            }
-            backend.render();
+    rozi::test_support::on_large_stack(|| {
+        let tab_id = SidebarTabId::new("branches");
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 20,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.sidebar.tabs = vec![SidebarTab::Command {
+                name: tab_id.clone(),
+                label: "Branches".into(),
+                command: "git branch --format='%(refname:short)'".into(),
+                interval_secs: 30,
+                on_click: None,
+                group_prefix: None,
+                env: Vec::new(),
+                format: rozi::config::SidebarCommandFormat::Lines,
+            }];
+            state.sidebar.panels[0].tabs = vec![tab_id.clone()];
+            state.sidebar.panels[0].active_tab = Some(tab_id.clone());
+            state.sidebar.command_output.insert(
+                tab_id,
+                SidebarCommandOutput {
+                    epoch: 1,
+                    tree: None,
+                    cwd: None,
+                    rows: vec![SidebarCommandRow {
+                        raw: "master".into(),
+                        display: "master".into(),
+                        error: false,
+                        header: false,
+                    }],
+                },
+            );
+        }
+        backend.render();
 
-            let line = backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .into_iter()
-                .find(|line| line.contains("master"))
-                .expect("command output row renders");
-            assert!(
-                line.starts_with(" master"),
-                "row has one-cell inset: {line:?}"
-            );
-            assert!(
-                !line.starts_with("  master"),
-                "row is not over-indented: {line:?}"
-            );
-        })
-        .expect("spawn command row smoke thread")
-        .join()
-        .expect("command row smoke completes");
+        let line = backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .into_iter()
+            .find(|line| line.contains("master"))
+            .expect("command output row renders");
+        assert!(
+            line.starts_with(" master"),
+            "row has one-cell inset: {line:?}"
+        );
+        assert!(
+            !line.starts_with("  master"),
+            "row is not over-indented: {line:?}"
+        );
+    });
 }

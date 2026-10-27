@@ -406,15 +406,6 @@ mod tests {
 
     use super::*;
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     /// A UI attached to a session on `host`, and what it sends that session.
     fn attached(host: Option<&str>) -> (TestBackend<AppRoot>, mpsc::Receiver<ClientOutbound>) {
         let mut backend = TestBackend::new(AppRoot::default());
@@ -494,7 +485,7 @@ mod tests {
 
     #[test]
     fn start_and_stop_name_no_file_and_say_which_host_the_file_is_on() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = attached(Some("devbox"));
             let focused = set_recording(&mut backend, false);
 
@@ -575,7 +566,7 @@ mod tests {
 
     #[test]
     fn toggle_waits_for_start_runtime_and_stop_completion() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = attached(Some("devbox"));
             let pane = backend.state().focused_pane().unwrap();
             backend
@@ -679,7 +670,7 @@ mod tests {
 
     #[test]
     fn a_recording_ending_by_itself_says_how_and_where() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, _outbound) = attached(Some("devbox"));
             self_ended(&mut backend, crate::recording::EndReason::MaxBytes, None);
             self_ended(
@@ -703,7 +694,7 @@ mod tests {
 
     #[test]
     fn a_stop_whose_file_failed_says_so_instead_of_stopped() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = attached(None);
             let pane = set_recording(&mut backend, true);
             backend
@@ -734,7 +725,7 @@ mod tests {
 
     #[test]
     fn a_refused_start_says_why() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = attached(None);
             backend
                 .dispatch(Msg::RunAction(Action::TogglePaneRecording))
@@ -766,7 +757,7 @@ mod tests {
 
     #[test]
     fn the_mark_prompt_sends_its_label_to_the_pane_and_blinks_the_dot() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound) = attached(None);
             let focused = set_recording(&mut backend, true);
             {

@@ -770,15 +770,6 @@ mod tests {
     use super::*;
     use tui_lipan::TestBackend;
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     fn frame(backend: &mut TestBackend<AppRoot>) -> String {
         backend.render();
         backend.capture_frame().to_fixed_grid_lines().join("\n")
@@ -795,7 +786,7 @@ mod tests {
 
     #[test]
     fn the_clock_tick_keeps_its_wall_anchor_on_a_controlled_clock() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             sized(&mut backend);
@@ -823,7 +814,7 @@ mod tests {
 
     #[test]
     fn a_long_handoff_says_what_commands_is_waiting_on() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             sized(&mut backend);
@@ -873,7 +864,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn an_extension_command_started_from_commands_is_handed_off_under_its_label() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             sized(&mut backend);
@@ -959,7 +950,7 @@ mod tests {
 
     #[test]
     fn a_background_error_becomes_a_toast() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend
                 .dispatch(Msg::BackgroundError {
@@ -975,7 +966,7 @@ mod tests {
 
     #[test]
     fn both_update_toasts_lead_with_the_new_version() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.dispatch(update_to("9.9.9", None)).unwrap();
             let toast = last_toast(&backend);
@@ -1003,7 +994,7 @@ mod tests {
     /// it in Commands - which is what makes a missed toast recoverable.
     #[test]
     fn an_unannounced_update_still_offers_update_rozi() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             assert!(!crate::commands::command_available(
                 Action::UpdateRozi,
@@ -1035,7 +1026,7 @@ mod tests {
     /// Once run, the same release is not offered again; a newer one is.
     #[test]
     fn update_rozi_is_withheld_on_a_remote_session_and_after_it_ran() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.dispatch(update_to("9.9.9", None)).unwrap();
 
@@ -1074,7 +1065,7 @@ mod tests {
 
     #[test]
     fn a_client_that_may_not_check_stays_off_the_network_whatever_the_config_says() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             // What an integration app looks like: checking is on in config, denied by the client.
             assert!(backend.state().config.updates.check);
@@ -1094,7 +1085,7 @@ mod tests {
 
     #[test]
     fn settings_enter_opens_alert_picker_and_shift_enter_cycles() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend.state_mut().config.pane.show_workbar = true;
@@ -1183,7 +1174,7 @@ mod tests {
 
     #[test]
     fn appearance_deep_link_reuses_settings() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
@@ -1199,7 +1190,7 @@ mod tests {
 
     #[test]
     fn help_filter_uses_picker_style_body_chrome() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -1270,7 +1261,7 @@ mod tests {
 
     #[test]
     fn keybindings_navigation_visits_every_row_in_both_directions() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -1325,7 +1316,7 @@ mod tests {
 
     #[test]
     fn keybindings_search_owns_every_key_and_escape_closes() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -1463,7 +1454,7 @@ mod tests {
 
     #[test]
     fn alerts_deep_link_clears_a_session_picker_and_selects_bell_urgency() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             {
                 let state = backend.state_mut();
@@ -1495,7 +1486,7 @@ mod tests {
 
     #[test]
     fn settings_command_opens_at_theme() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend
                 .dispatch(Msg::RunAction(Action::OpenSettings))
@@ -1510,7 +1501,7 @@ mod tests {
 
     #[test]
     fn mouse_pointer_is_saved_from_settings_and_cancel_restores_policy() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
@@ -1543,7 +1534,7 @@ mod tests {
 
     #[test]
     fn cursor_blink_is_saved_from_settings() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
@@ -1568,7 +1559,7 @@ mod tests {
 
     #[test]
     fn sessions_opening_preference_is_saved_from_settings() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
@@ -1603,7 +1594,7 @@ mod tests {
     /// file and run in parallel, so reading it back here would race a sibling's write.
     #[test]
     fn settings_shift_enter_cycles_startup_mode() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
@@ -1645,7 +1636,7 @@ mod tests {
 
     #[test]
     fn settings_shared_attach_cycles_and_persists() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _guard = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
@@ -1668,7 +1659,7 @@ mod tests {
 
     #[test]
     fn settings_shift_enter_cycles_foreground_restore() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
@@ -1710,7 +1701,7 @@ mod tests {
 
     #[test]
     fn settings_scroll_multiplier_applies_and_saves_a_typed_value() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             use tui_lipan::core::event::{KeyMods, MouseEvent, MouseKind};
 
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1824,7 +1815,7 @@ mod tests {
     /// until one is set. Stepping back from `picker` is the shortest way to reach it.
     #[test]
     fn settings_offers_profile_startup_only_once_a_default_profile_exists() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
             backend
@@ -1879,7 +1870,7 @@ mod tests {
 
     #[test]
     fn sleep_policy_settings_cannot_change_local_config_while_attached_remotely() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();
             crate::config::persist_session_flag("keep_awake_while_agents_work", false).unwrap();
             let before = std::fs::read(crate::config::config_path()).unwrap();
@@ -1915,7 +1906,7 @@ mod tests {
 
     #[test]
     fn settings_toggles_session_flags() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let _config = crate::test_support::lock_config_file();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_settings = true;
@@ -1961,7 +1952,7 @@ mod tests {
 
     #[test]
     fn focus_on_hover_id_stays_a_direct_action() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             let initial = backend.state().config.pane.focus_on_hover;
             backend

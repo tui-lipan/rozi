@@ -73,204 +73,192 @@ fn settle_until(
 
 #[test]
 fn sessions_sidebar_renders_group_and_child_hierarchy() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                // Revealing the sidebar after the first frame is a real toggle, so it runs the
-                // real slide; these assertions are about the settled column, not a frame
-                // part-way through it.
-                state.config.animations.sidebar = false;
-                // The hierarchy needs every row on screen, so collapse the default split and give
-                // the Sessions tab the whole sidebar.
-                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.config.sidebar.layout.left.panel_count = 1;
-                state.sidebar.apply_configured_panels(&state.config.sidebar);
-                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
-                state
-                    .config
-                    .remote
-                    .hosts
-                    .insert("linvm".into(), RemoteHostConfig::default());
-                state
-                    .config
-                    .remote
-                    .hosts
-                    .insert("winvm".into(), RemoteHostConfig::default());
-                state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
-                state
-                    .remote
-                    .hosts
-                    .get_mut(&RemoteTarget::Alias("linvm".into()))
-                    .expect("linvm")
-                    .probe = HostProbe::Reached;
-                state.current_mut().session_name = Some("dev".into());
-                state.sidebar.sessions = vec![
-                    session("dev", 2, 2, None),
-                    session("test", 3, 0, None),
-                    session("dev", 4, 0, Some("linvm")),
-                ];
-                state.remote.session_cache.insert(
-                    "winvm".into(),
-                    vec![CachedHostSession {
-                        name: "dev".into(),
-                        origin: Default::default(),
-                        ephemeral: false,
-                        panes: 2,
-                    }],
-                );
-            }
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            // Revealing the sidebar after the first frame is a real toggle, so it runs the
+            // real slide; these assertions are about the settled column, not a frame
+            // part-way through it.
+            state.config.animations.sidebar = false;
+            // The hierarchy needs every row on screen, so collapse the default split and give
+            // the Sessions tab the whole sidebar.
+            state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+            state
+                .config
+                .remote
+                .hosts
+                .insert("linvm".into(), RemoteHostConfig::default());
+            state
+                .config
+                .remote
+                .hosts
+                .insert("winvm".into(), RemoteHostConfig::default());
+            state.remote.hosts.seed(&state.config.remote, &[], &[], &[]);
+            state
+                .remote
+                .hosts
+                .get_mut(&RemoteTarget::Alias("linvm".into()))
+                .expect("linvm")
+                .probe = HostProbe::Reached;
+            state.current_mut().session_name = Some("dev".into());
+            state.sidebar.sessions = vec![
+                session("dev", 2, 2, None),
+                session("test", 3, 0, None),
+                session("dev", 4, 0, Some("linvm")),
+            ];
+            state.remote.session_cache.insert(
+                "winvm".into(),
+                vec![CachedHostSession {
+                    name: "dev".into(),
+                    origin: Default::default(),
+                    ephemeral: false,
+                    panes: 2,
+                }],
+            );
+        }
 
-            backend.render();
-            let frame = backend.capture_frame();
-            let lines: Vec<String> = frame
-                .to_fixed_grid_lines()
-                .into_iter()
-                .map(|line| line.chars().take(32).collect())
-                .collect();
+        backend.render();
+        let frame = backend.capture_frame();
+        let lines: Vec<String> = frame
+            .to_fixed_grid_lines()
+            .into_iter()
+            .map(|line| line.chars().take(32).collect())
+            .collect();
 
-            let row = |needle: &str| {
-                lines
-                    .iter()
-                    .position(|line| line.contains(needle))
-                    .unwrap_or_else(|| panic!("{needle:?} should be visible: {lines:#?}"))
-            };
-
-            // Each host is a heading, and its sessions hang from it.
-            assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
-            assert!(lines[row("▍├ dev")].starts_with("▍├ dev"));
-            assert!(lines[row("▍├ dev")].contains("󰍺 1"));
-            assert!(lines[row("▍├ dev")].contains("Current"));
-            assert!(lines[row("2 panes")].starts_with("▍│ 2 panes"));
-            assert!(!lines[row("2 panes")].contains("shared"));
-            assert!(lines[row("test")].starts_with(" └ test"));
-            assert!(lines[row("test")].contains("Running"));
-            assert!(lines[row("3 panes")].starts_with("   3 panes"));
-
-            let new_session_rows: Vec<_> = lines
+        let row = |needle: &str| {
+            lines
                 .iter()
-                .filter(|line| line.contains("+ New session"))
-                .collect();
-            assert_eq!(new_session_rows.len(), 2);
-            assert!(
-                new_session_rows
-                    .iter()
-                    .all(|line| line.starts_with(" + New session"))
-            );
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} should be visible: {lines:#?}"))
+        };
 
-            // A connected host is one line: the badge says it is connected, and disconnecting is
-            // its hover ✕, so its sessions follow immediately.
-            let linvm = row("LINVM");
-            assert!(lines[linvm].starts_with(" LINVM"));
-            assert!(
-                !lines[linvm + 1].contains("Click to disconnect"),
-                "no second line under a connected host: {:?}",
-                lines[linvm + 1]
-            );
-            assert!(lines[linvm + 1].starts_with(" └ dev"));
-            assert!(lines[linvm + 2].starts_with("   4 panes"));
+        // Each host is a heading, and its sessions hang from it.
+        assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
+        assert!(lines[row("▍├ dev")].starts_with("▍├ dev"));
+        assert!(lines[row("▍├ dev")].contains("󰍺 1"));
+        assert!(lines[row("▍├ dev")].contains("Current"));
+        assert!(lines[row("2 panes")].starts_with("▍│ 2 panes"));
+        assert!(!lines[row("2 panes")].contains("shared"));
+        assert!(lines[row("test")].starts_with(" └ test"));
+        assert!(lines[row("test")].contains("Running"));
+        assert!(lines[row("3 panes")].starts_with("   3 panes"));
 
-            // An offline host with nothing to explain spends its free second line on the standing
-            // invitation, rather than hiding it under the pointer.
-            let winvm = row("WINVM");
-            assert!(lines[winvm].starts_with(" WINVM"));
-            assert!(lines[winvm + 1].starts_with(" click to connect"));
-            assert!(
-                lines[winvm + 2].starts_with(" └ dev") && lines[winvm + 2].contains("Last seen")
-            );
-            assert!(lines[winvm + 3].starts_with("   2 panes"));
-            assert!(lines[row("+ Connect a host")].starts_with(" + Connect a host"));
+        let new_session_rows: Vec<_> = lines
+            .iter()
+            .filter(|line| line.contains("+ New session"))
+            .collect();
+        assert_eq!(new_session_rows.len(), 2);
+        assert!(
+            new_session_rows
+                .iter()
+                .all(|line| line.starts_with(" + New session"))
+        );
 
-            let accent = backend
-                .state()
-                .theme
-                .accent
-                .fg
-                .expect("accent foreground")
-                .color();
-            let muted = backend
-                .state()
-                .theme
-                .muted
-                .fg
-                .expect("muted foreground")
-                .color();
-            assert_eq!(frame.cell(1, linvm as u16).fg, accent);
-            // The cached session under an offline host, and its detail: both muted, so a memory of
-            // a session never reads like a live one.
-            assert_eq!(frame.cell(1, (winvm + 1) as u16).fg, muted);
-            assert_eq!(frame.cell(3, (winvm + 2) as u16).fg, muted);
-            assert_eq!(frame.cell(3, (winvm + 3) as u16).fg, muted);
-            // Actions close their group in the heading column and accent.
-            assert_eq!(frame.cell(1, row("+ Connect a host") as u16).fg, accent);
-        })
-        .expect("spawn Sessions sidebar smoke thread")
-        .join()
-        .expect("Sessions sidebar smoke completes");
+        // A connected host is one line: the badge says it is connected, and disconnecting is
+        // its hover ✕, so its sessions follow immediately.
+        let linvm = row("LINVM");
+        assert!(lines[linvm].starts_with(" LINVM"));
+        assert!(
+            !lines[linvm + 1].contains("Click to disconnect"),
+            "no second line under a connected host: {:?}",
+            lines[linvm + 1]
+        );
+        assert!(lines[linvm + 1].starts_with(" └ dev"));
+        assert!(lines[linvm + 2].starts_with("   4 panes"));
+
+        // An offline host with nothing to explain spends its free second line on the standing
+        // invitation, rather than hiding it under the pointer.
+        let winvm = row("WINVM");
+        assert!(lines[winvm].starts_with(" WINVM"));
+        assert!(lines[winvm + 1].starts_with(" click to connect"));
+        assert!(lines[winvm + 2].starts_with(" └ dev") && lines[winvm + 2].contains("Last seen"));
+        assert!(lines[winvm + 3].starts_with("   2 panes"));
+        assert!(lines[row("+ Connect a host")].starts_with(" + Connect a host"));
+
+        let accent = backend
+            .state()
+            .theme
+            .accent
+            .fg
+            .expect("accent foreground")
+            .color();
+        let muted = backend
+            .state()
+            .theme
+            .muted
+            .fg
+            .expect("muted foreground")
+            .color();
+        assert_eq!(frame.cell(1, linvm as u16).fg, accent);
+        // The cached session under an offline host, and its detail: both muted, so a memory of
+        // a session never reads like a live one.
+        assert_eq!(frame.cell(1, (winvm + 1) as u16).fg, muted);
+        assert_eq!(frame.cell(3, (winvm + 2) as u16).fg, muted);
+        assert_eq!(frame.cell(3, (winvm + 3) as u16).fg, muted);
+        // Actions close their group in the heading column and accent.
+        assert_eq!(frame.cell(1, row("+ Connect a host") as u16).fg, accent);
+    });
 }
 
 #[test]
 fn sessions_sidebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.config.sidebar.layout.left.panel_count = 1;
-                state.sidebar.apply_configured_panels(&state.config.sidebar);
-                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
-                state.current_mut().session_name = Some("dev".into());
-                state.sidebar.sessions = vec![session("dev", 2, 2, None)];
-            }
+    rozi::test_support::on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+            state.current_mut().session_name = Some("dev".into());
+            state.sidebar.sessions = vec![session("dev", 2, 2, None)];
+        }
 
-            backend.render();
-            let lines: Vec<String> = backend
-                .capture_frame()
-                .to_fixed_grid_lines()
-                .into_iter()
-                .map(|line| line.chars().take(32).collect())
-                .collect();
-            let row = lines
-                .iter()
-                .position(|line| line.contains("▍└ dev"))
-                .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
-            assert!(
-                lines[row].contains("⋈ 1"),
-                "shared-client count uses the standard-unicode stand-in: {}",
-                lines[row]
-            );
-            assert!(
-                !lines[row].contains('󰍺')
-                    && !lines
-                        .iter()
-                        .any(|line| line.contains('󰒍') || line.contains('󰛤')),
-                "nerd glyphs stay off when nerd_icons is false: {lines:#?}"
-            );
-        })
-        .expect("spawn nerd-icons Sessions smoke thread")
-        .join()
-        .expect("nerd-icons Sessions smoke completes");
+        backend.render();
+        let lines: Vec<String> = backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .into_iter()
+            .map(|line| line.chars().take(32).collect())
+            .collect();
+        let row = lines
+            .iter()
+            .position(|line| line.contains("▍└ dev"))
+            .unwrap_or_else(|| panic!("current session should be visible: {lines:#?}"));
+        assert!(
+            lines[row].contains("⋈ 1"),
+            "shared-client count uses the standard-unicode stand-in: {}",
+            lines[row]
+        );
+        assert!(
+            !lines[row].contains('󰍺')
+                && !lines
+                    .iter()
+                    .any(|line| line.contains('󰒍') || line.contains('󰛤')),
+            "nerd glyphs stay off when nerd_icons is false: {lines:#?}"
+        );
+    });
 }
 
 /// The Sessions tab with one configured host in `probe` state and nothing else, so the host row
@@ -311,62 +299,57 @@ fn host_backend(probe: HostProbe) -> TestBackend<AppRoot> {
 #[test]
 fn session_labels_distinguish_current_background_running_and_restorable() {
     rozi::test_support::isolate_user_dirs();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = settled_unswept_backend();
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.enabled = false;
-                state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.config.sidebar.layout.left.panel_count = 1;
-                state.sidebar.apply_configured_panels(&state.config.sidebar);
-                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
-                state.current_mut().session_name = Some("dev".into());
-                let mut saved = session("saved", 0, 0, None);
-                saved.status = DiscoveredSessionStatus::Restorable;
-                state.sidebar.sessions = vec![
-                    session("dev", 2, 0, None),
-                    session("review", 1, 0, None),
-                    session("build", 1, 0, None),
-                    session("session-with-a-very-long-name", 1, 0, None),
-                    saved,
-                ];
-                let mut background = rozi::state::Attachment::new();
-                background.session_name = Some("review".into());
-                background.connection = rozi::state::ConnectionState::Connected;
-                state.background.insert(1, background);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = settled_unswept_backend();
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.enabled = false;
+            state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+            state.config.sidebar.layout.left.panel_count = 1;
+            state.sidebar.apply_configured_panels(&state.config.sidebar);
+            state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
+            state.current_mut().session_name = Some("dev".into());
+            let mut saved = session("saved", 0, 0, None);
+            saved.status = DiscoveredSessionStatus::Restorable;
+            state.sidebar.sessions = vec![
+                session("dev", 2, 0, None),
+                session("review", 1, 0, None),
+                session("build", 1, 0, None),
+                session("session-with-a-very-long-name", 1, 0, None),
+                saved,
+            ];
+            let mut background = rozi::state::Attachment::new();
+            background.session_name = Some("review".into());
+            background.connection = rozi::state::ConnectionState::Connected;
+            state.background.insert(1, background);
+        }
+        for width in [24, 44] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            for (name, status) in [
+                ("dev", "Current"),
+                ("review", "Background"),
+                ("build", "Running"),
+                ("saved", "Restorable"),
+                ("session", "Running"),
+            ] {
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains(name) && line.contains(status)),
+                    "{name} should show {status} at width {width}: {lines:#?}"
+                );
             }
-            for width in [24, 44] {
-                backend.state_mut().config.sidebar.layout.left.width = width;
-                backend.render();
-                let lines = backend.capture_frame().to_fixed_grid_lines();
-                for (name, status) in [
-                    ("dev", "Current"),
-                    ("review", "Background"),
-                    ("build", "Running"),
-                    ("saved", "Restorable"),
-                    ("session", "Running"),
-                ] {
-                    assert!(
-                        lines
-                            .iter()
-                            .any(|line| line.contains(name) && line.contains(status)),
-                        "{name} should show {status} at width {width}: {lines:#?}"
-                    );
-                }
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        }
+    });
 }
 
 /// A mounted backend with its refresh loop disarmed, for a test that states a host's condition
@@ -470,99 +453,84 @@ fn host_row_index(lines: &[String]) -> usize {
 /// badge's slot instead of growing the row to three lines.
 #[test]
 fn a_failed_host_offers_the_connect_affordance_in_place_of_its_status() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = host_backend(HostProbe::Failed(
-                "bash: line 1: rozi: command not found".into(),
-            ));
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
-            assert!(lines[host].contains("Unreachable"), "{:?}", lines[host]);
-            assert!(
-                !lines[host].contains("connect"),
-                "nothing about connecting until the pointer arrives: {:?}",
-                lines[host]
-            );
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = host_backend(HostProbe::Failed(
+            "bash: line 1: rozi: command not found".into(),
+        ));
+        let lines = sidebar_lines(&mut backend);
+        let host = host_row_index(&lines);
+        assert!(lines[host].contains("Unreachable"), "{:?}", lines[host]);
+        assert!(
+            !lines[host].contains("connect"),
+            "nothing about connecting until the pointer arrives: {:?}",
+            lines[host]
+        );
 
-            let (lines, host) = hover_host_row_until(&mut backend, "connect");
-            assert!(
-                lines[host].contains("connect"),
-                "the affordance arrives on hover: {:?}",
-                lines[host]
-            );
-            assert!(
-                !lines[host].contains("Unreachable"),
-                "in the badge's place, not beside it: {:?}",
-                lines[host]
-            );
-            assert!(
-                lines[host + 1].contains("No rozi on host"),
-                "and the reason keeps its line: {:?}",
-                lines[host + 1]
-            );
-        })
-        .expect("spawn thread")
-        .join()
-        .expect("failed host affordance completes");
+        let (lines, host) = hover_host_row_until(&mut backend, "connect");
+        assert!(
+            lines[host].contains("connect"),
+            "the affordance arrives on hover: {:?}",
+            lines[host]
+        );
+        assert!(
+            !lines[host].contains("Unreachable"),
+            "in the badge's place, not beside it: {:?}",
+            lines[host]
+        );
+        assert!(
+            lines[host + 1].contains("No rozi on host"),
+            "and the reason keeps its line: {:?}",
+            lines[host + 1]
+        );
+    });
 }
 
 /// An offline host with nothing to explain has its second line free, so the invitation stands
 /// there rather than waiting for the pointer.
 #[test]
 fn an_offline_host_keeps_a_standing_invitation_to_connect() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = host_backend(HostProbe::Idle);
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
-            assert!(lines[host].contains("Disconnected"), "{:?}", lines[host]);
-            assert!(
-                lines[host + 1].contains("click to connect"),
-                "the invitation stands without hovering: {:?}",
-                lines[host + 1]
-            );
-        })
-        .expect("spawn thread")
-        .join()
-        .expect("offline host invitation completes");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = host_backend(HostProbe::Idle);
+        let lines = sidebar_lines(&mut backend);
+        let host = host_row_index(&lines);
+        assert!(lines[host].contains("Disconnected"), "{:?}", lines[host]);
+        assert!(
+            lines[host + 1].contains("click to connect"),
+            "the invitation stands without hovering: {:?}",
+            lines[host + 1]
+        );
+    });
 }
 
 /// Why the last attempt failed is the one thing the badge cannot say, so it earns the second line —
 /// on the host's own row, not a third row of its own.
 #[test]
 fn a_failed_probe_explains_itself_on_the_host_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = host_backend(HostProbe::Failed(
-                "bash: line 1: rozi: command not found".into(),
-            ));
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = host_backend(HostProbe::Failed(
+            "bash: line 1: rozi: command not found".into(),
+        ));
+        let lines = sidebar_lines(&mut backend);
+        let host = host_row_index(&lines);
 
-            assert!(lines[host].contains("Unreachable"), "{:?}", lines[host]);
-            assert!(
-                lines[host + 1].contains("No rozi on host"),
-                "the reason rides directly under the host: {:?}",
-                &lines[host..host + 2]
-            );
+        assert!(lines[host].contains("Unreachable"), "{:?}", lines[host]);
+        assert!(
+            lines[host + 1].contains("No rozi on host"),
+            "the reason rides directly under the host: {:?}",
+            &lines[host..host + 2]
+        );
 
-            // Both lines are one row, so pointing at the reason aims at the host it belongs to
-            // rather than at nothing.
-            let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
-            let title_row = hover_row(&mut backend, host);
-            let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
-            let reason_row = hover_row(&mut backend, host + 1);
-            assert_eq!(
-                title_row, reason_row,
-                "the reason belongs to the host's row"
-            );
-        })
-        .expect("spawn thread")
-        .join()
-        .expect("probe failure line completes");
+        // Both lines are one row, so pointing at the reason aims at the host it belongs to
+        // rather than at nothing.
+        let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
+        let title_row = hover_row(&mut backend, host);
+        let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
+        let reason_row = hover_row(&mut backend, host + 1);
+        assert_eq!(
+            title_row, reason_row,
+            "the reason belongs to the host's row"
+        );
+    });
 }
 
 /// Hover has to be tracked for every row, not only the ones a click activates.
@@ -572,83 +540,73 @@ fn a_failed_probe_explains_itself_on_the_host_row() {
 /// failed host then came back wearing its hover affordance instead of its status.
 #[test]
 fn a_row_that_stops_being_selectable_still_releases_the_pointer() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = host_backend(HostProbe::Idle);
-            let target = RemoteTarget::Alias("workbox".into());
-            hover_host_row(&mut backend);
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = host_backend(HostProbe::Idle);
+        let target = RemoteTarget::Alias("workbox".into());
+        hover_host_row(&mut backend);
 
-            // Connecting: the row goes inert, which used to take its hover region with it.
-            backend
-                .state_mut()
-                .remote
-                .hosts
-                .get_mut(&target)
-                .expect("workbox")
-                .probe = HostProbe::InFlight;
-            // Render it: the pointer acts on the tree that is actually on screen, so the row has
-            // to have already lost its region before the pointer leaves — which is the whole
-            // sequence being reproduced.
-            let _ = sidebar_lines(&mut backend);
+        // Connecting: the row goes inert, which used to take its hover region with it.
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .expect("workbox")
+            .probe = HostProbe::InFlight;
+        // Render it: the pointer acts on the tree that is actually on screen, so the row has
+        // to have already lost its region before the pointer leaves — which is the whole
+        // sequence being reproduced.
+        let _ = sidebar_lines(&mut backend);
 
-            // The pointer leaves the sidebar entirely.
-            backend
-                .send_mouse(MouseEvent {
-                    x: 90,
-                    y: 20,
-                    kind: MouseKind::Moved,
-                    mods: KeyMods::NONE,
-                })
-                .expect("move off the sidebar");
-            settle_until(&mut backend, "the pointer to leave every row", |b| {
-                b.state().sidebar.panels[0].hovered_row.is_none()
-            });
+        // The pointer leaves the sidebar entirely.
+        backend
+            .send_mouse(MouseEvent {
+                x: 90,
+                y: 20,
+                kind: MouseKind::Moved,
+                mods: KeyMods::NONE,
+            })
+            .expect("move off the sidebar");
+        settle_until(&mut backend, "the pointer to leave every row", |b| {
+            b.state().sidebar.panels[0].hovered_row.is_none()
+        });
 
-            // The probe fails; the row is selectable again and must read as unreachable.
-            backend
-                .state_mut()
-                .remote
-                .hosts
-                .get_mut(&target)
-                .expect("workbox")
-                .probe = HostProbe::Failed("bash: rozi: command not found".into());
-            let lines = sidebar_lines(&mut backend);
-            let host = host_row_index(&lines);
-            assert!(
-                lines[host].contains("Unreachable"),
-                "the status is back, not the hover affordance: {:?}",
-                lines[host]
-            );
-            assert!(!lines[host].contains("connect"), "{:?}", lines[host]);
-        })
-        .expect("spawn thread")
-        .join()
-        .expect("hover release completes");
+        // The probe fails; the row is selectable again and must read as unreachable.
+        backend
+            .state_mut()
+            .remote
+            .hosts
+            .get_mut(&target)
+            .expect("workbox")
+            .probe = HostProbe::Failed("bash: rozi: command not found".into());
+        let lines = sidebar_lines(&mut backend);
+        let host = host_row_index(&lines);
+        assert!(
+            lines[host].contains("Unreachable"),
+            "the status is back, not the hover affordance: {:?}",
+            lines[host]
+        );
+        assert!(!lines[host].contains("connect"), "{:?}", lines[host]);
+    });
 }
 
 /// A connected host is inert — clicking it does nothing — but it is still closable, and the ✕ is
 /// the only way to disconnect it. Hover therefore has to reach a row that has no activation.
 #[test]
 fn a_connected_host_reveals_its_disconnect_affordance_on_hover() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = host_backend(HostProbe::Reached);
-            let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
-            assert!(
-                !sidebar_lines(&mut backend)[host as usize].contains('✕'),
-                "quiet at rest"
-            );
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = host_backend(HostProbe::Reached);
+        let host = host_row_index(&sidebar_lines(&mut backend)) as u16;
+        assert!(
+            !sidebar_lines(&mut backend)[host as usize].contains('✕'),
+            "quiet at rest"
+        );
 
-            let (lines, host) = hover_host_row_until(&mut backend, "✕");
-            assert!(
-                lines[host].contains('✕'),
-                "an inert row still takes the pointer: {:?}",
-                lines[host]
-            );
-        })
-        .expect("spawn thread")
-        .join()
-        .expect("connected host affordance completes");
+        let (lines, host) = hover_host_row_until(&mut backend, "✕");
+        assert!(
+            lines[host].contains('✕'),
+            "an inert row still takes the pointer: {:?}",
+            lines[host]
+        );
+    });
 }

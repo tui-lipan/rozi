@@ -400,22 +400,17 @@ fn remote_runtime_case() {
     let Ok(case) = std::env::var(CASE_ENV) else {
         return;
     };
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || match case.as_str() {
-            "main" => main_case(),
-            "old" => old_rozi_case(),
-            "platform" => platform_case(),
-            "missing" => missing_case(),
-            "sessions" => sessions_case(),
-            "rename" => rename_case(),
-            "client" => client_case(),
-            "detach" => detach_case(),
-            other => panic!("unknown case {other}"),
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    rozi::test_support::on_deeper_stack(move || match case.as_str() {
+        "main" => main_case(),
+        "old" => old_rozi_case(),
+        "platform" => platform_case(),
+        "missing" => missing_case(),
+        "sessions" => sessions_case(),
+        "rename" => rename_case(),
+        "client" => client_case(),
+        "detach" => detach_case(),
+        other => panic!("unknown case {other}"),
+    });
 }
 
 fn main_case() {

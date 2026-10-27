@@ -68,12 +68,7 @@ fn stage(backend: &TestBackend<AppRoot>) -> KeybindingEditorStage {
 
 #[test]
 fn prefix_and_mod_edits_move_scheme_bindings_and_keep_literals() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn scheme smoke thread")
-        .join()
-        .expect("scheme smoke completes");
+    rozi::test_support::on_large_stack(body);
 }
 
 fn body() {

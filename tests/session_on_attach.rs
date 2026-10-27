@@ -156,13 +156,8 @@ fn automatic_take_attach(allow_takeover: bool) {
 
 #[test]
 fn automatic_take_attach_obeys_server_takeover_policy() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            automatic_take_attach(true);
-            automatic_take_attach(false);
-        })
-        .expect("spawn attach policy test")
-        .join()
-        .expect("attach policy test completes");
+    rozi::test_support::on_large_stack(|| {
+        automatic_take_attach(true);
+        automatic_take_attach(false);
+    });
 }

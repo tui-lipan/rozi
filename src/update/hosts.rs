@@ -274,204 +274,194 @@ mod tests {
 
     #[test]
     fn metadata_survives_closed_sidebar_and_disconnected_generations_are_ignored() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = RemoteTarget::Alias("monitor-test.invalid".into());
-                {
-                    let state = backend.state_mut();
-                    state.command_link = None;
-                    state.sidebar.hide_all();
-                    state.remote.hosts.seed(
-                        &state.config.remote,
-                        std::slice::from_ref(&target),
-                        &[],
-                        &[],
-                    );
-                    state.remote.hosts.get_mut(&target).unwrap().probe =
-                        crate::state::HostProbe::Reached;
-                    state
-                        .remote
-                        .monitors
-                        .push(Monitor::dormant(target.clone(), 7));
-                }
-                let row = DiscoveredSession {
-                    name: "dev".into(),
-                    origin: Default::default(),
-                    host: Some(target.display_label()),
-                    remote_target: Some(target.clone()),
-                    ephemeral: false,
-                    status: crate::session::discovery::DiscoveredSessionStatus::Running {
-                        panes: 2,
-                        clients: 0,
-                        has_layout: false,
-                    },
-                };
-                backend
-                    .dispatch(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        agents: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Ok(vec![row.clone()]),
-                    })
-                    .unwrap();
-                assert_eq!(backend.state().remote.live_sessions, vec![row.clone()]);
-                assert!(!backend.state().sidebar_shown());
-                backend
-                    .dispatch(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        agents: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Err("offline".into()),
-                    })
-                    .unwrap();
-                assert!(backend.state().remote.live_sessions.is_empty());
-                assert!(backend.state().sidebar.sessions.iter().any(|row| matches!(
-                    row.status,
-                    crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 2 }
-                )));
-                backend.state_mut().remote.monitors.clear();
-                backend
-                    .state_mut()
-                    .remote
-                    .hosts
-                    .get_mut(&target)
-                    .unwrap()
-                    .probe = crate::state::HostProbe::Idle;
-                backend
-                    .dispatch(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        agents: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Ok(vec![row]),
-                    })
-                    .unwrap();
-                assert!(backend.state().remote.live_sessions.is_empty());
-                assert_eq!(
-                    backend.state().remote.hosts.get(&target).unwrap().probe,
-                    crate::state::HostProbe::Idle
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = RemoteTarget::Alias("monitor-test.invalid".into());
+            {
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.sidebar.hide_all();
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
                 );
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                state.remote.hosts.get_mut(&target).unwrap().probe =
+                    crate::state::HostProbe::Reached;
+                state
+                    .remote
+                    .monitors
+                    .push(Monitor::dormant(target.clone(), 7));
+            }
+            let row = DiscoveredSession {
+                name: "dev".into(),
+                origin: Default::default(),
+                host: Some(target.display_label()),
+                remote_target: Some(target.clone()),
+                ephemeral: false,
+                status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    panes: 2,
+                    clients: 0,
+                    has_layout: false,
+                },
+            };
+            backend
+                .dispatch(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    agents: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Ok(vec![row.clone()]),
+                })
+                .unwrap();
+            assert_eq!(backend.state().remote.live_sessions, vec![row.clone()]);
+            assert!(!backend.state().sidebar_shown());
+            backend
+                .dispatch(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    agents: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Err("offline".into()),
+                })
+                .unwrap();
+            assert!(backend.state().remote.live_sessions.is_empty());
+            assert!(backend.state().sidebar.sessions.iter().any(|row| matches!(
+                row.status,
+                crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes: 2 }
+            )));
+            backend.state_mut().remote.monitors.clear();
+            backend
+                .state_mut()
+                .remote
+                .hosts
+                .get_mut(&target)
+                .unwrap()
+                .probe = crate::state::HostProbe::Idle;
+            backend
+                .dispatch(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    agents: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Ok(vec![row]),
+                })
+                .unwrap();
+            assert!(backend.state().remote.live_sessions.is_empty());
+            assert_eq!(
+                backend.state().remote.hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::Idle
+            );
+        });
     }
 
     #[test]
     fn host_push_refreshes_shared_sessions_and_disarms_changed_rows() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                crate::test_support::isolate_user_dirs();
-                let _persist = crate::test_support::lock_persisted_state();
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = RemoteTarget::Alias("push-test.invalid".into());
-                let row = |name: &str| DiscoveredSession {
-                    name: name.into(),
-                    origin: Default::default(),
-                    host: Some(target.display_label()),
-                    remote_target: Some(target.clone()),
-                    ephemeral: false,
-                    status: crate::session::discovery::DiscoveredSessionStatus::Running {
-                        panes: 2,
-                        clients: 0,
-                        has_layout: true,
-                    },
-                };
-                let selected = row("dev");
-                // These snapshots exist only in the picker, not in discovery or host caches.
-                let mut local = row("local-snapshot");
-                local.remote_target = None;
-                local.host = None;
-                let mut other = row("other-host-snapshot");
-                let other_target = RemoteTarget::Alias("untouched.invalid".into());
-                other.host = Some(other_target.display_label());
-                other.remote_target = Some(other_target);
-                {
-                    let state = backend.state_mut();
-                    state.command_link = None;
-                    state.remote.added_hosts.push(target.clone());
-                    state.remote.hosts.seed(
-                        &state.config.remote,
-                        std::slice::from_ref(&target),
-                        &[],
-                        &[],
-                    );
-                    state
-                        .remote
-                        .monitors
-                        .push(Monitor::dormant(target.clone(), 7));
-                    state.show_session_picker = true;
-                    let mut picker = crate::state::SessionPickerState::new(vec![
-                        selected.clone(),
-                        local.clone(),
-                        other.clone(),
-                    ])
-                    .on_tab(Some(target.clone()));
-                    picker.input.set_text("dev");
-                    picker.pending_kill = Some(0);
-                    picker.pending_restart = Some(0);
-                    state.session_picker = Some(picker);
-                }
-                backend
-                    .update_level(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Ok(vec![row("aaa"), selected]),
-                        agents: Vec::new(),
-                    })
-                    .unwrap();
-                let picker = backend.state().session_picker.as_ref().unwrap();
-                assert_eq!(picker.entries[picker.selected].name, "dev");
-                assert_eq!(picker.input.text(), "dev");
-                assert_eq!(picker.tab.remote_target(), Some(&target));
-                assert!(picker.pending_kill.is_none() && picker.pending_restart.is_none());
-                assert!(picker.entries.iter().any(|row| row.name == "aaa"));
-                assert!(picker.entries.contains(&local));
-                assert!(picker.entries.contains(&other));
-                backend
-                    .update_level(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Err("offline".into()),
-                        agents: Vec::new(),
-                    })
-                    .unwrap();
-                let picker = backend.state().session_picker.as_ref().unwrap();
-                let selected = &picker.entries[picker.selected];
-                assert_eq!(selected.name, "dev");
-                assert!(
-                    crate::ops::session::session_row_is_last_seen(selected),
-                    "{selected:?}; monitors {}",
-                    backend.state().remote.monitors.len()
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = RemoteTarget::Alias("push-test.invalid".into());
+            let row = |name: &str| DiscoveredSession {
+                name: name.into(),
+                origin: Default::default(),
+                host: Some(target.display_label()),
+                remote_target: Some(target.clone()),
+                ephemeral: false,
+                status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                    panes: 2,
+                    clients: 0,
+                    has_layout: true,
+                },
+            };
+            let selected = row("dev");
+            // These snapshots exist only in the picker, not in discovery or host caches.
+            let mut local = row("local-snapshot");
+            local.remote_target = None;
+            local.host = None;
+            let mut other = row("other-host-snapshot");
+            let other_target = RemoteTarget::Alias("untouched.invalid".into());
+            other.host = Some(other_target.display_label());
+            other.remote_target = Some(other_target);
+            {
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.remote.added_hosts.push(target.clone());
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
                 );
-                assert!(picker.entries.contains(&local));
-                assert!(picker.entries.contains(&other));
-                backend
-                    .update_level(Msg::HostMetadata {
-                        projects: Vec::new(),
-                        target: target.clone(),
-                        generation: 7,
-                        rows: Ok(Vec::new()),
-                        agents: Vec::new(),
-                    })
-                    .unwrap();
-                let picker = backend.state().session_picker.as_ref().unwrap();
-                assert_eq!(picker.entries.len(), 2);
-                assert!(picker.entries.contains(&local));
-                assert!(picker.entries.contains(&other));
-                assert_eq!(picker.input.text(), "dev");
-                assert_eq!(picker.tab.remote_target(), Some(&target));
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                state
+                    .remote
+                    .monitors
+                    .push(Monitor::dormant(target.clone(), 7));
+                state.show_session_picker = true;
+                let mut picker = crate::state::SessionPickerState::new(vec![
+                    selected.clone(),
+                    local.clone(),
+                    other.clone(),
+                ])
+                .on_tab(Some(target.clone()));
+                picker.input.set_text("dev");
+                picker.pending_kill = Some(0);
+                picker.pending_restart = Some(0);
+                state.session_picker = Some(picker);
+            }
+            backend
+                .update_level(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Ok(vec![row("aaa"), selected]),
+                    agents: Vec::new(),
+                })
+                .unwrap();
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(picker.entries[picker.selected].name, "dev");
+            assert_eq!(picker.input.text(), "dev");
+            assert_eq!(picker.tab.remote_target(), Some(&target));
+            assert!(picker.pending_kill.is_none() && picker.pending_restart.is_none());
+            assert!(picker.entries.iter().any(|row| row.name == "aaa"));
+            assert!(picker.entries.contains(&local));
+            assert!(picker.entries.contains(&other));
+            backend
+                .update_level(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Err("offline".into()),
+                    agents: Vec::new(),
+                })
+                .unwrap();
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            let selected = &picker.entries[picker.selected];
+            assert_eq!(selected.name, "dev");
+            assert!(
+                crate::ops::session::session_row_is_last_seen(selected),
+                "{selected:?}; monitors {}",
+                backend.state().remote.monitors.len()
+            );
+            assert!(picker.entries.contains(&local));
+            assert!(picker.entries.contains(&other));
+            backend
+                .update_level(Msg::HostMetadata {
+                    projects: Vec::new(),
+                    target: target.clone(),
+                    generation: 7,
+                    rows: Ok(Vec::new()),
+                    agents: Vec::new(),
+                })
+                .unwrap();
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            assert_eq!(picker.entries.len(), 2);
+            assert!(picker.entries.contains(&local));
+            assert!(picker.entries.contains(&other));
+            assert_eq!(picker.input.text(), "dev");
+            assert_eq!(picker.tab.remote_target(), Some(&target));
+        });
     }
 
     fn summary(session: &str, state: &str) -> crate::session::protocol::AgentSummary {
@@ -493,71 +483,67 @@ mod tests {
     /// presented as news, by the inbox or by a notification.
     #[test]
     fn reconnecting_a_host_does_not_resurrect_finishes_from_while_it_was_gone() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = RemoteTarget::Alias("reconnect-test.invalid".into());
-                {
-                    let state = backend.state_mut();
-                    state.command_link = None;
-                    state.sidebar.hide_all();
-                    state.remote.hosts.seed(
-                        &state.config.remote,
-                        std::slice::from_ref(&target),
-                        &[],
-                        &[],
-                    );
-                    state.remote.hosts.get_mut(&target).unwrap().probe =
-                        crate::state::HostProbe::Reached;
-                    state
-                        .remote
-                        .monitors
-                        .push(Monitor::dormant(target.clone(), 3));
-                }
-                let finished = |completions| {
-                    let mut agent = summary("dev", "idle");
-                    agent.completions = completions;
-                    agent
-                };
-                let metadata = |rows: std::result::Result<Vec<DiscoveredSession>, String>,
-                                agents| Msg::HostMetadata {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = RemoteTarget::Alias("reconnect-test.invalid".into());
+            {
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.sidebar.hide_all();
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
+                );
+                state.remote.hosts.get_mut(&target).unwrap().probe =
+                    crate::state::HostProbe::Reached;
+                state
+                    .remote
+                    .monitors
+                    .push(Monitor::dormant(target.clone(), 3));
+            }
+            let finished = |completions| {
+                let mut agent = summary("dev", "idle");
+                agent.completions = completions;
+                agent
+            };
+            let metadata = |rows: std::result::Result<Vec<DiscoveredSession>, String>, agents| {
+                Msg::HostMetadata {
                     projects: Vec::new(),
                     agents,
                     target: target.clone(),
                     generation: 3,
                     rows,
-                };
+                }
+            };
+            backend
+                .dispatch(metadata(Ok(Vec::new()), vec![finished(1)]))
+                .unwrap();
+            backend
+                .dispatch(metadata(Err("offline".into()), Vec::new()))
+                .unwrap();
+            // The same agent, which finished twice more while the host was unreachable.
+            backend
+                .dispatch(metadata(Ok(Vec::new()), vec![finished(3)]))
+                .unwrap();
+            assert!(
+                !backend
+                    .state()
+                    .agent_attention
+                    .summary_finished_unseen(&finished(3))
+            );
+            // A run that finishes after reconnecting is news again.
+            backend
+                .dispatch(metadata(Ok(Vec::new()), vec![finished(4)]))
+                .unwrap();
+            assert!(
                 backend
-                    .dispatch(metadata(Ok(Vec::new()), vec![finished(1)]))
-                    .unwrap();
-                backend
-                    .dispatch(metadata(Err("offline".into()), Vec::new()))
-                    .unwrap();
-                // The same agent, which finished twice more while the host was unreachable.
-                backend
-                    .dispatch(metadata(Ok(Vec::new()), vec![finished(3)]))
-                    .unwrap();
-                assert!(
-                    !backend
-                        .state()
-                        .agent_attention
-                        .summary_finished_unseen(&finished(3))
-                );
-                // A run that finishes after reconnecting is news again.
-                backend
-                    .dispatch(metadata(Ok(Vec::new()), vec![finished(4)]))
-                    .unwrap();
-                assert!(
-                    backend
-                        .state()
-                        .agent_attention
-                        .summary_finished_unseen(&finished(4))
-                );
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                    .state()
+                    .agent_attention
+                    .summary_finished_unseen(&finished(4))
+            );
+        });
     }
 
     /// The monitor's agent snapshot is state a row reads, not an event stream — so a poll that
@@ -565,29 +551,28 @@ mod tests {
     /// remembered `blocked` beside a host nothing can reach.
     #[test]
     fn agent_snapshots_replace_wholesale_and_a_failed_poll_forgets_them() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let target = RemoteTarget::Alias("agents-test.invalid".into());
-                {
-                    let state = backend.state_mut();
-                    state.command_link = None;
-                    state.remote.hosts.seed(
-                        &state.config.remote,
-                        std::slice::from_ref(&target),
-                        &[],
-                        &[],
-                    );
-                    state.remote.hosts.get_mut(&target).unwrap().probe =
-                        crate::state::HostProbe::Reached;
-                    state
-                        .remote
-                        .monitors
-                        .push(Monitor::dormant(target.clone(), 3));
-                }
-                let metadata = |agents: Vec<crate::session::protocol::AgentSummary>,
-                                rows: std::result::Result<Vec<DiscoveredSession>, String>| {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let target = RemoteTarget::Alias("agents-test.invalid".into());
+            {
+                let state = backend.state_mut();
+                state.command_link = None;
+                state.remote.hosts.seed(
+                    &state.config.remote,
+                    std::slice::from_ref(&target),
+                    &[],
+                    &[],
+                );
+                state.remote.hosts.get_mut(&target).unwrap().probe =
+                    crate::state::HostProbe::Reached;
+                state
+                    .remote
+                    .monitors
+                    .push(Monitor::dormant(target.clone(), 3));
+            }
+            let metadata =
+                |agents: Vec<crate::session::protocol::AgentSummary>,
+                 rows: std::result::Result<Vec<DiscoveredSession>, String>| {
                     Msg::HostMetadata {
                         projects: Vec::new(),
                         agents,
@@ -597,48 +582,45 @@ mod tests {
                     }
                 };
 
-                backend
-                    .dispatch(metadata(vec![summary("dev", "working")], Ok(Vec::new())))
-                    .unwrap();
-                assert_eq!(
-                    backend.state().remote.agents[&target],
-                    vec![summary("dev", "working")]
-                );
+            backend
+                .dispatch(metadata(vec![summary("dev", "working")], Ok(Vec::new())))
+                .unwrap();
+            assert_eq!(
+                backend.state().remote.agents[&target],
+                vec![summary("dev", "working")]
+            );
 
-                backend
-                    .dispatch(metadata(
-                        Vec::new(),
-                        Ok(vec![DiscoveredSession {
-                            name: "dev".into(),
-                            status: crate::session::discovery::DiscoveredSessionStatus::Busy,
-                            origin: Default::default(),
-                            ephemeral: false,
-                            host: Some(target.display_label()),
-                            remote_target: Some(target.clone()),
-                        }]),
-                    ))
-                    .unwrap();
-                assert_eq!(
-                    backend.state().remote.agents[&target],
-                    vec![summary("dev", "working")]
-                );
+            backend
+                .dispatch(metadata(
+                    Vec::new(),
+                    Ok(vec![DiscoveredSession {
+                        name: "dev".into(),
+                        status: crate::session::discovery::DiscoveredSessionStatus::Busy,
+                        origin: Default::default(),
+                        ephemeral: false,
+                        host: Some(target.display_label()),
+                        remote_target: Some(target.clone()),
+                    }]),
+                ))
+                .unwrap();
+            assert_eq!(
+                backend.state().remote.agents[&target],
+                vec![summary("dev", "working")]
+            );
 
-                // Once the endpoint answers again, its new state replaces the retained summary.
-                backend
-                    .dispatch(metadata(vec![summary("dev", "blocked")], Ok(Vec::new())))
-                    .unwrap();
-                assert_eq!(
-                    backend.state().remote.agents[&target],
-                    vec![summary("dev", "blocked")]
-                );
+            // Once the endpoint answers again, its new state replaces the retained summary.
+            backend
+                .dispatch(metadata(vec![summary("dev", "blocked")], Ok(Vec::new())))
+                .unwrap();
+            assert_eq!(
+                backend.state().remote.agents[&target],
+                vec![summary("dev", "blocked")]
+            );
 
-                backend
-                    .dispatch(metadata(Vec::new(), Err("offline".into())))
-                    .unwrap();
-                assert!(!backend.state().remote.agents.contains_key(&target));
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            backend
+                .dispatch(metadata(Vec::new(), Err("offline".into())))
+                .unwrap();
+            assert!(!backend.state().remote.agents.contains_key(&target));
+        });
     }
 }

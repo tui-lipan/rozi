@@ -2248,269 +2248,237 @@ mod tests {
 
     #[test]
     fn capture_ui_answers_every_request_from_the_next_painted_frame() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.render();
-                let drawn = backend.capture_frame();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.render();
+            let drawn = backend.capture_frame();
 
-                // Both arrive before the next paint, and nothing else asks for one.
-                let (text_request, text_reply) = capture_ui_request(CaptureRender::Text);
-                let (png_request, png_reply) = capture_ui_request(CaptureRender::Png);
-                backend.enqueue(text_request);
-                backend.enqueue(png_request);
-                backend.pump().unwrap();
+            // Both arrive before the next paint, and nothing else asks for one.
+            let (text_request, text_reply) = capture_ui_request(CaptureRender::Text);
+            let (png_request, png_reply) = capture_ui_request(CaptureRender::Png);
+            backend.enqueue(text_request);
+            backend.enqueue(png_request);
+            backend.pump().unwrap();
 
-                let text = capture_ui_reply(&text_reply, CaptureRender::Text);
-                assert_eq!((text.width, text.height), (drawn.width, drawn.height));
-                assert_eq!(
-                    text.content,
-                    crate::control::CaptureContent::Text {
-                        text: drawn.plain_text()
-                    }
-                );
+            let text = capture_ui_reply(&text_reply, CaptureRender::Text);
+            assert_eq!((text.width, text.height), (drawn.width, drawn.height));
+            assert_eq!(
+                text.content,
+                crate::control::CaptureContent::Text {
+                    text: drawn.plain_text()
+                }
+            );
 
-                let png = capture_ui_reply(&png_reply, CaptureRender::Png);
-                let crate::control::CaptureContent::Png { png_base64 } = png.content else {
-                    panic!("expected a png capture, got {:?}", png.content);
-                };
-                use base64::Engine as _;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(png_base64)
-                    .unwrap();
-                assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            let png = capture_ui_reply(&png_reply, CaptureRender::Png);
+            let crate::control::CaptureContent::Png { png_base64 } = png.content else {
+                panic!("expected a png capture, got {:?}", png.content);
+            };
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(png_base64)
+                .unwrap();
+            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        });
     }
 
     #[test]
     fn capture_ui_encodes_each_scale_in_a_batch_and_refuses_a_bad_one_at_once() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.render();
 
-                // Refused before any paint, so nothing is left waiting.
-                let (request, reply) = capture_ui_request_at(CaptureRender::Text, Some(2));
-                backend.update_level(request).unwrap();
-                let refused = reply.try_recv().expect("answered at once");
-                assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
-                assert!(backend.state().pending_ui_capture.is_none());
+            // Refused before any paint, so nothing is left waiting.
+            let (request, reply) = capture_ui_request_at(CaptureRender::Text, Some(2));
+            backend.update_level(request).unwrap();
+            let refused = reply.try_recv().expect("answered at once");
+            assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+            assert!(backend.state().pending_ui_capture.is_none());
 
-                let (one, one_reply) = capture_ui_request_at(CaptureRender::Png, None);
-                let (two, two_reply) = capture_ui_request_at(CaptureRender::Png, Some(2));
-                backend.update_level(one).unwrap();
-                backend.update_level(two).unwrap();
-                backend.pump().unwrap();
+            let (one, one_reply) = capture_ui_request_at(CaptureRender::Png, None);
+            let (two, two_reply) = capture_ui_request_at(CaptureRender::Png, Some(2));
+            backend.update_level(one).unwrap();
+            backend.update_level(two).unwrap();
+            backend.pump().unwrap();
 
-                let size = |capture: UiCapture| {
-                    let crate::control::CaptureContent::Png { png_base64 } = capture.content else {
-                        panic!("expected a png");
-                    };
-                    use base64::Engine as _;
-                    let png = base64::engine::general_purpose::STANDARD
-                        .decode(png_base64)
-                        .unwrap();
-                    let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
-                    (field(16), field(20))
+            let size = |capture: UiCapture| {
+                let crate::control::CaptureContent::Png { png_base64 } = capture.content else {
+                    panic!("expected a png");
                 };
-                let (w1, h1) = size(capture_ui_reply(&one_reply, CaptureRender::Png));
-                let (w2, h2) = size(capture_ui_reply(&two_reply, CaptureRender::Png));
-                assert_eq!((w2, h2), (w1 * 2, h1 * 2), "each scale gets its own encode");
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                use base64::Engine as _;
+                let png = base64::engine::general_purpose::STANDARD
+                    .decode(png_base64)
+                    .unwrap();
+                let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+                (field(16), field(20))
+            };
+            let (w1, h1) = size(capture_ui_reply(&one_reply, CaptureRender::Png));
+            let (w2, h2) = size(capture_ui_reply(&two_reply, CaptureRender::Png));
+            assert_eq!((w2, h2), (w1 * 2, h1 * 2), "each scale gets its own encode");
+        });
     }
 
     #[test]
     fn capture_ui_answers_spans_of_the_painted_frame_and_refuses_pixels_elsewhere() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.render();
-                let drawn = backend.capture_frame();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.render();
+            let drawn = backend.capture_frame();
 
-                let (request, reply) = capture_ui_request_with(CaptureRender::Png, None, true);
-                backend.update_level(request).unwrap();
-                let refused = reply.try_recv().expect("answered at once");
-                assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
-                assert!(backend.state().pending_ui_capture.is_none());
+            let (request, reply) = capture_ui_request_with(CaptureRender::Png, None, true);
+            backend.update_level(request).unwrap();
+            let refused = reply.try_recv().expect("answered at once");
+            assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+            assert!(backend.state().pending_ui_capture.is_none());
 
-                let (spans, spans_reply) = capture_ui_request(CaptureRender::Spans);
-                let (pixels, pixels_reply) =
-                    capture_ui_request_with(CaptureRender::Spans, None, true);
-                backend.update_level(spans).unwrap();
-                backend.update_level(pixels).unwrap();
-                backend.pump().unwrap();
+            let (spans, spans_reply) = capture_ui_request(CaptureRender::Spans);
+            let (pixels, pixels_reply) = capture_ui_request_with(CaptureRender::Spans, None, true);
+            backend.update_level(spans).unwrap();
+            backend.update_level(pixels).unwrap();
+            backend.pump().unwrap();
 
-                let capture = capture_ui_reply(&spans_reply, CaptureRender::Spans);
-                let crate::control::CaptureContent::Spans { frame } = capture.content else {
-                    panic!("expected spans, got {:?}", capture.content);
-                };
-                assert_eq!((frame.width, frame.height), (drawn.width, drawn.height));
-                let text: Vec<String> = frame
-                    .rows
-                    .iter()
-                    .map(|row| {
-                        let covered: u16 = row.iter().map(|run| run.width).sum();
-                        let text: String = row.iter().map(|run| run.text.as_str()).collect();
-                        text + &" ".repeat(usize::from(frame.width - covered))
-                    })
-                    .collect();
-                assert_eq!(
-                    text,
-                    drawn.to_fixed_grid_lines(),
-                    "the runs read as the painted frame"
-                );
-                assert!(
-                    frame.rows.iter().flatten().any(|run| run.fg.is_some()),
-                    "the UI's resolved colors are kept"
-                );
-                // No image is drawn, so asking for pixels answers with the same frame.
-                let with_pixels = capture_ui_reply(&pixels_reply, CaptureRender::Spans);
-                let crate::control::CaptureContent::Spans { frame: again } = with_pixels.content
-                else {
-                    panic!("expected spans");
-                };
-                assert_eq!(again, frame);
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            let capture = capture_ui_reply(&spans_reply, CaptureRender::Spans);
+            let crate::control::CaptureContent::Spans { frame } = capture.content else {
+                panic!("expected spans, got {:?}", capture.content);
+            };
+            assert_eq!((frame.width, frame.height), (drawn.width, drawn.height));
+            let text: Vec<String> = frame
+                .rows
+                .iter()
+                .map(|row| {
+                    let covered: u16 = row.iter().map(|run| run.width).sum();
+                    let text: String = row.iter().map(|run| run.text.as_str()).collect();
+                    text + &" ".repeat(usize::from(frame.width - covered))
+                })
+                .collect();
+            assert_eq!(
+                text,
+                drawn.to_fixed_grid_lines(),
+                "the runs read as the painted frame"
+            );
+            assert!(
+                frame.rows.iter().flatten().any(|run| run.fg.is_some()),
+                "the UI's resolved colors are kept"
+            );
+            // No image is drawn, so asking for pixels answers with the same frame.
+            let with_pixels = capture_ui_reply(&pixels_reply, CaptureRender::Spans);
+            let crate::control::CaptureContent::Spans { frame: again } = with_pixels.content else {
+                panic!("expected spans");
+            };
+            assert_eq!(again, frame);
+        });
     }
 
     #[test]
     fn capture_ui_requests_before_one_paint_share_its_encodes() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.render();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.render();
 
-                // Handled without a paint in between, as requests arriving together would be.
-                let mut replies = Vec::new();
-                for render in [CaptureRender::Png, CaptureRender::Png, CaptureRender::Text] {
-                    let (request, reply) = capture_ui_request(render);
-                    backend.update_level(request).unwrap();
-                    replies.push(reply);
-                }
-                let batch = backend.state().pending_ui_capture.clone().expect("a batch");
-                assert_eq!(
-                    batch.borrow().waiters.len(),
-                    3,
-                    "one batch, and so one snapshot callback, for all three"
-                );
+            // Handled without a paint in between, as requests arriving together would be.
+            let mut replies = Vec::new();
+            for render in [CaptureRender::Png, CaptureRender::Png, CaptureRender::Text] {
+                let (request, reply) = capture_ui_request(render);
+                backend.update_level(request).unwrap();
+                replies.push(reply);
+            }
+            let batch = backend.state().pending_ui_capture.clone().expect("a batch");
+            assert_eq!(
+                batch.borrow().waiters.len(),
+                3,
+                "one batch, and so one snapshot callback, for all three"
+            );
 
-                backend.pump().unwrap();
-                let captures = [
-                    capture_ui_reply(&replies[0], CaptureRender::Png),
-                    capture_ui_reply(&replies[1], CaptureRender::Png),
-                    capture_ui_reply(&replies[2], CaptureRender::Text),
-                ];
-                assert_eq!(
-                    captures[0], captures[1],
-                    "both PNG waiters get the one encode"
-                );
-                assert!(matches!(
-                    captures[2].content,
-                    crate::control::CaptureContent::Text { .. }
-                ));
-                assert!(batch.borrow().served && batch.borrow().waiters.is_empty());
+            backend.pump().unwrap();
+            let captures = [
+                capture_ui_reply(&replies[0], CaptureRender::Png),
+                capture_ui_reply(&replies[1], CaptureRender::Png),
+                capture_ui_reply(&replies[2], CaptureRender::Text),
+            ];
+            assert_eq!(
+                captures[0], captures[1],
+                "both PNG waiters get the one encode"
+            );
+            assert!(matches!(
+                captures[2].content,
+                crate::control::CaptureContent::Text { .. }
+            ));
+            assert!(batch.borrow().served && batch.borrow().waiters.is_empty());
 
-                // A request after the paint waits for a frame of its own.
-                let (request, reply) = capture_ui_request(CaptureRender::Text);
-                backend.dispatch(request).unwrap();
-                capture_ui_reply(&reply, CaptureRender::Text);
-                let next = backend.state().pending_ui_capture.clone().expect("a batch");
-                assert!(!std::rc::Rc::ptr_eq(&batch, &next));
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            // A request after the paint waits for a frame of its own.
+            let (request, reply) = capture_ui_request(CaptureRender::Text);
+            backend.dispatch(request).unwrap();
+            capture_ui_reply(&reply, CaptureRender::Text);
+            let next = backend.state().pending_ui_capture.clone().expect("a batch");
+            assert!(!std::rc::Rc::ptr_eq(&batch, &next));
+        });
     }
 
     #[test]
     fn stale_extension_generation_is_rejected_at_execution_time() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::Notify {
-                                message: "stale".to_string(),
-                                title: None,
-                                level: crate::control::NotifyLevel::Info,
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: Some(crate::config::ExtensionProvenance {
-                                id: "tools".to_string(),
-                                generation: "retired".to_string(),
-                            }),
-                            caller_context: None,
-                            credential: None,
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::Notify {
+                            message: "stale".to_string(),
+                            title: None,
+                            level: crate::control::NotifyLevel::Info,
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .unwrap();
+                        source_pane: None,
+                        source_session: None,
+                        extension: Some(crate::config::ExtensionProvenance {
+                            id: "tools".to_string(),
+                            generation: "retired".to_string(),
+                        }),
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .unwrap();
 
-                let response = response.recv().unwrap();
-                assert!(!response.ok);
-                assert_eq!(
-                    response.error.as_deref(),
-                    Some("extension generation is not active")
-                );
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            let response = response.recv().unwrap();
+            assert!(!response.ok);
+            assert_eq!(
+                response.error.as_deref(),
+                Some("extension generation is not active")
+            );
+        });
     }
 
     #[test]
     fn unavailable_extension_commands_get_extension_specific_guidance() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::RunAction {
-                                action: "git-tools.branches".to_string(),
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::RunAction {
+                            action: "git-tools.branches".to_string(),
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .unwrap();
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .unwrap();
 
-                let response = response.recv().unwrap();
-                assert_eq!(
-                    response.error.as_deref(),
-                    Some(
-                        "extension command `git-tools.branches` is unavailable; run `rozi extensions list --verbose`"
-                    )
-                );
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            let response = response.recv().unwrap();
+            assert_eq!(
+                response.error.as_deref(),
+                Some(
+                    "extension command `git-tools.branches` is unavailable; run `rozi extensions list --verbose`"
+                )
+            );
+        });
     }
 
     fn rect() -> FloatRect {
@@ -2572,85 +2540,80 @@ mod tests {
 
     #[test]
     fn writable_follower_can_queue_status_and_read_only_client_cannot() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                let (client, outbound) = SessionClient::test_channel();
-                {
-                    let state = backend.state_mut();
-                    state.current_mut().session_attached = true;
-                    state.current_mut().session_client = Some(client);
-                    state.current_mut().workspaces[0].panes[0].pty_generation = 9;
-                    let mut shared = crate::state::SharedSessionState::new(1);
-                    shared.controller = Some(2);
-                    state.current_mut().shared = Some(shared);
-                }
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::SetStatus {
-                                target: Some(1),
-                                status: Some("blocked".into()),
-                                reason: Some("waiting".into()),
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
+                state.current_mut().workspaces[0].panes[0].pty_generation = 9;
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(2);
+                state.current_mut().shared = Some(shared);
+            }
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::SetStatus {
+                            target: Some(1),
+                            status: Some("blocked".into()),
+                            reason: Some("waiting".into()),
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("dispatch writable status request");
-                assert!(response.recv().unwrap().ok);
-                assert!(outbound.try_iter().any(|message| matches!(
-                        message,
-                        ClientOutbound::Control(ClientMessage::SetPaneStatus {
-                            pane_id: 1,
-                local: false,
-                            generation: 9,
-                            status: Some(status),
-                            reason: Some(reason),
-                        }) if status == "blocked" && reason == "waiting"
-                    )));
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch writable status request");
+            assert!(response.recv().unwrap().ok);
+            assert!(outbound.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                        pane_id: 1,
+            local: false,
+                        generation: 9,
+                        status: Some(status),
+                        reason: Some(reason),
+                    }) if status == "blocked" && reason == "waiting"
+                )));
 
-                backend
-                    .state_mut()
-                    .current_mut()
-                    .shared
-                    .as_mut()
-                    .unwrap()
-                    .read_only = true;
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::SetStatus {
-                                target: Some(1),
-                                status: None,
-                                reason: None,
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+            backend
+                .state_mut()
+                .current_mut()
+                .shared
+                .as_mut()
+                .unwrap()
+                .read_only = true;
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::SetStatus {
+                            target: Some(1),
+                            status: None,
+                            reason: None,
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("dispatch read-only status request");
-                let response = response.recv().unwrap();
-                assert!(!response.ok);
-                assert_eq!(response.error.as_deref(), Some("attached read-only"));
-                assert!(outbound.try_recv().is_err());
-            })
-            .expect("spawn control status test thread")
-            .join()
-            .expect("control status test thread completes");
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch read-only status request");
+            let response = response.recv().unwrap();
+            assert!(!response.ok);
+            assert_eq!(response.error.as_deref(), Some("attached read-only"));
+            assert!(outbound.try_recv().is_err());
+        });
     }
 
     /// A backend whose mount has delivered the command link, which `hold_spawn_reply` needs to arm
@@ -2718,216 +2681,167 @@ mod tests {
 
     #[test]
     fn new_pane_leaves_focus_put_and_answers_only_once_the_pty_is_ready() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
-                let focused_before = backend.state().current().focused_pane;
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let focused_before = backend.state().current().focused_pane;
 
-                let (envelope, response) = new_pane_request(false);
-                backend
-                    .dispatch(crate::Msg::ControlRequest(envelope))
-                    .expect("dispatch new-pane");
+            let (envelope, response) = new_pane_request(false);
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane");
 
-                // Acceptance alone must not answer: the caller is told about readiness, not about
-                // the request having been received.
-                assert!(
-                    response.try_recv().is_err(),
-                    "reply was sent before the PTY reported ready"
-                );
-                assert_eq!(
-                    backend.state().current().focused_pane,
-                    focused_before,
-                    "an automation spawn moved focus"
-                );
+            // Acceptance alone must not answer: the caller is told about readiness, not about
+            // the request having been received.
+            assert!(
+                response.try_recv().is_err(),
+                "reply was sent before the PTY reported ready"
+            );
+            assert_eq!(
+                backend.state().current().focused_pane,
+                focused_before,
+                "an automation spawn moved focus"
+            );
 
-                let spawned = backend.state().current().workspaces[0]
-                    .panes
-                    .iter()
-                    .map(|pane| (pane.id, pane.pty_generation))
-                    .max_by_key(|(id, _)| *id)
-                    .expect("the pane was created");
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::SessionSpawnResult {
-                        epoch,
-                        pane_id: spawned.0,
-                        local: false,
-                        generation: spawned.1,
-                        pid: Some(4242),
-                        ok: true,
-                        error: None,
-                    })
-                    .expect("dispatch spawn result");
+            let spawned = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .map(|pane| (pane.id, pane.pty_generation))
+                .max_by_key(|(id, _)| *id)
+                .expect("the pane was created");
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionSpawnResult {
+                    epoch,
+                    pane_id: spawned.0,
+                    local: false,
+                    generation: spawned.1,
+                    pid: Some(4242),
+                    ok: true,
+                    error: None,
+                })
+                .expect("dispatch spawn result");
 
-                let response = response.try_recv().expect("reply released by spawn result");
-                assert!(response.ok);
-                let data = response.data.unwrap();
-                assert_eq!(data["id"], spawned.0);
-                assert_eq!(data["pty_ready"], true);
-                assert_eq!(
-                    backend.state().current().focused_pane,
-                    focused_before,
-                    "focus moved when the spawn completed"
-                );
-            })
-            .expect("spawn new-pane readiness test thread")
-            .join()
-            .expect("new-pane readiness test thread completes");
+            let response = response.try_recv().expect("reply released by spawn result");
+            assert!(response.ok);
+            let data = response.data.unwrap();
+            assert_eq!(data["id"], spawned.0);
+            assert_eq!(data["pty_ready"], true);
+            assert_eq!(
+                backend.state().current().focused_pane,
+                focused_before,
+                "focus moved when the spawn completed"
+            );
+        });
     }
 
     #[test]
     fn split_uses_local_directory_only_for_local_attachments() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                for remote in [false, true] {
-                    let mut backend = settled_backend();
-                    let _outbound = attach_test_session(&mut backend);
-                    if remote {
-                        backend.state_mut().current_mut().remote_host = Some("test-host".into());
-                    }
-                    let (mut envelope, _response) = new_pane_request(false);
-                    let ControlCommand::NewPane { cwd, local_cwd, .. } =
-                        &mut envelope.request.command
-                    else {
-                        unreachable!()
-                    };
-                    *cwd = Some("remote/relative".into());
-                    *local_cwd = Some("/local/caller".into());
-                    backend
-                        .dispatch(crate::Msg::ControlRequest(envelope))
-                        .unwrap();
-                    let pane = backend.state().current().workspaces[0]
-                        .panes
-                        .last()
-                        .unwrap();
-                    assert_eq!(
-                        pane.identity.cwd.as_deref(),
-                        Some(if remote {
-                            "remote/relative"
-                        } else {
-                            "/local/caller"
-                        })
-                    );
+        crate::test_support::on_large_stack(|| {
+            for remote in [false, true] {
+                let mut backend = settled_backend();
+                let _outbound = attach_test_session(&mut backend);
+                if remote {
+                    backend.state_mut().current_mut().remote_host = Some("test-host".into());
                 }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+                let (mut envelope, _response) = new_pane_request(false);
+                let ControlCommand::NewPane { cwd, local_cwd, .. } = &mut envelope.request.command
+                else {
+                    unreachable!()
+                };
+                *cwd = Some("remote/relative".into());
+                *local_cwd = Some("/local/caller".into());
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .unwrap();
+                let pane = backend.state().current().workspaces[0]
+                    .panes
+                    .last()
+                    .unwrap();
+                assert_eq!(
+                    pane.identity.cwd.as_deref(),
+                    Some(if remote {
+                        "remote/relative"
+                    } else {
+                        "/local/caller"
+                    })
+                );
+            }
+        });
     }
 
     #[test]
     fn new_pane_with_a_size_spawns_the_pty_and_the_parser_at_that_size() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                let outbound = attach_test_session(&mut backend);
-                let (mut envelope, _response) = new_pane_request(false);
-                let ControlCommand::NewPane {
-                    workspace, size, ..
-                } = &mut envelope.request.command
-                else {
-                    unreachable!("new_pane_request builds a NewPane");
-                };
-                // Off screen, so no tile ever reports a size that would replace this one.
-                *workspace = Some(9);
-                *size = Some(crate::control::PaneSize {
-                    cols: 100,
-                    rows: 220,
-                });
-                backend
-                    .dispatch(crate::Msg::ControlRequest(envelope))
-                    .expect("dispatch new-pane --size");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            let (mut envelope, _response) = new_pane_request(false);
+            let ControlCommand::NewPane {
+                workspace, size, ..
+            } = &mut envelope.request.command
+            else {
+                unreachable!("new_pane_request builds a NewPane");
+            };
+            // Off screen, so no tile ever reports a size that would replace this one.
+            *workspace = Some(9);
+            *size = Some(crate::control::PaneSize {
+                cols: 100,
+                rows: 220,
+            });
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane --size");
 
-                let spawned = outbound
-                    .try_iter()
-                    .find_map(|message| match message {
-                        ClientOutbound::Control(ClientMessage::SpawnPane {
-                            cols, rows, ..
-                        }) => Some((cols, rows)),
-                        _ => None,
-                    })
-                    .expect("the pane was spawned on the server");
-                assert_eq!(spawned, (100, 220));
-                let pane = backend.state().current().workspaces[8]
-                    .panes
-                    .last()
-                    .expect("the pane landed in workspace 9");
-                assert_eq!((pane.terminal.cols, pane.terminal.rows), (100, 220));
-            })
-            .expect("spawn new-pane size test thread")
-            .join()
-            .expect("new-pane size test thread completes");
+            let spawned = outbound
+                .try_iter()
+                .find_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::SpawnPane { cols, rows, .. }) => {
+                        Some((cols, rows))
+                    }
+                    _ => None,
+                })
+                .expect("the pane was spawned on the server");
+            assert_eq!(spawned, (100, 220));
+            let pane = backend.state().current().workspaces[8]
+                .panes
+                .last()
+                .expect("the pane landed in workspace 9");
+            assert_eq!((pane.terminal.cols, pane.terminal.rows), (100, 220));
+        });
     }
 
     #[test]
     fn new_pane_with_focus_moves_focus_to_the_new_pane() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
-                let focused_before = backend.state().current().focused_pane;
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let focused_before = backend.state().current().focused_pane;
 
-                let (envelope, _response) = new_pane_request(true);
-                backend
-                    .dispatch(crate::Msg::ControlRequest(envelope))
-                    .expect("dispatch new-pane --focus");
+            let (envelope, _response) = new_pane_request(true);
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane --focus");
 
-                let focused_after = backend.state().current().focused_pane;
-                assert_ne!(focused_after, focused_before);
-                assert!(focused_after.is_some());
-            })
-            .expect("spawn new-pane focus test thread")
-            .join()
-            .expect("new-pane focus test thread completes");
+            let focused_after = backend.state().current().focused_pane;
+            assert_ne!(focused_after, focused_before);
+            assert!(focused_after.is_some());
+        });
     }
 
     /// A blank toast would occupy the slot a real message needs, so it is refused rather than
     /// drawn empty.
     #[test]
     fn notify_refuses_an_empty_message() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                for blank in ["", "   "] {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    backend
-                        .dispatch(crate::Msg::ControlRequest(
-                            crate::control::ControlEnvelope {
-                                request: crate::control::ControlRequest {
-                                    command: crate::control::ControlCommand::Notify {
-                                        message: blank.to_string(),
-                                        title: None,
-                                        level: crate::control::NotifyLevel::Info,
-                                    },
-                                    source_pane: None,
-                                    source_session: None,
-                                    extension: None,
-                                    caller_context: None,
-                                    credential: None,
-                                },
-                                reply: tx,
-                                worker: None,
-                            },
-                        ))
-                        .expect("dispatch notify");
-                    let response = rx.try_recv().expect("answered");
-                    assert!(!response.ok, "an empty message was accepted");
-                    assert_eq!(response.error.as_deref(), Some("notify requires a message"));
-                }
-
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            for blank in ["", "   "] {
                 let (tx, rx) = std::sync::mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(
                         crate::control::ControlEnvelope {
                             request: crate::control::ControlRequest {
                                 command: crate::control::ControlCommand::Notify {
-                                    message: "deploy finished".into(),
+                                    message: blank.to_string(),
                                     title: None,
                                     level: crate::control::NotifyLevel::Info,
                                 },
@@ -2942,190 +2856,230 @@ mod tests {
                         },
                     ))
                     .expect("dispatch notify");
-                assert!(rx.try_recv().expect("answered").ok);
-            })
-            .expect("spawn notify test thread")
-            .join()
-            .expect("notify test thread completes");
+                let response = rx.try_recv().expect("answered");
+                assert!(!response.ok, "an empty message was accepted");
+                assert_eq!(response.error.as_deref(), Some("notify requires a message"));
+            }
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(
+                    crate::control::ControlEnvelope {
+                        request: crate::control::ControlRequest {
+                            command: crate::control::ControlCommand::Notify {
+                                message: "deploy finished".into(),
+                                title: None,
+                                level: crate::control::NotifyLevel::Info,
+                            },
+                            source_pane: None,
+                            source_session: None,
+                            extension: None,
+                            caller_context: None,
+                            credential: None,
+                        },
+                        reply: tx,
+                        worker: None,
+                    },
+                ))
+                .expect("dispatch notify");
+            assert!(rx.try_recv().expect("answered").ok);
+        });
     }
 
     #[test]
     fn a_failed_spawn_answers_the_held_new_pane_reply_with_an_error() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
 
-                let (envelope, response) = new_pane_request(false);
-                backend
-                    .dispatch(crate::Msg::ControlRequest(envelope))
-                    .expect("dispatch new-pane");
-                let spawned = backend.state().current().workspaces[0]
-                    .panes
-                    .iter()
-                    .map(|pane| (pane.id, pane.pty_generation))
-                    .max_by_key(|(id, _)| *id)
-                    .expect("the pane was created");
-                let epoch = backend.state().runtime_epoch;
+            let (envelope, response) = new_pane_request(false);
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane");
+            let spawned = backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .map(|pane| (pane.id, pane.pty_generation))
+                .max_by_key(|(id, _)| *id)
+                .expect("the pane was created");
+            let epoch = backend.state().runtime_epoch;
 
-                backend
-                    .dispatch(crate::Msg::SessionSpawnResult {
-                        epoch,
-                        pane_id: spawned.0,
-                        local: false,
-                        generation: spawned.1,
-                        pid: None,
-                        ok: false,
-                        error: Some("no such file".into()),
-                    })
-                    .expect("dispatch failed spawn result");
+            backend
+                .dispatch(crate::Msg::SessionSpawnResult {
+                    epoch,
+                    pane_id: spawned.0,
+                    local: false,
+                    generation: spawned.1,
+                    pid: None,
+                    ok: false,
+                    error: Some("no such file".into()),
+                })
+                .expect("dispatch failed spawn result");
 
-                let response = response.try_recv().expect("reply released by spawn result");
-                assert!(!response.ok);
-                assert_eq!(response.error.as_deref(), Some("no such file"));
-            })
-            .expect("spawn failed-spawn test thread")
-            .join()
-            .expect("failed-spawn test thread completes");
+            let response = response.try_recv().expect("reply released by spawn result");
+            assert!(!response.ok);
+            assert_eq!(response.error.as_deref(), Some("no such file"));
+        });
     }
 
     #[test]
     fn input_for_a_starting_pane_is_queued_and_flushed_once_the_pty_is_ready() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                let outbound = attach_test_session(&mut backend);
-                {
-                    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                    pane.pty_generation = 4;
-                    pane.terminal.status = ManagedTerminalStatus::Starting;
-                }
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.pty_generation = 4;
+                pane.terminal.status = ManagedTerminalStatus::Starting;
+            }
 
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::SendText {
-                                target: Some(1),
-                                text: "cargo test\n".into(),
-                                wait: None,
-                                capture: None,
-                                scale: None,
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::SendText {
+                            target: Some(1),
+                            text: "cargo test\n".into(),
+                            wait: None,
+                            capture: None,
+                            scale: None,
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("dispatch send-text at a starting pane");
-                assert!(response.recv().unwrap().ok);
-                assert!(
-                    !outbound.try_iter().any(|message| matches!(
-                        message,
-                        ClientOutbound::PaneInput { .. }
-                            | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
-                    )),
-                    "input reached the PTY before it was ready"
-                );
-
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::SessionSpawnResult {
-                        epoch,
-                        pane_id: 1,
-                        local: false,
-                        generation: 4,
-                        pid: Some(11),
-                        ok: true,
-                        error: None,
-                    })
-                    .expect("dispatch spawn result");
-
-                assert!(outbound.try_iter().any(|message| matches!(
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch send-text at a starting pane");
+            assert!(response.recv().unwrap().ok);
+            assert!(
+                !outbound.try_iter().any(|message| matches!(
                     message,
-                    ClientOutbound::PaneInput {
-                        pane_id: 1,
-                        generation: 4,
-                        ref bytes,
-                        ..
-                    } if bytes == b"cargo test\n"
-                )));
-            })
-            .expect("spawn queued-input test thread")
-            .join()
-            .expect("queued-input test thread completes");
+                    ClientOutbound::PaneInput { .. }
+                        | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
+                )),
+                "input reached the PTY before it was ready"
+            );
+
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionSpawnResult {
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation: 4,
+                    pid: Some(11),
+                    ok: true,
+                    error: None,
+                })
+                .expect("dispatch spawn result");
+
+            assert!(outbound.try_iter().any(|message| matches!(
+                message,
+                ClientOutbound::PaneInput {
+                    pane_id: 1,
+                    generation: 4,
+                    ref bytes,
+                    ..
+                } if bytes == b"cargo test\n"
+            )));
+        });
     }
 
     #[test]
     fn input_for_a_pane_that_is_not_running_still_fails() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
-                backend.state_mut().current_mut().workspaces[0].panes[0]
-                    .terminal
-                    .status = ManagedTerminalStatus::Exited(0);
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .status = ManagedTerminalStatus::Exited(0);
 
-                let (reply, response) = mpsc::channel();
-                backend
-                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::SendText {
-                                target: Some(1),
-                                text: "hi".into(),
-                                wait: None,
-                                capture: None,
-                                scale: None,
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::SendText {
+                            target: Some(1),
+                            text: "hi".into(),
+                            wait: None,
+                            capture: None,
+                            scale: None,
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("dispatch send-text at an exited pane");
-                let response = response.recv().unwrap();
-                assert!(!response.ok);
-                assert_eq!(response.error.as_deref(), Some("pane 1 PTY is not running"));
-            })
-            .expect("spawn exited-pane input test thread")
-            .join()
-            .expect("exited-pane input test thread completes");
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch send-text at an exited pane");
+            let response = response.recv().unwrap();
+            assert!(!response.ok);
+            assert_eq!(response.error.as_deref(), Some("pane 1 PTY is not running"));
+        });
     }
 
     #[test]
     fn list_panes_keeps_terminal_status_and_adds_reported_status_fields() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.state_mut().current_mut().session_name = Some("dev".into());
-                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                pane.terminal.title = Some("build".into());
-                pane.terminal.foreground_program = Some("cargo".into());
-                pane.terminal.foreground_programs = vec!["cargo".into(), "rustc".into()];
-                pane.terminal.foreground_arguments = vec!["test".into()];
-                pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
-                    value: "working".into(),
-                    reason: Some("building".into()),
-                    set_at: 1,
-                });
-                pane.terminal.status = ManagedTerminalStatus::Ready;
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().current_mut().session_name = Some("dev".into());
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.terminal.title = Some("build".into());
+            pane.terminal.foreground_program = Some("cargo".into());
+            pane.terminal.foreground_programs = vec!["cargo".into(), "rustc".into()];
+            pane.terminal.foreground_arguments = vec!["test".into()];
+            pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+                value: "working".into(),
+                reason: Some("building".into()),
+                set_at: 1,
+            });
+            pane.terminal.status = ManagedTerminalStatus::Ready;
+            let (reply, response) = mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::ListPanes,
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch list panes");
+            let data = response.recv().unwrap().data.unwrap();
+            assert!(data[0]["status"].is_string());
+            assert_ne!(data[0]["status"], "working");
+            assert_eq!(data[0]["reported_status"], "working");
+            assert_eq!(data[0]["status_reason"], "building");
+            assert_eq!(data[0]["session"], "dev");
+            assert_eq!(data[0]["title"], "build");
+            assert_eq!(data[0]["foreground_program"], "cargo");
+            assert_eq!(data[0]["foreground_programs"][1], "rustc");
+            assert_eq!(data[0]["foreground_arguments"][0], "test");
+        });
+    }
+
+    #[test]
+    fn layout_get_reports_the_shared_arrangement_and_where_this_ui_draws_it() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().current_mut().session_name = Some("dev".into());
+            let ask = |backend: &mut TestBackend<crate::AppRoot>, workspace| {
                 let (reply, response) = mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
                         request: ControlRequest {
-                            command: ControlCommand::ListPanes,
+                            command: ControlCommand::LayoutGet { workspace },
                             source_pane: None,
                             source_session: None,
                             extension: None,
@@ -3135,110 +3089,68 @@ mod tests {
                         reply,
                         worker: None,
                     }))
-                    .expect("dispatch list panes");
-                let data = response.recv().unwrap().data.unwrap();
-                assert!(data[0]["status"].is_string());
-                assert_ne!(data[0]["status"], "working");
-                assert_eq!(data[0]["reported_status"], "working");
-                assert_eq!(data[0]["status_reason"], "building");
-                assert_eq!(data[0]["session"], "dev");
-                assert_eq!(data[0]["title"], "build");
-                assert_eq!(data[0]["foreground_program"], "cargo");
-                assert_eq!(data[0]["foreground_programs"][1], "rustc");
-                assert_eq!(data[0]["foreground_arguments"][0], "test");
-            })
-            .expect("spawn list panes test thread")
-            .join()
-            .expect("list panes test thread completes");
-    }
+                    .expect("dispatch layout get");
+                let response = response.recv().unwrap();
+                assert!(response.ok, "{:?}", response.error);
+                serde_json::from_value::<crate::control::LayoutReport>(
+                    response.data.expect("layout data"),
+                )
+                .expect("a LayoutReport")
+            };
 
-    #[test]
-    fn layout_get_reports_the_shared_arrangement_and_where_this_ui_draws_it() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.state_mut().current_mut().session_name = Some("dev".into());
-                let ask = |backend: &mut TestBackend<crate::AppRoot>, workspace| {
-                    let (reply, response) = mpsc::channel();
-                    backend
-                        .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
-                            request: ControlRequest {
-                                command: ControlCommand::LayoutGet { workspace },
-                                source_pane: None,
-                                source_session: None,
-                                extension: None,
-                                caller_context: None,
-                                credential: None,
-                            },
-                            reply,
-                            worker: None,
-                        }))
-                        .expect("dispatch layout get");
-                    let response = response.recv().unwrap();
-                    assert!(response.ok, "{:?}", response.error);
-                    serde_json::from_value::<crate::control::LayoutReport>(
-                        response.data.expect("layout data"),
-                    )
-                    .expect("a LayoutReport")
-                };
+            let report = ask(&mut backend, None);
+            assert_eq!(report.session, "dev");
+            assert_eq!(
+                report.workspaces.len(),
+                crate::state::WORKSPACE_COUNT,
+                "empty workspaces are still reported, with their layouts"
+            );
+            let client = report.client.expect("a UI reports its own view");
+            assert_eq!(client.active_workspace, 1);
+            // No shared session: this UI owns its layout outright and has no server to lag.
+            assert!(client.controller);
+            assert!(client.committed);
+            assert_eq!(report.revision, None);
+            let canvas = report.canvas.expect("a UI always has a canvas");
+            let [pane] = report.workspaces[0].panes.as_slice() else {
+                panic!("expected the seeded pane");
+            };
+            assert_eq!(client.focused_pane, Some(pane.id));
+            assert_eq!(pane.order, Some(0));
+            assert_eq!(
+                (pane.rect.width, pane.rect.height),
+                (u32::from(canvas.cols), u32::from(canvas.rows)),
+                "a lone tiled pane covers the canonical canvas"
+            );
+            let view = pane.view_rect.expect("the active workspace is on screen");
+            assert!(view.width > 0 && view.width <= u32::from(client.viewport.cols));
+            assert!(view.height > 0 && view.height <= u32::from(client.viewport.rows));
 
-                let report = ask(&mut backend, None);
-                assert_eq!(report.session, "dev");
-                assert_eq!(
-                    report.workspaces.len(),
-                    crate::state::WORKSPACE_COUNT,
-                    "empty workspaces are still reported, with their layouts"
-                );
-                let client = report.client.expect("a UI reports its own view");
-                assert_eq!(client.active_workspace, 1);
-                // No shared session: this UI owns its layout outright and has no server to lag.
-                assert!(client.controller);
-                assert!(client.committed);
-                assert_eq!(report.revision, None);
-                let canvas = report.canvas.expect("a UI always has a canvas");
-                let [pane] = report.workspaces[0].panes.as_slice() else {
-                    panic!("expected the seeded pane");
-                };
-                assert_eq!(client.focused_pane, Some(pane.id));
-                assert_eq!(pane.order, Some(0));
-                assert_eq!(
-                    (pane.rect.width, pane.rect.height),
-                    (u32::from(canvas.cols), u32::from(canvas.rows)),
-                    "a lone tiled pane covers the canonical canvas"
-                );
-                let view = pane.view_rect.expect("the active workspace is on screen");
-                assert!(view.width > 0 && view.width <= u32::from(client.viewport.cols));
-                assert!(view.height > 0 && view.height <= u32::from(client.viewport.rows));
+            let narrowed = ask(&mut backend, Some(2));
+            assert_eq!(narrowed.workspaces.len(), 1);
+            assert_eq!(narrowed.workspaces[0].index, 2);
+            assert!(narrowed.workspaces[0].panes.is_empty());
 
-                let narrowed = ask(&mut backend, Some(2));
-                assert_eq!(narrowed.workspaces.len(), 1);
-                assert_eq!(narrowed.workspaces[0].index, 2);
-                assert!(narrowed.workspaces[0].panes.is_empty());
+            // A follower describes the revision it applied and never has changes of its own.
+            let mut shared = crate::state::SharedSessionState::new(1);
+            shared.controller = Some(2);
+            shared.layout_rev = 3;
+            shared.assumed_rev = 3;
+            backend.state_mut().current_mut().shared = Some(shared);
+            let follower = ask(&mut backend, None);
+            assert_eq!(follower.revision, Some(3));
+            let client = follower.client.expect("client view");
+            assert!(!client.controller);
+            assert!(client.committed);
 
-                // A follower describes the revision it applied and never has changes of its own.
-                let mut shared = crate::state::SharedSessionState::new(1);
-                shared.controller = Some(2);
-                shared.layout_rev = 3;
-                shared.assumed_rev = 3;
-                backend.state_mut().current_mut().shared = Some(shared);
-                let follower = ask(&mut backend, None);
-                assert_eq!(follower.revision, Some(3));
-                let client = follower.client.expect("client view");
-                assert!(!client.controller);
-                assert!(client.committed);
-
-                // A controller whose commit the server has not echoed yet is ahead of `revision`.
-                let shared = backend.state_mut().current_mut().shared.as_mut().unwrap();
-                shared.controller = Some(1);
-                shared.assumed_rev = 4;
-                let pending = ask(&mut backend, None).client.expect("client view");
-                assert!(pending.controller);
-                assert!(!pending.committed);
-            })
-            .expect("spawn layout get test thread")
-            .join()
-            .expect("layout get test thread completes");
+            // A controller whose commit the server has not echoed yet is ahead of `revision`.
+            let shared = backend.state_mut().current_mut().shared.as_mut().unwrap();
+            shared.controller = Some(1);
+            shared.assumed_rev = 4;
+            let pending = ask(&mut backend, None).client.expect("client view");
+            assert!(pending.controller);
+            assert!(!pending.committed);
+        });
     }
 
     fn dispatch(
@@ -3321,88 +3233,78 @@ mod tests {
     /// first, so the gesture's last step is live and the write is an ordinary revision.
     #[test]
     fn a_layout_write_during_a_split_drag_is_an_ordinary_commit() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, rx) = shared_controller();
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
-                    .expect("publish the starting layout");
-                let _ = commit_liveness(&rx);
-                mid_split_drag(&mut backend);
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, rx) = shared_controller();
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                .expect("publish the starting layout");
+            let _ = commit_liveness(&rx);
+            mid_split_drag(&mut backend);
 
-                let response = dispatch(
-                    &mut backend,
-                    ControlCommand::LayoutSet {
-                        workspace: 1,
-                        layout: Some(crate::control::ControlLayoutKind::Grid),
-                        master_ratio: None,
-                        if_revision: None,
-                    },
-                );
-                assert!(response.ok, "{:?}", response.error);
-                assert_eq!(
-                    commit_liveness(&rx),
-                    vec![true, false],
-                    "the gesture's last step is live; the layout write is its own ordinary revision"
-                );
-                assert!(
-                    backend.state().split_drag.is_none(),
-                    "the write ended the gesture"
-                );
-            })
-            .expect("spawn layout write test thread")
-            .join()
-            .expect("layout write test thread completes");
+            let response = dispatch(
+                &mut backend,
+                ControlCommand::LayoutSet {
+                    workspace: 1,
+                    layout: Some(crate::control::ControlLayoutKind::Grid),
+                    master_ratio: None,
+                    if_revision: None,
+                },
+            );
+            assert!(response.ok, "{:?}", response.error);
+            assert_eq!(
+                commit_liveness(&rx),
+                vec![true, false],
+                "the gesture's last step is live; the layout write is its own ordinary revision"
+            );
+            assert!(
+                backend.state().split_drag.is_none(),
+                "the write ended the gesture"
+            );
+        });
     }
 
     /// `new-pane` adds a shared pane outside the action dispatcher, so it ends the gesture too.
     #[test]
     fn a_new_pane_during_a_split_drag_ends_the_gesture_first() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, rx) = shared_controller();
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
-                    .expect("publish the starting layout");
-                let _ = commit_liveness(&rx);
-                mid_split_drag(&mut backend);
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, rx) = shared_controller();
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                .expect("publish the starting layout");
+            let _ = commit_liveness(&rx);
+            mid_split_drag(&mut backend);
 
-                let panes_before = backend.state().current().workspaces[0].panes.len();
-                // The reply waits for the PTY; the spawn itself is what this test is about.
-                let (envelope, _response) = new_pane_request(false);
-                backend
-                    .dispatch(crate::Msg::ControlRequest(envelope))
-                    .expect("dispatch new-pane");
-                assert_eq!(
-                    backend.state().current().workspaces[0].panes.len(),
-                    panes_before + 1,
-                    "the controller spawns a shared pane"
-                );
-                assert!(
-                    backend.state().split_drag.is_none(),
-                    "the spawn ended the gesture"
-                );
-                assert_eq!(
-                    commit_liveness(&rx),
-                    vec![true],
-                    "only the gesture's step is live"
-                );
-                backend
-                    .dispatch(crate::Msg::FlushLayoutCommit { epoch })
-                    .expect("publish the spawn");
-                assert_eq!(
-                    commit_liveness(&rx),
-                    Vec::<bool>::new(),
-                    "the spawn already published its placement atomically"
-                );
-            })
-            .expect("spawn new pane test thread")
-            .join()
-            .expect("new pane test thread completes");
+            let panes_before = backend.state().current().workspaces[0].panes.len();
+            // The reply waits for the PTY; the spawn itself is what this test is about.
+            let (envelope, _response) = new_pane_request(false);
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane");
+            assert_eq!(
+                backend.state().current().workspaces[0].panes.len(),
+                panes_before + 1,
+                "the controller spawns a shared pane"
+            );
+            assert!(
+                backend.state().split_drag.is_none(),
+                "the spawn ended the gesture"
+            );
+            assert_eq!(
+                commit_liveness(&rx),
+                vec![true],
+                "only the gesture's step is live"
+            );
+            backend
+                .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                .expect("publish the spawn");
+            assert_eq!(
+                commit_liveness(&rx),
+                Vec::<bool>::new(),
+                "the spawn already published its placement atomically"
+            );
+        });
     }
 
     fn pane_set(
@@ -3451,477 +3353,439 @@ mod tests {
     /// Moves and swaps, like `pane set`, must commit the document a session server would write.
     #[test]
     fn a_ui_moves_and_swaps_panes_into_the_document_a_session_server_would_write() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
-                let focused_before = backend.state().current().focused_pane;
-                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
-                let steps: [(ControlCommand, Edit); 4] = [
-                    (
-                        ControlCommand::PaneSwap {
-                            target: 1,
-                            with: 3,
-                            if_revision: None,
-                        },
-                        |layout| layout.swap_panes(1, 3).expect("swap"),
-                    ),
-                    (
-                        ControlCommand::PaneMove {
-                            target: 2,
-                            workspace: 4,
-                            if_revision: None,
-                        },
-                        |layout| layout.move_pane(2, 3).expect("move"),
-                    ),
-                    (
-                        ControlCommand::PaneMove {
-                            target: 3,
-                            workspace: 4,
-                            if_revision: None,
-                        },
-                        |layout| layout.move_pane(3, 3).expect("move"),
-                    ),
-                    (
-                        ControlCommand::PaneMove {
-                            target: 3,
-                            workspace: 4,
-                            if_revision: None,
-                        },
-                        |layout| layout.move_pane(3, 3).expect("move"),
-                    ),
-                ];
-                for (command, apply) in steps {
-                    let mut expected =
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    let expected_change = apply(&mut expected);
-                    let response = dispatch(&mut backend, command.clone());
-                    assert!(response.ok, "{command:?}: {:?}", response.error);
-                    let change: crate::control::LayoutChange =
-                        serde_json::from_value(response.data.expect("change")).expect("change");
-                    assert_eq!(change.changed, expected_change, "{command:?}");
-                    assert_eq!(
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                        expected,
-                        "{command:?}"
-                    );
-                }
-                let attachment = backend.state().current();
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
+            let focused_before = backend.state().current().focused_pane;
+            type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+            let steps: [(ControlCommand, Edit); 4] = [
+                (
+                    ControlCommand::PaneSwap {
+                        target: 1,
+                        with: 3,
+                        if_revision: None,
+                    },
+                    |layout| layout.swap_panes(1, 3).expect("swap"),
+                ),
+                (
+                    ControlCommand::PaneMove {
+                        target: 2,
+                        workspace: 4,
+                        if_revision: None,
+                    },
+                    |layout| layout.move_pane(2, 3).expect("move"),
+                ),
+                (
+                    ControlCommand::PaneMove {
+                        target: 3,
+                        workspace: 4,
+                        if_revision: None,
+                    },
+                    |layout| layout.move_pane(3, 3).expect("move"),
+                ),
+                (
+                    ControlCommand::PaneMove {
+                        target: 3,
+                        workspace: 4,
+                        if_revision: None,
+                    },
+                    |layout| layout.move_pane(3, 3).expect("move"),
+                ),
+            ];
+            for (command, apply) in steps {
+                let mut expected =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                let expected_change = apply(&mut expected);
+                let response = dispatch(&mut backend, command.clone());
+                assert!(response.ok, "{command:?}: {:?}", response.error);
+                let change: crate::control::LayoutChange =
+                    serde_json::from_value(response.data.expect("change")).expect("change");
+                assert_eq!(change.changed, expected_change, "{command:?}");
                 assert_eq!(
-                    attachment.active_workspace, 0,
-                    "a move does not follow the pane"
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    expected,
+                    "{command:?}"
                 );
-                if focused_before == Some(1) {
-                    assert_eq!(attachment.focused_pane, Some(1), "unmoved focus stays put");
-                }
-                assert!(
-                    attachment
-                        .focused_pane
-                        .is_none_or(|id| attachment.workspaces[0]
-                            .panes
-                            .iter()
-                            .any(|pane| pane.id == id)),
-                    "focus never points at a pane that left the workspace"
-                );
-            })
-            .expect("spawn move test thread")
-            .join()
-            .expect("move test thread completes");
+            }
+            let attachment = backend.state().current();
+            assert_eq!(
+                attachment.active_workspace, 0,
+                "a move does not follow the pane"
+            );
+            if focused_before == Some(1) {
+                assert_eq!(attachment.focused_pane, Some(1), "unmoved focus stays put");
+            }
+            assert!(
+                attachment
+                    .focused_pane
+                    .is_none_or(|id| attachment.workspaces[0]
+                        .panes
+                        .iter()
+                        .any(|pane| pane.id == id)),
+                "focus never points at a pane that left the workspace"
+            );
+        });
     }
 
     /// `pane reveal` scrolls this UI's strip to a pane and nothing else: focus, the shared
     /// document, and its revision stay as they were.
     #[test]
     fn a_ui_reveals_a_scrollable_pane_without_moving_focus_or_the_layout() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
-                let reveal = |target| ControlCommand::PaneReveal { target };
-                let revealed = |response: ControlResponse| {
-                    assert!(response.ok, "{:?}", response.error);
-                    serde_json::from_value::<crate::control::PaneRevealed>(
-                        response.data.expect("reveal data"),
-                    )
-                    .expect("a PaneRevealed")
-                };
-
-                let response = revealed(dispatch(&mut backend, reveal(3)));
-                assert!(!response.changed, "Dwindle already shows every tile");
-
-                let response = dispatch(
-                    &mut backend,
-                    ControlCommand::LayoutSet {
-                        workspace: 1,
-                        layout: Some(crate::control::ControlLayoutKind::Scrollable),
-                        master_ratio: None,
-                        if_revision: None,
-                    },
-                );
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
+            let reveal = |target| ControlCommand::PaneReveal { target };
+            let revealed = |response: ControlResponse| {
                 assert!(response.ok, "{:?}", response.error);
-                crate::ops::focus::focus_pane(backend.state_mut(), 1);
-                let document =
-                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                let anchor = |backend: &TestBackend<crate::AppRoot>| {
-                    let workspace = &backend.state().current().workspaces[0];
-                    crate::layout::scrollable_viewport_anchor(workspace, &workspace.tiled_ids())
-                };
-                assert_eq!(anchor(&backend), Some(1));
+                serde_json::from_value::<crate::control::PaneRevealed>(
+                    response.data.expect("reveal data"),
+                )
+                .expect("a PaneRevealed")
+            };
 
-                let response = revealed(dispatch(&mut backend, reveal(3)));
-                assert_eq!((response.changed, response.workspace), (true, 1));
-                assert_eq!(
-                    anchor(&backend),
-                    Some(3),
-                    "the strip follows the revealed pane"
-                );
-                assert_eq!(backend.state().focused_pane(), Some(1), "focus stays put");
-                assert_eq!(
-                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                    document,
-                    "the view is local: the shared document is untouched"
-                );
-                assert!(
-                    !revealed(dispatch(&mut backend, reveal(3))).changed,
-                    "revealing it again moves nothing"
-                );
+            let response = revealed(dispatch(&mut backend, reveal(3)));
+            assert!(!response.changed, "Dwindle already shows every tile");
 
-                // A workspace off screen keeps the pane as its anchor for when it is shown.
-                backend.state_mut().current_mut().active_workspace = 1;
-                assert!(revealed(dispatch(&mut backend, reveal(2))).changed);
-                assert_eq!(anchor(&backend), Some(2));
+            let response = dispatch(
+                &mut backend,
+                ControlCommand::LayoutSet {
+                    workspace: 1,
+                    layout: Some(crate::control::ControlLayoutKind::Scrollable),
+                    master_ratio: None,
+                    if_revision: None,
+                },
+            );
+            assert!(response.ok, "{:?}", response.error);
+            crate::ops::focus::focus_pane(backend.state_mut(), 1);
+            let document = crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+            let anchor = |backend: &TestBackend<crate::AppRoot>| {
+                let workspace = &backend.state().current().workspaces[0];
+                crate::layout::scrollable_viewport_anchor(workspace, &workspace.tiled_ids())
+            };
+            assert_eq!(anchor(&backend), Some(1));
 
-                assert_eq!(
-                    dispatch(&mut backend, reveal(99)).code,
-                    Some(ControlErrorCode::PaneNotFound)
-                );
-            })
-            .expect("spawn reveal test thread")
-            .join()
-            .expect("reveal test thread completes");
+            let response = revealed(dispatch(&mut backend, reveal(3)));
+            assert_eq!((response.changed, response.workspace), (true, 1));
+            assert_eq!(
+                anchor(&backend),
+                Some(3),
+                "the strip follows the revealed pane"
+            );
+            assert_eq!(backend.state().focused_pane(), Some(1), "focus stays put");
+            assert_eq!(
+                crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                document,
+                "the view is local: the shared document is untouched"
+            );
+            assert!(
+                !revealed(dispatch(&mut backend, reveal(3))).changed,
+                "revealing it again moves nothing"
+            );
+
+            // A workspace off screen keeps the pane as its anchor for when it is shown.
+            backend.state_mut().current_mut().active_workspace = 1;
+            assert!(revealed(dispatch(&mut backend, reveal(2))).changed);
+            assert_eq!(anchor(&backend), Some(2));
+
+            assert_eq!(
+                dispatch(&mut backend, reveal(99)).code,
+                Some(ControlErrorCode::PaneNotFound)
+            );
+        });
     }
 
     /// Absolute sizes land in the same document from a UI as from a session server, read back
     /// through `layout get`, and are refused for layouts that do not use them.
     #[test]
     fn a_ui_sets_ratios_into_the_document_a_session_server_would_write() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
-                let sized = |split_ratio, width_ratio| ControlCommand::PaneSet {
-                    target: 3,
-                    floating: None,
-                    fullscreen: None,
-                    rect: None,
-                    rect_fraction: None,
-                    split_ratio,
-                    width_ratio,
-                    if_revision: None,
-                };
-                let layout_set = |layout, master_ratio| ControlCommand::LayoutSet {
-                    workspace: 1,
-                    layout,
-                    master_ratio,
-                    if_revision: None,
-                };
-                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
-                let steps: [(ControlCommand, Edit); 3] = [
-                    (sized(Some(0.7), None), |layout| {
-                        let edit = crate::control::PaneEdit::validate(
-                            None,
-                            None,
-                            None,
-                            None,
-                            Some(0.7),
-                            None,
-                        )
-                        .unwrap();
-                        layout.edit_pane(3, edit).unwrap()
-                    }),
-                    (
-                        layout_set(Some(crate::control::ControlLayoutKind::Master), Some(0.65)),
-                        |layout| {
-                            layout.set_layout_kind(0, crate::state::LayoutKind::Master)
-                                | layout.set_master_ratio(0, 0.65)
-                        },
-                    ),
-                    (
-                        layout_set(Some(crate::control::ControlLayoutKind::Scrollable), None),
-                        |layout| layout.set_layout_kind(0, crate::state::LayoutKind::Scrollable),
-                    ),
-                ];
-                for (command, apply) in steps {
-                    let mut expected =
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    let expected_change = apply(&mut expected);
-                    let response = dispatch(&mut backend, command.clone());
-                    assert!(response.ok, "{command:?}: {:?}", response.error);
-                    let change: crate::control::LayoutChange =
-                        serde_json::from_value(response.data.expect("change")).expect("change");
-                    assert_eq!(change.changed, expected_change, "{command:?}");
-                    assert_eq!(
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                        expected,
-                        "{command:?}"
-                    );
-                }
-
-                let response = dispatch(&mut backend, sized(None, Some(0.4)));
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
+            let sized = |split_ratio, width_ratio| ControlCommand::PaneSet {
+                target: 3,
+                floating: None,
+                fullscreen: None,
+                rect: None,
+                rect_fraction: None,
+                split_ratio,
+                width_ratio,
+                if_revision: None,
+            };
+            let layout_set = |layout, master_ratio| ControlCommand::LayoutSet {
+                workspace: 1,
+                layout,
+                master_ratio,
+                if_revision: None,
+            };
+            type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+            let steps: [(ControlCommand, Edit); 3] = [
+                (sized(Some(0.7), None), |layout| {
+                    let edit =
+                        crate::control::PaneEdit::validate(None, None, None, None, Some(0.7), None)
+                            .unwrap();
+                    layout.edit_pane(3, edit).unwrap()
+                }),
+                (
+                    layout_set(Some(crate::control::ControlLayoutKind::Master), Some(0.65)),
+                    |layout| {
+                        layout.set_layout_kind(0, crate::state::LayoutKind::Master)
+                            | layout.set_master_ratio(0, 0.65)
+                    },
+                ),
+                (
+                    layout_set(Some(crate::control::ControlLayoutKind::Scrollable), None),
+                    |layout| layout.set_layout_kind(0, crate::state::LayoutKind::Scrollable),
+                ),
+            ];
+            for (command, apply) in steps {
+                let mut expected =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                let expected_change = apply(&mut expected);
+                let response = dispatch(&mut backend, command.clone());
+                assert!(response.ok, "{command:?}: {:?}", response.error);
                 let change: crate::control::LayoutChange =
                     serde_json::from_value(response.data.expect("change")).expect("change");
-                let pane = change
-                    .workspace
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == 3)
-                    .expect("pane 3");
-                assert_eq!(pane.width_ratio, Some(0.4), "read back as it was set");
-                assert_eq!(pane.split_ratio, None, "no split ratio outside Dwindle");
-                assert_eq!(change.workspace.master_ratio, None);
+                assert_eq!(change.changed, expected_change, "{command:?}");
+                assert_eq!(
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    expected,
+                    "{command:?}"
+                );
+            }
 
-                for (command, code) in [
-                    (sized(Some(0.6), None), ControlErrorCode::Unsupported),
-                    (layout_set(None, Some(0.6)), ControlErrorCode::Unsupported),
-                    (sized(None, Some(0.9)), ControlErrorCode::InvalidArgument),
-                    (
-                        ControlCommand::PaneSet {
-                            target: 3,
-                            floating: Some(false),
-                            fullscreen: None,
-                            rect: None,
-                            rect_fraction: None,
-                            split_ratio: None,
-                            width_ratio: Some(0.5),
-                            if_revision: None,
-                        },
-                        ControlErrorCode::InvalidArgument,
-                    ),
-                ] {
-                    let before =
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    let response = dispatch(&mut backend, command.clone());
-                    assert_eq!(response.code, Some(code), "{command:?}");
-                    assert_eq!(
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                        before,
-                        "a refused {command:?} changes nothing"
-                    );
-                }
-            })
-            .expect("spawn ratio test thread")
-            .join()
-            .expect("ratio test thread completes");
+            let response = dispatch(&mut backend, sized(None, Some(0.4)));
+            let change: crate::control::LayoutChange =
+                serde_json::from_value(response.data.expect("change")).expect("change");
+            let pane = change
+                .workspace
+                .panes
+                .iter()
+                .find(|pane| pane.id == 3)
+                .expect("pane 3");
+            assert_eq!(pane.width_ratio, Some(0.4), "read back as it was set");
+            assert_eq!(pane.split_ratio, None, "no split ratio outside Dwindle");
+            assert_eq!(change.workspace.master_ratio, None);
+
+            for (command, code) in [
+                (sized(Some(0.6), None), ControlErrorCode::Unsupported),
+                (layout_set(None, Some(0.6)), ControlErrorCode::Unsupported),
+                (sized(None, Some(0.9)), ControlErrorCode::InvalidArgument),
+                (
+                    ControlCommand::PaneSet {
+                        target: 3,
+                        floating: Some(false),
+                        fullscreen: None,
+                        rect: None,
+                        rect_fraction: None,
+                        split_ratio: None,
+                        width_ratio: Some(0.5),
+                        if_revision: None,
+                    },
+                    ControlErrorCode::InvalidArgument,
+                ),
+            ] {
+                let before =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                let response = dispatch(&mut backend, command.clone());
+                assert_eq!(response.code, Some(code), "{command:?}");
+                assert_eq!(
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    before,
+                    "a refused {command:?} changes nothing"
+                );
+            }
+        });
     }
 
     /// The one-fullscreen-pane rule holds for explicit targets, and the UI keeps it exactly as the
     /// document edit does.
     #[test]
     fn explicit_fullscreen_keeps_one_fullscreen_pane_per_workspace_on_both_endpoints() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
-                let fullscreen = |target| pane_set(target, None, Some(true), None);
-                type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
-                let steps: [(ControlCommand, Edit); 4] = [
-                    (fullscreen(1), |layout| {
-                        layout
-                            .edit_pane(
-                                1,
-                                crate::control::PaneEdit::validate(
-                                    None,
-                                    Some(true),
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                )
-                                .unwrap(),
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
+            let fullscreen = |target| pane_set(target, None, Some(true), None);
+            type Edit = fn(&mut crate::layout::shared::SharedLayout) -> bool;
+            let steps: [(ControlCommand, Edit); 4] = [
+                (fullscreen(1), |layout| {
+                    layout
+                        .edit_pane(
+                            1,
+                            crate::control::PaneEdit::validate(
+                                None,
+                                Some(true),
+                                None,
+                                None,
+                                None,
+                                None,
                             )
-                            .unwrap()
-                    }),
-                    (fullscreen(2), |layout| {
-                        layout
-                            .edit_pane(
-                                2,
-                                crate::control::PaneEdit::validate(
-                                    None,
-                                    Some(true),
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                )
-                                .unwrap(),
+                            .unwrap(),
+                        )
+                        .unwrap()
+                }),
+                (fullscreen(2), |layout| {
+                    layout
+                        .edit_pane(
+                            2,
+                            crate::control::PaneEdit::validate(
+                                None,
+                                Some(true),
+                                None,
+                                None,
+                                None,
+                                None,
                             )
-                            .unwrap()
-                    }),
-                    (
-                        ControlCommand::PaneMove {
-                            target: 1,
-                            workspace: 2,
-                            if_revision: None,
-                        },
-                        |layout| layout.move_pane(1, 1).unwrap(),
-                    ),
-                    (
-                        ControlCommand::PaneMove {
-                            target: 2,
-                            workspace: 2,
-                            if_revision: None,
-                        },
-                        |layout| layout.move_pane(2, 1).unwrap(),
-                    ),
-                ];
-                for (command, apply) in steps {
-                    let mut expected =
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    apply(&mut expected);
-                    let response = dispatch(&mut backend, command.clone());
-                    assert!(response.ok, "{command:?}: {:?}", response.error);
-                    assert_eq!(
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                        expected,
-                        "{command:?}"
-                    );
-                }
-                let fullscreen: Vec<(usize, PaneId)> = backend
-                    .state()
-                    .current()
-                    .workspaces
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(index, workspace)| {
-                        workspace
-                            .panes
-                            .iter()
-                            .filter(|pane| pane.fullscreen)
-                            .map(move |pane| (index, pane.id))
-                    })
-                    .collect();
+                            .unwrap(),
+                        )
+                        .unwrap()
+                }),
+                (
+                    ControlCommand::PaneMove {
+                        target: 1,
+                        workspace: 2,
+                        if_revision: None,
+                    },
+                    |layout| layout.move_pane(1, 1).unwrap(),
+                ),
+                (
+                    ControlCommand::PaneMove {
+                        target: 2,
+                        workspace: 2,
+                        if_revision: None,
+                    },
+                    |layout| layout.move_pane(2, 1).unwrap(),
+                ),
+            ];
+            for (command, apply) in steps {
+                let mut expected =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                apply(&mut expected);
+                let response = dispatch(&mut backend, command.clone());
+                assert!(response.ok, "{command:?}: {:?}", response.error);
                 assert_eq!(
-                    fullscreen,
-                    vec![(1, 2)],
-                    "exactly one, and the arriving pane won"
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    expected,
+                    "{command:?}"
                 );
-            })
-            .expect("spawn fullscreen test thread")
-            .join()
-            .expect("fullscreen test thread completes");
+            }
+            let fullscreen: Vec<(usize, PaneId)> = backend
+                .state()
+                .current()
+                .workspaces
+                .iter()
+                .enumerate()
+                .flat_map(|(index, workspace)| {
+                    workspace
+                        .panes
+                        .iter()
+                        .filter(|pane| pane.fullscreen)
+                        .map(move |pane| (index, pane.id))
+                })
+                .collect();
+            assert_eq!(
+                fullscreen,
+                vec![(1, 2)],
+                "exactly one, and the arriving pane won"
+            );
+        });
     }
 
     /// A follower reports the document the server holds, not one rebuilt from its own workspaces:
     /// a sparse document must not grow the follower's local defaults.
     #[test]
     fn a_follower_reports_the_document_it_applied() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
-                let mut sparse =
-                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                sparse.workspaces.retain(|workspace| workspace.index == 0);
-                let mut follower = crate::state::SharedSessionState::new(1);
-                follower.controller = Some(2);
-                follower.layout_rev = 7;
-                follower.assumed_rev = 7;
-                follower.last_committed_layout = Some(sparse.clone());
-                backend.state_mut().current_mut().shared = Some(follower);
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
+            let mut sparse =
+                crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+            sparse.workspaces.retain(|workspace| workspace.index == 0);
+            let mut follower = crate::state::SharedSessionState::new(1);
+            follower.controller = Some(2);
+            follower.layout_rev = 7;
+            follower.assumed_rev = 7;
+            follower.last_committed_layout = Some(sparse.clone());
+            backend.state_mut().current_mut().shared = Some(follower);
 
-                let response =
-                    dispatch(&mut backend, ControlCommand::LayoutGet { workspace: None });
-                let report: crate::control::LayoutReport =
-                    serde_json::from_value(response.data.expect("layout data")).expect("report");
-                let mut shared = report.workspaces.clone();
-                for workspace in &mut shared {
-                    for pane in &mut workspace.panes {
-                        pane.view_rect = None;
-                    }
+            let response = dispatch(&mut backend, ControlCommand::LayoutGet { workspace: None });
+            let report: crate::control::LayoutReport =
+                serde_json::from_value(response.data.expect("layout data")).expect("report");
+            let mut shared = report.workspaces.clone();
+            for workspace in &mut shared {
+                for pane in &mut workspace.panes {
+                    pane.view_rect = None;
                 }
-                assert_eq!(
-                    shared,
-                    crate::control::WorkspaceLayout::from_shared(
-                        &sparse,
-                        None,
-                        backend.state().current().session_instance.as_ref(),
-                    ),
-                    "exactly the session's document"
-                );
-                assert_eq!(report.revision, Some(7));
-                let shared = backend.state().current().shared.as_ref().unwrap();
-                assert_eq!(
-                    (shared.layout_rev, shared.assumed_rev),
-                    (7, 7),
-                    "reading commits nothing"
-                );
-            })
-            .expect("spawn follower test thread")
-            .join()
-            .expect("follower test thread completes");
+            }
+            assert_eq!(
+                shared,
+                crate::control::WorkspaceLayout::from_shared(
+                    &sparse,
+                    None,
+                    backend.state().current().session_instance.as_ref(),
+                ),
+                "exactly the session's document"
+            );
+            assert_eq!(report.revision, Some(7));
+            let shared = backend.state().current().shared.as_ref().unwrap();
+            assert_eq!(
+                (shared.layout_rev, shared.assumed_rev),
+                (7, 7),
+                "reading commits nothing"
+            );
+        });
     }
 
     #[test]
     fn moving_the_focused_pane_leaves_focus_behind_and_close_needs_no_confirmation() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, _) = three_tiled_panes();
-                let focused = backend
-                    .state()
-                    .current()
-                    .focused_pane
-                    .expect("a focused pane");
-                let moved = dispatch(
-                    &mut backend,
-                    ControlCommand::PaneMove {
-                        target: focused,
-                        workspace: 5,
-                        if_revision: None,
-                    },
-                );
-                assert!(moved.ok, "{:?}", moved.error);
-                let attachment = backend.state().current();
-                assert_eq!(attachment.active_workspace, 0, "the view does not follow");
-                let now = attachment.focused_pane.expect("focus fell back");
-                assert_ne!(now, focused);
-                assert!(
-                    attachment.workspaces[0]
-                        .panes
-                        .iter()
-                        .any(|pane| pane.id == now)
-                );
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, _) = three_tiled_panes();
+            let focused = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("a focused pane");
+            let moved = dispatch(
+                &mut backend,
+                ControlCommand::PaneMove {
+                    target: focused,
+                    workspace: 5,
+                    if_revision: None,
+                },
+            );
+            assert!(moved.ok, "{:?}", moved.error);
+            let attachment = backend.state().current();
+            assert_eq!(attachment.active_workspace, 0, "the view does not follow");
+            let now = attachment.focused_pane.expect("focus fell back");
+            assert_ne!(now, focused);
+            assert!(
+                attachment.workspaces[0]
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == now)
+            );
 
-                let closed = dispatch(
-                    &mut backend,
-                    ControlCommand::PaneClose {
-                        target: now,
-                        if_revision: None,
-                    },
-                );
-                assert!(closed.ok, "{:?}", closed.error);
-                let closed: crate::control::PaneClosed =
-                    serde_json::from_value(closed.data.expect("closed")).expect("PaneClosed");
-                assert_eq!(closed.id, now);
-                let workspace = closed.workspace.expect("the workspace it left");
-                assert!(workspace.panes.iter().all(|pane| pane.id != now));
-                assert!(
-                    backend.state().pending_destructive.is_none(),
-                    "no second-press confirmation was armed"
-                );
+            let closed = dispatch(
+                &mut backend,
+                ControlCommand::PaneClose {
+                    target: now,
+                    if_revision: None,
+                },
+            );
+            assert!(closed.ok, "{:?}", closed.error);
+            let closed: crate::control::PaneClosed =
+                serde_json::from_value(closed.data.expect("closed")).expect("PaneClosed");
+            assert_eq!(closed.id, now);
+            let workspace = closed.workspace.expect("the workspace it left");
+            assert!(workspace.panes.iter().all(|pane| pane.id != now));
+            assert!(
+                backend.state().pending_destructive.is_none(),
+                "no second-press confirmation was armed"
+            );
 
-                let gone = dispatch(
-                    &mut backend,
-                    ControlCommand::PaneClose {
-                        target: now,
-                        if_revision: None,
-                    },
-                );
-                assert_eq!(gone.code, Some(ControlErrorCode::PaneNotFound));
-            })
-            .expect("spawn close test thread")
-            .join()
-            .expect("close test thread completes");
+            let gone = dispatch(
+                &mut backend,
+                ControlCommand::PaneClose {
+                    target: now,
+                    if_revision: None,
+                },
+            );
+            assert_eq!(gone.code, Some(ControlErrorCode::PaneNotFound));
+        });
     }
 
     /// A UI applies `pane set` to its live workspace and a session server applies it to the shared
@@ -3929,194 +3793,184 @@ mod tests {
     /// or the same script reshapes a session differently depending on who is attached.
     #[test]
     fn a_ui_edits_panes_into_exactly_the_document_a_session_server_would_write() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let (mut backend, canvas) = three_tiled_panes();
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, canvas) = three_tiled_panes();
 
-                let rect = crate::control::CellRect {
-                    x: 7,
-                    y: 3,
-                    width: 30,
-                    height: 9,
-                };
-                for (target, floating, fullscreen, rect) in [
-                    (2, Some(true), None, None),
-                    (2, None, None, Some(rect)),
-                    (3, Some(true), Some(true), None),
-                    (2, Some(false), None, None),
-                    (3, Some(false), Some(false), None),
-                ] {
-                    let mut expected =
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
-                    let edit = crate::control::PaneEdit::validate(floating, fullscreen, rect, None, None, None)
-                        .expect("valid edit");
-                    let expected_change = expected.edit_pane(target, edit).expect("server edit");
+            let rect = crate::control::CellRect {
+                x: 7,
+                y: 3,
+                width: 30,
+                height: 9,
+            };
+            for (target, floating, fullscreen, rect) in [
+                (2, Some(true), None, None),
+                (2, None, None, Some(rect)),
+                (3, Some(true), Some(true), None),
+                (2, Some(false), None, None),
+                (3, Some(false), Some(false), None),
+            ] {
+                let mut expected =
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas);
+                let edit = crate::control::PaneEdit::validate(
+                    floating, fullscreen, rect, None, None, None,
+                )
+                .expect("valid edit");
+                let expected_change = expected.edit_pane(target, edit).expect("server edit");
 
-                    let response = dispatch(
-                        &mut backend,
-                        pane_set(target, floating, fullscreen, rect),
-                    );
-                    assert!(response.ok, "{:?}", response.error);
-                    let change: crate::control::LayoutChange =
-                        serde_json::from_value(response.data.expect("change")).expect("change");
-                    assert_eq!(change.changed, expected_change);
-                    assert_eq!(
-                        crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
-                        expected,
-                        "pane {target}: floating {floating:?}, fullscreen {fullscreen:?}, rect {rect:?}"
-                    );
-                }
-
-                // The same request twice is a no-op the second time.
-                let again = dispatch(&mut backend, pane_set(3, Some(false), Some(false), None));
-                let again: crate::control::LayoutChange =
-                    serde_json::from_value(again.data.expect("change")).expect("change");
-                assert!(!again.changed);
-
-                let set = dispatch(
-                    &mut backend,
-                    ControlCommand::LayoutSet {
-                        workspace: 1,
-                        layout: Some(crate::control::ControlLayoutKind::Grid),
-                        master_ratio: None,
-                        if_revision: None,
-                    },
+                let response = dispatch(&mut backend, pane_set(target, floating, fullscreen, rect));
+                assert!(response.ok, "{:?}", response.error);
+                let change: crate::control::LayoutChange =
+                    serde_json::from_value(response.data.expect("change")).expect("change");
+                assert_eq!(change.changed, expected_change);
+                assert_eq!(
+                    crate::layout::shared::shared_layout_from_state(backend.state(), canvas),
+                    expected,
+                    "pane {target}: floating {floating:?}, fullscreen {fullscreen:?}, rect {rect:?}"
                 );
-                let set: crate::control::LayoutChange =
-                    serde_json::from_value(set.data.expect("change")).expect("change");
-                assert!(set.changed);
-                assert_eq!(set.workspace.layout, crate::control::ControlLayoutKind::Grid);
-                assert!(
-                    set.workspace.panes.iter().all(|pane| pane.view_rect.is_some()),
-                    "the shown workspace reports where it is drawn"
-                );
-            })
-            .expect("spawn pane set test thread")
-            .join()
-            .expect("pane set test thread completes");
+            }
+
+            // The same request twice is a no-op the second time.
+            let again = dispatch(&mut backend, pane_set(3, Some(false), Some(false), None));
+            let again: crate::control::LayoutChange =
+                serde_json::from_value(again.data.expect("change")).expect("change");
+            assert!(!again.changed);
+
+            let set = dispatch(
+                &mut backend,
+                ControlCommand::LayoutSet {
+                    workspace: 1,
+                    layout: Some(crate::control::ControlLayoutKind::Grid),
+                    master_ratio: None,
+                    if_revision: None,
+                },
+            );
+            let set: crate::control::LayoutChange =
+                serde_json::from_value(set.data.expect("change")).expect("change");
+            assert!(set.changed);
+            assert_eq!(
+                set.workspace.layout,
+                crate::control::ControlLayoutKind::Grid
+            );
+            assert!(
+                set.workspace
+                    .panes
+                    .iter()
+                    .all(|pane| pane.view_rect.is_some()),
+                "the shown workspace reports where it is drawn"
+            );
+        });
     }
 
     #[test]
     fn a_ui_refuses_layout_writes_it_may_not_make_before_changing_anything() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                let code = |response: ControlResponse| {
-                    assert!(!response.ok);
-                    response.code
-                };
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let code = |response: ControlResponse| {
+                assert!(!response.ok);
+                response.code
+            };
 
-                assert_eq!(
-                    code(dispatch(&mut backend, pane_set(99, None, Some(true), None))),
-                    Some(ControlErrorCode::PaneNotFound)
-                );
-                assert_eq!(
-                    code(dispatch(
-                        &mut backend,
-                        pane_set(
-                            1,
-                            None,
-                            None,
-                            Some(crate::control::CellRect {
-                                x: 0,
-                                y: 0,
-                                width: 10,
-                                height: 5,
-                            })
-                        )
-                    )),
-                    Some(ControlErrorCode::InvalidArgument),
-                    "a rect on a pane that stays tiled"
-                );
-                assert_eq!(
-                    code(dispatch(
-                        &mut backend,
-                        ControlCommand::LayoutSet {
-                            workspace: 1,
-                            layout: Some(crate::control::ControlLayoutKind::Rows),
-                            master_ratio: None,
-                            if_revision: Some(4),
-                        }
-                    )),
-                    Some(ControlErrorCode::Conflict),
-                    "a UI without a shared session has no revision to match"
-                );
+            assert_eq!(
+                code(dispatch(&mut backend, pane_set(99, None, Some(true), None))),
+                Some(ControlErrorCode::PaneNotFound)
+            );
+            assert_eq!(
+                code(dispatch(
+                    &mut backend,
+                    pane_set(
+                        1,
+                        None,
+                        None,
+                        Some(crate::control::CellRect {
+                            x: 0,
+                            y: 0,
+                            width: 10,
+                            height: 5,
+                        })
+                    )
+                )),
+                Some(ControlErrorCode::InvalidArgument),
+                "a rect on a pane that stays tiled"
+            );
+            assert_eq!(
+                code(dispatch(
+                    &mut backend,
+                    ControlCommand::LayoutSet {
+                        workspace: 1,
+                        layout: Some(crate::control::ControlLayoutKind::Rows),
+                        master_ratio: None,
+                        if_revision: Some(4),
+                    }
+                )),
+                Some(ControlErrorCode::Conflict),
+                "a UI without a shared session has no revision to match"
+            );
 
-                let scratch = 1 << 31;
-                backend
-                    .state_mut()
-                    .scratch
-                    .panes
-                    .push(crate::state::Pane::new(scratch, 100, FloatRect::default()));
-                assert_eq!(
-                    code(dispatch(
-                        &mut backend,
-                        pane_set(scratch, None, Some(true), None)
-                    )),
-                    Some(ControlErrorCode::Unsupported)
-                );
+            let scratch = 1 << 31;
+            backend
+                .state_mut()
+                .scratch
+                .panes
+                .push(crate::state::Pane::new(scratch, 100, FloatRect::default()));
+            assert_eq!(
+                code(dispatch(
+                    &mut backend,
+                    pane_set(scratch, None, Some(true), None)
+                )),
+                Some(ControlErrorCode::Unsupported)
+            );
 
-                let mut follower = crate::state::SharedSessionState::new(1);
-                follower.controller = Some(2);
-                backend.state_mut().current_mut().shared = Some(follower);
-                assert_eq!(
-                    code(dispatch(&mut backend, pane_set(1, Some(true), None, None))),
-                    Some(ControlErrorCode::NotController)
-                );
-                let pane = &backend.state().current().workspaces[0].panes[0];
-                assert!(!pane.floating, "a refused write changes nothing");
-            })
-            .expect("spawn refusal test thread")
-            .join()
-            .expect("refusal test thread completes");
+            let mut follower = crate::state::SharedSessionState::new(1);
+            follower.controller = Some(2);
+            backend.state_mut().current_mut().shared = Some(follower);
+            assert_eq!(
+                code(dispatch(&mut backend, pane_set(1, Some(true), None, None))),
+                Some(ControlErrorCode::NotController)
+            );
+            let pane = &backend.state().current().workspaces[0].panes[0];
+            assert!(!pane.floating, "a refused write changes nothing");
+        });
     }
 
     #[test]
     fn metrics_control_is_render_neutral_and_returns_cached_shape_without_waiting() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                let (reply, response) = mpsc::channel();
-                let level = backend
-                    .update_level(crate::Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::Metrics,
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
-                        },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("update metrics");
-                assert_eq!(level, tui_lipan::UpdateLevel::None);
-                let response = response
-                    .recv_timeout(std::time::Duration::from_millis(100))
-                    .expect("metrics response is immediate");
-                let data = response.data.expect("metrics data");
-                assert!(response.ok);
-                assert!(data["sampled_at_unix_ms"].is_number());
-                assert!(data["client_inbound"].is_null());
-                assert!(data["client_outbound"].is_null());
-                assert!(data["piped_remote"].is_null());
-                assert_eq!(
-                    data["orphan_output"]["capacity_bytes"],
-                    crate::state::ORPHAN_OUTPUT_GLOBAL_CAP as u64
-                );
-                assert_eq!(
-                    data["orphan_output"]["capacity_keys"],
-                    crate::state::ORPHAN_OUTPUT_KEY_CAP as u64
-                );
-                assert!(data["server"].is_null());
-            })
-            .expect("spawn metrics control test")
-            .join()
-            .expect("metrics control test completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (reply, response) = mpsc::channel();
+            let level = backend
+                .update_level(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::Metrics,
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("update metrics");
+            assert_eq!(level, tui_lipan::UpdateLevel::None);
+            let response = response
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .expect("metrics response is immediate");
+            let data = response.data.expect("metrics data");
+            assert!(response.ok);
+            assert!(data["sampled_at_unix_ms"].is_number());
+            assert!(data["client_inbound"].is_null());
+            assert!(data["client_outbound"].is_null());
+            assert!(data["piped_remote"].is_null());
+            assert_eq!(
+                data["orphan_output"]["capacity_bytes"],
+                crate::state::ORPHAN_OUTPUT_GLOBAL_CAP as u64
+            );
+            assert_eq!(
+                data["orphan_output"]["capacity_keys"],
+                crate::state::ORPHAN_OUTPUT_KEY_CAP as u64
+            );
+            assert!(data["server"].is_null());
+        });
     }
 
     fn pane_wait(text: Option<&str>, timeout_ms: u64) -> Option<crate::control::PaneWait> {
@@ -4176,286 +4030,261 @@ mod tests {
 
     #[test]
     fn a_ui_send_wait_matches_only_output_after_the_server_marks_its_input() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                let outbound = attach_test_session(&mut backend);
-                feed(&mut backend, b"$ ");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            feed(&mut backend, b"$ ");
 
-                let response = ask(
-                    &mut backend,
-                    ControlCommand::SendKeys {
-                        target: Some(1),
-                        keys: vec!["make".into(), "Enter".into()],
-                        literal: false,
-                        wait: pane_wait(Some("$ "), 5_000),
-                        capture: Some(CaptureRender::Text),
-                        scale: None,
-                    },
-                );
-                let sent: Vec<_> = outbound
-                    .try_iter()
-                    .filter(|message| {
-                        !matches!(
-                            message,
-                            ClientOutbound::PresentationInterest(_)
-                                | ClientOutbound::PresentationAcks(_)
-                        )
-                    })
-                    .collect();
-                let [
-                    ClientOutbound::Control(ClientMessage::MarkedInput {
-                        pane_id: 1, token, ..
-                    }),
-                ] = sent.as_slice()
-                else {
-                    panic!("the input carries its own mark, got {sent:?}");
-                };
-                let token = *token;
+            let response = ask(
+                &mut backend,
+                ControlCommand::SendKeys {
+                    target: Some(1),
+                    keys: vec!["make".into(), "Enter".into()],
+                    literal: false,
+                    wait: pane_wait(Some("$ "), 5_000),
+                    capture: Some(CaptureRender::Text),
+                    scale: None,
+                },
+            );
+            let sent: Vec<_> = outbound
+                .try_iter()
+                .filter(|message| {
+                    !matches!(
+                        message,
+                        ClientOutbound::PresentationInterest(_)
+                            | ClientOutbound::PresentationAcks(_)
+                    )
+                })
+                .collect();
+            let [
+                ClientOutbound::Control(ClientMessage::MarkedInput {
+                    pane_id: 1, token, ..
+                }),
+            ] = sent.as_slice()
+            else {
+                panic!("the input carries its own mark, got {sent:?}");
+            };
+            let token = *token;
 
-                // The server answers the mark in the same step as writing the input, so anything
-                // ahead of the answer is older than the input - not even a fresh-looking prompt
-                // counts.
-                feed(&mut backend, b"make\r\nold output\r\n$ ");
-                assert!(response.try_recv().is_err());
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::SessionInputMarked { epoch, token })
-                    .expect("dispatch the mark");
-                assert!(response.try_recv().is_err(), "the prompt was already there");
+            // The server answers the mark in the same step as writing the input, so anything
+            // ahead of the answer is older than the input - not even a fresh-looking prompt
+            // counts.
+            feed(&mut backend, b"make\r\nold output\r\n$ ");
+            assert!(response.try_recv().is_err());
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionInputMarked { epoch, token })
+                .expect("dispatch the mark");
+            assert!(response.try_recv().is_err(), "the prompt was already there");
 
-                feed(&mut backend, b"\r\nbuilt\r\n$ ");
-                let answer = response
-                    .try_recv()
-                    .expect("the new prompt answers the wait");
-                assert!(answer.ok, "{answer:?}");
-                assert!(captured_text(&answer).contains("built"));
-                assert!(backend.state().capture_waits_are_empty());
-            })
-            .expect("spawn ui send-wait test")
-            .join()
-            .expect("ui send-wait test completes");
+            feed(&mut backend, b"\r\nbuilt\r\n$ ");
+            let answer = response
+                .try_recv()
+                .expect("the new prompt answers the wait");
+            assert!(answer.ok, "{answer:?}");
+            assert!(captured_text(&answer).contains("built"));
+            assert!(backend.state().capture_waits_are_empty());
+        });
     }
 
     #[test]
     fn a_ui_send_settle_counts_quiet_only_from_its_mark() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                let outbound = attach_test_session(&mut backend);
-                feed(&mut backend, b"$ ");
-                let response = ask(
-                    &mut backend,
-                    ControlCommand::SendText {
-                        target: Some(1),
-                        text: "go\r".into(),
-                        wait: Some(crate::control::PaneWait {
-                            text: None,
-                            settle_ms: Some(40),
-                            timeout_ms: 5_000,
-                        }),
-                        capture: None,
-                        scale: None,
-                    },
-                );
-                let token = outbound
-                    .try_iter()
-                    .find_map(|sent| match sent {
-                        ClientOutbound::Control(ClientMessage::MarkedInput { token, .. }) => {
-                            Some(token)
-                        }
-                        _ => None,
-                    })
-                    .expect("the input carries its own mark");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            feed(&mut backend, b"$ ");
+            let response = ask(
+                &mut backend,
+                ControlCommand::SendText {
+                    target: Some(1),
+                    text: "go\r".into(),
+                    wait: Some(crate::control::PaneWait {
+                        text: None,
+                        settle_ms: Some(40),
+                        timeout_ms: 5_000,
+                    }),
+                    capture: None,
+                    scale: None,
+                },
+            );
+            let token = outbound
+                .try_iter()
+                .find_map(|sent| match sent {
+                    ClientOutbound::Control(ClientMessage::MarkedInput { token, .. }) => {
+                        Some(token)
+                    }
+                    _ => None,
+                })
+                .expect("the input carries its own mark");
 
-                // The mark is slow to come back: longer than the whole settle period.
-                std::thread::sleep(std::time::Duration::from_millis(80));
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::SessionInputMarked { epoch, token })
-                    .expect("dispatch the mark");
-                assert!(
-                    response.try_recv().is_err(),
-                    "nothing was watched before the mark, so none of it is quiet"
-                );
+            // The mark is slow to come back: longer than the whole settle period.
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionInputMarked { epoch, token })
+                .expect("dispatch the mark");
+            assert!(
+                response.try_recv().is_err(),
+                "nothing was watched before the mark, so none of it is quiet"
+            );
 
-                std::thread::sleep(std::time::Duration::from_millis(60));
-                backend
-                    .dispatch(crate::Msg::CaptureWaitTick)
-                    .expect("dispatch tick");
-                let answer = response
-                    .try_recv()
-                    .expect("the quiet after the mark answers");
-                assert!(answer.ok, "{answer:?}");
-            })
-            .expect("spawn ui settle test")
-            .join()
-            .expect("ui settle test completes");
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            backend
+                .dispatch(crate::Msg::CaptureWaitTick)
+                .expect("dispatch tick");
+            let answer = response
+                .try_recv()
+                .expect("the quiet after the mark answers");
+            assert!(answer.ok, "{answer:?}");
+        });
     }
 
     #[test]
     fn ui_send_waits_queued_behind_a_starting_pane_share_the_mark_on_its_first_write() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                let outbound = attach_test_session(&mut backend);
-                {
-                    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                    pane.pty_generation = 4;
-                    pane.terminal.status = ManagedTerminalStatus::Starting;
-                }
-                let send = |text: &str, wait: &str| ControlCommand::SendText {
-                    target: Some(1),
-                    text: text.into(),
-                    wait: pane_wait(Some(wait), 5_000),
-                    capture: None,
-                    scale: None,
-                };
-                let first = ask(&mut backend, send("one\r", "ONE"));
-                let second = ask(&mut backend, send("two\r", "TWO"));
-                assert!(
-                    !outbound.try_iter().any(|message| matches!(
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            let outbound = attach_test_session(&mut backend);
+            {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.pty_generation = 4;
+                pane.terminal.status = ManagedTerminalStatus::Starting;
+            }
+            let send = |text: &str, wait: &str| ControlCommand::SendText {
+                target: Some(1),
+                text: text.into(),
+                wait: pane_wait(Some(wait), 5_000),
+                capture: None,
+                scale: None,
+            };
+            let first = ask(&mut backend, send("one\r", "ONE"));
+            let second = ask(&mut backend, send("two\r", "TWO"));
+            assert!(
+                !outbound.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::PaneInput { .. }
+                        | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
+                )),
+                "input waits for the PTY"
+            );
+
+            let epoch = backend.state().runtime_epoch;
+            backend
+                .dispatch(crate::Msg::SessionSpawnResult {
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation: 4,
+                    pid: Some(11),
+                    ok: true,
+                    error: None,
+                })
+                .expect("dispatch spawn result");
+            let sent: Vec<_> = outbound
+                .try_iter()
+                .filter(|message| {
+                    !matches!(
                         message,
-                        ClientOutbound::PaneInput { .. }
-                            | ClientOutbound::Control(ClientMessage::MarkedInput { .. })
-                    )),
-                    "input waits for the PTY"
-                );
+                        ClientOutbound::PresentationInterest(_)
+                            | ClientOutbound::PresentationAcks(_)
+                    )
+                })
+                .collect();
+            let [
+                ClientOutbound::Control(ClientMessage::MarkedInput {
+                    pane_id: 1,
+                    generation: 4,
+                    bytes,
+                    token,
+                    ..
+                }),
+            ] = sent.as_slice()
+            else {
+                panic!("the queue goes out as one marked write, got {sent:?}");
+            };
+            assert_eq!(bytes, b"one\rtwo\r");
 
-                let epoch = backend.state().runtime_epoch;
-                backend
-                    .dispatch(crate::Msg::SessionSpawnResult {
-                        epoch,
-                        pane_id: 1,
-                        local: false,
-                        generation: 4,
-                        pid: Some(11),
-                        ok: true,
-                        error: None,
-                    })
-                    .expect("dispatch spawn result");
-                let sent: Vec<_> = outbound
-                    .try_iter()
-                    .filter(|message| {
-                        !matches!(
-                            message,
-                            ClientOutbound::PresentationInterest(_)
-                                | ClientOutbound::PresentationAcks(_)
-                        )
-                    })
-                    .collect();
-                let [
-                    ClientOutbound::Control(ClientMessage::MarkedInput {
-                        pane_id: 1,
-                        generation: 4,
-                        bytes,
-                        token,
-                        ..
-                    }),
-                ] = sent.as_slice()
-                else {
-                    panic!("the queue goes out as one marked write, got {sent:?}");
-                };
-                assert_eq!(bytes, b"one\rtwo\r");
-
-                backend
-                    .dispatch(crate::Msg::SessionInputMarked {
-                        epoch,
-                        token: *token,
-                    })
-                    .expect("dispatch the mark");
-                let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
-                backend
-                    .dispatch(crate::Msg::SessionOutput {
-                        media: None,
-                        metadata: crate::session::protocol::OutputMetadata::default(),
-                        epoch,
-                        pane_id: 1,
-                        local: false,
-                        generation,
-                        bytes: b"ONE\r\nTWO\r\n".to_vec(),
-                    })
-                    .expect("dispatch pane output");
-                assert!(first.try_recv().expect("first answered").ok);
-                assert!(second.try_recv().expect("second answered").ok);
-            })
-            .expect("spawn queued ui wait test")
-            .join()
-            .expect("queued ui wait test completes");
+            backend
+                .dispatch(crate::Msg::SessionInputMarked {
+                    epoch,
+                    token: *token,
+                })
+                .expect("dispatch the mark");
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(crate::Msg::SessionOutput {
+                    media: None,
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation,
+                    bytes: b"ONE\r\nTWO\r\n".to_vec(),
+                })
+                .expect("dispatch pane output");
+            assert!(first.try_recv().expect("first answered").ok);
+            assert!(second.try_recv().expect("second answered").ok);
+        });
     }
 
     #[test]
     fn a_ui_capture_wait_times_out_with_the_screen_it_had() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
-                feed(&mut backend, b"still working");
-                let response = ask(
-                    &mut backend,
-                    ControlCommand::CapturePane {
-                        target: Some(1),
-                        scrollback: None,
-                        render: CaptureRender::Text,
-                        scale: None,
-                        image_pixels: false,
-                        wait: pane_wait(Some("done"), 20),
-                    },
-                );
-                assert!(response.try_recv().is_err());
-                std::thread::sleep(std::time::Duration::from_millis(30));
-                backend
-                    .dispatch(crate::Msg::CaptureWaitTick)
-                    .expect("dispatch tick");
-                let answer = response.try_recv().expect("the deadline answers");
-                assert_eq!(answer.code, Some(ControlErrorCode::Timeout));
-                assert!(captured_text(&answer).contains("still working"));
-            })
-            .expect("spawn ui timeout test")
-            .join()
-            .expect("ui timeout test completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            feed(&mut backend, b"still working");
+            let response = ask(
+                &mut backend,
+                ControlCommand::CapturePane {
+                    target: Some(1),
+                    scrollback: None,
+                    render: CaptureRender::Text,
+                    scale: None,
+                    image_pixels: false,
+                    wait: pane_wait(Some("done"), 20),
+                },
+            );
+            assert!(response.try_recv().is_err());
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            backend
+                .dispatch(crate::Msg::CaptureWaitTick)
+                .expect("dispatch tick");
+            let answer = response.try_recv().expect("the deadline answers");
+            assert_eq!(answer.code, Some(ControlErrorCode::Timeout));
+            assert!(captured_text(&answer).contains("still working"));
+        });
     }
 
     #[test]
     fn a_ui_wait_ends_when_its_pane_exits() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = settled_backend();
-                attach_test_session(&mut backend);
-                let response = ask(
-                    &mut backend,
-                    ControlCommand::CapturePane {
-                        target: Some(1),
-                        scrollback: None,
-                        render: CaptureRender::Text,
-                        scale: None,
-                        image_pixels: false,
-                        wait: pane_wait(Some("done"), 5_000),
-                    },
-                );
-                feed(&mut backend, b"crashed");
-                let epoch = backend.state().runtime_epoch;
-                let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
-                backend
-                    .dispatch(crate::Msg::SessionExited {
-                        epoch,
-                        pane_id: 1,
-                        local: false,
-                        generation,
-                        code: 1,
-                    })
-                    .expect("dispatch exit");
-                let answer = response.try_recv().expect("the exit answers");
-                assert_eq!(answer.code, Some(ControlErrorCode::PaneNotRunning));
-                assert!(captured_text(&answer).contains("crashed"));
-            })
-            .expect("spawn ui exit test")
-            .join()
-            .expect("ui exit test completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let response = ask(
+                &mut backend,
+                ControlCommand::CapturePane {
+                    target: Some(1),
+                    scrollback: None,
+                    render: CaptureRender::Text,
+                    scale: None,
+                    image_pixels: false,
+                    wait: pane_wait(Some("done"), 5_000),
+                },
+            );
+            feed(&mut backend, b"crashed");
+            let epoch = backend.state().runtime_epoch;
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(crate::Msg::SessionExited {
+                    epoch,
+                    pane_id: 1,
+                    local: false,
+                    generation,
+                    code: 1,
+                })
+                .expect("dispatch exit");
+            let answer = response.try_recv().expect("the exit answers");
+            assert_eq!(answer.code, Some(ControlErrorCode::PaneNotRunning));
+            assert!(captured_text(&answer).contains("crashed"));
+        });
     }
 }

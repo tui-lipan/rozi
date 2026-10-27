@@ -159,64 +159,58 @@ mod tests {
 
     #[test]
     fn the_palette_lists_a_hidden_command_once_its_extension_shows_it() {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                crate::test_support::isolate_user_dirs();
-                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
-                backend.set_viewport(tui_lipan::prelude::Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let mut install = command("tools.install", Some("tools"), true);
-                install.label = Some("Install probe".to_string());
-                let mut open = command("tools.open", Some("tools"), false);
-                open.label = Some("Open probe".to_string());
-                {
-                    let state = backend.state_mut();
-                    state.config.commands = vec![install, open];
-                    state.extension_generations =
-                        [("tools".to_string(), "gen-1".to_string())].into();
-                    state.commands_dirty = true;
-                }
-                let palette = |backend: &mut tui_lipan::TestBackend<crate::AppRoot>| {
-                    backend
-                        .dispatch(crate::Msg::RunAction(crate::input::Action::TogglePalette))
-                        .expect("open the palette");
-                    backend.render();
-                    for ch in "probe".chars() {
-                        backend
-                            .send_key(tui_lipan::prelude::KeyEvent {
-                                code: tui_lipan::prelude::KeyCode::Char(ch),
-                                mods: tui_lipan::prelude::KeyMods::NONE,
-                            })
-                            .expect("type");
-                    }
-                    backend.advance(std::time::Duration::from_millis(200));
-                    let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+        crate::test_support::on_deeper_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let mut install = command("tools.install", Some("tools"), true);
+            install.label = Some("Install probe".to_string());
+            let mut open = command("tools.open", Some("tools"), false);
+            open.label = Some("Open probe".to_string());
+            {
+                let state = backend.state_mut();
+                state.config.commands = vec![install, open];
+                state.extension_generations = [("tools".to_string(), "gen-1".to_string())].into();
+                state.commands_dirty = true;
+            }
+            let palette = |backend: &mut tui_lipan::TestBackend<crate::AppRoot>| {
+                backend
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::TogglePalette))
+                    .expect("open the palette");
+                backend.render();
+                for ch in "probe".chars() {
                     backend
                         .send_key(tui_lipan::prelude::KeyEvent {
-                            code: tui_lipan::prelude::KeyCode::Esc,
+                            code: tui_lipan::prelude::KeyCode::Char(ch),
                             mods: tui_lipan::prelude::KeyMods::NONE,
                         })
-                        .expect("close the palette");
-                    backend.render();
-                    frame
-                };
+                        .expect("type");
+                }
+                backend.advance(std::time::Duration::from_millis(200));
+                let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                backend
+                    .send_key(tui_lipan::prelude::KeyEvent {
+                        code: tui_lipan::prelude::KeyCode::Esc,
+                        mods: tui_lipan::prelude::KeyMods::NONE,
+                    })
+                    .expect("close the palette");
+                backend.render();
+                frame
+            };
 
-                let before = palette(&mut backend);
-                assert!(before.contains("Open probe"), "{before}");
-                assert!(!before.contains("Install probe"), "{before}");
+            let before = palette(&mut backend);
+            assert!(before.contains("Open probe"), "{before}");
+            assert!(!before.contains("Install probe"), "{before}");
 
-                assert!(set(backend.state_mut(), Some(&tools("gen-1")), "install", true).ok);
-                let after = palette(&mut backend);
-                assert!(after.contains("Install probe"), "{after}");
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+            assert!(set(backend.state_mut(), Some(&tools("gen-1")), "install", true).ok);
+            let after = palette(&mut backend);
+            assert!(after.contains("Install probe"), "{after}");
+        });
     }
 
     #[test]

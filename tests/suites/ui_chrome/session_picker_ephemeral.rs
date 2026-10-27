@@ -31,15 +31,10 @@ fn session_row(name: &str) -> DiscoveredSession {
 
 /// Rendering the app recurses deeply enough to overflow a default test stack.
 fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            body();
-        })
-        .expect("spawn render thread")
-        .join()
-        .expect("render thread completes");
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        body();
+    });
 }
 
 fn screen(backend: &mut TestBackend<AppRoot>) -> String {

@@ -106,15 +106,6 @@ fn backend(style: PaneAnimationStyle) -> TestBackend<AppRoot> {
     backend
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn pane-slide smoke test")
-        .join()
-        .expect("pane-slide smoke test completes");
-}
-
 /// Let the arriving pane start arriving: the target flips to deployed and the transition carries it.
 fn begin_arrival(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0]
@@ -158,7 +149,7 @@ fn assert_fixture_geometry() {
 
 #[test]
 fn a_sliding_pane_is_clipped_to_its_tile_and_never_leaks_into_its_neighbour() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         backend.render();
@@ -220,7 +211,7 @@ fn a_sliding_pane_is_clipped_to_its_tile_and_never_leaks_into_its_neighbour() {
 /// which has to travel *past* its resting column before coming back to it.
 #[test]
 fn the_tile_making_room_overshoots_its_new_size_and_settles() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         // Start with pane 10 alone, so its rect transition is resting at the full-width tile.
@@ -293,7 +284,7 @@ fn the_tile_making_room_overshoots_its_new_size_and_settles() {
 /// pointer event takes. A settled pane has to stay clickable through it.
 #[test]
 fn a_slid_pane_is_still_clickable_once_it_has_arrived() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         assert_fixture_geometry();
         let mut backend = backend(PaneAnimationStyle::Slide);
         begin_arrival(&mut backend);
@@ -324,7 +315,7 @@ fn a_slid_pane_is_still_clickable_once_it_has_arrived() {
 
 #[test]
 fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         assert_fixture_geometry();
         // Scale keeps the terminal at its settled allocation while its visible frame grows from the
         // centre. The opening state is retained until Activate, at which point the wrapper is allowed
@@ -380,7 +371,7 @@ fn the_scale_style_grows_an_opening_pane_inside_its_tile_instead() {
 
 #[test]
 fn a_launcher_session_open_snaps_when_animations_are_off() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {

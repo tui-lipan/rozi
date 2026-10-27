@@ -8,15 +8,6 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 fn picker() -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
@@ -56,7 +47,7 @@ fn picker() -> TestBackend<AppRoot> {
 
 #[test]
 fn picker_hides_remote_paths_and_keeps_the_association_for_opening() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         backend.render();
         let frame = backend.capture_frame().plain_text();
@@ -86,7 +77,7 @@ fn picker_hides_remote_paths_and_keeps_the_association_for_opening() {
 
 #[test]
 fn removal_confirmation_preserves_branch_padding_and_current_marker() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         use rozi::state::{PendingWorktreeRemove, PendingWorktreeRemoveKind};
 
         for current in [false, true] {
@@ -150,7 +141,7 @@ fn removal_confirmation_preserves_branch_padding_and_current_marker() {
 /// Paths do not consume row width, and the picker is clamped on a narrow terminal.
 #[test]
 fn picker_hides_long_paths_at_wide_and_narrow_viewports() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         let path = "/home/me/src/rozi/.claude/worktrees/session-fade-duration";
         {
@@ -206,7 +197,7 @@ fn picker_hides_long_paths_at_wide_and_narrow_viewports() {
 /// Compact PR status and checkout locks remain readable in a narrow picker.
 #[test]
 fn narrow_picker_keeps_work_status_and_lock() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         {
             let picker = backend.state_mut().worktree_picker.as_mut().unwrap();
@@ -247,7 +238,7 @@ fn narrow_picker_keeps_work_status_and_lock() {
 
 #[test]
 fn stale_list_reply_does_not_replace_a_new_picker_request() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         let epoch = backend.state().runtime_epoch;
         backend
@@ -302,7 +293,7 @@ fn stale_list_reply_does_not_replace_a_new_picker_request() {
 /// the refresh keeps the selection on the same checkout even when rows move.
 #[test]
 fn listed_worktrees_are_cached_and_keep_the_selection() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         let epoch = backend.state().runtime_epoch;
         let tree = |path: &str, branch: &str, linked: bool| rozi::git::worktrees::WorktreeInfo {
@@ -347,7 +338,7 @@ fn listed_worktrees_are_cached_and_keep_the_selection() {
 
 #[test]
 fn status_replies_are_scoped_cached_and_shared_with_the_sidebar() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         use rozi::git::pull_requests::{PullRequestStatus, WorkStatus, WorktreeStatuses};
         let mut backend = picker();
         let epoch = backend.state().runtime_epoch;
@@ -431,7 +422,7 @@ fn status_replies_are_scoped_cached_and_shared_with_the_sidebar() {
 
 #[test]
 fn hidden_remote_paths_remain_searchable_and_copyable_by_key_and_click() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         use std::cell::RefCell;
         use std::rc::Rc;
         use tui_lipan::prelude::{App, KeyCode, KeyEvent};
@@ -541,7 +532,7 @@ fn click_hint(backend: &mut TestBackend<AppRoot>, label: &str) {
 
 #[test]
 fn footer_hints_lift_under_the_pointer() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         let at = hint_at(&mut backend, "refresh");
         let resting = backend.capture_frame().cell(at.0, at.1).bg;
@@ -556,7 +547,7 @@ fn footer_hints_lift_under_the_pointer() {
 
 #[test]
 fn footer_hints_click_through_to_their_key_action() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         click_hint(&mut backend, "new");
         let form_open = |backend: &TestBackend<AppRoot>| {
@@ -602,7 +593,7 @@ fn footer_hints_click_through_to_their_key_action() {
 
 #[test]
 fn local_repository_title_is_stable_across_worktrees_and_only_shows_a_host_when_needed() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = picker();
         let state = backend.state_mut();
         let picker = state.worktree_picker.as_mut().unwrap();
@@ -640,7 +631,7 @@ fn local_repository_title_is_stable_across_worktrees_and_only_shows_a_host_when_
 
 #[test]
 fn branch_picker_only_advertises_available_branches_as_actionable() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         use rozi::git::worktrees::WorktreeBranch;
         use rozi::state::WorktreeFormState;
         use tui_lipan::PointerShape;

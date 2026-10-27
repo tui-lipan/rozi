@@ -123,6 +123,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         // Which tabs a worker may publish to is decided when its stream opens: only its own
         // extension's.
         ControlCommand::Pick { .. }
+        | ControlCommand::Prompt { .. }
         | ControlCommand::SidebarPublish { .. }
         | ControlCommand::Notify { .. }
         | ControlCommand::CommandVisibility { .. }

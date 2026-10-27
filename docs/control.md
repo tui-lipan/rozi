@@ -247,6 +247,7 @@ attached.
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
 | `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
+| `prompt --title TEXT [--placeholder TEXT] [--value TEXT] [--masked] [--json]` | Ask for a line of text in a modal prompt. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
 | `sidebar publish --tab TAB [--name NAME]` | Publish rows to a sidebar [stream tab](sidebar.md#stream-tabs) over stdin and receive what the user does with them on stdout. | no |
 | `extensions status [--json]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host). | no |
@@ -300,6 +301,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "layout-control",
     "pane-control",
     "pane-reveal",
+    "pick-prompt-from-query",
+    "prompt",
     "publish-kind",
     "published-activity",
     "record-pane",
@@ -332,6 +335,12 @@ binary treats every published row as an agent and keeps one publisher per pane.
 [placed extension processes](writing-extensions.md#run-on-the-session-host), as a client and as a host. Both
 need it.
 
+`pick-prompt-from-query` means a picker action's prompt honors `from_query`. An older binary
+ignores it and starts the prompt from `value`.
+
+`prompt` means the UI answers [`prompt`](#prompts). An older binary refuses it as an unknown
+command.
+
 `sidebar-tab-settings` means extension manifests accept a setting's table form and
 [`settings` on a sidebar tab](writing-extensions.md#tab-settings). An older binary rejects a
 manifest that uses either.
@@ -352,7 +361,7 @@ document is also written to stdout.
 | `1` | The command was invalid or refused, the reply had `ok: false`, a [wait](#wait-for-output) timed out, or a capture could not be written. |
 | `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
 
-`pick` has its own statuses; see [Pickers](#pickers).
+`pick` and `prompt` have their own statuses; see [Pickers](#pickers) and [Prompts](#prompts).
 
 `list-panes` describes only the endpoint that answered. From a UI, it includes the current
 attachment and client-local scratch panes, not every named session. From `--session`, it includes
@@ -927,7 +936,8 @@ contain initial rows. Each later line replaces the complete row set.
 JSON mode prints selection, cancellation, and action objects. An action without `close: true` keeps
 the picker open so the producer can send refreshed rows. `empty` is the text shown for an empty row
 list while the filter is empty; a filter that matches nothing always says `No matches`. `prompt`
-may be a title string or an object with `title`, `placeholder`, `value`, and `masked`.
+may be a title string or an object with `title`, `placeholder`, `value`, `from_query`, and `masked`;
+`from_query` starts the prompt with the text typed in the search field.
 
 Declare `tabs` to show several related lists in one picker, with tabs below the search field.
 Each tab keeps its own rows, filter, and highlight; `Tab`/`Shift+Tab` or `Right`/`Left` switch
@@ -942,6 +952,20 @@ first shown:
 
 Selections and actions from a tabbed picker carry the tab: `{"selected":"main","tab":"branches"}`.
 See [Picker protocol](control-protocol.md#picker-stream).
+
+## Prompts
+
+`prompt` asks for one line of text, with no list to choose from, and prints what was entered:
+
+```sh
+url=$(rozi prompt --title 'Open URL' --placeholder 'https://example.com') || exit 0
+```
+
+`Enter` submits and exits `0`, `Esc` exits `1`, and a lost connection exits `2`. The text is
+printed as entered, even when empty. `--value` fills the field to start with, and `--masked` hides
+what is typed on screen; the printed text is still plain. `--json` prints the reply object instead:
+`{"input":"…"}` or `{"cancelled":true}`. A prompt from another host names that host in its title.
+See [Prompt protocol](control-protocol.md#prompt-stream).
 
 ## Published activity
 

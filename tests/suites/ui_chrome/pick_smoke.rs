@@ -226,6 +226,7 @@ fn a_masked_prompt_hides_its_seed_value() {
                             title: "Token".into(),
                             placeholder: None,
                             value: Some("super-secret-token".into()),
+                            from_query: false,
                             masked: true,
                         },
                     )),
@@ -253,6 +254,74 @@ fn a_masked_prompt_hides_its_seed_value() {
             !frame.contains("super-secret-token"),
             "masked seed must not appear:\n{frame}"
         );
+    });
+}
+
+/// `prompt` opens straight onto the text field with no picker behind it, so submitting answers the
+/// stream with the text and cancelling ends it rather than revealing an empty list.
+#[test]
+fn a_standalone_prompt_answers_with_its_text_or_cancels() {
+    rozi::test_support::on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        let open = |backend: &mut TestBackend<AppRoot>, id| {
+            let (tx, rx) = rozi::state::PickReply::channel();
+            let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+            backend
+                .dispatch(rozi::Msg::PromptStreamOpen {
+                    id,
+                    prompt: rozi::state::PickPromptFields {
+                        title: "Open URL".into(),
+                        placeholder: None,
+                        value: Some("https://example.com".into()),
+                        from_query: false,
+                        masked: false,
+                    },
+                    extension: None,
+                    worker: None,
+                    sender: tx,
+                    ack: ack_tx,
+                })
+                .expect("dispatch open");
+            assert!(ack_rx.recv().expect("ack").ok);
+            rx
+        };
+
+        let rx = open(&mut backend, 1);
+        let frame = rendered_lines(&mut backend);
+        assert!(frame.contains("Open URL"), "prompt title:\n{frame}");
+        assert!(
+            frame.contains("https://example.com"),
+            "seed value:\n{frame}"
+        );
+        assert!(
+            !frame.contains("Search…"),
+            "no picker behind the prompt:\n{frame}"
+        );
+        backend
+            .dispatch(rozi::Msg::PickPromptSubmit)
+            .expect("submit");
+        assert_eq!(
+            rx.try_recv().expect("input written").trim(),
+            r#"{"input":"https://example.com"}"#
+        );
+        assert!(!backend.state().show_pick);
+
+        let rx = open(&mut backend, 2);
+        backend
+            .dispatch(rozi::Msg::PickPromptCancel)
+            .expect("cancel");
+        assert_eq!(
+            rx.try_recv().expect("cancel written").trim(),
+            r#"{"cancelled":true}"#
+        );
+        assert!(!backend.state().show_pick);
     });
 }
 

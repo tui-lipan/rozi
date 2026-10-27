@@ -36,8 +36,9 @@ is visible without closing and reopening it.
 Branch picker:
 
 - `Enter` switches to the selected branch.
-- `Ctrl-N` prompts for a branch name and creates it at `HEAD` without switching.
-- `Ctrl-D` twice deletes the highlighted branch with Git's non-forcing `-d`.
+- `Ctrl-N` prompts for a branch name, starting with the filter text, and creates it at `HEAD`
+  without switching.
+- `Ctrl-K` twice deletes the highlighted branch with Git's non-forcing `-d`.
 - The current branch and branches checked out in another worktree cannot be selected or deleted.
 - `main`, `master`, `trunk`, and a remote's symbolic default branch are protected from deletion.
 - When the current worktree is dirty, branch switching is disabled. Refresh after cleaning it.
@@ -45,9 +46,9 @@ Branch picker:
 Worktree picker:
 
 - `Enter` opens the selected worktree in a new focused pane.
-- `Ctrl-N` prompts for a new branch and creates a sibling worktree named
+- `Ctrl-N` prompts for a new branch, starting with the filter text, and creates a sibling worktree named
   `<primary-directory>-<branch>`. Slashes in the branch become dashes in the directory name.
-- `Ctrl-D` twice removes the highlighted worktree.
+- `Ctrl-K` twice removes the highlighted worktree.
 - The current, primary, locked, dirty, and missing worktrees cannot be removed. Removal never uses
   `--force`.
 
@@ -71,7 +72,7 @@ In the branch picker:
 2. Select it with `Enter`, reopen the picker, and verify it is grouped under `Current`.
 3. Run `touch "dirty ü.txt"`, reopen the picker, and verify other branches say `Dirty tree`.
 4. Run `rm "dirty ü.txt" && git switch main`, reopen the picker, highlight the feature branch,
-   press `Ctrl-D` once to arm and again to delete, then verify the row disappears.
+   press `Ctrl-K` once to arm and again to delete, then verify the row disappears.
 5. Press `r` after making a branch change in another pane and verify the open list updates.
 
 Then open the worktree picker:
@@ -85,7 +86,7 @@ rozi run-action git-tools.worktrees
 3. Run `touch "$tmp/demo-topic-ü/dirty ü.txt"`, reopen the picker from the original worktree, press
    `r`, and verify the topic row reports `dirty`.
 4. Verify confirmed remove is rejected, run `rm "$tmp/demo-topic-ü/dirty ü.txt"`, refresh, then
-   press `Ctrl-D` twice and verify the row and directory disappear.
+   press `Ctrl-K` twice and verify the row and directory disappear.
 5. Press `Esc` at either picker and verify it closes without an error notification.
 
 Remove the disposable repository and any sibling worktrees when finished:

@@ -1316,6 +1316,10 @@ pub struct PickPromptFields {
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Seed the prompt with the picker's filter text, the way the session picker's `new` starts
+    /// from what was typed. `value` still applies while the filter is empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_query: bool,
     /// Hide typed characters on screen. The submitted `input` is still plaintext on the stream.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub masked: bool,
@@ -1340,6 +1344,13 @@ impl PickPromptSpec {
         match self {
             Self::Title(_) => "",
             Self::Fields(fields) => fields.value.as_deref().unwrap_or(""),
+        }
+    }
+
+    pub fn from_query(&self) -> bool {
+        match self {
+            Self::Title(_) => false,
+            Self::Fields(fields) => fields.from_query,
         }
     }
 
@@ -1517,6 +1528,9 @@ pub struct PickState {
     pub pages: Vec<PickPage>,
     /// Index into `pages`.
     pub active: usize,
+    /// Opened by `prompt`: there is no picker under the prompt to return to, so submitting or
+    /// cancelling it ends the stream.
+    pub standalone: bool,
     pub reply: PickReply,
 }
 
@@ -1713,13 +1727,14 @@ mod tests {
         assert_eq!(string.prompt, Some(PickPromptSpec::Title("Command".into())));
 
         let object: PickAction = serde_json::from_str(
-            r#"{"id":"edit","key":"ctrl-e","label":"edit","prompt":{"title":"Edit command","placeholder":"git status","value":"git status --short","masked":true}}"#,
+            r#"{"id":"edit","key":"ctrl-e","label":"edit","prompt":{"title":"Edit command","placeholder":"git status","value":"git status --short","from_query":true,"masked":true}}"#,
         )
         .expect("object prompt");
         let spec = object.prompt.expect("prompt");
         assert_eq!(spec.title(), "Edit command");
         assert_eq!(spec.placeholder(), "git status");
         assert_eq!(spec.value(), "git status --short");
+        assert!(spec.from_query());
         assert!(spec.masked());
     }
 }

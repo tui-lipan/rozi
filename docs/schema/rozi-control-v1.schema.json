@@ -2286,6 +2286,40 @@
             "cmd"
           ],
           "type": "object"
+        },
+        {
+          "description": "Ask for one line of text in a modal prompt, with no picker behind it.",
+          "properties": {
+            "cmd": {
+              "const": "prompt",
+              "type": "string"
+            },
+            "masked": {
+              "description": "Hide typed characters on screen. The submitted `input` is still plaintext on the stream.",
+              "type": "boolean"
+            },
+            "placeholder": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "value": {
+              "description": "Initial contents.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "title"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3759,6 +3793,40 @@
             "cmd"
           ],
           "type": "object"
+        },
+        {
+          "description": "Ask for one line of text in a modal prompt, with no picker behind it.",
+          "properties": {
+            "cmd": {
+              "const": "prompt",
+              "type": "string"
+            },
+            "masked": {
+              "description": "Hide typed characters on screen. The submitted `input` is still plaintext on the stream.",
+              "type": "boolean"
+            },
+            "placeholder": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "value": {
+              "description": "Initial contents.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "title"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -4939,6 +5007,10 @@
     "PickPromptFields": {
       "description": "Object form of [`PickPromptSpec`].",
       "properties": {
+        "from_query": {
+          "description": "Seed the prompt with the picker's filter text, the way the session picker's `new` starts\nfrom what was typed. `value` still applies while the filter is empty.",
+          "type": "boolean"
+        },
         "masked": {
           "description": "Hide typed characters on screen. The submitted `input` is still plaintext on the stream.",
           "type": "boolean"

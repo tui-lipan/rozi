@@ -308,6 +308,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Choose a line of stdin in a modal picker",
             ),
             row(
+                "prompt --title T [--placeholder P] [--value V] [--masked] [--json]",
+                "Ask for a line of text in a modal prompt",
+            ),
+            row(
                 "metrics [--format text|json]",
                 "Show runtime resources; JSON when piped",
             ),

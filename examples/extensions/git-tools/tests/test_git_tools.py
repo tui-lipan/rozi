@@ -118,5 +118,13 @@ class GitToolsTests(unittest.TestCase):
             )
 
 
+class PickerRequestTests(unittest.TestCase):
+    def test_creating_starts_from_the_filter_text(self) -> None:
+        for mode in ("branches", "worktrees"):
+            actions = git_tools.picker_request(mode, [])["actions"]
+            create = next(action for action in actions if action["id"] == "create")
+            self.assertTrue(create["prompt"]["from_query"], mode)
+
+
 if __name__ == "__main__":
     unittest.main()

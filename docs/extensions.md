@@ -151,7 +151,7 @@ On the **Installed** tab:
 | `Ctrl+D` | Open the full report |
 | `Ctrl+I` | Open the install prompt |
 | `Ctrl+U` | Apply the selected extension's update, or check every Git-managed extension for one |
-| `Ctrl+Shift+U` | Update every extension with a known update (shown when there is more than one) |
+| `Ctrl+Y` | Update every extension with a known update (shown when there is more than one) |
 | `Ctrl+R` | Rescan extension manifests |
 | `Ctrl+O` | Open `extension.toml` |
 | `Ctrl+K` | Remove the installation (press twice) |
@@ -279,8 +279,7 @@ shows the same result, or the error when a remote could not be checked.
 
 On a row with a known update, `Ctrl+U` runs the same update as the CLI. On any other row,
 `Ctrl+U` checks every Git-managed installation's remote again. When more than one update is known,
-`Ctrl+Shift+U` updates them all in turn and reloads once at the end. It needs a terminal that reports
-`Shift` with `Ctrl`, such as one with the Kitty keyboard protocol; elsewhere, use
+`Ctrl+Y` updates them all in turn and reloads once at the end. You can also run
 `rozi extensions update --all`. Closing **Extensions** does not stop an update. Opening it again
 shows the rows that are still updating, and another update or a removal waits until that run
 finishes. Changes to linked checkouts still take an explicit `reload-extensions`, because `rozi`

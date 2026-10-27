@@ -1318,7 +1318,7 @@ fn extensions_manager_splits_installed_and_discover_tabs() {
     });
 }
 
-/// `Ctrl+U` checks every Git installation from a row without a known update, `Ctrl+Shift+U`
+/// `Ctrl+U` checks every Git installation from a row without a known update, `Ctrl+Y`
 /// appears once more than one update is known and runs them all, and the run settles each row as
 /// it finishes but reports once at the end.
 #[test]
@@ -1423,7 +1423,7 @@ fn extensions_manager_checks_and_updates_every_git_installation() {
             .update_checks
             .insert("update-beta".to_string(), available());
         let two = frame(&mut backend);
-        assert!(two.contains("update all Ctrl+Shift+U"), "{two}");
+        assert!(two.contains("update all Ctrl+Y"), "{two}");
 
         // A run in progress: each row settles when its own update finishes. The run itself
         // stays until the aggregate result, so nothing else can start in between.
@@ -1482,7 +1482,7 @@ fn extensions_manager_checks_and_updates_every_git_installation() {
         );
         assert!(!reported.contains("up to date"), "{reported}");
 
-        // The key itself: Ctrl+Shift+U runs both, where Ctrl+U would update only the row.
+        // The key itself: Ctrl+Y runs both, where Ctrl+U would update only the row.
         backend
             .state_mut()
             .extensions
@@ -1493,11 +1493,8 @@ fn extensions_manager_checks_and_updates_every_git_installation() {
         frame(&mut backend);
         backend
             .send_key(KeyEvent {
-                code: KeyCode::Char('u'),
-                mods: KeyMods {
-                    shift: true,
-                    ..KeyMods::CTRL
-                },
+                code: KeyCode::Char('y'),
+                mods: KeyMods::CTRL,
             })
             .expect("update all");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

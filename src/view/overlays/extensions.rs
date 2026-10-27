@@ -322,7 +322,7 @@ fn update_all_action(
     state: &crate::state::ExtensionsState,
 ) -> OverlayAction {
     OverlayAction::new(
-        "ctrl-shift-u",
+        "ctrl-y",
         "update all",
         Msg::ExtensionsUpdateAll,
         !update_busy(ctx) && crate::ops::extensions_manager::updatable_ids(state).len() > 1,

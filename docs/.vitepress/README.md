@@ -84,11 +84,19 @@ reference doc's job rather than the landing's.
 | Setting | Value |
 |---------|-------|
 | Production branch | `website` |
+| Builds for non-production branches | Off |
 | Root directory | `docs` |
 | Build command | `npm run docs:build` |
 | Deploy command | `npx wrangler deploy` |
+| Version command | `npx wrangler versions upload` |
 | Node version | 22 |
 | Custom domain | `rozi.tui-lipan.dev` |
+
+**Keep the production branch `website`.** With any other branch there,
+Cloudflare publishes every push to that branch, so `master` would put
+unreleased documentation and install scripts on the live site. Non-production
+builds stay off: they would only upload preview versions, and the **Docs
+site** workflow already checks that every change builds.
 
 The site follows releases, not `master`. After each successful release,
 `.github/workflows/website.yml` moves the `website` branch to the release tag,

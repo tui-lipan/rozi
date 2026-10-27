@@ -7,9 +7,14 @@ Run from the extension directory:
 
 from __future__ import annotations
 
+import os
+import stat
 import sys
+import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bin"))
@@ -72,6 +77,46 @@ class BoardTest(unittest.TestCase):
     def test_activating_a_row_focuses_its_pane(self) -> None:
         self.assertEqual(board.handle({"activate": "3"}), [board.ROZI, "focus", "3"])
         self.assertIsNone(board.handle({"visible": True}))
+
+
+@unittest.skipIf(os.name == "nt", "the stand-in rozi is a POSIX shell script")
+class WatchTest(unittest.TestCase):
+    """`watch` against a stand-in `rozi` whose `subscribe` streams events or refuses them."""
+
+    def watch_with(self, script: str) -> tuple[bool, float, str]:
+        with tempfile.TemporaryDirectory() as directory:
+            args = Path(directory) / "args"
+            rozi = Path(directory) / "rozi"
+            rozi.write_text(f'#!/bin/sh\necho "$@" > "{args}"\n{script}\n', encoding="utf-8")
+            rozi.chmod(rozi.stat().st_mode | stat.S_IXUSR)
+            changed = threading.Event()
+            with mock.patch.object(board, "ROZI", str(rozi)):
+                watching = threading.Thread(target=board.watch, args=(changed,))
+                watching.start()
+                watching.join(timeout=5)
+            self.assertFalse(watching.is_alive())
+            return changed.is_set(), board.poll_interval(watching), args.read_text().strip()
+
+    def test_an_agent_change_wakes_the_board(self) -> None:
+        event = '{"event":"agent-state-changed","data":{"pane":"2","state":"blocked"}}'
+        woken, _, args = self.watch_with(f"echo '{event}'")
+        self.assertTrue(woken)
+        self.assertEqual(args, "subscribe agent-state-changed pane-exited")
+
+    def test_a_rozi_without_the_events_is_polled_instead(self) -> None:
+        woken, interval, _ = self.watch_with("echo 'unknown event' >&2; exit 1")
+        self.assertFalse(woken)
+        self.assertEqual(interval, board.FALLBACK_POLL_SECONDS)
+
+    def test_a_live_subscription_needs_only_the_slow_poll(self) -> None:
+        release = threading.Event()
+        live = threading.Thread(target=release.wait)
+        live.start()
+        try:
+            self.assertEqual(board.poll_interval(live), board.POLL_SECONDS)
+        finally:
+            release.set()
+            live.join()
 
 
 class DemoAgentTest(unittest.TestCase):

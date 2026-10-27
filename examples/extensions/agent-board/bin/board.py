@@ -11,9 +11,14 @@ import os
 import subprocess
 import sys
 import threading
-import time
 
 ROZI = os.environ.get("ROZI_BIN", "rozi")
+# A change to an agent wakes the board at once. Pane titles change without an event, so it still
+# looks again now and then.
+EVENTS = ("agent-state-changed", "pane-exited")
+POLL_SECONDS = 10.0
+# A rozi without those events (no `runtime-events` capability) gets the board polled instead.
+FALLBACK_POLL_SECONDS = 2.0
 TONES = {
     "working": "working",
     "blocked": "blocked",
@@ -72,6 +77,24 @@ def list_panes() -> list[dict[str, object]]:
     return panes if isinstance(panes, list) else []
 
 
+def watch(changed: threading.Event) -> None:
+    """Set `changed` on each agent change until the stream ends. Returns at once, with the stream
+    refused, from a rozi that does not have these events."""
+    with subprocess.Popen(
+        [ROZI, "subscribe", *EVENTS],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ) as stream:
+        assert stream.stdout is not None
+        for _line in stream.stdout:
+            changed.set()
+
+
+def poll_interval(watching: threading.Thread) -> float:
+    return POLL_SECONDS if watching.is_alive() else FALLBACK_POLL_SECONDS
+
+
 def handle(event: dict[str, object]) -> list[str] | None:
     """The `rozi` command a sidebar event asks for: activating a row focuses its pane."""
     pane = event.get("activate")
@@ -98,6 +121,9 @@ def run() -> int:
                 subprocess.run(command, check=False)
 
     threading.Thread(target=read_events, daemon=True).start()
+    changed = threading.Event()
+    watching = threading.Thread(target=watch, args=(changed,), daemon=True)
+    watching.start()
     while tab.poll() is None and activity.poll() is None:
         agents = agent_panes(list_panes())
         snapshots = [(tab, tab_snapshot(agents)), (activity, activity_snapshot(agents))]
@@ -107,7 +133,8 @@ def run() -> int:
                 stream.stdin.flush()
         except BrokenPipeError:
             break
-        time.sleep(2)
+        changed.wait(poll_interval(watching))
+        changed.clear()
     return 0
 
 

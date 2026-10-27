@@ -174,14 +174,17 @@ pub(crate) fn apply_pane_runtime_state(
         .note_failures(&previous_failures)
         .into_iter()
         .partition(|failure| {
-            failure.as_ref().is_some_and(|key| {
+            failure.slot.as_ref().is_some_and(|key| {
                 pane.terminal
                     .published_rows
                     .iter()
                     .any(|row| row.has_key(key) && !row.active)
             })
         });
-    let mut failed_rows: Vec<_> = failed_rows.into_iter().flatten().collect();
+    let mut failed_rows: Vec<_> = failed_rows
+        .into_iter()
+        .filter_map(|failure| failure.slot)
+        .collect();
     finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,

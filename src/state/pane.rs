@@ -239,31 +239,45 @@ impl Pane {
         }
     }
 
-    /// What in this pane has failed, one entry per occupant: the pane's own agent or status
-    /// (`None`), and each published row by key. Read from the occupant projection, so a hook report
-    /// speaking for one of an agent publisher's rows is that row's failure, not a second one.
-    pub fn failures(&self) -> Vec<Option<crate::session::protocol::RowKey>> {
+    /// What in this pane has failed, one entry per occupant: the pane's own agent or status, and
+    /// each published row. Read from the occupant projection, so a hook report speaking for one of an
+    /// agent publisher's rows is that row's failure, not a second one.
+    pub fn failures(&self) -> Vec<Failure> {
+        let rows = &self.terminal.published_rows;
+        let integration = self.terminal.agent_integration.as_deref();
         crate::session::protocol::pane_occupants(&self.semantic_runtime())
             .into_iter()
             .filter(|occupant| occupant.state == crate::session::protocol::ActivityState::Error)
-            .map(|occupant| occupant.slot)
+            .map(|occupant| {
+                let conversation = match &occupant.slot {
+                    Some(key) => rows
+                        .iter()
+                        .find(|row| row.has_key(key) && row.is_agent())
+                        .and_then(crate::session::protocol::row_reporting_session),
+                    None if occupant.is_agent() => {
+                        integration.and_then(|report| report.native_session.as_deref())
+                    }
+                    None => None,
+                };
+                Failure {
+                    slot: occupant.slot,
+                    conversation: conversation.map(str::to_string),
+                }
+            })
             .collect()
     }
 
     /// Arm the pane's `error_unseen` when something fails that had not already failed before this
-    /// update, and drop it once nothing has. Returns what newly failed, as [`Self::failures`] names
-    /// it: the identities a notification announces.
-    pub(crate) fn note_failures(
-        &mut self,
-        before: &[Option<crate::session::protocol::RowKey>],
-    ) -> Vec<Option<crate::session::protocol::RowKey>> {
+    /// update, and drop it once nothing has. Returns what newly failed: the failures a notification
+    /// announces.
+    pub(crate) fn note_failures(&mut self, before: &[Failure]) -> Vec<Failure> {
         let failures = self.failures();
         if failures.is_empty() {
             self.terminal.error_unseen = false;
         }
         let new: Vec<_> = failures
             .into_iter()
-            .filter(|failure| !before.contains(failure))
+            .filter(|failure| !before.iter().any(|earlier| earlier.is_same(failure)))
             .collect();
         if !new.is_empty() {
             self.terminal.error_unseen = true;
@@ -574,6 +588,27 @@ impl Pane {
                 .agent_runtimes()
                 .iter()
                 .any(|runtime| runtime.state == crate::session::protocol::AgentState::Blocked)
+    }
+}
+
+/// One thing that failed in a pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    /// Where the failure shows: a published row, or `None` for the pane's own agent or status.
+    pub slot: Option<crate::session::protocol::RowKey>,
+    /// The conversation that failed, when an agent names one. A hook report speaks for the pane
+    /// while no row lists its conversation and for that row once one does, so this, not the slot,
+    /// is what stays the same as a publisher's rows come and go.
+    conversation: Option<String>,
+}
+
+impl Failure {
+    /// Whether two failures are one: the same conversation when both name one, else the same place.
+    fn is_same(&self, other: &Self) -> bool {
+        match (&self.conversation, &other.conversation) {
+            (Some(left), Some(right)) => left == right,
+            _ => self.slot == other.slot,
+        }
     }
 }
 

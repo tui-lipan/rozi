@@ -1374,7 +1374,10 @@ fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
         "nothing new to announce"
     );
     assert_eq!(
-        pane.failures(),
+        pane.failures()
+            .into_iter()
+            .map(|failure| failure.slot)
+            .collect::<Vec<_>>(),
         [Some(RowKey::new("threads", "conversation"))]
     );
     assert!(
@@ -1431,6 +1434,64 @@ fn a_new_failure_is_announced_once_where_it_happened() {
         (vec![], true),
         "the one on screen fails the pane"
     );
+}
+
+/// The hooks speak for the pane while no row lists their conversation, and for its row once one
+/// does. A standing failure is the same failure on either side of that, whichever way it moves.
+#[test]
+fn a_standing_hook_failure_is_not_new_when_its_row_comes_or_goes() {
+    use crate::session::protocol::{
+        AgentIdentity, AgentIntegrationReport, AgentRecord, AgentRef, AgentState, PublishedRow,
+        PublisherKind, RowKey,
+    };
+    let runtime = |listed: bool| PaneRuntimeState {
+        rows: listed
+            .then(|| PublishedRow {
+                publisher: "threads".into(),
+                kind: PublisherKind::Agent,
+                live_session: None,
+                reported: false,
+                id: "conversation".into(),
+                title: "conversation".into(),
+                status: "error".into(),
+                reason: None,
+                active: true,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: Some("abc".into()),
+            })
+            .into_iter()
+            .collect(),
+        integration: Some(Box::new(AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: AgentIdentity::new("codex", "Codex"),
+            reference: AgentRef::for_test(1, 1, None),
+            state: AgentState::Error,
+            reason: None,
+            native_session: Some("abc".into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        })),
+        ..PaneRuntimeState::default()
+    };
+    let records = |listed: bool| -> Vec<AgentRecord> {
+        let slot = listed.then(|| RowKey::new("threads", "conversation"));
+        vec![AgentRef::for_test(1, 1, slot).into()]
+    };
+    for (first, then) in [(false, true), (true, false)] {
+        let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+        apply_pane_runtime_state(&mut pane, records(first), runtime(first));
+        assert!(pane.terminal.error_unseen);
+        // Looked at.
+        pane.terminal.error_unseen = false;
+        let moved = apply_pane_runtime_state(&mut pane, records(then), runtime(then));
+        assert_eq!(pane.failures().len(), 1);
+        assert!(
+            !pane.terminal.error_unseen && !moved.edges.failed && moved.failed_rows.is_empty(),
+            "listed {first} then {then}: the same failure"
+        );
+    }
 }
 
 #[test]

@@ -1118,6 +1118,87 @@ mod tests {
         });
     }
 
+    /// Column where `needle` starts on the painted screen.
+    fn painted_column(backend: &tui_lipan::TestBackend<AppRoot>, needle: &str) -> Option<usize> {
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .find_map(|line| line.find(needle).map(|at| line[..at].chars().count()))
+    }
+
+    #[test]
+    fn toasts_slide_in_from_the_right_unless_animations_are_off() {
+        use crate::Msg;
+
+        // Short enough to stay readable while the rest of the toast is still past the screen edge.
+        let message = &NOT_ATTACHED[..7];
+        let rested = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let rest = rested.clone();
+        with_backend(move |mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            backend.advance(std::time::Duration::from_millis(30));
+            let entering = painted_column(&backend, message);
+            backend.advance(std::time::Duration::from_millis(500));
+            let settled = painted_column(&backend, message).expect("the toast settles on screen");
+            assert!(
+                entering.is_some_and(|column| column > settled),
+                "an arriving toast is painted right of where it settles: {entering:?} vs {settled}\n{}",
+                backend.capture_frame().plain_text()
+            );
+            *rest.lock().unwrap() = Some(settled);
+        });
+        let settled = rested.lock().unwrap().expect("the animated toast settled");
+        with_backend(move |mut backend| {
+            backend.state_mut().config.animations.enabled = false;
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            backend.render();
+            assert_eq!(
+                painted_column(&backend, message),
+                Some(settled),
+                "with animations off the toast is in place at once"
+            );
+        });
+    }
+
+    #[test]
+    fn a_replacement_toast_appears_in_its_place_instead_of_arriving_again() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            let shown = |backend: &tui_lipan::TestBackend<AppRoot>| {
+                let tracked = backend.state().replaceable_toasts.get(&layout_slot)?;
+                tracked.content().split('\0').next_back().map(str::to_owned)
+            };
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch first layout cycle");
+            backend.advance(std::time::Duration::from_millis(500));
+            let first = shown(&backend).expect("the layout toast is tracked");
+            let settled = painted_column(&backend, &first).expect("the first toast settles");
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch second layout cycle");
+            let second = shown(&backend).expect("the replacement is tracked");
+            assert_ne!(first, second);
+            backend.render();
+            let replaced = painted_column(&backend, &second);
+            backend.advance(std::time::Duration::from_millis(500));
+            assert_eq!(
+                replaced,
+                painted_column(&backend, &second),
+                "the replacement does not travel"
+            );
+            assert!(replaced.is_some_and(|column| column.abs_diff(settled) <= first.len()));
+        });
+    }
+
     #[test]
     fn layout_cycle_stays_quiet_when_the_workbar_names_the_layout() {
         use crate::Msg;

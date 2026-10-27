@@ -237,9 +237,9 @@ You can add your own sidebar tabs that launch commands or list a command's outpu
 
 ## Tune animations
 
-rozi animates panes opening and closing, workspace and session switches, and focus changes. The
-master switch turns everything off at once; **Settings › General › Animations** holds the same
-controls.
+rozi animates panes opening and closing, workspace and session switches, toasts, and focus
+changes. The master switch turns everything off at once; **Settings › General › Animations** holds
+the same controls.
 
 ```toml
 [animations]
@@ -248,6 +248,7 @@ pane_open_style = "portal"   # off, scale, slide, portal, scan, or particles
 pane_close_style = "particles"
 workspace_ms = 160      # 0 switches workspaces instantly
 session = "portal"      # fade, portal, or off
+toast = "slide"         # slide, fade, or off
 ```
 
 Each pane style has its own timing and motion curve. See

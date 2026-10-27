@@ -4,7 +4,7 @@ use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
     PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle, ScanDirection,
-    SessionAnimationStyle, WindowAnimationConfig,
+    SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
 };
 
 use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec, SessionSpec};
@@ -87,6 +87,14 @@ pub(super) fn apply_animations(
             Some(style) => target.picker = style,
             None => warnings.push(format!(
                 "Ignored unknown animations.picker \"{value}\" (expected one of: off, fade, portal, scan)"
+            )),
+        }
+    }
+    if let Some(value) = raw.toast.as_deref() {
+        match ToastAnimationStyle::parse(value) {
+            Some(style) => target.toast = style,
+            None => warnings.push(format!(
+                "Ignored unknown animations.toast \"{value}\" (expected one of: off, fade, slide)"
             )),
         }
     }
@@ -291,26 +299,29 @@ mod tests {
     }
 
     #[test]
-    fn picker_styles_parse_and_unknown_styles_warn() {
-        for style in PickerAnimationStyle::all() {
-            let raw =
-                toml::from_str(&format!("picker = \"{}\"", style.id().to_uppercase())).unwrap();
+    fn overlay_styles_parse_and_unknown_styles_warn() {
+        let parsed = |text: &str| {
             let mut config = WindowAnimationConfig::default();
             let mut warnings = Vec::new();
-            apply_animations(&mut config, raw, &mut warnings);
+            apply_animations(&mut config, toml::from_str(text).unwrap(), &mut warnings);
+            (config, warnings)
+        };
+        for style in PickerAnimationStyle::all() {
+            let (config, warnings) = parsed(&format!("picker = \"{}\"", style.id().to_uppercase()));
             assert_eq!(config.picker, *style);
             assert!(warnings.is_empty());
         }
-        let mut config = WindowAnimationConfig::default();
-        let mut warnings = Vec::new();
-        apply_animations(
-            &mut config,
-            toml::from_str("picker = \"zoom\"").unwrap(),
-            &mut warnings,
-        );
+        for style in ToastAnimationStyle::all() {
+            let (config, warnings) = parsed(&format!("toast = \"{}\"", style.id().to_uppercase()));
+            assert_eq!(config.toast, *style);
+            assert!(warnings.is_empty());
+        }
+        let (config, warnings) = parsed("picker = \"zoom\"\ntoast = \"zoom\"");
         assert_eq!(config.picker, PickerAnimationStyle::Fade);
-        assert_eq!(warnings.len(), 1);
+        assert_eq!(config.toast, ToastAnimationStyle::Slide);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("animations.picker"));
+        assert!(warnings[1].contains("animations.toast"));
     }
 
     #[test]

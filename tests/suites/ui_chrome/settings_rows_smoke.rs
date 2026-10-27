@@ -1146,7 +1146,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 21, "Pane close"),
+            (SettingsTab::General, 22, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 21, "Bell urgency"),

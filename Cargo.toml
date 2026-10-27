@@ -77,7 +77,9 @@ exclude = [
 # 0.30.0: immutable media ownership and trusted local snapshot adoption.
 # 0.31.0: OSC 22 and pointer-shape support.
 # 0.32.0: superseded-frame elision and opt-in root-frame edits for inline image relay.
-tui-lipan = { version = "0.32.1", features = [
+# Unreleased: toast slide and restack motion (tui-lipan/tui-lipan#379). Replace this revision
+# with the release that carries it, and drop its `deny.toml` allowance.
+tui-lipan = { git = "https://github.com/tui-lipan/tui-lipan", rev = "f2d7a42ad30f3f427537501920e1c8422172304e", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

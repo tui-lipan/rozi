@@ -151,7 +151,8 @@ into range rather than skipped; their rows below say so.
 rozi shows a toast for failures, rejected actions, destructive confirmations, and results that
 have no other visible feedback. Changes that already show up in the workbar, pane layout, a picker,
 or the sidebar do not add a toast. A repeated message renews the existing toast instead of stacking
-copies.
+copies. A message that replaces one on screen, such as a new layout name, takes over its place
+without arriving again. [`animations.toast`](#animations) sets how toasts arrive and leave.
 
 Scripts can show their own result with [`rozi notify`](control.md#actions-status-and-notifications).
 Release notices are described in [Update notices](#update-notices).
@@ -326,6 +327,7 @@ pane raises the alert again.
 | `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
+| `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge in 280 ms and sends it back out in 180 ms; Fade fades it in place in 150 ms and out in 100 ms. With either, the other toasts glide to make room or close a gap. Off shows and removes toasts at once. In Settings: General › Animations › Toasts. The animation master switch also disables it. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
 | `geometry_ms` | integer | `220` | Base geometry duration in milliseconds; Particles opening uses this duration and closing takes four times it. |

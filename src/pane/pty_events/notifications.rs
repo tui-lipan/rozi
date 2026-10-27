@@ -114,6 +114,7 @@ fn notify(
     toast: Toast,
 ) -> Notified {
     prune_tracked_toasts(ctx);
+    let mut replacing = false;
     if let Some(tracked) = ctx.state.replaceable_toasts.get(&key).cloned() {
         // `renew` reports false once the toast has expired or begun fading, neither of which can be
         // extended - then this falls through and pushes a fresh one.
@@ -123,9 +124,15 @@ fn notify(
             }
             return Notified::Renewed;
         }
-        ctx.toast().dismiss_immediately(tracked.id);
+        replacing = ctx.toast().dismiss_immediately(tracked.id);
     }
-    let id = ctx.toast().push(toast);
+    let motion = crate::view::animation::toast_motion(ctx.state.config.animations);
+    let motion = if replacing {
+        motion.replacing()
+    } else {
+        motion
+    };
+    let id = ctx.toast().push(motion.apply(toast));
     ctx.state.replaceable_toasts.insert(
         key,
         TrackedToast {
@@ -135,6 +142,12 @@ fn notify(
         },
     );
     Notified::Pushed
+}
+
+/// Show `toast` with the configured toast motion, for a toast that is never de-duplicated.
+pub(crate) fn push_toast(ctx: &mut Context<AppRoot>, toast: Toast) -> OverlayId {
+    let motion = crate::view::animation::toast_motion(ctx.state.config.animations);
+    ctx.toast().push(motion.apply(toast))
 }
 
 /// The text two toasts must share to count as the same message. The separator is a byte that

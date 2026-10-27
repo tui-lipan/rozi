@@ -39,3 +39,5 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Unreleased tui-lipan toast motion; remove with the revision in Cargo.toml.
+allow-git = ["https://github.com/tui-lipan/tui-lipan"]

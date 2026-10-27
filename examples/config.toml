@@ -202,6 +202,9 @@
 #session = "portal"
 # Picker opening and closing: "off", "fade", "portal", or "scan".
 #picker = "fade"
+# Toast arrival and departure: "slide" in from the right edge, "fade" in place, or "off". Slide and
+# Fade also glide the other toasts out of the way.
+#toast = "slide"
 #focus_chrome = true
 # Choose a style independently for pane opening and closing. "off" shows and hides the pane at
 # once while neighbouring tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in

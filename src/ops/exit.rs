@@ -35,7 +35,7 @@ fn confirm_second_press(
         }
     }
 
-    let toast_id = ctx.toast().push(toast);
+    let toast_id = crate::pane::pty_events::push_toast(ctx, toast);
     ctx.state.pending_destructive = Some(PendingDestructiveConfirmation {
         action: pending,
         armed_at: Instant::now(),

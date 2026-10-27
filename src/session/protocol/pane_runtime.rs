@@ -463,6 +463,11 @@ pub struct PaneRuntimeState {
     /// command line. Shell intent is retained for interpreted commands; native evidence replaces a
     /// shell alias or function when the platform can prove which executable took over.
     pub foreground_program: Option<String>,
+    /// Whether [`Self::foreground_program`] is a shell rather than a program a shell runs: the
+    /// pane's own launch shell or a common shell name. Judged by the session server, on the host
+    /// that runs the pane - a client's shell configuration says nothing about another machine's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub foreground_shell: bool,
     /// Basename-only identities observed across the PTY's current foreground process group.
     ///
     /// POSIX terminals arbitrate input at process-group granularity, so there is no universally

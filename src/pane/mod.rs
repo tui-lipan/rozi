@@ -254,6 +254,8 @@ pub struct TerminalPane {
     /// Split-aware routing checks all of them because a wrapper may remain group leader while the
     /// editor receiving input is another member.
     pub foreground_programs: Vec<String>,
+    /// Whether `foreground_program` is a shell, as the session server judged it on its own host.
+    pub foreground_shell: bool,
     /// Absolute path of that same program, sent only when its name would not resolve on the
     /// session server's `PATH` (a shell alias, a build-tree binary). Profile capture replays this
     /// instead of the name, which is all a restored pane could otherwise fail to find.
@@ -476,6 +478,7 @@ impl TerminalPane {
             child_pid: None,
             foreground_program: None,
             foreground_programs: Vec::new(),
+            foreground_shell: false,
             foreground_executable: None,
             foreground_arguments: Vec::new(),
             foreground_pid: None,

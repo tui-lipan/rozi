@@ -1403,6 +1403,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.cwd_source != current.cwd_source
         || candidate.command_phase != current.command_phase
         || candidate.foreground_program != current.foreground_program
+        || candidate.foreground_shell != current.foreground_shell
         || candidate.foreground_programs != current.foreground_programs
         || candidate.foreground_executable != current.foreground_executable
         || candidate.foreground_arguments != current.foreground_arguments
@@ -1495,6 +1496,10 @@ fn compute_runtime_state(
         detected_agent.as_ref(),
         pane.runtime.integration.as_deref(),
     );
+    let foreground_shell = foreground
+        .program
+        .as_deref()
+        .is_some_and(|program| is_pane_shell(pane, program));
     let candidate = PaneRuntimeState {
         cwd: path.cwd,
         cwd_host: path.cwd_host,
@@ -1506,6 +1511,7 @@ fn compute_runtime_state(
         command_phase,
         foreground_pid,
         foreground_program: foreground.program,
+        foreground_shell,
         foreground_programs: foreground.programs.into_boxed_slice(),
         foreground_executable,
         foreground_arguments,
@@ -1530,6 +1536,16 @@ fn compute_runtime_state(
         },
         ..candidate
     }
+}
+
+/// Whether `program`, a normalized basename, is a shell in `pane`: a common shell, or the one this
+/// server launched the pane with, which only this host can name.
+fn is_pane_shell(pane: &ServerPane, program: &str) -> bool {
+    crate::pane::launch::is_common_shell(program)
+        || pane
+            .shell
+            .first()
+            .is_some_and(|shell| normalized_program_name(shell) == program)
 }
 
 struct ForegroundEvidence {
@@ -3937,6 +3953,33 @@ mod tests {
         assert_eq!(
             first, second,
             "every pane in a cycle must read the same captured walk"
+        );
+    }
+
+    /// Which program is a shell is judged here, on the host running the pane: a custom shell it
+    /// was launched with counts, though no client's configuration would name it.
+    #[test]
+    fn the_pane_launch_shell_is_judged_a_shell_on_its_own_host() {
+        let mut pane = make_pane();
+        pane.shell = vec!["/opt/bin/xonsh".into(), "-i".into()];
+        let mut foreground = |program: &str| {
+            pane.terminal
+                .process_bytes(format!("\x1b]133;C;rozi_exe={program}\x07").as_bytes());
+            compute_runtime_state(
+                &mut pane,
+                &StubInspector,
+                None,
+                &mut LazyProcessScan::default(),
+            )
+        };
+
+        let shell = foreground("xonsh");
+        assert_eq!(shell.foreground_program.as_deref(), Some("xonsh"));
+        assert!(shell.foreground_shell, "the pane's own launch shell");
+        assert!(foreground("zsh").foreground_shell, "a common shell");
+        assert!(
+            !foreground("cargo").foreground_shell,
+            "a program the shell runs"
         );
     }
 

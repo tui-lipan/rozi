@@ -65,13 +65,16 @@ Every field is a string:
   `previous_state` is empty when the agent appears, and `state` is empty when it goes. `agent` is
   the agent's ID, such as `claude`, and `label` its name. `reason` is why the agent is in its
   state, when it says. `ref` is the agent's exact reference as JSON: pass it to
-  `rozi agents get --ref` or `agents wait --ref`. A new run of an agent in the same pane has a new
-  `ref`, so it reads as one agent going and another appearing.
+  `rozi agents get --ref` or `agents wait --ref`. An agent keeps its `ref` across every turn it
+  works through and finishes. An agent replaced in the same pane, such as one relaunched, has a
+  new `ref`, so the replacement reads as one agent going and another appearing.
 - `foreground-changed.program` is the executable name of the program the pane runs, such as
-  `cargo`, and is empty when the pane is at its shell prompt. `pid` is that program's process
-  group on the machine running the session, and is empty when nothing runs or the platform cannot
-  read it. The same program restarted in a new process group fires again. rozi samples a pane's
-  foreground, so a command that starts and finishes between two samples may not fire.
+  `cargo`, and is empty when the pane is at its shell prompt. The pane's shell is the one it was
+  started with, or a common shell such as `bash` or `zsh`, on the machine running the session.
+  `pid` is that program's process group on the same machine, and is empty when nothing runs or the
+  platform cannot read it. The same program restarted in a new process group fires again. rozi
+  samples a pane's foreground, so a command that starts and finishes between two samples may not
+  fire.
 - `layout-changed.author` is `self`, `client`, or `server`.
 - `controller-changed.reason` is `released`, `expired`, or `granted`.
 

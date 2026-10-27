@@ -4041,28 +4041,82 @@ fn foreground_changes_report_the_running_program() {
         assert_eq!(ended["data"]["previous_program"], "cargo");
         assert_eq!(ended["data"]["pid"], "");
 
-        // Without integration the shell itself is in the foreground: still nothing running.
-        dispatch_runtime(
-            &mut backend,
-            Vec::new(),
-            foreground(PaneCommandPhase::Unknown, "bash", Some(7), 3),
-        );
-        assert!(events.try_recv().is_err());
+        // Without integration the shell itself is in the foreground: still nothing running. The
+        // server says which program is a shell, so a custom one on a remote host - `xonsh`, which
+        // this client's configuration never names - is a shell all the same.
+        for (shell, sequence) in [("bash", 3), ("xonsh", 4)] {
+            dispatch_runtime(
+                &mut backend,
+                Vec::new(),
+                PaneRuntimeState {
+                    foreground_shell: true,
+                    ..foreground(PaneCommandPhase::Unknown, shell, Some(7), sequence)
+                },
+            );
+            assert!(events.try_recv().is_err(), "{shell} is the prompt");
+        }
 
         // The same program in a new process group is a new foreground job.
         dispatch_runtime(
             &mut backend,
             Vec::new(),
-            foreground(PaneCommandPhase::Unknown, "claude", Some(50), 4),
+            foreground(PaneCommandPhase::Unknown, "claude", Some(50), 5),
         );
         assert_eq!(next_event(&events)["data"]["program"], "claude");
         dispatch_runtime(
             &mut backend,
             Vec::new(),
-            foreground(PaneCommandPhase::Unknown, "claude", Some(51), 5),
+            foreground(PaneCommandPhase::Unknown, "claude", Some(51), 6),
         );
         let restarted = next_event(&events);
         assert_eq!(restarted["data"]["previous_program"], "claude");
         assert_eq!(restarted["data"]["pid"], "51");
+    });
+}
+
+/// A scratch pane and a session pane can share an id. `focused` names the one actually in focus:
+/// the visible scratch pane, not the hidden session pane its id happens to match.
+#[test]
+fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        bind_first_pane(&mut backend);
+        assert_eq!(backend.state().current().focused_pane, Some(1));
+        let mut scratch = crate::state::Pane::new(1, 100, Default::default());
+        scratch.pty_generation = 7;
+        scratch.terminal.bind_session(1, 7);
+        let state = backend.state_mut();
+        state.scratch.panes.push(scratch);
+        state.scratch.focused_pane = Some(1);
+        state.scratch_visible = true;
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::ForegroundChanged,
+        ])));
+        let epoch = backend.state().runtime_epoch;
+        let mut focused = |local| {
+            backend
+                .dispatch(Msg::SessionPaneRuntimeChanged {
+                    epoch,
+                    pane_id: 1,
+                    local,
+                    generation: 7,
+                    agents: Vec::new(),
+                    state: PaneRuntimeState {
+                        command_phase: crate::session::protocol::PaneCommandPhase::Executing,
+                        foreground_program: Some("cargo".into()),
+                        sequence: 1,
+                        ..PaneRuntimeState::default()
+                    },
+                })
+                .expect("dispatch runtime");
+            next_event(&events)["data"]["focused"].clone()
+        };
+
+        assert_eq!(focused(true), "true", "the visible scratch pane");
+        assert_eq!(
+            focused(false),
+            "false",
+            "the hidden session pane with its id"
+        );
     });
 }

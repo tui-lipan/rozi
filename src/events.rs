@@ -10,6 +10,8 @@ pub enum EventKind {
     PaneSpawned,
     PaneExited,
     PaneStatusChanged,
+    AgentStateChanged,
+    ForegroundChanged,
     Bell,
     FocusChanged,
     WorkspaceSwitched,
@@ -28,10 +30,12 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::PaneStatusChanged,
+        Self::AgentStateChanged,
+        Self::ForegroundChanged,
         Self::Bell,
         Self::FocusChanged,
         Self::WorkspaceSwitched,
@@ -54,6 +58,8 @@ impl EventKind {
             Self::PaneSpawned => "pane-spawned",
             Self::PaneExited => "pane-exited",
             Self::PaneStatusChanged => "pane-status-changed",
+            Self::AgentStateChanged => "agent-state-changed",
+            Self::ForegroundChanged => "foreground-changed",
             Self::Bell => "bell",
             Self::FocusChanged => "focus-changed",
             Self::WorkspaceSwitched => "workspace-switched",
@@ -212,6 +218,13 @@ impl EventHub {
     }
 }
 
+/// Whether anything would receive an event of `kind`: a subscription, which may be filtering for
+/// it, or a hook. Lets an event that is costly to work out be skipped when nobody listens.
+pub fn wanted(state: &crate::state::State, kind: EventKind) -> bool {
+    state.event_hub.subscriber_count() > 0
+        || state.config.hooks.iter().any(|hook| hook.event == kind)
+}
+
 pub fn emit(state: &crate::state::State, event: Event) {
     state
         .event_hub
@@ -336,7 +349,7 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
-        assert_eq!(EventKind::ALL.len(), 18);
+        assert_eq!(EventKind::ALL.len(), 20);
         let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));

@@ -97,17 +97,7 @@ pub fn replayable_foreground_command(
     snapshot: ForegroundSnapshot<'_>,
     shells: &std::collections::HashSet<String>,
 ) -> Option<String> {
-    use crate::session::protocol::PaneCommandPhase;
-
-    match snapshot.command_phase {
-        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {}
-        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
-            return None;
-        }
-    }
-    let program = snapshot.program.filter(|program| {
-        !shells.contains(&crate::platform::command::normalized_program_name(program))
-    })?;
+    let program = running_program(snapshot.command_phase, snapshot.program, shells)?;
     if snapshot.remote {
         return Some(program.to_string());
     }
@@ -239,6 +229,42 @@ pub fn prompt_line(argv: &[String], quoting: PromptQuoting) -> String {
         PromptQuoting::PowerShell => format!("& {line}"),
         _ => line,
     }
+}
+
+/// The program a pane is running right now, other than its shell.
+///
+/// A reported `program` alone is not enough: shell integration keeps naming the last command while
+/// the shell idles at its prompt. Only a command mid-flight (`Executing`), or a pane with no
+/// integration at all (`Unknown`), whose program comes from the live foreground process group, is
+/// running. A shell in the foreground is the pane sitting at its prompt, not running something.
+pub fn running_program<'a>(
+    command_phase: crate::session::protocol::PaneCommandPhase,
+    program: Option<&'a str>,
+    shells: &std::collections::HashSet<String>,
+) -> Option<&'a str> {
+    use crate::session::protocol::PaneCommandPhase;
+
+    match command_phase {
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => program.filter(|program| {
+            !shells.contains(&crate::platform::command::normalized_program_name(program))
+        }),
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
+            None
+        }
+    }
+}
+
+/// [`common_shell_basenames`] plus the interactive shell `config` resolves to.
+pub fn shell_basenames(config: &crate::config::Config) -> std::collections::HashSet<String> {
+    let mut shells = common_shell_basenames();
+    let resolved = crate::platform::command::resolve_interactive_shell(
+        config.shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
+    shells.insert(crate::platform::command::normalized_program_name(
+        &resolved.program,
+    ));
+    shells
 }
 
 /// Program names that mean "this pane is sitting in a shell", not "this pane is running something".

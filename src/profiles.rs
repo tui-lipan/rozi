@@ -132,7 +132,7 @@ fn write_session_snapshot(directory: &Path, path: &Path, profile: &Profile) -> R
 }
 
 pub fn profile_from_state(state: &State) -> Profile {
-    let shells = shell_basenames(&state.config);
+    let shells = crate::pane::launch::shell_basenames(&state.config);
     Profile {
         version: 1,
         active_workspace: state.current().active_workspace,
@@ -709,18 +709,6 @@ fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String>
         },
         shells,
     )
-}
-
-fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
-    let mut shells = crate::pane::launch::common_shell_basenames();
-    let resolved = crate::platform::command::resolve_interactive_shell(
-        config.shell.as_deref(),
-        &crate::platform::command::ShellEnv::from_process(),
-    );
-    shells.insert(crate::platform::command::normalized_program_name(
-        &resolved.program,
-    ));
-    shells
 }
 
 fn profile_tree_from_dwindle(

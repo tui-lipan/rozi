@@ -2197,6 +2197,19 @@ mod tests {
                     .dispatch(Msg::RunAction(crate::input::Action::SwitchWorkspace(4)))
                     .expect("follower looks elsewhere");
                 assert!(holds(&backend, 1), "a follower does not carry pinned panes");
+                {
+                    // A pane of its own already holds focus there, and the keyboard is elsewhere.
+                    let state = backend.state_mut();
+                    let mut own = Pane::new(4, 100, FloatRect::default());
+                    own.opening = false;
+                    own.terminal_active = true;
+                    let workspace = &mut state.current_mut().workspaces[4];
+                    workspace.panes.push(own);
+                    crate::layout::tiling::append_tiled_window(workspace, 4);
+                    workspace.focused_pane = Some(4);
+                    state.current_mut().focused_pane = Some(4);
+                    state.sidebar.focused = true;
+                }
 
                 let epoch = backend.state().runtime_epoch;
                 backend
@@ -2208,6 +2221,11 @@ mod tests {
                     .expect("take control");
                 assert!(holds(&backend, 4));
                 assert!(!holds(&backend, 1));
+                assert_eq!(backend.state().focused_pane(), Some(4));
+                assert!(
+                    backend.state().sidebar.focused,
+                    "gathering a pin does not pull the keyboard out of the sidebar"
+                );
                 backend
                     .dispatch(Msg::FlushLayoutCommit { epoch })
                     .expect("flush the layout commit");

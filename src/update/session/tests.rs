@@ -1245,6 +1245,68 @@ fn a_conversation_the_hooks_do_not_follow_raises_the_blocked_edge() {
     );
 }
 
+/// A conversation that fails behind the one on screen marks its pane once. Looking at the pane
+/// answers it for as long as that failure lasts, so the mark does not come back every time focus
+/// leaves; another failure, or the same conversation failing again later, raises it again.
+#[test]
+fn a_failure_marks_its_pane_until_seen_and_again_only_when_new() {
+    use crate::session::protocol::{AgentRecord, AgentRef, PublishedRow, PublisherKind, RowKey};
+    let row = |id: &str, status: &str, active: bool| PublishedRow {
+        publisher: "threads".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: id.into(),
+        title: id.into(),
+        status: status.into(),
+        reason: None,
+        active,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some(format!("native-{id}")),
+    };
+    let runtime = |first: &str, second: &str| PaneRuntimeState {
+        rows: vec![
+            row("shown", "idle", true),
+            row("first", first, false),
+            row("second", second, false),
+        ],
+        ..PaneRuntimeState::default()
+    };
+    let records = || -> Vec<AgentRecord> {
+        ["shown", "first", "second"]
+            .into_iter()
+            .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("threads", id))).into())
+            .collect()
+    };
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let apply = |pane: &mut crate::state::Pane, first: &str, second: &str| {
+        apply_pane_runtime_state(pane, records(), runtime(first, second));
+        pane.terminal.error_unseen
+    };
+
+    assert!(!apply(&mut pane, "working", "idle"));
+    assert!(apply(&mut pane, "error", "idle"), "a failure is news");
+    // Looked at.
+    pane.terminal.error_unseen = false;
+    assert!(
+        !apply(&mut pane, "error", "idle"),
+        "the same failure is not news again"
+    );
+    assert!(
+        apply(&mut pane, "error", "error"),
+        "another conversation failing is"
+    );
+    pane.terminal.error_unseen = false;
+    assert!(!apply(&mut pane, "working", "idle"));
+    assert!(
+        apply(&mut pane, "error", "idle"),
+        "failing again after recovering is news"
+    );
+    assert!(!apply(&mut pane, "done", "idle"), "nothing failed any more");
+}
+
 #[test]
 fn hold_on_exit_excludes_disabled_and_closing_panes() {
     assert!(should_hold_on_exit(true, false));

@@ -306,6 +306,10 @@ The focused pane still shows a finished run, and an agent waiting on you in any 
 conversations. That blocked alert holds still instead of breathing, and clears once you answer the
 agent. A plain `rozi status blocked` marks a pane only while it is not focused.
 
+An error alert appears when an agent or one of its conversations fails, and clears once you use the
+pane, even while the failure lasts. The sidebar keeps showing the failed row. Another failure in the
+pane raises the alert again.
+
 ## `[animations]`
 
 | Key | Type | Default | Constraints and behavior |

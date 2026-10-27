@@ -425,6 +425,15 @@ fn host_rows(
                 session_agents.sort_by_key(|agent| agent.rank());
                 let lead = session_agents.first().copied();
                 checkout_leads.push(lead);
+                let statuses = session_agents
+                    .iter()
+                    .map(|agent| (agent.status.clone(), agent.finished_unseen))
+                    .collect::<Vec<_>>();
+                rows[checkout_index]
+                    .content
+                    .activity_statuses
+                    .extend(statuses.iter().cloned());
+                rows[repo_index].content.activity_statuses.extend(statuses);
                 let active = here(summary) && focused_checkout == Some(summary.root.as_str());
                 rows.push(project_session_row(
                     state,
@@ -487,6 +496,10 @@ fn project_session_row(
         content: RowContent {
             label,
             description: project_description(state, host, summary, agents),
+            activity_statuses: agents
+                .iter()
+                .map(|agent| (agent.status.clone(), agent.finished_unseen))
+                .collect(),
             tone: lead_tone(agents.first().copied()),
             active,
             ..RowContent::default()
@@ -508,23 +521,20 @@ fn project_description(
 ) -> Option<String> {
     use crate::view::vocabulary::{SessionPresence, fields, session_presence_for};
     let presence = session_presence_for(state, &summary.session, host);
-    let status = (presence != SessionPresence::Running).then(|| presence.label().to_string());
+    let status = (!matches!(
+        presence,
+        SessionPresence::Running | SessionPresence::Current
+    ))
+    .then(|| presence.label().to_string());
     let facts = session_description(agents, summary);
     let description = fields(status.into_iter().chain(facts));
     (!description.is_empty()).then_some(description)
 }
 
-/// What a session row says about the work it holds: the one agent by name, a count of several,
-/// or how many panes have no agent at all.
+/// Count panes when no agent runs here; agent activity is carried by the compact status counts.
 fn session_description(agents: &[&GlobalAgentRow], summary: &ProjectSummary) -> Option<String> {
-    match agents {
-        [] => {
-            let panes = summary.panes.len();
-            (panes > 0).then(|| crate::view::vocabulary::count(panes, "pane"))
-        }
-        [agent] => Some(agent.agent.clone()),
-        several => Some(crate::view::vocabulary::count(several.len(), "agent")),
-    }
+    (agents.is_empty() && !summary.panes.is_empty())
+        .then(|| crate::view::vocabulary::count(summary.panes.len(), "pane"))
 }
 
 #[cfg(test)]
@@ -613,14 +623,32 @@ mod tests {
                 summary("dev", "/x/tui-lipan", None, "main", &[4]),
             ],
         });
+        let sections = state.project_sections();
+        let statuses = |id: &str| {
+            sections[0]
+                .rows
+                .iter()
+                .find(|row| row.id == id)
+                .unwrap()
+                .content
+                .activity_statuses
+                .iter()
+                .map(|(status, _)| status.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(statuses("repo:/x/rozi"), ["working", "blocked"]);
+        assert_eq!(statuses("checkout:/x/rozi"), ["working"]);
+        assert_eq!(statuses("checkout:/x/rozi/.worktrees/fix"), ["blocked"]);
+        assert_eq!(statuses("session:/x/rozi:dev"), ["working"]);
+        assert!(statuses("repo:/x/tui-lipan").is_empty());
         assert_eq!(
             outline(&state.project_sections()),
             [
                 "rozi Blocked",
                 "  master Working",
-                "    dev Working [Codex]",
+                "    dev Working",
                 "  fix/ssh Blocked",
-                "    fix Blocked [Codex]",
+                "    fix Blocked",
                 "tui-lipan Normal",
                 "  main Normal",
                 "    dev Normal [1 pane]",
@@ -659,9 +687,9 @@ mod tests {
             [
                 "rozi Success",
                 "  master Working",
-                "    dev Working [Codex]",
+                "    dev Working",
                 "  fix/ssh Success",
-                "    fix Success [Codex]",
+                "    fix Success",
             ]
         );
     }
@@ -777,7 +805,7 @@ mod tests {
         state.current_mut().session_name = Some("dev".into());
         assert_eq!(
             project_description(&state, None, &summary, &[]).as_deref(),
-            Some("Current · 2 panes")
+            Some("2 panes")
         );
         state.current_mut().session_name = Some("other".into());
         for (connection, expected) in [

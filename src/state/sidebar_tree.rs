@@ -270,6 +270,7 @@ impl TreeRow {
                 active: spec.active,
                 disabled: spec.disabled.clone(),
                 heading: spec.heading,
+                activity_statuses: Vec::new(),
             },
             target,
             close,
@@ -285,6 +286,9 @@ pub struct RowContent {
     pub label: String,
     /// Right-aligned on the label's line.
     pub description: Option<String>,
+    /// Descendant agent statuses and whether their last finish is unseen. Shown as compact counts
+    /// on leaves and collapsed parents, using the Activity tab's glyphs.
+    pub activity_statuses: Vec<(String, bool)>,
     /// Beside the label, in the row's tone.
     pub meta: Option<String>,
     /// The row's second line.

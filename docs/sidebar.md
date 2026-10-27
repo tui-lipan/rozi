@@ -356,19 +356,22 @@ Projects lists every Git checkout any of your sessions works in — on this mach
  ├▼ master
  │└─ api                1 pane
  └▼ ▲ fix/ssh
-▍ └─ ▲ fix    Current · Codex
+▍ └─ ▲ fix                  ▲1
 ```
 
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
 works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
 most urgent agent below it: blocked, then failed, then a finished run you have not looked at,
-then working. A session row names its agent, counts
-several, or counts its panes when none runs an agent. When more than one machine has work, each
-machine gets a heading, `LOCAL` for this one.
+then working. Session rows show compact colored status counts, using the same static glyphs as
+collapsed Activity clusters. Ordinary idle agents are omitted. Collapsed checkout and repository
+rows show the combined counts of their agents; expanded parents leave those counts to their
+session rows. The leading working indicator animates. Sessions without agents show a pane count.
+When more than one machine has work, each machine gets a heading, `LOCAL` for this one.
 
-Session rows show pane or agent counts. Sessions held by this client also show their state, such
-as `Current`, `Background`, or `Reconnecting`. Other running sessions omit the `Running` word.
+Sessions held by this client show connection states such as `Background` or `Reconnecting`.
+The current session is identified by its row highlight, without a `Current` label.
+Other running sessions omit the `Running` word.
 The activity glyph describes the most urgent agent, independently of the session's connection
 state. Saved restore snapshots do not add entries to Projects.
 

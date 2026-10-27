@@ -74,6 +74,7 @@ pub(super) fn tree_rows(state: &State, items: Vec<TreeItem>) -> Vec<SidebarRow> 
 fn tree_row(state: &State, line: TreeLine) -> Row {
     let theme = &state.theme;
     let armed_label = armed_stream_label(state, &line);
+    let badges = row_badges(&line.row.content, !line.expandable || !line.expanded, theme);
     let content = line.row.content;
     let muted = super::super::fg_only(&theme.muted);
     let disabled = content.disabled.is_some();
@@ -96,10 +97,8 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
     if let Some(glyph) = glyph {
         row = row.glyph(glyph);
     }
-    if let Some(description) = content.description {
-        row = row
-            .priority(Priority::Balanced)
-            .badge_text(description, muted.dim());
+    if !badges.is_empty() {
+        row = row.priority(Priority::Balanced).badge_parts(badges);
     }
     if let Some(meta) = content.meta {
         row = row.meta(meta, color.map_or(muted, |color| Style::new().fg(color)));
@@ -115,6 +114,32 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
         color,
         muted,
     )
+}
+
+fn row_badges(
+    content: &crate::state::RowContent,
+    show_activity: bool,
+    theme: &Theme,
+) -> Vec<(String, Style)> {
+    let muted = super::super::fg_only(&theme.muted);
+    let mut badges = Vec::new();
+    if let Some(description) = &content.description {
+        badges.push((description.clone(), muted.dim()));
+    }
+    if show_activity {
+        let counts = super::agents::compact_status_parts(
+            content
+                .activity_statuses
+                .iter()
+                .map(|(status, unseen)| (status.as_str(), *unseen)),
+            theme,
+        );
+        if !badges.is_empty() && !counts.is_empty() {
+            badges.push(("·".into(), muted.dim()));
+        }
+        badges.extend(counts);
+    }
+    badges
 }
 
 /// A keyed stream action asks for confirmation on its row; the close button arms itself.

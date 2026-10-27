@@ -12,7 +12,7 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     let previous = state.current().active_workspace;
     state.current_mut().active_workspace = index;
     state.animation = GeometryAnimation::None;
-    let carried = carry_pinned_panes(state, previous, index);
+    let carried = gather_pinned_panes(state, index);
     // A pinned pane keeps focus only where there is nothing else to focus: arriving somewhere
     // returns to the pane that workspace last had focused.
     let destination = &state.current().workspaces[index];
@@ -43,24 +43,96 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     }
 }
 
-/// Move the pinned panes of workspace `source` to `target`, returning the ones that moved.
+/// Move every pinned pane that is not on workspace `target` there, returning the ones that moved.
 ///
-/// Only a client that may edit the shared layout carries them. A follower switching workspace
-/// leaves them where the controller has them.
-fn carry_pinned_panes(state: &mut State, source: usize, target: usize) -> Vec<PaneId> {
-    if source == target || !state.is_controller() {
+/// Pinned panes always sit on the controlling client's active workspace. Switching keeps them
+/// there, and [`keep_pinned_panes_on_active_workspace`] restores it after anything else - a
+/// takeover, an attach, a scripted move. A follower changes nothing: it sees them wherever the
+/// controller has them.
+pub(crate) fn gather_pinned_panes(state: &mut State, target: usize) -> Vec<PaneId> {
+    if !state.is_controller() || target >= state.current().workspaces.len() {
         return Vec::new();
     }
-    let pinned: Vec<PaneId> = state.current().workspaces[source]
+    let strays: Vec<(usize, PaneId)> = state
+        .current()
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != target)
+        .flat_map(|(index, workspace)| {
+            workspace
+                .panes
+                .iter()
+                .filter(|pane| pane.pinned && !pane.closing)
+                .map(move |pane| (index, pane.id))
+        })
+        .collect();
+    let mut moved = Vec::new();
+    for (source, id) in strays {
+        if transfer_pane(state, id, source, target) {
+            moved.push((source, id));
+        }
+    }
+    for &(source, id) in &moved {
+        let workspace = &mut state.current_mut().workspaces[source];
+        if workspace.focused_pane == Some(id) {
+            workspace.focused_pane = own_focus(workspace);
+        }
+    }
+    moved.into_iter().map(|(_, id)| id).collect()
+}
+
+/// The pane `workspace` should focus once the pinned panes passing through have left: the last
+/// of its own it had focused, or its first.
+fn own_focus(workspace: &Workspace) -> Option<PaneId> {
+    let live = |id: &PaneId| {
+        workspace
+            .panes
+            .iter()
+            .any(|pane| pane.id == *id && !pane.closing && !pane.pinned)
+    };
+    workspace.unpinned_focus.filter(live).or_else(|| {
+        workspace
+            .panes
+            .iter()
+            .find(|pane| !pane.closing && !pane.pinned)
+            .map(|pane| pane.id)
+    })
+}
+
+/// Restore the pinned-pane invariant after any message: see [`gather_pinned_panes`].
+pub(crate) fn keep_pinned_panes_on_active_workspace(state: &mut State) {
+    let active = state.current().active_workspace;
+    let stray = state
+        .current()
+        .workspaces
+        .iter()
+        .enumerate()
+        .any(|(index, workspace)| {
+            index != active
+                && workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.pinned && !pane.closing)
+        });
+    if stray {
+        gather_pinned_panes(state, active);
+    }
+}
+
+/// Remember the focused pane as its workspace's own focus, unless it is a pinned pane.
+pub(crate) fn note_unpinned_focus(state: &mut State) {
+    let Some(id) = state.current().focused_pane else {
+        return;
+    };
+    let workspace = state.current_mut().active_workspace_mut();
+    if workspace
         .panes
         .iter()
-        .filter(|pane| pane.pinned && !pane.closing)
-        .map(|pane| pane.id)
-        .collect();
-    pinned
-        .into_iter()
-        .filter(|&id| transfer_pane(state, id, source, target))
-        .collect()
+        .any(|pane| pane.id == id && !pane.pinned && !pane.closing)
+    {
+        workspace.unpinned_focus = Some(id);
+    }
 }
 
 /// Emit the public `workspace-switched` event. Every mutation of `active_workspace` must go
@@ -102,7 +174,7 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
         |layout| layout.set_pinned(focused, false),
     );
     transfer_pane(state, focused, source_index, target_index);
-    carry_pinned_panes(state, source_index, target_index);
+    gather_pinned_panes(state, target_index);
     super::choose_fallback_focus(state);
 
     state.current_mut().active_workspace = target_index;
@@ -252,6 +324,7 @@ fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
     std::mem::swap(&mut a.last_directional_focus, &mut b.last_directional_focus);
     std::mem::swap(&mut a.scrollable_anchor, &mut b.scrollable_anchor);
     std::mem::swap(&mut a.scrollable_reveal_edge, &mut b.scrollable_reveal_edge);
+    std::mem::swap(&mut a.unpinned_focus, &mut b.unpinned_focus);
     std::mem::swap(&mut a.name, &mut b.name);
 }
 
@@ -267,5 +340,6 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
     to.last_directional_focus = from.last_directional_focus.take();
     to.scrollable_anchor = from.scrollable_anchor.take();
     to.scrollable_reveal_edge = std::mem::take(&mut from.scrollable_reveal_edge);
+    to.unpinned_focus = from.unpinned_focus.take();
     to.name = from.name.take();
 }

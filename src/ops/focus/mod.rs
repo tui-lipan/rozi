@@ -768,6 +768,7 @@ pub(crate) fn focus_pane_in_place(state: &mut State, id: PaneId) {
 }
 
 fn focus_pane_with_reveal(state: &mut State, id: PaneId, reveal: bool) {
+    note_unpinned_focus(state);
     let previous = state.focused_pane();
     let scrollable = state.active_workspace_ref().layout_kind == LayoutKind::Scrollable;
     // Capture before mutation so same-workspace Scrollable focus-scroll can detect a real
@@ -2398,6 +2399,37 @@ mod tests {
             state.current().focused_pane,
             Some(5),
             "an empty workspace has only the pinned pane to focus"
+        );
+    }
+
+    #[test]
+    fn returning_to_a_workspace_refocuses_its_own_pane_not_the_pinned_one() {
+        let mut state = state_with_pinned_float();
+        focus_pane(&mut state, 2);
+        focus_pane(&mut state, 5);
+
+        switch_workspace(&mut state, 1);
+        assert_eq!(state.current().focused_pane, Some(3));
+        switch_workspace(&mut state, 0);
+        assert_eq!(state.current().focused_pane, Some(2));
+    }
+
+    #[test]
+    fn a_pinned_pane_left_on_another_workspace_is_gathered_back() {
+        let mut state = state_with_pinned_float();
+        let pinned = state.current_mut().workspaces[0].panes.pop().unwrap();
+        state.current_mut().workspaces[1].panes.push(pinned);
+        state.current_mut().active_workspace = 4;
+
+        keep_pinned_panes_on_active_workspace(&mut state);
+        assert!(workspace_holds(&state, 4, 5));
+
+        let pinned = state.current_mut().workspaces[4].panes.pop().unwrap();
+        state.current_mut().workspaces[2].panes.push(pinned);
+        switch_workspace(&mut state, 5);
+        assert!(
+            workspace_holds(&state, 5, 5),
+            "switching finds a pin anywhere"
         );
     }
 

@@ -154,7 +154,7 @@ pub enum SharedLayoutValidationError {
         workspace: usize,
     },
     MissingFloatingRect(PaneId),
-    PinnedTiledPane(PaneId),
+    InvalidPin(PaneId),
     InvalidFloatingRect {
         pane_id: PaneId,
         reason: &'static str,
@@ -197,7 +197,9 @@ impl std::fmt::Display for SharedLayoutValidationError {
                 write!(f, "invalid tree split ratio in workspace {workspace}")
             }
             Self::MissingFloatingRect(id) => write!(f, "floating pane {id} missing rect"),
-            Self::PinnedTiledPane(id) => write!(f, "tiled pane {id} must not be pinned"),
+            Self::InvalidPin(id) => {
+                write!(f, "pinned pane {id} must float and not be fullscreen")
+            }
             Self::InvalidFloatingRect { pane_id, reason } => {
                 write!(f, "floating pane {pane_id} has invalid rect: {reason}")
             }
@@ -316,8 +318,9 @@ impl SharedLayout {
                         pane_id: pane.pane_id,
                         reason: "non-floating pane must not carry a floating rect",
                     });
-                } else if pane.pinned {
-                    return Err(SharedLayoutValidationError::PinnedTiledPane(pane.pane_id));
+                }
+                if pane.pinned && (!pane.floating || pane.fullscreen) {
+                    return Err(SharedLayoutValidationError::InvalidPin(pane.pane_id));
                 }
             }
 
@@ -783,14 +786,19 @@ impl SharedLayout {
     }
 
     /// Move `pane_id` to the workspace at zero-based `target`, at the end of its pane list and,
-    /// when tiled, at the end of its tiling order. A floating pane keeps its rect. Returns whether
-    /// the document changed.
+    /// when tiled, at the end of its tiling order. A floating pane keeps its rect and a pinned one
+    /// is unpinned. Returns whether the document changed.
     pub(crate) fn move_pane(
         &mut self,
         pane_id: PaneId,
         target: usize,
     ) -> std::result::Result<bool, SharedEditError> {
-        let changed = self.move_pane_fields(pane_id, target)?;
+        // Sending a pinned pane to another workspace settles it there.
+        let leaves = self
+            .workspace_position_of(pane_id)
+            .is_some_and(|position| self.workspaces[position].index != target);
+        let unpinned = leaves && self.set_pinned(pane_id, false);
+        let changed = self.move_pane_fields(pane_id, target)? || unpinned;
         self.validate().map_err(SharedEditError::InvalidDocument)?;
         Ok(changed)
     }
@@ -940,7 +948,8 @@ impl SharedLayout {
         changed
     }
 
-    /// Pin or unpin pane `id`. Only a floating pane can be pinned. Returns whether it changed.
+    /// Pin or unpin pane `id`. Only a floating pane can be pinned, and pinning ends fullscreen.
+    /// Returns whether it changed.
     pub(crate) fn set_pinned(&mut self, id: PaneId, pinned: bool) -> bool {
         let Some(pane) = self
             .workspaces
@@ -951,8 +960,10 @@ impl SharedLayout {
             return false;
         };
         let pinned = pinned && pane.floating;
-        let changed = pane.pinned != pinned;
+        let changed = pane.pinned != pinned || (pinned && pane.fullscreen);
         pane.pinned = pinned;
+        // A pinned pane rides over every workspace, so it never covers one.
+        pane.fullscreen &= !pinned;
         changed
     }
 
@@ -1019,6 +1030,7 @@ impl SharedLayout {
             .expect("located above");
         if let Some(fullscreen) = edit.fullscreen {
             pane.fullscreen = fullscreen;
+            pane.pinned &= !fullscreen;
         }
         if edit.fullscreen == Some(true) {
             clear_other_shared_fullscreen(workspace, pane_id);
@@ -1973,6 +1985,38 @@ mod tests {
             id,
         )
         .expect("placed")
+    }
+
+    #[test]
+    fn a_pinned_pane_is_never_fullscreen_and_a_scripted_move_unpins_it() {
+        let pane = |layout: &SharedLayout, id: PaneId| {
+            layout
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.panes)
+                .find(|pane| pane.pane_id == id)
+                .cloned()
+                .expect("placed")
+        };
+        let mut layout = three_tiled();
+        assert!(!layout.set_pinned(2, true), "a tiled pane cannot be pinned");
+
+        layout
+            .edit_pane(2, edit(Some(true), Some(true), None))
+            .unwrap();
+        assert!(layout.set_pinned(2, true));
+        assert!(pane(&layout, 2).pinned);
+        assert!(!pane(&layout, 2).fullscreen, "pinning ends fullscreen");
+
+        layout.edit_pane(2, edit(None, Some(true), None)).unwrap();
+        assert!(pane(&layout, 2).fullscreen);
+        assert!(!pane(&layout, 2).pinned, "fullscreen unpins");
+
+        layout.edit_pane(2, edit(None, Some(false), None)).unwrap();
+        layout.set_pinned(2, true);
+        assert_eq!(layout.move_pane(2, 3), Ok(true));
+        assert!(!pane(&layout, 2).pinned, "a scripted move settles the pane");
+        assert!(pane(&layout, 2).floating);
     }
 
     #[test]
@@ -4097,10 +4141,26 @@ mod reconciler_tests {
         bad.workspaces[0].panes[0].pinned = true;
         assert_eq!(
             bad.validate(),
-            Err(SharedLayoutValidationError::PinnedTiledPane(
+            Err(SharedLayoutValidationError::InvalidPin(
                 bad.workspaces[0].panes[0].pane_id
             ))
         );
+
+        // Pinned fullscreen pane
+        let mut bad = valid.clone();
+        bad.workspaces[0].panes[0].floating = true;
+        bad.workspaces[0].panes[0].rect = Some(FracRect {
+            x: 0.1,
+            y: 0.1,
+            w: 0.5,
+            h: 0.5,
+        });
+        bad.workspaces[0].panes[0].fullscreen = true;
+        bad.workspaces[0].panes[0].pinned = true;
+        assert!(matches!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::InvalidPin(_))
+        ));
 
         // Non-floating pane carrying rect
         let mut bad = valid.clone();

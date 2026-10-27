@@ -210,6 +210,7 @@ pane = 1
 | `keep_open` | boolean | After an `argv` program exits, replace it with an interactive shell in the same pane. |
 | `floating` | boolean | Start the pane floating. |
 | `fullscreen` | boolean | Start the pane fullscreen. |
+| `pinned` | boolean | Pin the pane so it follows you to every workspace. Applies only to a floating pane that is not fullscreen. |
 | `rect` | table | Floating rectangle with `x`, `y`, `w`, and `h` numbers. |
 | `scrollable_width` | number | Column width in the Scrollable layout, as a fraction of the viewport. Defaults to `0.45`; clamped to `0.20`–`0.80`. |
 
@@ -218,7 +219,7 @@ pane = 1
 Capture saves:
 
 - workspace names, layouts, synchronization, split trees, and ratios
-- pane names, floating and fullscreen state, floating rectangles, and Scrollable widths
+- pane names, floating, pinned, and fullscreen state, floating rectangles, and Scrollable widths
 - each pane's working directory, when it is a usable local path
 - a pane's explicit launch command, or the command still running when you capture
 

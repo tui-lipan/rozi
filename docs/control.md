@@ -532,7 +532,7 @@ reports the one it commits.
 | `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
 | `master_ratio` | Master workspaces only: the master pane's share of the width. |
 | `order` | The pane's position in the tiling order that every layout except Dwindle arranges panes in. Null for a floating pane. |
-| `pinned` | Whether the pane is pinned. A pinned pane floats and moves to each workspace the controlling client switches to. |
+| `pinned` | Whether the pane is pinned. A pinned pane floats, is never fullscreen, and moves to each workspace the controlling client switches to. |
 | `rect` | Where the pane sits on the shared canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
 | `rect_fraction` | The pane's position as fractions of the canvas, rounded to six decimal places. Floating panes are stored this way, so their fractions are exact. |
 | `split_ratio` | Dwindle workspaces only: the pane's share of the split that directly holds it. Absent for a floating pane or a lone tile. |
@@ -600,8 +600,8 @@ are clamped the same way a dragged float is: part of the pane may leave the canv
 always stays on screen to grab. The float lands on whole cells.
 
 `pane move --workspace N` puts the pane at the end of workspace `N`: last in its tiling order when
-tiled, at the same rect when floating. A fullscreen pane stays fullscreen and restores any
-fullscreen pane already in `N`. The view does not follow the pane. If the pane had focus, focus
+tiled, at the same rect when floating. A pinned pane is unpinned. A fullscreen pane stays
+fullscreen and restores any fullscreen pane already in `N`. The view does not follow the pane. If the pane had focus, focus
 moves to another pane in the workspace it left, as if the pane had closed. Moving a pane to the
 workspace it is already in is `changed: false`.
 

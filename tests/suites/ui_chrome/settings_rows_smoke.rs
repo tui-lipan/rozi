@@ -236,7 +236,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_all_keeps_every_control_available() {
     on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         backend
             .state_mut()
             .config
@@ -291,6 +291,7 @@ fn settings_all_keeps_every_control_available() {
             "Show notifications",
             "Blocked",
             "Finished",
+            "Failed",
             "Exit",
             "Exit with error",
             "Play sounds",
@@ -1156,7 +1157,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::General, 21, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
-            (SettingsTab::Alerts, 20, "Bell urgency"),
+            (SettingsTab::Alerts, 21, "Bell urgency"),
             (SettingsTab::Sessions, 7, "On shared attach"),
         ] {
             backend

@@ -234,6 +234,7 @@ fn apply_agents(
     let host = target.display_label();
     let mut blocked_any = false;
     let mut finished_any = false;
+    let mut failed_any = false;
     for agent in &agents {
         // A session this client holds reports its own pane status over the session protocol, and
         // that path owns the attendance rules. A monitor alert would double every one of them.
@@ -251,16 +252,19 @@ fn apply_agents(
             Some(&host),
             &agent.session,
             &agent.label,
-            edges.became_blocked,
-            edges.finished,
+            &edges,
         );
         blocked_any |= edges.became_blocked;
         finished_any |= edges.finished;
+        failed_any |= edges.failed;
     }
     // One cue per snapshot, not per agent: a host that reconnects with four finished runs should
     // sound like an event, not like a rattle.
     if blocked_any {
         crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
+    }
+    if failed_any {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Error);
     }
     if finished_any {
         crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);

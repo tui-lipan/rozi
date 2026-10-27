@@ -3,7 +3,8 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::pane::lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut};
 use crate::pane::pty_events::{
-    finished_rows_notice, maybe_notify_pane_status, maybe_notify_rows_done,
+    failed_rows_notice, finished_rows_notice, maybe_notify_pane_failure, maybe_notify_pane_status,
+    maybe_notify_rows_done, maybe_notify_rows_failed,
 };
 use crate::session::protocol::PaneRuntimeState;
 use crate::state::PaneId;
@@ -13,11 +14,12 @@ pub(crate) fn status_is_active_run(value: Option<&str>) -> bool {
     value.is_some() && !crate::session::protocol::status_ends_run(value)
 }
 
-/// The two alertable transitions a pane or a summary can report: its agent started waiting on the
-/// user, or a run ended.
+/// The alertable transitions a pane or a summary can report: its agent started waiting on the
+/// user, a run ended, or something failed that had not failed before.
 pub(crate) struct AgentEdges {
     pub(crate) became_blocked: bool,
     pub(crate) finished: bool,
+    pub(crate) failed: bool,
 }
 
 /// The alertable transitions between two summaries of one agent, for a monitor that only ever
@@ -36,6 +38,8 @@ pub(crate) fn summary_edges(
         became_blocked: current.state == AgentState::Blocked
             && previous.is_none_or(|previous| previous.state != AgentState::Blocked),
         finished: previous.is_some_and(|previous| current.completions > previous.completions),
+        failed: current.state == AgentState::Error
+            && previous.is_none_or(|previous| previous.state != AgentState::Error),
     }
 }
 
@@ -90,6 +94,8 @@ pub(crate) fn update_agent_status_edge(
     AgentEdges {
         became_blocked: !previous_blocked && pane.is_blocked(),
         finished,
+        // Read across the whole pane by `apply_pane_runtime_state`, which sees every row.
+        failed: false,
     }
 }
 
@@ -113,6 +119,9 @@ pub(crate) fn finished_records(
 
 pub(crate) struct AppliedPaneRuntime {
     pub(crate) finished_rows: Vec<crate::session::protocol::RowKey>,
+    /// Rows the publisher is not showing that failed in this update. A failure on screen, or of
+    /// the pane's own agent, is [`AgentEdges::failed`] instead.
+    pub(crate) failed_rows: Vec<crate::session::protocol::RowKey>,
     pub(crate) edges: AgentEdges,
     pub(crate) previous_status: Option<crate::session::protocol::PaneStatus>,
     pub(crate) current_status: Option<crate::session::protocol::PaneStatus>,
@@ -161,7 +170,18 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
     let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
-    pane.note_failures(&previous_failures);
+    let (failed_rows, failed_here): (Vec<_>, Vec<_>) = pane
+        .note_failures(&previous_failures)
+        .into_iter()
+        .partition(|failure| {
+            failure.as_ref().is_some_and(|key| {
+                pane.terminal
+                    .published_rows
+                    .iter()
+                    .any(|row| row.has_key(key) && !row.active)
+            })
+        });
+    let mut failed_rows: Vec<_> = failed_rows.into_iter().flatten().collect();
     finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,
@@ -172,12 +192,16 @@ pub(crate) fn apply_pane_runtime_state(
     );
     // A conversation the hooks do not follow can block too; it is news all the same.
     edges.became_blocked = !previous_blocked && pane.agent_blocked();
+    edges.failed = !failed_here.is_empty();
     if relaunched {
         edges.finished = false;
         edges.became_blocked = false;
+        edges.failed = false;
+        failed_rows.clear();
     }
     AppliedPaneRuntime {
         finished_rows,
+        failed_rows,
         edges,
         previous_status,
         current_status: pane.terminal.reported_status.clone(),
@@ -220,6 +244,7 @@ pub(crate) fn pane_runtime_changed(
     let mut title = None;
     let mut reported_status = None;
     let mut finished_rows = Vec::new();
+    let mut failed_rows = Vec::new();
     let mut recording_changed = None;
     if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
@@ -232,6 +257,7 @@ pub(crate) fn pane_runtime_changed(
         let applied = apply_pane_runtime_state(pane, agents.clone(), state);
         reported_status = applied.current_status.clone();
         finished_rows = applied.finished_rows;
+        failed_rows = applied.failed_rows;
         edges = Some(applied.edges);
         if applied.previous_status != applied.current_status {
             transition = Some((
@@ -305,6 +331,38 @@ pub(crate) fn pane_runtime_changed(
             if ctx.state.is_controller() {
                 crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);
             }
+        }
+    }
+    // Like a finished row, a failed row the publisher is not showing alerts whether or not the
+    // pane is attended, and names the row rather than the pane.
+    if !failed_rows.is_empty() && title.is_some() {
+        let notice = find_pane_in_namespace(&ctx.state, pane_id, local)
+            .and_then(|pane| failed_rows_notice(pane, &failed_rows));
+        if let Some(notice) = notice {
+            if !ctx.state.do_not_disturb {
+                maybe_notify_rows_failed(&ctx.state.config, ctx.state.is_controller(), &notice);
+            }
+            if ctx.state.is_controller() {
+                crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Error);
+            }
+        }
+    }
+    if let (Some(edges), Some(title)) = (&edges, &title)
+        && edges.failed
+    {
+        let attended = ctx.state.is_pane_attended(pane_id);
+        if !ctx.state.do_not_disturb {
+            maybe_notify_pane_failure(
+                &ctx.state.config,
+                ctx.state.is_controller(),
+                attended,
+                pane_id,
+                title,
+                reported_status.as_ref(),
+            );
+        }
+        if ctx.state.is_controller() && !attended {
+            crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Error);
         }
     }
     if let (Some(edges), Some(title)) = (edges, title)
@@ -462,13 +520,15 @@ fn program_status_alert_cue(
     } else {
         crate::platform::sound::Cue::Error
     };
-    let desktop = crate::pane::pty_events::notifications::should_notify_pane_status(
-        config,
-        controller,
-        attended,
-        state == tui_lipan::ProgramStatusState::Blocked,
-        state == tui_lipan::ProgramStatusState::Error,
-    );
+    let desktop = if state == tui_lipan::ProgramStatusState::Error {
+        crate::pane::pty_events::notifications::should_notify_pane_failure(
+            config, controller, attended,
+        )
+    } else {
+        crate::pane::pty_events::notifications::should_notify_pane_status(
+            config, controller, attended, true, false,
+        )
+    };
     let sound = config.sounds.enabled && config.sounds.enabled_for(cue);
     (desktop || sound).then_some(cue)
 }

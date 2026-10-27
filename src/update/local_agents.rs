@@ -62,6 +62,7 @@ pub(super) fn apply(
     }
     let mut blocked_any = false;
     let mut finished_any = false;
+    let mut failed_any = false;
     for agent in &current.agents {
         let Some(edges) = alert_edges_for(&ctx.state, &previous.agents, agent) else {
             continue;
@@ -71,14 +72,17 @@ pub(super) fn apply(
             None,
             &agent.session,
             &agent.label,
-            edges.became_blocked,
-            edges.finished,
+            &edges,
         );
         blocked_any |= edges.became_blocked;
         finished_any |= edges.finished;
+        failed_any |= edges.failed;
     }
     if blocked_any {
         crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
+    }
+    if failed_any {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Error);
     }
     if finished_any {
         crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);

@@ -639,6 +639,7 @@ struct NotificationsFileConfig {
     bell: Option<bool>,
     pane_blocked: Option<bool>,
     pane_done: Option<bool>,
+    pane_error: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1292,6 +1293,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(pane_done) = parsed.notifications.pane_done {
         config.notifications.pane_done = pane_done;
+    }
+    if let Some(pane_error) = parsed.notifications.pane_error {
+        config.notifications.pane_error = pane_error;
     }
     if let Some(enabled) = parsed.sounds.enabled {
         config.sounds.enabled = enabled;

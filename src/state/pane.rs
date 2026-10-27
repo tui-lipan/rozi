@@ -251,14 +251,24 @@ impl Pane {
     }
 
     /// Arm the pane's `error_unseen` when something fails that had not already failed before this
-    /// update, and drop it once nothing has.
-    pub(crate) fn note_failures(&mut self, before: &[Option<crate::session::protocol::RowKey>]) {
+    /// update, and drop it once nothing has. Returns what newly failed, as [`Self::failures`] names
+    /// it: the identities a notification announces.
+    pub(crate) fn note_failures(
+        &mut self,
+        before: &[Option<crate::session::protocol::RowKey>],
+    ) -> Vec<Option<crate::session::protocol::RowKey>> {
         let failures = self.failures();
         if failures.is_empty() {
             self.terminal.error_unseen = false;
-        } else if failures.iter().any(|failure| !before.contains(failure)) {
+        }
+        let new: Vec<_> = failures
+            .into_iter()
+            .filter(|failure| !before.contains(failure))
+            .collect();
+        if !new.is_empty() {
             self.terminal.error_unseen = true;
         }
+        new
     }
 
     /// The agent projection: this pane's agents, for the Agents view and `rozi agents`.

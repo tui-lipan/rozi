@@ -296,6 +296,7 @@
 #pane_exit_error = true
 #pane_blocked = true
 #pane_done = false
+#pane_error = true
 # Mark an unattended pane urgent on BEL. Independent of the desktop notifications above.
 #bell = true
 

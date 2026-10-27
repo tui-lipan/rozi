@@ -1086,6 +1086,13 @@ fn summary_edges_report_transitions_rather_than_standing_states() {
     assert!(!edges(None, (AgentState::Done, 4)).finished);
     // Blocking is not finishing, and neither is carrying on working.
     assert!(!edges(Some((AgentState::Working, 0)), (AgentState::Blocked, 0)).finished);
+
+    // A failure is news once, like a prompt: when it happens, not on every poll it lasts.
+    let failed = edges(Some((AgentState::Working, 0)), (AgentState::Error, 0));
+    assert!(failed.failed);
+    assert!(!failed.finished);
+    assert!(!edges(Some((AgentState::Error, 0)), (AgentState::Error, 0)).failed);
+    assert!(!edges(Some((AgentState::Working, 0)), (AgentState::Done, 1)).failed);
 }
 
 /// An agent pane reports the finish the server counted and keeps no flag of its own: whether
@@ -1357,10 +1364,14 @@ fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
     assert!(pane.terminal.error_unseen);
     // Looked at.
     pane.terminal.error_unseen = false;
-    apply_pane_runtime_state(
+    let reported = apply_pane_runtime_state(
         &mut pane,
         records(),
         runtime("error", Some(AgentState::Error)),
+    );
+    assert!(
+        reported.failed_rows.is_empty() && !reported.edges.failed,
+        "nothing new to announce"
     );
     assert_eq!(
         pane.failures(),
@@ -1369,6 +1380,56 @@ fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
     assert!(
         !pane.terminal.error_unseen,
         "the same failure, reported twice"
+    );
+}
+
+/// A failure is announced once, as the alert is raised: a conversation behind the one on screen by
+/// its own name, whatever the pane's attendance, and the one on screen as the pane's edge.
+#[test]
+fn a_new_failure_is_announced_once_where_it_happened() {
+    use crate::session::protocol::{AgentRecord, AgentRef, PublishedRow, PublisherKind, RowKey};
+    let row = |id: &str, status: &str, active: bool| PublishedRow {
+        publisher: "threads".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: id.into(),
+        title: id.into(),
+        status: status.into(),
+        reason: None,
+        active,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some(format!("native-{id}")),
+    };
+    let runtime = |shown: &str, behind: &str| PaneRuntimeState {
+        rows: vec![row("shown", shown, true), row("behind", behind, false)],
+        ..PaneRuntimeState::default()
+    };
+    let records = || -> Vec<AgentRecord> {
+        ["shown", "behind"]
+            .into_iter()
+            .map(|id| AgentRef::for_test(1, 1, Some(RowKey::new("threads", id))).into())
+            .collect()
+    };
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    let mut apply = |shown: &str, behind: &str| {
+        let applied = apply_pane_runtime_state(&mut pane, records(), runtime(shown, behind));
+        (applied.failed_rows, applied.edges.failed)
+    };
+
+    assert_eq!(apply("working", "working"), (vec![], false));
+    assert_eq!(
+        apply("working", "error"),
+        (vec![RowKey::new("threads", "behind")], false),
+        "the conversation behind, by name"
+    );
+    assert_eq!(apply("working", "error"), (vec![], false), "announced once");
+    assert_eq!(
+        apply("error", "error"),
+        (vec![], true),
+        "the one on screen fails the pane"
     );
 }
 

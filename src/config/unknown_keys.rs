@@ -158,6 +158,7 @@ const NOTIFICATION_KEYS: &[&str] = &[
     "bell",
     "pane_blocked",
     "pane_done",
+    "pane_error",
 ];
 
 const SOUND_KEYS: &[&str] = &[

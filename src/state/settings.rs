@@ -166,6 +166,7 @@ settings_actions! {
     ToggleDesktopEnabled,
     ToggleDesktopBlocked,
     ToggleDesktopDone,
+    ToggleDesktopError,
     ToggleDesktopExit,
     ToggleDesktopExitError,
     ToggleSoundEnabled,
@@ -325,6 +326,7 @@ impl SettingsAction {
             }
             Self::ToggleDesktopBlocked
             | Self::ToggleDesktopDone
+            | Self::ToggleDesktopError
             | Self::ToggleDesktopExit
             | Self::ToggleDesktopExitError
                 if !config.notifications.enabled =>

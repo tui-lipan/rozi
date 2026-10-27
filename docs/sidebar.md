@@ -115,12 +115,16 @@ Selecting a row focuses its pane. For a published row, it also asks the program 
 activity.
 
 When an agent runs more than once in one project, such as Claude Code with background sessions or
-in two panes, its runs are listed beneath one row for the agent, titled by what each works on. A
-run with no title is named after its terminal title or the agent, numbered when two would read the
+in two panes, its runs are listed beneath one row for the agent, titled by what each works on, with
+its state and elapsed time beneath, such as `Working 9m22s`. A run with no title is named after its terminal title or the agent, numbered when two would read the
 same. The agent's row shows its most urgent run's state, and selecting it collapses or expands the
 runs. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
 out. When the runs are on different workspaces, each one shows its workspace number. Runs in a
 pane with no known directory are grouped only with other sessions in the same pane.
+
+A run that its program keeps behind the one it shows, such as a background session of Claude Code
+or another loaded Codex thread, has an italic title and `⧉` at the right of its second line.
+Focusing its pane does not show it; selecting the row does.
 
 Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
@@ -163,7 +167,8 @@ agent and gives the reason for its state when it gave one, such as `Permission r
 without a task shows its state and the project and branch the agent works in instead.
 
 Agents in the session on screen also show a time: how long a blocked state has held, or how long a
-finished run took. A marker in the left margin shows the agent in the focused pane.
+finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
+a run its program keeps in the background has an italic title and `⧉` on its second line.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
 one of several sessions in a pane, switch to that session. It then leaves the tab. Looking at an

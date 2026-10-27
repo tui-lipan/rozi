@@ -186,7 +186,8 @@ would read the same are numbered. The glyph shows the agent's state. The right s
 an agent gave for waiting or failing, and, on **All**, where it runs: the session name for local
 agents and `session@host` for remote agents. The line below the list describes the highlighted
 agent in full: its state, how long it has held or what its run took, the reason, and the project
-and branch it works in.
+and branch it works in. A run its program keeps behind the one it shows, in a session this client
+is attached to, has an italic task.
 
 Search matches all of it — the task, the agent, the session, the host, the project and branch, and
 the reason — so typing a branch or a host name narrows the list to the agents there.

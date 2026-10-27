@@ -1142,6 +1142,35 @@ fn row_is_active(state: &State, row: &AgentRow) -> bool {
         && row.slot.as_ref().is_none_or(|slot| slot.active)
 }
 
+/// Whether a run is one its client keeps behind the one it shows: published for the pane, but not
+/// on screen there. A pane's own agent and the run a client shows are what focusing the pane
+/// reveals; this one is not.
+pub(crate) fn is_background_run(row: &AgentRow) -> bool {
+    row.slot.as_ref().is_some_and(|slot| !slot.active)
+}
+
+/// A run's title: italic for a background run, so it reads as behind the pane without giving up
+/// the colour its name shares with every other run.
+pub(crate) fn run_title_style(theme: &Theme, row: &AgentRow) -> Style {
+    let style = super::super::fg_only(&theme.primary);
+    if is_background_run(row) {
+        style.italic()
+    } else {
+        style
+    }
+}
+
+/// Pins the background marker to a background run's detail line, under the workspace badge.
+fn mark_background_run(content: Row, state: &State, row: &AgentRow) -> Row {
+    if !is_background_run(row) {
+        return content;
+    }
+    content.detail_badge(
+        crate::view::vocabulary::BACKGROUND_RUN,
+        super::super::fg_only(&state.theme.muted).dim(),
+    )
+}
+
 /// A cluster's one-line row: the agent, the most urgent of its runs' glyphs, and its workspace when
 /// they share one. Folded, it also counts its runs by state, and its arrow takes the most urgent
 /// run's color.
@@ -1236,22 +1265,25 @@ pub(super) fn compact_status_parts<'a>(
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 ///
 /// Beneath a cluster, which already names the agent, a run is titled by what it works on, with its
-/// state and the reason for it on the detail line. It carries no badge unless the cluster spans
-/// workspaces, and then only where it sits.
+/// state, its elapsed time, and the reason for it on the detail line. It carries no badge unless
+/// the cluster spans workspaces, and then only where it sits.
 fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
     let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &state.theme);
     let duration = row_duration(row).map(|(text, _)| text);
     let muted = super::super::fg_only(&state.theme.muted).dim();
     if let Some(child) = child {
+        // A run's title is what it works on, often long enough to truncate anything riding after
+        // it, so its time joins the state it measures, which the detail line never truncates.
+        let mut label = row_status_label(status, row.finished_unseen);
+        if let Some(duration) = duration.as_deref() {
+            label = format!("{label} {duration}");
+        }
         let mut content = Row::new(child.label)
             .active(row_is_active(state, row))
             .glyph(status_icon(glyph, color, spinner))
-            .title_style(super::super::fg_only(&state.theme.primary))
-            .detail(
-                row_status_label(status, row.finished_unseen),
-                Style::new().fg(color),
-            );
+            .title_style(run_title_style(&state.theme, row))
+            .detail(label, Style::new().fg(color));
         if let Some(reason) = row.reason.as_deref() {
             let budget = activity_budget(
                 state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
@@ -1271,17 +1303,14 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
         if !badge.is_empty() {
             content = content.badge_text(badge, muted);
         }
-        if let Some(duration) = duration {
-            content = content.meta(duration, Style::new().fg(color));
-        }
-        return content;
+        return mark_background_run(content, state, row);
     }
     let mut content = Row::new(row.title.clone())
         // For a published slot, being on screen in its own program decides this: a focused pane
         // shows exactly one of its slots, so marking them all active would say nothing.
         .active(row_is_active(state, row))
         .glyph(status_icon(glyph, color, spinner))
-        .title_style(super::super::fg_only(&state.theme.primary))
+        .title_style(run_title_style(&state.theme, row))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
         // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
         // that two rows cannot be watched side by side.
@@ -1335,7 +1364,7 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
             super::super::fg_only(&state.theme.muted).dim(),
         );
     }
-    content
+    mark_background_run(content, state, row)
 }
 
 #[cfg(test)]
@@ -3010,6 +3039,44 @@ mod tests {
         let targets = item_targets(&rows);
         assert!(matches!(targets[0].1, RowTarget::TreeToggle(_)));
         assert_eq!(targets[1], (2, blocked));
+    }
+
+    /// A run's title is what it works on and runs long, so its time rides with its state on the
+    /// detail line rather than after the title, where truncation would take it first.
+    #[test]
+    fn a_cluster_run_shows_its_time_beside_its_state() {
+        let state = State::new(crate::config::Config::default(), Theme::default());
+        let run = AgentRow {
+            pane_id: 1,
+            workspace_index: 0,
+            pane_index: 0,
+            title: "Claude Code".into(),
+            status: Some("working".into()),
+            activity: None,
+            age: Some(std::time::Duration::from_secs(9 * 60 + 22)),
+            run: None,
+            cwd: None,
+            cwd_host: None,
+            project_root: None,
+            subpath: None,
+            branch: None,
+            repository: None,
+            finished_unseen: false,
+            slot: None,
+            identity: Some(AgentIdentity::new("claude", "Claude Code")),
+            task: Some("a task title long enough to fill the sidebar".into()),
+            reason: Some("Thinking".into()),
+            order: 0,
+            screen_title: None,
+        };
+        let child = ClusterChild {
+            label: "a task title long enough to fill the sidebar".into(),
+            show_workspace: false,
+        };
+
+        let content = agent_row(&state, &run, Some(child));
+        assert_eq!(content.meta_text(), None);
+        assert_eq!(content.detail_texts(), ["Working 9m22s", "Thinking"]);
     }
 
     /// Runs are named by their task, else what their terminal says, else the agent - numbered

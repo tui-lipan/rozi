@@ -480,20 +480,93 @@ fn pane_status_notification_policy_is_controller_only_and_configurable() {
 /// and applying them would silence the alert exactly when it is the only signal there is.
 #[test]
 fn host_agent_alert_follows_the_pane_switches_without_the_attendance_gate() {
+    let edges = |became_blocked, finished, failed| crate::update::session::status::AgentEdges {
+        became_blocked,
+        finished,
+        failed,
+    };
     let mut config = crate::config::Config::default();
-    assert_eq!(host_agent_alert(&config, true, false), None);
+    assert_eq!(host_agent_alert(&config, &edges(true, false, false)), None);
 
     config.notifications.enabled = true;
-    assert_eq!(host_agent_alert(&config, true, false), Some("blocked"));
-    assert_eq!(host_agent_alert(&config, false, true), None);
+    assert_eq!(
+        host_agent_alert(&config, &edges(true, false, false)),
+        Some("is blocked")
+    );
+    assert_eq!(host_agent_alert(&config, &edges(false, true, false)), None);
+    assert_eq!(
+        host_agent_alert(&config, &edges(false, false, true)),
+        Some("failed")
+    );
 
     config.notifications.pane_done = true;
-    assert_eq!(host_agent_alert(&config, false, true), Some("done"));
-    // Both edges in one poll: the prompt waiting for an answer is the more urgent news.
-    assert_eq!(host_agent_alert(&config, true, true), Some("blocked"));
+    assert_eq!(
+        host_agent_alert(&config, &edges(false, true, false)),
+        Some("is done")
+    );
+    // Several edges in one poll: a prompt waiting for an answer is the most urgent news, then a
+    // failure, then a finish.
+    assert_eq!(
+        host_agent_alert(&config, &edges(true, true, true)),
+        Some("is blocked")
+    );
+    assert_eq!(
+        host_agent_alert(&config, &edges(false, true, true)),
+        Some("failed")
+    );
 
     config.notifications.pane_blocked = false;
-    assert_eq!(host_agent_alert(&config, true, false), None);
+    assert_eq!(host_agent_alert(&config, &edges(true, false, false)), None);
+    config.notifications.pane_error = false;
+    assert_eq!(host_agent_alert(&config, &edges(false, false, true)), None);
+}
+
+/// A failure is news like a prompt waiting for an answer: on by default, under its own switch, for
+/// the controller only, and not while the user is looking at the pane.
+#[test]
+fn pane_failure_notification_has_its_own_switch() {
+    let mut config = crate::config::Config::default();
+    assert!(!should_notify_pane_failure(&config, true, false));
+    config.notifications.enabled = true;
+    assert!(should_notify_pane_failure(&config, true, false));
+    assert!(!should_notify_pane_failure(&config, false, false));
+    assert!(!should_notify_pane_failure(&config, true, true));
+    // Finishes are off by default; failures do not depend on them.
+    assert!(!config.notifications.pane_done);
+    config.notifications.pane_error = false;
+    assert!(!should_notify_pane_failure(&config, true, false));
+}
+
+/// A conversation that failed behind the one on screen is named by its own title, as a finished
+/// one is; the conversation on screen is not, since its pane already says so.
+#[test]
+fn a_failed_background_row_is_named_by_its_title() {
+    use crate::session::protocol::RowKey;
+    let mut pane = Pane::new(23, 100, rect());
+    let row = |id: &str, title: &str, active: bool| {
+        serde_json::from_value::<crate::session::protocol::PublishedRow>(serde_json::json!({
+            "id": id, "title": title, "status": "error", "kind": "agent", "active": active
+        }))
+        .unwrap()
+    };
+    pane.terminal.published_rows = vec![
+        row("shown", "on screen", true),
+        row("login", "fix login redirect", false),
+        row("docs", "write docs", false),
+    ];
+    let key = |id: &str| -> RowKey {
+        let rows = &pane.terminal.published_rows;
+        rows.iter().find(|row| row.id == id).unwrap().key()
+    };
+    assert_eq!(
+        failed_rows_notice(&pane, &[key("login")]).as_deref(),
+        Some("fix login redirect in pane 23 failed")
+    );
+    assert_eq!(
+        failed_rows_notice(&pane, &[key("login"), key("docs")]).as_deref(),
+        Some("fix login redirect, write docs in pane 23 failed")
+    );
+    assert_eq!(failed_rows_notice(&pane, &[key("shown")]), None);
 }
 
 #[test]

@@ -392,21 +392,6 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     }
 }
 
-/// Whether anything in the pane failed: its agent, one of its published rows, or its own status.
-fn activity_failed(pane: &Pane) -> bool {
-    let terminal = &pane.terminal;
-    let failed = |status: &str| {
-        status
-            .trim()
-            .eq_ignore_ascii_case(crate::session::protocol::pane_status::ERROR)
-    };
-    terminal
-        .effective_rows()
-        .iter()
-        .any(|row| failed(&row.status))
-        || terminal.agent_status().as_deref().is_some_and(failed)
-}
-
 /// The configured attention state this pane currently draws. Configured-off states deliberately
 /// fall through, so disabling a state can still expose another enabled alert.
 /// The alert a pane draws, as the state that raised it plus its configured colour. The state is
@@ -440,9 +425,10 @@ pub(crate) fn pane_alert(
     // An agent's blocked state stays lit on the focused pane, since answering the agent clears it
     // and the prompt may sit behind another conversation tab; [`pane_alert_breathes`] holds it
     // still there. A bare `rozi status blocked` names no agent to answer, and only its producer can
-    // clear it, so it stays a live condition. Finished
-    // is a latch, raised for news the user has not read yet, and it stays lit on the focused pane
-    // until an input answers it (`acknowledge_pane_if_attended`).
+    // clear it, so it stays a live condition. Error and finished are latches, raised for news the
+    // user has not read yet, and they stay lit on the focused pane until an input answers them
+    // (`acknowledge_pane_if_attended`). A failure can last as long as its thread stays loaded, so
+    // a live error mark would come back every time focus left the pane.
     [
         (
             PaneAlert::Blocked,
@@ -452,7 +438,7 @@ pub(crate) fn pane_alert(
         ),
         (
             PaneAlert::Error,
-            (!focused && activity_failed(pane))
+            pane.terminal.error_unseen
                 || osc_attention == Some(tui_lipan::ProgramStatusState::Error),
             colors.error,
         ),
@@ -2538,15 +2524,15 @@ mod tests {
             false,
             false,
         );
+        pane.note_failures(&[]);
         assert!(!edges.finished);
-        assert_eq!(
-            pane_alert(&pane, true, &PaneConfig::default(), &Default::default()),
-            None
-        );
-        assert_eq!(
-            pane_alert(&pane, false, &PaneConfig::default(), &Default::default()),
-            Some((PaneAlert::Error, BadgeColor::Error))
-        );
+        for focused in [true, false] {
+            assert_eq!(
+                pane_alert(&pane, focused, &PaneConfig::default(), &Default::default()),
+                Some((PaneAlert::Error, BadgeColor::Error)),
+                "the failure, never a success border"
+            );
+        }
     }
 
     #[test]
@@ -2558,12 +2544,17 @@ mod tests {
             reason: None,
             set_at: 0,
         });
+        pane.note_failures(&[]);
         assert_eq!(
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
         assert!(!PaneAlert::Error.is_calm());
-        assert_eq!(pane_alert(&pane, true, &config, &Default::default()), None);
+        // A latch: it stays lit on the focused pane until the pane is used.
+        assert_eq!(
+            pane_alert(&pane, true, &config, &Default::default()),
+            Some((PaneAlert::Error, BadgeColor::Error))
+        );
         config.alert_colors.error = Some(BadgeColor::Info);
         assert_eq!(
             pane_alert(&pane, false, &config, &Default::default()),
@@ -2581,13 +2572,16 @@ mod tests {
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
+        let before = pane.failures();
         pane.terminal.reported_status = None;
+        pane.note_failures(&before);
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         let row = serde_json::from_value(serde_json::json!({
             "id": "build", "title": "Build", "status": "error", "kind": "activity"
         }))
         .unwrap();
         pane.terminal.published_rows.push(row);
+        pane.note_failures(&[]);
         assert_eq!(
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))

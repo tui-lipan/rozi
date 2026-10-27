@@ -101,7 +101,7 @@ fn list_gap_after_tabs(frame: &str) -> usize {
 #[test]
 fn settings_lists_both_effect_rows_with_their_current_modes() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         {
             let state = backend.state_mut();
             state.config.pane.alert_border = AlertMode::Static;
@@ -125,7 +125,7 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
 #[test]
 fn settings_marks_multi_value_rows_with_an_ellipsis() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         let frame = rendered_rows(&mut backend);
         assert!(
             setting_row(&frame, "Which-key").contains("Which-key…"),
@@ -165,7 +165,7 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
 #[test]
 fn settings_rows_report_their_disabled_reasons() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         {
             let state = backend.state_mut();
             state.config.pane.border_mode = PaneBorderMode::None;
@@ -228,7 +228,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_all_keeps_every_control_available() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         backend
             .state_mut()
             .config
@@ -283,6 +283,7 @@ fn settings_all_keeps_every_control_available() {
             "Show notifications",
             "Blocked",
             "Finished",
+            "Failed",
             "Exit",
             "Exit with error",
             "Play sounds",
@@ -367,7 +368,7 @@ fn settings_all_keeps_every_control_available() {
 #[test]
 fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         let general = rendered_rows(&mut backend);
         let general_body = list_body(&general);
@@ -476,7 +477,7 @@ fn settings_matches_keybindings_chrome_without_hints() {
 #[test]
 fn settings_reports_startup_and_session_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         {
             let state = backend.state_mut();
             state.config.session.startup = rozi::config::SessionStartup::Last;
@@ -503,7 +504,7 @@ fn settings_reports_startup_and_session_values() {
 #[test]
 fn settings_reports_sidebar_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         {
             let state = backend.state_mut();
             state.sidebar.shown = [true, false];
@@ -1036,7 +1037,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
         use rozi::state::{PaneTitlebarMode, SettingsAction};
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
-        let mut backend = settings_backend(100, 160);
+        let mut backend = settings_backend(100, 170);
         backend.state_mut().config.pane.show_titles = false;
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
         backend.state_mut().config.pane.show_workbar = false;
@@ -1148,7 +1149,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::General, 21, "Pane close"),
             (SettingsTab::Panes, 12, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
-            (SettingsTab::Alerts, 20, "Bell urgency"),
+            (SettingsTab::Alerts, 21, "Bell urgency"),
             (SettingsTab::Sessions, 7, "On shared attach"),
         ] {
             backend

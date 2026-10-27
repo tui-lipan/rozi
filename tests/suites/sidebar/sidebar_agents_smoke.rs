@@ -600,11 +600,11 @@ fn published_sessions_render_under_one_cluster() {
         assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
         assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
         assert!(
-            sidebar.iter().any(|line| line.contains("permission requ")),
+            sidebar.iter().any(|line| line.contains("permission")),
             "a titled session shows its reason beside its state: {sidebar:#?}"
         );
         // Until a title exists, the reason is all the row has.
-        assert!(sidebar.iter().any(|line| line.contains("answer required")));
+        assert!(sidebar.iter().any(|line| line.contains("answer req")));
         // An id is an opaque handle and must never stand in for a missing title.
         assert!(!sidebar.iter().any(|line| line.contains("ses_")));
         // A slot with nothing to say about its work falls back to the state word, which is
@@ -618,6 +618,77 @@ fn published_sessions_render_under_one_cluster() {
             "the lowercase wire value must not reach the screen"
         );
     });
+}
+
+/// A client keeps runs behind the one it shows. Those lean, and carry the background marker at the
+/// right of their detail line; the run on screen reads as any other agent does.
+#[test]
+fn a_run_kept_in_the_background_is_marked() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                agents_fill_the_sidebar(state);
+                let mut publisher =
+                    agent_pane(1, agent("codex", "Codex"), None, Some("/home/x/work/rozi"));
+                publisher.terminal.published_rows = vec![
+                    published_row("shown", "shown task", "working", None, true),
+                    published_row("behind", "hidden task", "working", None, false),
+                ];
+                publisher.agents = ["shown", "behind"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, slot)| {
+                        agent_ref(publisher.id, Some(slot), index as u64 + 1).into()
+                    })
+                    .collect();
+                state.current_mut().workspaces[0].panes = vec![publisher];
+            }
+            backend.render();
+            let frame = backend.capture_frame();
+            let lines = frame.to_fixed_grid_lines();
+            for line in &lines {
+                println!("{line}");
+            }
+            let title = |task: &str| {
+                let row = lines.iter().position(|line| line.contains(task)).unwrap();
+                let column = lines[row]
+                    .chars()
+                    .position(|c| c == task.chars().next().unwrap());
+                (row, column.unwrap())
+            };
+            let marker = "⧉";
+
+            let (behind, column) = title("hidden task");
+            assert!(
+                frame.cell(column as u16, behind as u16).modifiers.italic,
+                "a background run's title leans: {lines:#?}"
+            );
+            assert!(
+                lines[behind + 1].contains(marker),
+                "its detail line carries the marker: {lines:#?}"
+            );
+            let status = lines[behind + 1].find("Working").unwrap();
+            assert!(
+                lines[behind + 1].find(marker).unwrap() > status,
+                "the marker sits right of the state word: {lines:#?}"
+            );
+
+            let (shown, column) = title("shown task");
+            assert!(!frame.cell(column as u16, shown as u16).modifiers.italic);
+            assert!(!lines[shown + 1].contains(marker));
+        })
+        .expect("spawn background run render thread")
+        .join()
+        .expect("background run render completes");
 }
 
 #[test]

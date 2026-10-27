@@ -515,12 +515,35 @@ pub(crate) fn finished_rows_notice(
     pane: &crate::state::Pane,
     finished: &[crate::session::protocol::RowKey],
 ) -> Option<String> {
+    let id = pane.id;
+    match background_row_names(pane, finished).as_slice() {
+        [] => None,
+        [name] => Some(format!("{name} in pane {id} is done")),
+        names => Some(format!("{} in pane {id} are done", names.join(", "))),
+    }
+}
+
+/// What to say when rows a publisher is not showing fail, named as [`finished_rows_notice`] names
+/// them, or `None` when none of `failed` is such a row.
+pub(crate) fn failed_rows_notice(
+    pane: &crate::state::Pane,
+    failed: &[crate::session::protocol::RowKey],
+) -> Option<String> {
+    let names = background_row_names(pane, failed);
+    (!names.is_empty()).then(|| format!("{} in pane {} failed", names.join(", "), pane.id))
+}
+
+/// The names of the rows among `keys` that their publisher is not showing.
+fn background_row_names(
+    pane: &crate::state::Pane,
+    keys: &[crate::session::protocol::RowKey],
+) -> Vec<String> {
     let occupants = pane.occupants();
     let rows = &pane.terminal.published_rows;
     let names: Vec<String> = rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| !row.active && finished.iter().any(|key| row.has_key(key)))
+        .filter(|(_, row)| !row.active && keys.iter().any(|key| row.has_key(key)))
         .map(|(index, row)| {
             let title = row.title.trim();
             if !title.is_empty() {
@@ -549,12 +572,7 @@ pub(crate) fn finished_rows_notice(
             }
         })
         .collect();
-    let id = pane.id;
-    match names.as_slice() {
-        [] => None,
-        [name] => Some(format!("{name} in pane {id} is done")),
-        names => Some(format!("{} in pane {id} are done", names.join(", "))),
-    }
+    names
 }
 
 /// Raise [`finished_rows_notice`]'s text, under the same settings as a pane finishing. The rows
@@ -567,6 +585,54 @@ pub(crate) fn maybe_notify_rows_done(
     if should_notify_pane_status(config, is_controller, false, false, true) {
         crate::platform::notifications::notify("rozi", notice);
     }
+}
+
+/// Raise [`failed_rows_notice`]'s text, under the same settings as a pane failing. The rows were
+/// not on screen, so attending the pane does not silence it.
+pub(crate) fn maybe_notify_rows_failed(
+    config: &crate::config::Config,
+    is_controller: bool,
+    notice: &str,
+) {
+    if should_notify_pane_failure(config, is_controller, false) {
+        crate::platform::notifications::notify("rozi", notice);
+    }
+}
+
+/// Announce that something in a pane failed: its agent, the conversation on screen, or its own
+/// status, which supplies the reason when it says why.
+pub(crate) fn maybe_notify_pane_failure(
+    config: &crate::config::Config,
+    is_controller: bool,
+    is_attended: bool,
+    id: PaneId,
+    title: &str,
+    reported_status: Option<&crate::session::protocol::PaneStatus>,
+) {
+    if !should_notify_pane_failure(config, is_controller, is_attended) {
+        return;
+    }
+    let reason = reported_status
+        .filter(|status| {
+            status
+                .value
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::ERROR)
+        })
+        .and_then(|status| status.reason.as_deref());
+    let body = match reason {
+        Some(reason) => format!("Pane {id} ({title}) failed: {reason}"),
+        None => format!("Pane {id} ({title}) failed"),
+    };
+    crate::platform::notifications::notify("rozi", &body);
+}
+
+pub(crate) fn should_notify_pane_failure(
+    config: &crate::config::Config,
+    is_controller: bool,
+    is_attended: bool,
+) -> bool {
+    config.notifications.enabled && config.notifications.pane_error && is_controller && !is_attended
 }
 
 pub(crate) fn should_notify_pane_status(
@@ -592,34 +658,34 @@ pub(crate) fn maybe_notify_session_agent(
     host: Option<&str>,
     session: &str,
     label: &str,
-    blocked: bool,
-    done: bool,
+    edges: &crate::update::session::status::AgentEdges,
 ) {
-    let Some(state) = host_agent_alert(config, blocked, done) else {
+    let Some(state) = host_agent_alert(config, edges) else {
         return;
     };
     let location = host.map_or_else(|| session.to_string(), |host| format!("{host}/{session}"));
-    crate::platform::notifications::notify("rozi", &format!("{label} in {location} is {state}"));
+    crate::platform::notifications::notify("rozi", &format!("{label} in {location} {state}"));
 }
 
-/// The word a host-monitor alert would announce, or `None` when the user has not asked for one.
+/// What a host-monitor alert would announce, or `None` when the user has not asked for one.
 ///
-/// Blocked outranks finished when a poll caught both edges at once: a prompt waiting for an answer
-/// is the more urgent of the two, and a monitor snapshot is coarse enough that a single agent can
-/// plausibly show both between polls.
+/// Blocked outranks a failure, and a failure outranks a finish, when a poll caught several edges
+/// at once: a prompt waiting for an answer is the most urgent, and a monitor snapshot is coarse
+/// enough that a single agent can plausibly show more than one between polls.
 pub(crate) fn host_agent_alert(
     config: &crate::config::Config,
-    blocked: bool,
-    done: bool,
+    edges: &crate::update::session::status::AgentEdges,
 ) -> Option<&'static str> {
-    use crate::session::protocol::pane_status;
-    if !config.notifications.enabled {
+    let notifications = &config.notifications;
+    if !notifications.enabled {
         return None;
     }
-    if blocked && config.notifications.pane_blocked {
-        Some(pane_status::BLOCKED)
-    } else if done && config.notifications.pane_done {
-        Some(pane_status::DONE)
+    if edges.became_blocked && notifications.pane_blocked {
+        Some("is blocked")
+    } else if edges.failed && notifications.pane_error {
+        Some("failed")
+    } else if edges.finished && notifications.pane_done {
+        Some("is done")
     } else {
         None
     }
@@ -634,9 +700,18 @@ pub(crate) fn maybe_notify_program_status(
     state: tui_lipan::ProgramStatusState,
     message: Option<&str>,
 ) -> bool {
-    let blocked = state == tui_lipan::ProgramStatusState::Blocked;
-    let error = state == tui_lipan::ProgramStatusState::Error;
-    if !should_notify_pane_status(config, controller, attended, blocked, error) {
+    let allowed = if state == tui_lipan::ProgramStatusState::Error {
+        should_notify_pane_failure(config, controller, attended)
+    } else {
+        should_notify_pane_status(
+            config,
+            controller,
+            attended,
+            state == tui_lipan::ProgramStatusState::Blocked,
+            false,
+        )
+    };
+    if !allowed {
         return false;
     }
     let detail = message.map(crate::session::protocol::program_status_display);

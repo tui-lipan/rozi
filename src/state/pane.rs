@@ -276,17 +276,35 @@ impl Pane {
     }
 
     /// Arm the pane's `error_unseen` when something fails that had not already failed before this
-    /// update, and drop it once nothing has. Returns what newly failed: the failures a notification
-    /// announces.
+    /// update, and drop it once nothing has. Returns what newly failed, once each: the failures a
+    /// notification announces.
+    ///
+    /// Several publishers can list one conversation, so one failure can show in several places at
+    /// once. It is announced where it is on screen, if it is anywhere: the pane's own occupant or a
+    /// row its publisher shows.
     pub(crate) fn note_failures(&mut self, before: &[Failure]) -> Vec<Failure> {
-        let failures = self.failures();
+        let mut failures = self.failures();
         if failures.is_empty() {
             self.terminal.error_unseen = false;
         }
-        let new: Vec<_> = failures
-            .into_iter()
-            .filter(|failure| !before.iter().any(|earlier| earlier.is_same(failure)))
-            .collect();
+        let rows = &self.terminal.published_rows;
+        let shown = |failure: &Failure| {
+            failure
+                .slot
+                .as_ref()
+                .is_none_or(|key| rows.iter().any(|row| row.has_key(key) && row.active))
+        };
+        failures.sort_by_key(|failure| !shown(failure));
+        let mut new: Vec<Failure> = Vec::new();
+        for failure in failures {
+            if !before
+                .iter()
+                .chain(&new)
+                .any(|earlier| earlier.is_same(&failure))
+            {
+                new.push(failure);
+            }
+        }
         if !new.is_empty() {
             self.terminal.error_unseen = true;
         }

@@ -1579,6 +1579,49 @@ fn a_standing_failure_is_not_new_when_its_conversation_moves_process() {
     }
 }
 
+/// Two publishers can list one conversation, one showing it and one not. When it fails, that is
+/// one failure, announced once, as the one on screen.
+#[test]
+fn a_conversation_two_publishers_list_fails_once() {
+    use crate::session::protocol::{AgentRecord, AgentRef, PublishedRow, PublisherKind, RowKey};
+    let row = |publisher: &str, status: &str, active: bool| PublishedRow {
+        publisher: publisher.into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: "conversation".into(),
+        title: "conversation".into(),
+        status: status.into(),
+        reason: None,
+        active,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("abc".into()),
+    };
+    let runtime = |status: &str| PaneRuntimeState {
+        rows: vec![row("first", status, false), row("second", status, true)],
+        ..PaneRuntimeState::default()
+    };
+    let records = || -> Vec<AgentRecord> {
+        ["first", "second"]
+            .into_iter()
+            .map(|publisher| {
+                AgentRef::for_test(1, 1, Some(RowKey::new(publisher, "conversation"))).into()
+            })
+            .collect()
+    };
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    apply_pane_runtime_state(&mut pane, records(), runtime("working"));
+    let failed = apply_pane_runtime_state(&mut pane, records(), runtime("error"));
+    assert_eq!(pane.failures().len(), 2, "it shows in both places");
+    assert!(pane.terminal.error_unseen);
+    assert!(
+        failed.edges.failed && failed.failed_rows.is_empty(),
+        "announced once, as the row on screen"
+    );
+}
+
 #[test]
 fn hold_on_exit_excludes_disabled_and_closing_panes() {
     assert!(should_hold_on_exit(true, false));

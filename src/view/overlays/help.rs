@@ -491,6 +491,7 @@ fn help_tab_msg(tab: crate::state::HelpTab, steps: isize) -> Msg {
 struct HelpTarget {
     id: String,
     edit: RowEdit,
+    bound: bool,
     overridden: bool,
 }
 
@@ -586,6 +587,7 @@ pub(crate) fn help_overlay(
             targets.push(Some(HelpTarget {
                 id: help_row_id(row),
                 edit: RowEdit::of(row),
+                bound: !row.keys.is_empty(),
                 overridden: row.overridden,
             }));
         }
@@ -602,6 +604,7 @@ pub(crate) fn help_overlay(
     let selected = selected_index.and_then(|index| targets[index].as_ref());
     let change = selected.and_then(|target| target.edit.change_msg());
     let action_id = selected
+        .filter(|target| target.bound)
         .and_then(|target| target.edit.action_id())
         .map(str::to_string);
     let reset = selected

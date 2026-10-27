@@ -1431,6 +1431,8 @@ mod tests {
             assert!(unbound.contains("Edit scrollback"));
             assert!(unbound.contains("—"));
             assert!(!unbound.contains("not set"));
+            assert!(unbound.contains("change Enter"), "{unbound}");
+            assert!(!unbound.contains("unbind Ctrl+U"), "{unbound}");
             backend
                 .dispatch(Msg::HelpTabSelected(3))
                 .expect("show all bindings");

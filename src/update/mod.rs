@@ -1194,7 +1194,9 @@ fn post_update_sync(
 
     // Before the layout diff below, so a pinned pane gathered onto this client's workspace (after a
     // takeover, an attach, or a scripted move) is published with everything else.
-    crate::ops::focus::keep_pinned_panes_on_active_workspace(&mut ctx.state);
+    if crate::ops::focus::keep_pinned_panes_on_active_workspace(&mut ctx.state) {
+        crate::ops::focus::request_current_pane_focus(ctx);
+    }
     crate::ops::focus::note_unpinned_focus(&mut ctx.state);
 
     // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The

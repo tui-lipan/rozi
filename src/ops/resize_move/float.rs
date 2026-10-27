@@ -2239,6 +2239,53 @@ mod tests {
             });
         }
 
+        /// Taking control while looking at an empty workspace hands the arriving pin focus, in
+        /// state and in the framework, as switching to an empty workspace would.
+        #[test]
+        fn taking_control_on_an_empty_workspace_focuses_the_gathered_pin() {
+            in_test_stack(|| {
+                let (mut backend, _rx) = shared_backend(false);
+                {
+                    let state = backend.state_mut();
+                    let mut pinned = Pane::new(
+                        3,
+                        100,
+                        FloatRect {
+                            x: 10.0,
+                            y: 4.0,
+                            w: 30.0,
+                            h: 10.0,
+                        },
+                    );
+                    pinned.opening = false;
+                    pinned.terminal_active = true;
+                    pinned.floating = true;
+                    pinned.pinned = true;
+                    state.active_workspace_mut().panes.push(pinned);
+                }
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::SwitchWorkspace(5)))
+                    .expect("follower looks at an empty workspace");
+                assert_eq!(backend.state().focused_pane(), None);
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(Msg::SessionControllerChanged {
+                        epoch,
+                        controller: Some(1),
+                        reason: crate::session::protocol::ControllerChangeReason::Granted,
+                    })
+                    .expect("take control");
+                assert_eq!(backend.state().focused_pane(), Some(3));
+                backend.render();
+                let terminal = backend.state().current().workspaces[5].panes[0]
+                    .keys
+                    .terminal
+                    .clone();
+                assert_eq!(backend.focused_key(), Some(&terminal));
+            });
+        }
+
         /// A lease lost mid-gesture abandons the gesture's liveness with it. When this client
         /// controls again, its republish is an ordinary revision that followers animate.
         #[test]

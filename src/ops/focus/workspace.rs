@@ -100,8 +100,10 @@ fn own_focus(workspace: &Workspace) -> Option<PaneId> {
     })
 }
 
-/// Restore the pinned-pane invariant after any message: see [`gather_pinned_panes`].
-pub(crate) fn keep_pinned_panes_on_active_workspace(state: &mut State) {
+/// Restore the pinned-pane invariant after any message: see [`gather_pinned_panes`]. Focus is
+/// resolved again as a switch would, so an empty workspace that receives a pinned pane focuses it.
+/// Returns whether anything moved, in which case the caller syncs framework focus.
+pub(crate) fn keep_pinned_panes_on_active_workspace(state: &mut State) -> bool {
     let active = state.current().active_workspace;
     let stray = state
         .current()
@@ -115,9 +117,11 @@ pub(crate) fn keep_pinned_panes_on_active_workspace(state: &mut State) {
                     .iter()
                     .any(|pane| pane.pinned && !pane.closing)
         });
-    if stray {
-        gather_pinned_panes(state, active);
+    if !stray || gather_pinned_panes(state, active).is_empty() {
+        return false;
     }
+    super::choose_fallback_focus(state);
+    true
 }
 
 /// Remember the focused pane as its workspace's own focus, unless it is a pinned pane.
@@ -254,6 +258,7 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     let source_empty = workspace_is_empty(&state.current().workspaces[source_index]);
     if source_empty {
         state.current_mut().active_workspace = target_index;
+        gather_pinned_panes(state, target_index);
         super::choose_fallback_focus(state);
         state.animation = GeometryAnimation::None;
         emit_workspace_switched(state, target_index);
@@ -286,8 +291,12 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     emit_workspace_switched(state, target_index);
 }
 
+/// Whether `workspace` holds nothing of its own. A pinned pane only rides along on it.
 fn workspace_is_empty(workspace: &Workspace) -> bool {
-    !workspace.panes.iter().any(|pane| !pane.closing)
+    !workspace
+        .panes
+        .iter()
+        .any(|pane| !pane.closing && !pane.pinned)
 }
 
 fn swap_workspace_content(state: &mut State, source_index: usize, target_index: usize) {

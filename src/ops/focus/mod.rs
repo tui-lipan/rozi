@@ -101,11 +101,13 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
     let changed = pane.activity.has_unseen_output
         || pane.activity.bell
         || pane.terminal.finished_unseen
+        || pane.terminal.error_unseen
         || row_cleared
         || pane.terminal.program_status_attention;
     pane.activity.has_unseen_output = false;
     pane.activity.bell = false;
     pane.terminal.finished_unseen = false;
+    pane.terminal.error_unseen = false;
     pane.terminal.program_status_attention = false;
     let mut agent_cleared = false;
     for runtime in on_screen {
@@ -1333,6 +1335,7 @@ mod tests {
             let pane = &mut state.current_mut().workspaces[0].panes[0];
             pane.activity.has_unseen_output = true;
             pane.terminal.finished_unseen = true;
+            pane.terminal.error_unseen = true;
         }
 
         assert!(!acknowledge_pane_if_attended(&mut state, 1));
@@ -1345,6 +1348,7 @@ mod tests {
         assert!(acknowledge_pane_input(&mut state, 1));
         let pane = &state.current().workspaces[0].panes[0];
         assert!(!pane.terminal.finished_unseen);
+        assert!(!pane.terminal.error_unseen);
         assert!(!pane.activity.has_unseen_output);
     }
 

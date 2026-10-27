@@ -1017,6 +1017,7 @@ pub struct NotificationsConfig {
     pub bell: bool,
     pub pane_blocked: bool,
     pub pane_done: bool,
+    pub pane_error: bool,
 }
 
 impl Default for NotificationsConfig {
@@ -1031,6 +1032,7 @@ impl Default for NotificationsConfig {
             bell: true,
             pane_blocked: true,
             pane_done: false,
+            pane_error: true,
         }
     }
 }

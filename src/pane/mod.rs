@@ -279,6 +279,11 @@ pub struct TerminalPane {
     /// both focused). An agent's finishes are [`crate::state::AgentAttention`]'s instead; read both
     /// through [`crate::state::Pane::finished_unseen`].
     pub finished_unseen: bool,
+    /// Set when something in this pane fails - its own agent or status, or one of its published
+    /// rows - and cleared once the pane is looked at. A failure is news once: the sidebar keeps
+    /// showing the failed row, but the pane's alert does not come back every time focus leaves it.
+    /// Another failure arms it again.
+    pub error_unseen: bool,
     /// Server timestamp for the current active agent run. It stays unchanged while an agent is
     /// blocked and resumes working, so the sidebar can show one continuous run age.
     pub work_started_at: Option<u64>,
@@ -480,6 +485,7 @@ impl TerminalPane {
             agent_launch: 0,
             agent_integration: None,
             finished_unseen: false,
+            error_unseen: false,
             work_started_at: None,
             status_since: None,
             last_run: None,
@@ -562,6 +568,7 @@ impl TerminalPane {
             self.detected_agent = None;
             self.agent_integration = None;
             self.finished_unseen = false;
+            self.error_unseen = false;
             self.work_started_at = None;
             self.status_since = None;
             self.last_run = None;

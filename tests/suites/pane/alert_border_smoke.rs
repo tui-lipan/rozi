@@ -934,6 +934,10 @@ fn blocked_and_error_color_border_and_content_independently() {
                 .as_mut()
                 .unwrap()
                 .value = status.into();
+            // A failure arrives through a runtime update, which raises the pane's error mark.
+            backend.state_mut().current_mut().workspaces[0].panes[1]
+                .terminal
+                .error_unseen = status == "error";
             backend.render();
             backend.capture_frame()
         };
@@ -968,6 +972,9 @@ fn error_border_and_content_keep_the_existing_urgent_pulse_in_step() {
             .as_mut()
             .unwrap()
             .value = "error".into();
+        backend.state_mut().current_mut().workspaces[0].panes[1]
+            .terminal
+            .error_unseen = true;
         let quarter = half_period(&backend) / 4;
         assert_eq!(blocked_surfaces(&mut backend), (ends.border.0, ends.tint.0));
         first_turn(&mut backend);

@@ -306,6 +306,10 @@ The focused pane still shows a finished run, and an agent waiting on you in any 
 conversations. That blocked alert holds still instead of breathing, and clears once you answer the
 agent. A plain `rozi status blocked` marks a pane only while it is not focused.
 
+An error alert appears when an agent or one of its conversations fails, and clears once you use the
+pane, even while the failure lasts. The sidebar keeps showing the failed row. Another failure in the
+pane raises the alert again.
+
 ## `[animations]`
 
 | Key | Type | Default | Constraints and behavior |
@@ -520,20 +524,22 @@ host, or when rozi was installed from a distribution package or in a way it does
 | `pane_exit_error` | bool | `true` | Notifies when a pane exits on its own with a nonzero status. |
 | `pane_blocked` | bool | `true` | Notifies when an unattended pane becomes blocked. |
 | `pane_done` | bool | `false` | Notifies when a pane you have not looked at goes from working to finished. |
+| `pane_error` | bool | `true` | Notifies when an agent, one of its conversations, or a pane's own status fails in a pane you are not looking at. |
 | `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless the pane is running an agent, whose finished or blocked mark covers it. Works even when `enabled` is off. |
 
 Desktop notifications go through the platform's notification service and are best effort.
 
-`pane_blocked` and `pane_done` also cover agents in other local sessions and in sessions on a
+`pane_blocked`, `pane_done`, and `pane_error` also cover agents in other local sessions and in sessions on a
 [connected remote host](remote.md#agents-on-a-machine-you-are-not-in) that this client is not
 attached to. Because nothing on screen shows those panes, their alerts skip the checks for who
 controls the pane and whether you are looking at it.
 
-`pane_done` also covers [published Activity rows](control.md#published-activity) a pane is not
-showing, such as a background conversation behind a Claude Code client. Looking at the pane does
-not count as having seen such a row, and the notification names the row that finished, for example
-`fix login redirect in pane 23 is done`, rather than the pane, whose title is the conversation on
-screen.
+`pane_done` and `pane_error` also cover [published Activity rows](control.md#published-activity) a
+pane is not showing, such as a background conversation behind a Claude Code client. Looking at the
+pane does not count as having seen such a row, and the notification names the row, for example
+`fix login redirect in pane 23 is done` or `fix login redirect in pane 23 failed`, rather than the
+pane, whose title is the conversation on screen. A failure that lasts is announced once; another
+failure is announced again.
 
 ## `[sounds]`
 

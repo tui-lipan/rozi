@@ -1077,6 +1077,17 @@ pub static SETTINGS: &[SettingSpec] = {
             ),
         ),
         row(
+            ToggleDesktopError,
+            G::DesktopNotifications,
+            "Failed",
+            &["error", "failure"],
+            toggle(
+                config_field!(notifications.pane_error),
+                "notifications",
+                "pane_error",
+            ),
+        ),
+        row(
             ToggleDesktopExit,
             G::DesktopNotifications,
             "Exit",

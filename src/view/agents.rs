@@ -44,6 +44,10 @@ pub(crate) struct GlobalAgentRow {
     /// Which of several rows this is that would otherwise read exactly the same - one program's
     /// untitled runs in one checkout - and `None` for every row that reads apart on its own.
     pub ordinal: Option<usize>,
+    /// A run its client keeps behind the one it shows. See
+    /// [`crate::view::sidebar::agents::is_background_run`]. Another session's summary does not say,
+    /// so its rows are never marked.
+    pub background: bool,
 }
 
 impl GlobalAgentRow {
@@ -192,6 +196,7 @@ fn summary_row(
         project: checkout.map(|checkout| project_name(checkout.repository_root())),
         branch: checkout.and_then(|checkout| checkout.branch.clone()),
         ordinal: None,
+        background: false,
     }
 }
 
@@ -331,6 +336,7 @@ fn live_attachment_rows(
         )
         .map(|(elapsed, _)| elapsed);
         let seat = (row.pane_id, row.order);
+        let background = crate::view::sidebar::agents::is_background_run(&row);
         let global = GlobalAgentRow {
             location: if std::ptr::eq(attachment, state.current()) {
                 AgentLocation::Here {
@@ -359,6 +365,7 @@ fn live_attachment_rows(
             project,
             branch,
             ordinal: None,
+            background,
         };
         rows.push((global, seat));
     }
@@ -647,6 +654,7 @@ mod tests {
             project: Some("rozi".into()),
             branch: Some("worktree-fix".into()),
             ordinal: None,
+            background: false,
         };
         assert_eq!(row.title(), "fix login redirect");
         assert_eq!(row.label(), "fix login redirect · Claude Code · dev");

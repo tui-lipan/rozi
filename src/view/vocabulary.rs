@@ -45,6 +45,11 @@ use crate::view::fg_only;
 pub(crate) const KILLING: &str = "Killing…";
 pub(crate) const SEPARATOR: &str = " · ";
 
+/// Marks an agent run a client keeps behind the one it shows: published for its pane, not on
+/// screen there. Layered squares - the run sits under what the pane shows - and no ring, which the
+/// session family and the idle agent glyph already use.
+pub(crate) const BACKGROUND_RUN: &str = "⧉";
+
 /// The name shown for a temporary session in place of its generated one. Lowercase because it sits
 /// in the name column, where it stands for a name rather than a state.
 pub(crate) const EPHEMERAL: &str = "ephemeral";

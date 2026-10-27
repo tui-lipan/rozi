@@ -211,6 +211,7 @@ pub(crate) struct Row {
     priority: Priority,
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
+    detail_badge: Option<(String, Style)>,
     armed_prompt: Option<String>,
     /// Armed by something other than its ✕: a keyed action waiting for its second press.
     armed: bool,
@@ -229,6 +230,7 @@ impl Row {
             priority: Priority::Label,
             meta: None,
             detail: Vec::new(),
+            detail_badge: None,
             armed_prompt: None,
             armed: false,
         }
@@ -316,6 +318,13 @@ impl Row {
         self
     }
 
+    /// A short marker pinned to the right edge of the detail line, under the title line's badge. The
+    /// detail gives way to it, so a long reason truncates before the marker does.
+    pub(super) fn detail_badge(mut self, text: impl Into<String>, style: Style) -> Self {
+        self.detail_badge = Some((text.into(), style));
+        self
+    }
+
     #[cfg(test)]
     pub(super) fn detail_texts(&self) -> Vec<&str> {
         self.detail.iter().map(|(text, _)| text.as_str()).collect()
@@ -363,8 +372,8 @@ impl Row {
         // The cursor changes the background only; every span keeps the color that carries its
         // meaning, so agent status, git state, and error red stay readable underneath it.
         let mut text = VStack::new().gap(0).height(Length::Px(lines)).child(title);
-        if let Some(detail) = detail_item(self.detail) {
-            text = text.child(item_text(detail, 1));
+        if let Some(detail) = detail_item(std::mem::take(&mut self.detail)) {
+            text = text.child(self.detail_line(detail));
         }
 
         RowParts {
@@ -380,6 +389,24 @@ impl Row {
             },
         }
     }
+    fn detail_line(&mut self, detail: ListItem) -> Element {
+        let line = item_text(detail, 1);
+        match self.detail_badge.take() {
+            Some((badge, style)) => HStack::new()
+                .gap(1)
+                .height(Length::Px(1))
+                .child(line)
+                .child(
+                    Text::new(badge)
+                        .style(style)
+                        .width(Length::Auto)
+                        .height(Length::Px(1)),
+                )
+                .into(),
+            None => line,
+        }
+    }
+
     fn apply_confirmation(&mut self, ctx: &Context<AppRoot>, close: Option<CloseAffordance>) {
         let theme = &ctx.state.theme;
         // An armed row spells the confirmation out the way the session picker's pending kill does:
@@ -388,6 +415,8 @@ impl Row {
         // — it is the target, and a target that changes shape under the pointer is one you can miss.
         if self.armed || close.is_some_and(|close| close.armed) {
             self.title_style = self.title_style.strikethrough();
+            // The detail line asks for the second gesture, and nothing else shares it.
+            self.detail_badge = None;
             self.detail = vec![(
                 self.armed_prompt
                     .take()

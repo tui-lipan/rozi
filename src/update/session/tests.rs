@@ -1494,6 +1494,91 @@ fn a_standing_hook_failure_is_not_new_when_its_row_comes_or_goes() {
     }
 }
 
+/// A conversation that moves to another process keeps its row and first ID, and names the new
+/// process as `live_session`. A standing failure is the same failure across that move, whether the
+/// row or a hook report under the new process carries it.
+#[test]
+fn a_standing_failure_is_not_new_when_its_conversation_moves_process() {
+    use crate::session::protocol::{
+        AgentIdentity, AgentIntegrationReport, AgentRecord, AgentRef, AgentState, PublishedRow,
+        PublisherKind, RowKey,
+    };
+    let row = |live: Option<&str>| PublishedRow {
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
+        live_session: live.map(str::to_string),
+        reported: false,
+        id: "origin".into(),
+        title: "origin".into(),
+        status: "error".into(),
+        reason: None,
+        active: false,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("origin".into()),
+    };
+    let hook = || {
+        Box::new(AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: AgentIdentity::new("claude", "Claude Code"),
+            reference: AgentRef::for_test(1, 1, None),
+            state: AgentState::Error,
+            reason: None,
+            native_session: Some("fork".into()),
+            seq: 1,
+            reported_at_unix_ms: 1,
+        })
+    };
+    let listed = || -> Vec<AgentRecord> {
+        vec![AgentRef::for_test(1, 1, Some(RowKey::new("sessions", "origin"))).into()]
+    };
+    let alone = || -> Vec<AgentRecord> { vec![AgentRef::for_test(1, 1, None).into()] };
+    let steps: [(Vec<AgentRecord>, PaneRuntimeState); 3] = [
+        (
+            listed(),
+            PaneRuntimeState {
+                rows: vec![row(Some("fork"))],
+                ..PaneRuntimeState::default()
+            },
+        ),
+        (
+            listed(),
+            PaneRuntimeState {
+                rows: vec![row(Some("fork"))],
+                integration: Some(hook()),
+                ..PaneRuntimeState::default()
+            },
+        ),
+        (
+            alone(),
+            PaneRuntimeState {
+                integration: Some(hook()),
+                ..PaneRuntimeState::default()
+            },
+        ),
+    ];
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+    apply_pane_runtime_state(
+        &mut pane,
+        listed(),
+        PaneRuntimeState {
+            rows: vec![row(None)],
+            ..PaneRuntimeState::default()
+        },
+    );
+    assert!(pane.terminal.error_unseen);
+    // Looked at.
+    pane.terminal.error_unseen = false;
+    for (step, (records, runtime)) in steps.into_iter().enumerate() {
+        let applied = apply_pane_runtime_state(&mut pane, records, runtime);
+        assert!(
+            !pane.terminal.error_unseen && !applied.edges.failed && applied.failed_rows.is_empty(),
+            "step {step}: the same failure"
+        );
+    }
+}
+
 #[test]
 fn hold_on_exit_excludes_disabled_and_closing_panes() {
     assert!(should_hold_on_exit(true, false));

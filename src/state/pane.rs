@@ -249,19 +249,27 @@ impl Pane {
             .into_iter()
             .filter(|occupant| occupant.state == crate::session::protocol::ActivityState::Error)
             .map(|occupant| {
-                let conversation = match &occupant.slot {
+                let sessions = match &occupant.slot {
                     Some(key) => rows
                         .iter()
                         .find(|row| row.has_key(key) && row.is_agent())
-                        .and_then(crate::session::protocol::row_reporting_session),
-                    None if occupant.is_agent() => {
-                        integration.and_then(|report| report.native_session.as_deref())
-                    }
-                    None => None,
+                        .map(|row| {
+                            row.native_session
+                                .iter()
+                                .chain(&row.live_session)
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    None if occupant.is_agent() => integration
+                        .and_then(|report| report.native_session.clone())
+                        .into_iter()
+                        .collect(),
+                    None => Vec::new(),
                 };
                 Failure {
                     slot: occupant.slot,
-                    conversation: conversation.map(str::to_string),
+                    sessions,
                 }
             })
             .collect()
@@ -596,19 +604,25 @@ impl Pane {
 pub struct Failure {
     /// Where the failure shows: a published row, or `None` for the pane's own agent or status.
     pub slot: Option<crate::session::protocol::RowKey>,
-    /// The conversation that failed, when an agent names one. A hook report speaks for the pane
-    /// while no row lists its conversation and for that row once one does, so this, not the slot,
-    /// is what stays the same as a publisher's rows come and go.
-    conversation: Option<String>,
+    /// Every session ID the failed conversation goes by: a row's first one and the process running
+    /// it now, or the one a hook report names. A hook report speaks for the pane while no row lists
+    /// its conversation and for that row once one does, and a conversation can move to another
+    /// process while its row keeps its first ID, so these, not the slot, follow one conversation.
+    sessions: Vec<String>,
 }
 
 impl Failure {
-    /// Whether two failures are one: the same conversation when both name one, else the same place.
+    /// Whether two failures are one: the same published row, or a conversation both name.
     fn is_same(&self, other: &Self) -> bool {
-        match (&self.conversation, &other.conversation) {
-            (Some(left), Some(right)) => left == right,
-            _ => self.slot == other.slot,
-        }
+        (self.slot.is_some() && self.slot == other.slot)
+            || self
+                .sessions
+                .iter()
+                .any(|session| other.sessions.contains(session))
+            || (self.slot.is_none()
+                && other.slot.is_none()
+                && self.sessions.is_empty()
+                && other.sessions.is_empty())
     }
 }
 

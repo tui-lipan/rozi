@@ -3388,6 +3388,7 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
                     replay: false,
                     keep_open: false,
                     floating: false,
+                    pinned: false,
                     fullscreen: false,
                     rect: None,
                     scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,

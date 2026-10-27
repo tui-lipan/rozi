@@ -2471,12 +2471,14 @@ impl Config {
     /// Pane title icon for tiled / floating / fullscreen chrome. Empty when nerd icons are off so
     /// the title does not spend columns on a missing glyph or a substitute badge: floating and
     /// fullscreen already change the frame, and a tiled pane is the default.
-    pub fn pane_title_icon(&self, fullscreen: bool, floating: bool) -> &'static str {
+    pub fn pane_title_icon(&self, fullscreen: bool, floating: bool, pinned: bool) -> &'static str {
         if !self.nerd_icons {
             return "";
         }
         if fullscreen {
             "󰊓"
+        } else if pinned {
+            "󰐃"
         } else if floating {
             "󰹙"
         } else {
@@ -2936,9 +2938,10 @@ mod tests {
         assert_eq!(config.effective_cap_style(CapStyle::Round), CapStyle::Round);
         assert_eq!(config.effective_cap_style(CapStyle::Arrow), CapStyle::Arrow);
         assert_eq!(config.effective_cap_style(CapStyle::Half), CapStyle::Half);
-        assert_eq!(config.pane_title_icon(false, false), "󰖲");
-        assert_eq!(config.pane_title_icon(false, true), "󰹙");
-        assert_eq!(config.pane_title_icon(true, false), "󰊓");
+        assert_eq!(config.pane_title_icon(false, false, false), "󰖲");
+        assert_eq!(config.pane_title_icon(false, true, false), "󰹙");
+        assert_eq!(config.pane_title_icon(false, true, true), "󰐃");
+        assert_eq!(config.pane_title_icon(true, false, true), "󰊓");
 
         config.nerd_icons = false;
         assert_eq!(
@@ -2954,8 +2957,8 @@ mod tests {
             config.effective_cap_style(CapStyle::Padded),
             CapStyle::Padded
         );
-        assert_eq!(config.pane_title_icon(false, false), "");
-        assert_eq!(config.pane_title_icon(true, true), "");
+        assert_eq!(config.pane_title_icon(false, false, false), "");
+        assert_eq!(config.pane_title_icon(true, true, true), "");
         assert_eq!(config.remote_host_icon(), "⌁ ");
         assert_eq!(config.named_session_icon(), "∞ ");
         assert_eq!(config.shared_clients_icon(), "⋈ ");

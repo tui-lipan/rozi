@@ -527,6 +527,7 @@ pub(crate) fn attachment_from_profile(
             pane.identity.keep_open = pane_profile.keep_open;
             pane.floating = pane_profile.floating;
             pane.fullscreen = pane_profile.fullscreen;
+            pane.pinned = pane_profile.pinned && pane.floating && !pane.fullscreen;
             pane.scrollable_width = crate::layout::tiling::sanitize_scrollable_width(
                 pane_profile
                     .scrollable_width
@@ -682,6 +683,7 @@ fn workspace_profile_from_state(
                     keep_open: pane.identity.keep_open,
                     floating: pane.floating,
                     fullscreen: pane.fullscreen,
+                    pinned: pane.pinned,
                     rect: pane.floating.then_some(pane.floating_rect.into()),
                     scrollable_width: {
                         let width =
@@ -802,6 +804,9 @@ pub struct PaneProfile {
     pub keep_open: bool,
     pub floating: bool,
     pub fullscreen: bool,
+    /// Carried to every workspace; only meaningful for a floating, non-fullscreen pane.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
     pub rect: Option<ProfileRect>,
     /// Scrollable column width fraction; absent restores as [`crate::state::DEFAULT_SCROLLABLE_WIDTH`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -966,6 +971,42 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_pane_survives_a_profile_round_trip() {
+        let mut state = State::new(Config::default(), Theme::default());
+        let rect = FloatRect {
+            x: 11.0,
+            y: 7.0,
+            w: 40.0,
+            h: 12.0,
+        };
+        let mut pinned = Pane::new(2, state.config.scrollback, rect);
+        pinned.floating = true;
+        pinned.pinned = true;
+        state.current_mut().workspaces[0].panes.push(pinned);
+
+        let mut profile = profile_from_state(&state);
+        let text = toml::to_string(&profile).expect("serialize");
+        assert_eq!(text.matches("pinned = true").count(), 1, "{text}");
+        let restored = State::from_profile(Config::default(), Theme::default(), profile.clone());
+        let panes = &restored.current().workspaces[0].panes;
+        assert!(panes.iter().any(|pane| pane.floating && pane.pinned));
+        assert!(panes.iter().any(|pane| !pane.floating && !pane.pinned));
+
+        // A pin written on a tiled or fullscreen pane is ignored.
+        for pane in &mut profile.workspaces[0].panes {
+            pane.pinned = true;
+            pane.fullscreen = pane.floating;
+        }
+        let restored = State::from_profile(Config::default(), Theme::default(), profile);
+        assert!(
+            restored.current().workspaces[0]
+                .panes
+                .iter()
+                .all(|pane| !pane.pinned)
+        );
+    }
+
+    #[test]
     fn snapshot_preserves_custom_name_and_floating_rect() {
         let mut state = State::new(Config::default(), Theme::default());
         let first = state.current_mut().workspaces[0]
@@ -987,6 +1028,7 @@ mod tests {
         };
         let mut floating = Pane::new(2, state.config.scrollback, floating_rect);
         floating.floating = true;
+        floating.pinned = true;
         floating.identity.profile_name = Some("scratch".to_string());
         state.current_mut().workspaces[0].panes.push(floating);
         state.current_mut().workspaces[0].focused_pane = Some(2);
@@ -1020,6 +1062,8 @@ mod tests {
         assert_eq!(workspace.panes[1].name.as_deref(), Some("scratch"));
         assert_eq!(workspace.panes[1].title.as_deref(), None);
         assert!(workspace.panes[1].floating);
+        assert!(workspace.panes[1].pinned);
+        assert!(!workspace.panes[0].pinned);
         assert_rect_eq(
             workspace.panes[1].rect.expect("floating rect"),
             floating_rect.into(),
@@ -1514,6 +1558,7 @@ mod tests {
                         command: Some("nvim src/main.rs".to_string()),
                         floating: false,
                         fullscreen: true,
+                        pinned: false,
                         rect: Some(ProfileRect {
                             x: 1.0,
                             y: 2.0,
@@ -1530,6 +1575,7 @@ mod tests {
                         command: Some("bash -l".to_string()),
                         floating: false,
                         fullscreen: false,
+                        pinned: false,
                         rect: Some(ProfileRect {
                             x: 81.0,
                             y: 2.0,
@@ -2033,6 +2079,7 @@ scrollable_width = 9.0
                         command: Some("bash".to_string()),
                         floating: false,
                         fullscreen: false,
+                        pinned: false,
                         rect: None,
                         ..PaneProfile::default()
                     }],
@@ -2052,6 +2099,7 @@ scrollable_width = 9.0
                             command: Some("nvim src/main.rs".to_string()),
                             floating: false,
                             fullscreen: true,
+                            pinned: false,
                             rect: None,
                             ..PaneProfile::default()
                         },
@@ -2060,6 +2108,7 @@ scrollable_width = 9.0
                             name: Some("scratch".to_string()),
                             floating: true,
                             fullscreen: false,
+                            pinned: false,
                             rect: Some(ProfileRect {
                                 x: 12.0,
                                 y: 6.0,

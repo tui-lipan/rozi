@@ -30,6 +30,7 @@ pub enum Action {
     /// then switch there. Triggered by `Ctrl+Shift+1`–`9` in prefix/modifier mode.
     RelocateWorkspace(usize),
     ToggleFloat,
+    TogglePin,
     ToggleFullscreen,
     RenamePane,
     RenameWorkspace,
@@ -179,6 +180,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::CycleFocus(false),
     Action::PromoteToMaster,
     Action::ToggleFloat,
+    Action::TogglePin,
     Action::ToggleFullscreen,
     Action::RenamePane,
     Action::RenameWorkspace,
@@ -309,6 +311,7 @@ impl Action {
             Action::CycleFocus(false) => "cycle-focus-prev",
             Action::PromoteToMaster => "promote-to-master",
             Action::ToggleFloat => "toggle-float",
+            Action::TogglePin => "toggle-pin",
             Action::ToggleFullscreen => "toggle-fullscreen",
             Action::RenamePane => "rename-pane",
             Action::RenameWorkspace => "rename-workspace",

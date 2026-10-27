@@ -43,6 +43,10 @@ pub struct Workspace {
     /// How the Scrollable allocator aligns [`Self::scrollable_anchor`] into the visible interval.
     /// Local view state only — never persisted in profiles or SharedLayout.
     pub scrollable_reveal_edge: ScrollableRevealEdge,
+    /// Last pane of this workspace's own that held focus, as opposed to a pinned pane passing
+    /// through. Focus returns here when a focused pinned pane is carried away. Local view state
+    /// only — never persisted in profiles or SharedLayout.
+    pub unpinned_focus: Option<PaneId>,
     /// User-assigned label shown in the workbar in place of (or alongside) the workspace
     /// number. `None` keeps the default numeric display.
     pub name: Option<String>,
@@ -66,6 +70,7 @@ impl Workspace {
             last_directional_focus: None,
             scrollable_anchor: None,
             scrollable_reveal_edge: ScrollableRevealEdge::Left,
+            unpinned_focus: None,
             name: None,
         }
     }

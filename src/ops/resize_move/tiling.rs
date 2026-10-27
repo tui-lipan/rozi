@@ -89,6 +89,31 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
     request_pane_focus(ctx, id);
 }
 
+/// Pin the focused pane so it comes along on every workspace switch, floating it first, or unpin it
+/// where it is.
+pub(crate) fn toggle_pin(ctx: &mut Context<AppRoot>) {
+    let Some(id) = ctx.state.focused_pane() else {
+        return;
+    };
+    let Some(pane) = ctx
+        .state
+        .active_workspace_ref()
+        .panes
+        .iter()
+        .find(|pane| pane.id == id && !pane.closing)
+    else {
+        return;
+    };
+    let pin = !pane.pinned;
+    if pin && !pane.floating {
+        toggle_tiling(ctx);
+    }
+    crate::layout::shared::edit_live_workspace(ctx.state.active_workspace_mut(), |layout| {
+        layout.set_pinned(id, pin)
+    });
+    request_pane_focus(ctx, id);
+}
+
 /// Where a pane returning to the tiling is dropped: the tile under `point` is split for it.
 pub(crate) struct TileAt {
     pub point: (f32, f32),
@@ -1089,6 +1114,43 @@ mod tests {
                     .tiled_ids()
                     .contains(&1)
             );
+        });
+    }
+
+    #[test]
+    fn pinning_floats_a_tiled_pane_and_tiling_it_again_unpins_it() {
+        fn pane_one(backend: &TestBackend<AppRoot>) -> &Pane {
+            backend.state().current().workspaces[0]
+                .panes
+                .iter()
+                .find(|pane| pane.id == 1)
+                .expect("pane 1")
+        }
+        in_test_stack(|| {
+            let mut backend = two_pane_backend(SplitAxis::Horizontal);
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePin))
+                .expect("pin");
+            let pane = pane_one(&backend);
+            assert!(pane.floating && pane.pinned);
+
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePin))
+                .expect("unpin");
+            let pane = pane_one(&backend);
+            assert!(
+                pane.floating && !pane.pinned,
+                "unpinning leaves the float in place"
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::TogglePin))
+                .expect("pin again");
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("tile");
+            let pane = pane_one(&backend);
+            assert!(!pane.floating && !pane.pinned);
         });
     }
 

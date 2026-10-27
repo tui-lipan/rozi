@@ -494,6 +494,7 @@ pub(crate) fn spawn_placement(
                         replay: false,
                         keep_open: false,
                         floating: false,
+                        pinned: false,
                         fullscreen: false,
                         rect: None,
                         scrollable_width: 0.5,

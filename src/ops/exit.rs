@@ -271,7 +271,12 @@ pub(crate) fn kill_workspace_with_confirmation(
 ) -> Update {
     let workspace_index = ctx.state.current().active_workspace;
     let workspace = &ctx.state.current().workspaces[workspace_index];
-    let pane_count = workspace.panes.iter().filter(|pane| !pane.closing).count();
+    // A pinned pane only rides along on this workspace; it belongs to none of them.
+    let pane_count = workspace
+        .panes
+        .iter()
+        .filter(|pane| !pane.closing && !pane.pinned)
+        .count();
     if pane_count == 0 {
         crate::pane::pty_events::notify_info(ctx, "Workspace is already empty");
         return Update::full();
@@ -299,7 +304,7 @@ pub(crate) fn kill_workspace_with_confirmation(
     let pane_ids: Vec<_> = ctx.state.current().workspaces[workspace_index]
         .panes
         .iter()
-        .filter(|pane| !pane.closing)
+        .filter(|pane| !pane.closing && !pane.pinned)
         .map(|pane| pane.id)
         .collect();
 

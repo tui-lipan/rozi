@@ -49,6 +49,7 @@ field, are reminders only.
 | New floating pane | `Shift+Enter` |
 | Close pane | `w` |
 | Toggle floating | `t` |
+| Pin or unpin | `T` |
 | Toggle fullscreen | `f` |
 | Rename pane | `N` |
 | Paste text | `v` |

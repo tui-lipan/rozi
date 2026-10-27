@@ -13,6 +13,9 @@ pub struct Pane {
     pub title: String,
     pub identity: PaneIdentity,
     pub floating: bool,
+    /// Floating and carried along whenever this pane's controller switches workspace. Shared
+    /// placement, so it is only ever set on a floating pane.
+    pub pinned: bool,
     pub fullscreen: bool,
     pub floating_rect: FloatRect,
     /// Whether `floating_rect` is user-visible floating geometry rather than only the default size
@@ -186,6 +189,7 @@ impl Pane {
             title: "shell".to_string(),
             identity: PaneIdentity::default(),
             floating: false,
+            pinned: false,
             fullscreen: false,
             floating_rect,
             floating_rect_initialized: false,

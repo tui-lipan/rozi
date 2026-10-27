@@ -1219,7 +1219,7 @@ mod tests {
                 .find(|line| line.contains("Search keybindings"))
                 .expect("help search row");
             assert!(placeholder.contains("│ Search keybindings…"));
-            assert!(placeholder.contains("54/54 │"), "{placeholder}");
+            assert!(placeholder.contains("55/55 │"), "{placeholder}");
 
             help_state(&mut backend).query = TextInput::new("here i am quite long");
             backend.render();

@@ -48,7 +48,8 @@ disconnects after opening it, collaborators can still find it in the same worksp
 
 Followers can still:
 
-- focus panes and switch workspaces locally
+- focus panes and switch workspaces locally. Pinned panes follow the controller's workspace
+  switches, not a follower's
 - type into panes unless input is locked
 - use copy, search, hints, overlays, and the sidebar
 - request layout control

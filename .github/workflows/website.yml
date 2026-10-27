@@ -7,10 +7,11 @@
 # After a successful release this moves `website` to the release tag.
 #
 # To publish documentation before the next release, run it by hand with `commits`: the commits
-# from master to apply on top of the latest release, oldest first, or a range such as
-# `v0.0.34..master`. Each must touch only docs/, README.md, assets/, or tools/docs-captures/ - the
-# site also serves install.sh and install.ps1 and counts features out of src/, and those must stay
-# the release's. A commit already in the release is skipped. Run it with `ref` alone to publish
+# from master to apply on top of the latest release, oldest first, or a range ending at the last
+# of them, such as `v0.0.34..79b66bc0`. Each must touch only docs/, README.md, assets/, or
+# tools/docs-captures/ - the site also serves install.sh and install.ps1 and counts features out
+# of src/, and those must stay the release's - so a range reaching a code commit is refused as a
+# whole. Commits already in the release are skipped. Run it with `ref` alone to publish
 # another commit, tag, or branch as it is. Never pass `master` as `ref` - it describes unreleased
 # work.
 name: Website
@@ -26,7 +27,7 @@ on:
         required: false
         default: ""
       commits:
-        description: "Documentation commits to apply on top of it, oldest first, or a range such as v0.0.34..master"
+        description: "Documentation commits to apply on top of it, oldest first, or a range ending at the last of them (v0.0.34..<commit>)"
         required: false
         default: ""
 
@@ -107,12 +108,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
 
-          # Expand ranges, oldest first, and check every commit before applying any.
+          # The checkout keeps branches only as origin/*; mirror them so `master` resolves in a
+          # range. HEAD is detached, so every local branch may be overwritten.
+          git fetch --quiet origin '+refs/heads/*:refs/heads/*'
+
+          # Expand ranges, oldest first, and check every commit before applying any. A name that
+          # does not resolve fails here rather than expanding to nothing.
           picks=()
           for item in $COMMITS; do
             if [[ "$item" == *..* ]]; then
-              mapfile -t range < <(git rev-list --reverse --no-merges "$item")
-              picks+=("${range[@]}")
+              listed="$(git rev-list --reverse --no-merges "$item")"
+              [ -n "$listed" ] && mapfile -t range <<< "$listed" && picks+=("${range[@]}")
             else
               picks+=("$(git rev-parse --verify "$item^{commit}")")
             fi

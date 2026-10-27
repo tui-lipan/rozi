@@ -99,12 +99,12 @@ match the published binaries.
 
 To publish documentation before the next release, run the **Website** workflow
 by hand with `commits`: the commits from `master` to apply on top of the latest
-release, oldest first, or a range such as `v0.0.34..master`. It publishes the
-release plus those commits. Each may touch only `docs/`, `README.md`,
-`assets/`, or `tools/docs-captures/`; the workflow refuses anything else,
-because the site also serves `install.sh` and `install.ps1` and counts features
-out of `src/`, and those must stay the release's. Commits already in the
-release are skipped. Never point `website` at `master`.
+release, oldest first, or a range ending at the last of them, such as
+`v0.0.34..79b66bc0`. It publishes the release plus those commits. Each may
+touch only `docs/`, `README.md`, `assets/`, or `tools/docs-captures/`; a range
+that reaches any other commit is refused as a whole, because the site also
+serves `install.sh` and `install.ps1` and counts features out of `src/`, and
+those must stay the release's. Commits already in the release are skipped. Never point `website` at `master`.
 
 **Leave the root directory as `docs`.** It is where both commands run and where
 `wrangler.jsonc` lives, which is what Cloudflare recommends for this layout.

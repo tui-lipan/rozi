@@ -505,6 +505,7 @@ reports the one it commits.
           "reference": { "session_instance": "…", "pane_id": 7, "generation": 1 },
           "order": 0,
           "floating": false,
+          "pinned": false,
           "fullscreen": false,
           "rect": { "x": 0, "y": 0, "width": 96, "height": 47 },
           "rect_fraction": { "x": 0.0, "y": 0.0, "width": 0.6, "height": 1.0 },
@@ -531,6 +532,7 @@ reports the one it commits.
 | `layout` | `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. |
 | `master_ratio` | Master workspaces only: the master pane's share of the width. |
 | `order` | The pane's position in the tiling order that every layout except Dwindle arranges panes in. Null for a floating pane. |
+| `pinned` | Whether the pane is pinned. A pinned pane floats and moves to each workspace the controlling client switches to. |
 | `rect` | Where the pane sits on the shared canvas, in whole cells. Gaps, borders, and the workbar are left out, because each client draws those differently. |
 | `rect_fraction` | The pane's position as fractions of the canvas, rounded to six decimal places. Floating panes are stored this way, so their fractions are exact. |
 | `split_ratio` | Dwindle workspaces only: the pane's share of the split that directly holds it. Absent for a floating pane or a lone tile. |

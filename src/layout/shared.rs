@@ -107,6 +107,9 @@ pub struct SharedPane {
     pub replay: bool,
     pub keep_open: bool,
     pub floating: bool,
+    /// Carried to whichever workspace the controller switches to. Only a floating pane is pinned.
+    #[serde(default)]
+    pub pinned: bool,
     pub fullscreen: bool,
     /// Fractions of the canonical canvas; `Some` only for floating panes.
     pub rect: Option<FracRect>,
@@ -151,6 +154,7 @@ pub enum SharedLayoutValidationError {
         workspace: usize,
     },
     MissingFloatingRect(PaneId),
+    PinnedTiledPane(PaneId),
     InvalidFloatingRect {
         pane_id: PaneId,
         reason: &'static str,
@@ -193,6 +197,7 @@ impl std::fmt::Display for SharedLayoutValidationError {
                 write!(f, "invalid tree split ratio in workspace {workspace}")
             }
             Self::MissingFloatingRect(id) => write!(f, "floating pane {id} missing rect"),
+            Self::PinnedTiledPane(id) => write!(f, "tiled pane {id} must not be pinned"),
             Self::InvalidFloatingRect { pane_id, reason } => {
                 write!(f, "floating pane {pane_id} has invalid rect: {reason}")
             }
@@ -311,6 +316,8 @@ impl SharedLayout {
                         pane_id: pane.pane_id,
                         reason: "non-floating pane must not carry a floating rect",
                     });
+                } else if pane.pinned {
+                    return Err(SharedLayoutValidationError::PinnedTiledPane(pane.pane_id));
                 }
             }
 
@@ -475,6 +482,7 @@ fn shared_workspace_from_state(
                 replay: pane.identity.replay,
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
+                pinned: pane.pinned,
                 fullscreen: pane.fullscreen,
                 rect: pane
                     .floating
@@ -923,10 +931,28 @@ impl SharedLayout {
         let changed = pane.floating != floating || pane.rect != rect;
         let retile = pane.floating != floating;
         pane.floating = floating;
+        // A pin only means something for a float, so returning to the tiling drops it.
+        pane.pinned &= floating;
         pane.rect = rect;
         if retile {
             self.settle_tree(position);
         }
+        changed
+    }
+
+    /// Pin or unpin pane `id`. Only a floating pane can be pinned. Returns whether it changed.
+    pub(crate) fn set_pinned(&mut self, id: PaneId, pinned: bool) -> bool {
+        let Some(pane) = self
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.panes.iter_mut())
+            .find(|pane| pane.pane_id == id)
+        else {
+            return false;
+        };
+        let pinned = pinned && pane.floating;
+        let changed = pane.pinned != pinned;
+        pane.pinned = pinned;
         changed
     }
 
@@ -1790,6 +1816,7 @@ fn apply_shared_pane_fields(
     float_rect: FloatRect,
 ) {
     pane.floating = shared_pane.floating;
+    pane.pinned = shared_pane.pinned;
     pane.fullscreen = shared_pane.fullscreen;
     if shared_pane.floating {
         pane.floating_rect = float_rect;
@@ -2218,6 +2245,7 @@ mod tests {
             replay: false,
             keep_open: false,
             floating: false,
+            pinned: false,
             fullscreen: false,
             rect: None,
             scrollable_width: 0.67,
@@ -2403,6 +2431,7 @@ mod tests {
                         replay: false,
                         keep_open: false,
                         floating: false,
+                        pinned: false,
                         fullscreen: false,
                         rect: None,
                         scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -2526,6 +2555,7 @@ mod reconciler_tests {
                         replay: false,
                         keep_open: false,
                         floating: false,
+                        pinned: false,
                         fullscreen: false,
                         rect: None,
                         scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -3217,6 +3247,7 @@ mod reconciler_tests {
                             replay: false,
                             keep_open: false,
                             floating: false,
+                            pinned: false,
                             fullscreen: false,
                             rect: None,
                             scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -3242,6 +3273,7 @@ mod reconciler_tests {
                                 replay: false,
                                 keep_open: false,
                                 floating: false,
+                                pinned: false,
                                 fullscreen: false,
                                 rect: None,
                                 scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
@@ -4057,6 +4089,18 @@ mod reconciler_tests {
             bad.validate(),
             Err(SharedLayoutValidationError::InvalidFloatingRect { pane_id: 1, .. })
         ));
+
+        // Tiled pane marked pinned
+        let mut bad = valid.clone();
+        bad.workspaces[0].panes[0].floating = false;
+        bad.workspaces[0].panes[0].rect = None;
+        bad.workspaces[0].panes[0].pinned = true;
+        assert_eq!(
+            bad.validate(),
+            Err(SharedLayoutValidationError::PinnedTiledPane(
+                bad.workspaces[0].panes[0].pane_id
+            ))
+        );
 
         // Non-floating pane carrying rect
         let mut bad = valid.clone();

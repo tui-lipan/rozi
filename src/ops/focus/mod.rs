@@ -2334,6 +2334,102 @@ mod tests {
         assert_eq!(state.current().focused_pane, Some(3));
     }
 
+    /// Workspace 0 holds tiled panes 1 and 2 plus pinned float 5; workspace 1 holds tiled 3.
+    fn state_with_pinned_float() -> State {
+        let mut state = state_with_tiled(&[1, 2]);
+        let rect = FloatRect {
+            x: 10.0,
+            y: 5.0,
+            w: 30.0,
+            h: 10.0,
+        };
+        let mut pinned = Pane::new(5, 100, rect);
+        pinned.floating = true;
+        pinned.pinned = true;
+        state.current_mut().workspaces[0].panes.push(pinned);
+        state.current_mut().workspaces[1]
+            .panes
+            .push(Pane::new(3, 100, rect));
+        append_tiled_window(&mut state.current_mut().workspaces[1], 3);
+        state.current_mut().workspaces[1].focused_pane = Some(3);
+        state
+    }
+
+    fn workspace_holds(state: &State, index: usize, id: PaneId) -> bool {
+        state.current().workspaces[index]
+            .panes
+            .iter()
+            .any(|pane| pane.id == id && !pane.closing)
+    }
+
+    #[test]
+    fn a_pinned_pane_follows_every_workspace_switch() {
+        let mut state = state_with_pinned_float();
+        focus_pane(&mut state, 2);
+
+        switch_workspace(&mut state, 1);
+        assert!(workspace_holds(&state, 1, 5));
+        assert!(!workspace_holds(&state, 0, 5));
+        assert!(workspace_holds(&state, 0, 2), "tiled panes stay home");
+        let pane = state.current().workspaces[1]
+            .panes
+            .iter()
+            .find(|pane| pane.id == 5)
+            .unwrap();
+        assert!(pane.pinned && pane.floating);
+        assert_eq!(pane.floating_rect.x, 10.0);
+        assert!(!state.current().workspaces[1].tiled_ids().contains(&5));
+
+        switch_workspace(&mut state, 4);
+        assert!(workspace_holds(&state, 4, 5));
+    }
+
+    #[test]
+    fn a_focused_pinned_pane_yields_focus_to_the_destinations_own_pane() {
+        let mut state = state_with_pinned_float();
+        focus_pane(&mut state, 5);
+
+        switch_workspace(&mut state, 1);
+        assert_eq!(state.current().focused_pane, Some(3));
+
+        focus_pane(&mut state, 5);
+        switch_workspace(&mut state, 2);
+        assert_eq!(
+            state.current().focused_pane,
+            Some(5),
+            "an empty workspace has only the pinned pane to focus"
+        );
+    }
+
+    #[test]
+    fn moving_a_pinned_pane_to_a_workspace_unpins_it_there() {
+        let mut state = state_with_pinned_float();
+        focus_pane(&mut state, 5);
+
+        move_focused_to_workspace(&mut state, 1);
+        assert_eq!(state.current().active_workspace, 1);
+        let pane = state.current().workspaces[1]
+            .panes
+            .iter()
+            .find(|pane| pane.id == 5)
+            .unwrap();
+        assert!(pane.floating && !pane.pinned);
+
+        switch_workspace(&mut state, 0);
+        assert!(workspace_holds(&state, 1, 5), "an unpinned pane stays put");
+    }
+
+    #[test]
+    fn moving_another_pane_brings_the_pinned_pane_along() {
+        let mut state = state_with_pinned_float();
+        focus_pane(&mut state, 2);
+
+        move_focused_to_workspace(&mut state, 1);
+        assert!(workspace_holds(&state, 1, 2));
+        assert!(workspace_holds(&state, 1, 5));
+        assert_eq!(state.current().focused_pane, Some(2));
+    }
+
     #[test]
     fn relocate_active_workspace_swaps_content_when_target_is_occupied() {
         let mut state = state_with_tiled(&[1, 2]);

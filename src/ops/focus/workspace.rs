@@ -12,6 +12,25 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     let previous = state.current().active_workspace;
     state.current_mut().active_workspace = index;
     state.animation = GeometryAnimation::None;
+    let carried = carry_pinned_panes(state, previous, index);
+    // A pinned pane keeps focus only where there is nothing else to focus: arriving somewhere
+    // returns to the pane that workspace last had focused.
+    let destination = &state.current().workspaces[index];
+    let remembered = destination.focused_pane.filter(|id| {
+        !carried.contains(id)
+            && destination
+                .panes
+                .iter()
+                .any(|pane| pane.id == *id && !pane.closing)
+    });
+    if remembered.is_some()
+        && state
+            .current()
+            .focused_pane
+            .is_some_and(|id| carried.contains(&id))
+    {
+        state.current_mut().focused_pane = remembered;
+    }
     super::choose_fallback_focus(state);
     if let Some(focus) = state.current().focused_pane {
         // Normalize Scrollable viewport for the newly active focus (covers inactive reconcile
@@ -22,6 +41,26 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     if previous != index {
         emit_workspace_switched(state, index);
     }
+}
+
+/// Move the pinned panes of workspace `source` to `target`, returning the ones that moved.
+///
+/// Only a client that may edit the shared layout carries them. A follower switching workspace
+/// leaves them where the controller has them.
+fn carry_pinned_panes(state: &mut State, source: usize, target: usize) -> Vec<PaneId> {
+    if source == target || !state.is_controller() {
+        return Vec::new();
+    }
+    let pinned: Vec<PaneId> = state.current().workspaces[source]
+        .panes
+        .iter()
+        .filter(|pane| pane.pinned && !pane.closing)
+        .map(|pane| pane.id)
+        .collect();
+    pinned
+        .into_iter()
+        .filter(|&id| transfer_pane(state, id, source, target))
+        .collect()
 }
 
 /// Emit the public `workspace-switched` event. Every mutation of `active_workspace` must go
@@ -57,7 +96,13 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
         super::choose_fallback_focus(state);
         return;
     };
+    // Sending a pinned pane to a workspace settles it there.
+    crate::layout::shared::edit_live_workspace(
+        &mut state.current_mut().workspaces[source_index],
+        |layout| layout.set_pinned(focused, false),
+    );
     transfer_pane(state, focused, source_index, target_index);
+    carry_pinned_panes(state, source_index, target_index);
     super::choose_fallback_focus(state);
 
     state.current_mut().active_workspace = target_index;

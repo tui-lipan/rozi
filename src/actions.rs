@@ -12,7 +12,7 @@ use crate::ops::identity::open_rename_pane;
 use crate::ops::profile::{open_profile_picker, open_save_profile_prompt};
 use crate::ops::resize_move::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
-    toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
+    toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_pin, toggle_tiling,
 };
 use crate::ops::search::open_search;
 use crate::ops::theme::open_theme_picker;
@@ -167,6 +167,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::Swap(_)
         | Action::PromoteToMaster
         | Action::ToggleFloat
+        | Action::TogglePin
         | Action::ToggleFullscreen
         | Action::FlipSplit
         | Action::AdjustRatio(_)
@@ -204,6 +205,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
             Action::SwitchWorkspace(_)
                 | Action::MoveToWorkspace(_)
                 | Action::RelocateWorkspace(_)
+                | Action::TogglePin
                 | Action::RenameWorkspace
                 | Action::KillWorkspace
                 | Action::SaveProfile
@@ -341,6 +343,10 @@ fn execute_action_inner(
         }
         Action::ToggleFloat => {
             toggle_tiling(ctx);
+            Update::full()
+        }
+        Action::TogglePin => {
+            toggle_pin(ctx);
             Update::full()
         }
         Action::ToggleFullscreen => toggle_fullscreen(ctx),

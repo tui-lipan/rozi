@@ -4702,6 +4702,11 @@
             "null"
           ]
         },
+        "pinned": {
+          "default": false,
+          "description": "A pinned pane is floating and moves with the controlling client to every workspace it\nswitches to.",
+          "type": "boolean"
+        },
         "rect": {
           "$ref": "#/$defs/CellRect",
           "description": "Placement on the canonical canvas, in cells, without gaps, borders, or the workbar - those\nare each client's own presentation. Every pane in Monocle shares one rect."

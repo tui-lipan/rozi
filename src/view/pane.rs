@@ -51,7 +51,7 @@ impl PaneMerge {
 fn pane_icon(ctx: &Context<AppRoot>, pane: &Pane) -> &'static str {
     ctx.state
         .config
-        .pane_title_icon(pane.fullscreen, pane.floating)
+        .pane_title_icon(pane.fullscreen, pane.floating, pane.pinned)
 }
 
 fn icon_lead(icon: &str) -> String {

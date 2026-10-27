@@ -4,9 +4,15 @@
 # latest release rather than work that has not shipped. The install scripts the site serves come
 # from the same commit, so they always match the published binaries.
 #
-# After a successful release this moves `website` to the release tag. Run it by hand with a `ref`
-# to publish a documentation fix before the next release: branch from the latest tag, cherry-pick
-# the fix, push that branch, and pass its name. Never pass `master` - it describes unreleased work.
+# After a successful release this moves `website` to the release tag.
+#
+# To publish documentation before the next release, run it by hand with `commits`: the commits
+# from master to apply on top of the latest release, oldest first, or a range such as
+# `v0.0.34..master`. Each must touch only docs/, README.md, assets/, or tools/docs-captures/ - the
+# site also serves install.sh and install.ps1 and counts features out of src/, and those must stay
+# the release's. A commit already in the release is skipped. Run it with `ref` alone to publish
+# another commit, tag, or branch as it is. Never pass `master` as `ref` - it describes unreleased
+# work.
 name: Website
 
 on:
@@ -17,6 +23,10 @@ on:
     inputs:
       ref:
         description: "Commit, tag, or branch to publish (default: the latest release)"
+        required: false
+        default: ""
+      commits:
+        description: "Documentation commits to apply on top of it, oldest first, or a range such as v0.0.34..master"
         required: false
         default: ""
 
@@ -39,7 +49,8 @@ jobs:
        startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     steps:
-      - name: Move the website branch
+      - name: Choose the commit to publish
+        id: base
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED: ${{ inputs.ref }}
@@ -53,15 +64,81 @@ jobs:
           # A release run for an older tag finishing late must not move the site backwards.
           if [ "$GITHUB_EVENT_NAME" = workflow_run ] && [ "$ref" != "$RELEASED" ]; then
             echo "latest release is $latest; leaving website alone"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ref" --jq .sha)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Move the website branch
+        if: steps.base.outputs.skip != 'true' && inputs.commits == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.base.outputs.ref }}
+          SHA: ${{ steps.base.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/website" >/dev/null 2>&1; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/website" \
-              -f sha="$sha" -F force=true >/dev/null
+              -f sha="$SHA" -F force=true >/dev/null
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref=refs/heads/website -f sha="$sha" >/dev/null
+              -f ref=refs/heads/website -f sha="$SHA" >/dev/null
           fi
-          echo "website now at $ref ($sha)"
+          echo "website now at $REF ($SHA)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.base.outputs.skip != 'true' && inputs.commits != ''
+        with:
+          ref: ${{ steps.base.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Apply the documentation commits and publish them
+        if: steps.base.outputs.skip != 'true' && inputs.commits != ''
+        env:
+          REF: ${{ steps.base.outputs.ref }}
+          COMMITS: ${{ inputs.commits }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+
+          # Expand ranges, oldest first, and check every commit before applying any.
+          picks=()
+          for item in $COMMITS; do
+            if [[ "$item" == *..* ]]; then
+              mapfile -t range < <(git rev-list --reverse --no-merges "$item")
+              picks+=("${range[@]}")
+            else
+              picks+=("$(git rev-parse --verify "$item^{commit}")")
+            fi
+          done
+
+          for commit in "${picks[@]}"; do
+            # Already published with the release; nothing of it is left to check.
+            git merge-base --is-ancestor "$commit" HEAD && continue
+            outside="$(git diff-tree --no-commit-id --name-only -r "$commit" \
+              | grep -Ev '^(docs/|README\.md$|assets/|tools/docs-captures/)' || true)"
+            if [ -n "$outside" ]; then
+              echo "::error::$(git log -1 --format='%h %s' "$commit") changes more than documentation:"
+              echo "$outside"
+              exit 1
+            fi
+          done
+
+          applied=0
+          for commit in "${picks[@]}"; do
+            if git merge-base --is-ancestor "$commit" HEAD; then
+              echo "already in $REF: $(git log -1 --format='%h %s' "$commit")"
+            else
+              git cherry-pick "$commit"
+              applied=$((applied + 1))
+            fi
+          done
+
+          git push --force origin HEAD:refs/heads/website
+          echo "website now at $REF plus $applied documentation commit(s) ($(git rev-parse HEAD))"

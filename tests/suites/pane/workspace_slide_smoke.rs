@@ -151,7 +151,7 @@ fn workspace_slide_snaps_when_disabled_or_resized() {
 }
 
 #[test]
-fn workspace_slide_supports_floating_fullscreen_and_each_layout() {
+fn workspace_slide_preserves_terminal_size_across_representative_layouts() {
     rozi::test_support::on_deeper_stack(|| {
         // One tiled layout, one floating layout, and monocle-as-fullscreen. The slide
         // contract is that the terminal keeps its settled size, which these three cover.

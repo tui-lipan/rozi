@@ -881,10 +881,9 @@ const BOTTOM: PaneId = 11;
 const ICON_X: u16 = 2;
 
 const MODES: [PaneTitlebarMode; 2] = [PaneTitlebarMode::Border, PaneTitlebarMode::Integrated];
-/// Padded integrated titles own the seam row. Round caps leave the corner cells to fuse.
-/// Half matches padded ownership and Arrow matches the round inset, so those two stand in
-/// for the four cap styles.
-const CAPS: [CapStyle; 2] = [CapStyle::Padded, CapStyle::Round];
+/// Padded and Half own the seam row through separate composition paths.
+/// Round covers the generic capped path shared with Arrow, with inset corner junctions.
+const CAPS: [CapStyle; 3] = [CapStyle::Padded, CapStyle::Half, CapStyle::Round];
 
 /// Two tiles stacked top/bottom in merged-border mode, with `focused` holding the focus.
 fn render_seam(mode: PaneTitlebarMode, title_style: CapStyle, focused: PaneId) -> CapturedFrame {

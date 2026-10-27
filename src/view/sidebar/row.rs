@@ -316,6 +316,16 @@ impl Row {
         self
     }
 
+    #[cfg(test)]
+    pub(super) fn detail_texts(&self) -> Vec<&str> {
+        self.detail.iter().map(|(text, _)| text.as_str()).collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn meta_text(&self) -> Option<&str> {
+        self.meta.as_ref().map(|(text, _)| text.as_str())
+    }
+
     pub(super) fn parts(
         mut self,
         ctx: &Context<AppRoot>,

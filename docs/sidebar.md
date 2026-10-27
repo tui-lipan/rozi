@@ -115,8 +115,8 @@ Selecting a row focuses its pane. For a published row, it also asks the program 
 activity.
 
 When an agent runs more than once in one project, such as Claude Code with background sessions or
-in two panes, its runs are listed beneath one row for the agent, titled by what each works on. A
-run with no title is named after its terminal title or the agent, numbered when two would read the
+in two panes, its runs are listed beneath one row for the agent, titled by what each works on, with
+its state and elapsed time beneath, such as `Working 9m22s`. A run with no title is named after its terminal title or the agent, numbered when two would read the
 same. The agent's row shows its most urgent run's state, and selecting it collapses or expands the
 runs. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
 out. When the runs are on different workspaces, each one shows its workspace number. Runs in a

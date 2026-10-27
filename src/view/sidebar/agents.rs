@@ -1142,6 +1142,35 @@ fn row_is_active(state: &State, row: &AgentRow) -> bool {
         && row.slot.as_ref().is_none_or(|slot| slot.active)
 }
 
+/// Whether a run is one its client keeps behind the one it shows: published for the pane, but not
+/// on screen there. A pane's own agent and the run a client shows are what focusing the pane
+/// reveals; this one is not.
+pub(crate) fn is_background_run(row: &AgentRow) -> bool {
+    row.slot.as_ref().is_some_and(|slot| !slot.active)
+}
+
+/// A run's title: italic for a background run, so it reads as behind the pane without giving up
+/// the colour its name shares with every other run.
+pub(crate) fn run_title_style(theme: &Theme, row: &AgentRow) -> Style {
+    let style = super::super::fg_only(&theme.primary);
+    if is_background_run(row) {
+        style.italic()
+    } else {
+        style
+    }
+}
+
+/// Pins the background marker to a background run's detail line, under the workspace badge.
+fn mark_background_run(content: Row, state: &State, row: &AgentRow) -> Row {
+    if !is_background_run(row) {
+        return content;
+    }
+    content.detail_badge(
+        crate::view::vocabulary::BACKGROUND_RUN,
+        super::super::fg_only(&state.theme.muted).dim(),
+    )
+}
+
 /// A cluster's one-line row: the agent, the most urgent of its runs' glyphs, and its workspace when
 /// they share one. Folded, it also counts its runs by state, and its arrow takes the most urgent
 /// run's color.
@@ -1247,7 +1276,7 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
         let mut content = Row::new(child.label)
             .active(row_is_active(state, row))
             .glyph(status_icon(glyph, color, spinner))
-            .title_style(super::super::fg_only(&state.theme.primary))
+            .title_style(run_title_style(&state.theme, row))
             .detail(
                 row_status_label(status, row.finished_unseen),
                 Style::new().fg(color),
@@ -1274,14 +1303,14 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
         if let Some(duration) = duration {
             content = content.meta(duration, Style::new().fg(color));
         }
-        return content;
+        return mark_background_run(content, state, row);
     }
     let mut content = Row::new(row.title.clone())
         // For a published slot, being on screen in its own program decides this: a focused pane
         // shows exactly one of its slots, so marking them all active would say nothing.
         .active(row_is_active(state, row))
         .glyph(status_icon(glyph, color, spinner))
-        .title_style(super::super::fg_only(&state.theme.primary))
+        .title_style(run_title_style(&state.theme, row))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
         // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
         // that two rows cannot be watched side by side.
@@ -1335,7 +1364,7 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
             super::super::fg_only(&state.theme.muted).dim(),
         );
     }
-    content
+    mark_background_run(content, state, row)
 }
 
 #[cfg(test)]

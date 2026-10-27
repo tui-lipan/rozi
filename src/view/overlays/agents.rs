@@ -119,6 +119,12 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         let (_, color) = status_colors
             .iter()
             .find(|(location, _)| location == &item.value)?;
+        // A run its client keeps in the background leans, as it does in the sidebar.
+        let name_style = if row.background {
+            name_style.italic()
+        } else {
+            name_style
+        };
         let mut label = vec![Span::new(row.title()).style(name_style)];
         if row.task.is_some() {
             label.push(Span::new(format!(" · {}", row.agent)).style(agent_style));
@@ -272,6 +278,7 @@ mod tests {
             project: Some("api".into()),
             branch: Some("fix-login".into()),
             ordinal: None,
+            background: false,
         }
     }
 

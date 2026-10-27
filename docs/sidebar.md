@@ -122,6 +122,10 @@ runs. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving 
 out. When the runs are on different workspaces, each one shows its workspace number. Runs in a
 pane with no known directory are grouped only with other sessions in the same pane.
 
+A run that its program keeps behind the one it shows, such as a background session of Claude Code
+or another loaded Codex thread, has an italic title and `⧉` at the right of its second line.
+Focusing its pane does not show it; selecting the row does.
+
 Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
 Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
 for you stands apart from work that failed. A finished run stays marked `Done` until you look at
@@ -163,7 +167,8 @@ agent and gives the reason for its state when it gave one, such as `Permission r
 without a task shows its state and the project and branch the agent works in instead.
 
 Agents in the session on screen also show a time: how long a blocked state has held, or how long a
-finished run took. A marker in the left margin shows the agent in the focused pane.
+finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
+a run its program keeps in the background has an italic title and `⧉` on its second line.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
 one of several sessions in a pane, switch to that session. It then leaves the tab. Looking at an

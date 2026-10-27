@@ -72,8 +72,15 @@ fn agent_row(state: &State, row: GlobalAgentRow) -> Row {
     let mut content = Row::new(row.title())
         .active(active)
         .glyph(glyph)
-        .title_style(super::super::fg_only(&theme.primary))
+        .title_style(if row.background {
+            super::super::fg_only(&theme.primary).italic()
+        } else {
+            super::super::fg_only(&theme.primary)
+        })
         .badge_text(place_badge(&row), muted);
+    if row.background {
+        content = content.detail_badge(crate::view::vocabulary::BACKGROUND_RUN, muted);
+    }
     if let Some(elapsed) = row.elapsed {
         content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
     }
@@ -148,6 +155,7 @@ mod tests {
             project: None,
             branch: None,
             ordinal: None,
+            background: false,
         }
     }
 

@@ -362,19 +362,23 @@ fn managed_file_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct Scratch(PathBuf);
 
     impl Scratch {
+        /// A directory no other test shares. The time tells runs apart; tests in one run are in
+        /// parallel and the clock can read the same for two of them (macOS gives microseconds), so
+        /// a counter tells those apart.
         fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let path = std::env::temp_dir().join(format!(
-                "rozi-managed-skill-{}-{}",
+                "rozi-managed-skill-{}-{}-{}",
                 std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             fs::create_dir_all(&path).unwrap();
             Self(path)

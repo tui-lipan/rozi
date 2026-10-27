@@ -624,7 +624,6 @@ mod tests {
     use crate::config::ProfileEntry;
     use crate::profiles::{Profile, save_profile};
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tui_lipan::TestBackend;
 
     fn entry(name: &str, path: PathBuf) -> ProfileEntry {
@@ -634,14 +633,19 @@ mod tests {
         }
     }
 
+    /// A profile path no other test shares. The time tells runs apart; tests in one run are in
+    /// parallel and the clock can read the same for two of them (macOS gives microseconds), so a
+    /// counter tells those apart.
     fn temp_profile_path() -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         std::env::temp_dir().join(format!(
-            "rozi-profile-ops-{}-{}.toml",
+            "rozi-profile-ops-{}-{}-{}.toml",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock after epoch")
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
     }
 

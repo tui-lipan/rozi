@@ -671,6 +671,8 @@ fn title_parts(ctx: &Context<AppRoot>, pane: &Pane, focused_pane: Option<PaneId>
     let icon = pane_icon(ctx, pane);
     let badge = if pane.fullscreen {
         Some("fullscreen")
+    } else if pane.pinned {
+        Some("pinned")
     } else if pane.floating {
         Some("floating")
     } else {
@@ -1060,6 +1062,8 @@ pub(crate) fn pane_element(
     let icon = pane_icon(ctx, pane);
     let badge = if pane.fullscreen {
         Some("fullscreen")
+    } else if pane.pinned {
+        Some("pinned")
     } else if pane.floating {
         Some("floating")
     } else {

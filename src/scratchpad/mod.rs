@@ -483,6 +483,7 @@ pub(crate) fn scratch_panes(
             // Scratch floats are already canvas-absolute; see `WorkspaceLayer::float_origin`.
             float_origin: (0.0, 0.0),
             scratch: true,
+            panes: view::LayerPanes::All,
             // Snap whenever the dropdown moves during the slide. A transition chasing its box
             // would settle on its own, longer curve instead of this one. Compare the box rather
             // than testing whether progress is still animating,

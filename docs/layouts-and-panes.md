@@ -122,7 +122,7 @@ Press `t` to move the focused pane between the tiled layout and a floating recta
 pointer yet.
 
 Press `T` to pin the focused pane. A pinned pane floats above every workspace: it comes with you
-when you switch workspaces, keeps its position, and shows a pin icon in its title. Pinning a tiled
+when you switch workspaces, keeps its position, and is labeled `pinned` in its title. Pinning a tiled
 pane floats it first. Press `T` again to unpin it on the workspace you are on. Moving a pinned pane
 to a workspace with `Shift+1` through `Shift+9`, or returning it to the tiled layout with `t`, also
 unpins it. Killing a workspace leaves a pinned pane open. When you switch to a workspace, focus goes

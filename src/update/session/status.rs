@@ -159,6 +159,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.git_branch = state.git_branch;
     pane.terminal.repository = state.repository;
     pane.terminal.foreground_program = state.foreground_program;
+    pane.terminal.foreground_shell = state.foreground_shell;
     pane.terminal.foreground_programs = state.foreground_programs.into_vec();
     pane.terminal.foreground_executable = state.foreground_executable;
     pane.terminal.foreground_arguments = state.foreground_arguments;
@@ -249,6 +250,11 @@ pub(crate) fn pane_runtime_changed(
     let mut finished_rows = Vec::new();
     let mut failed_rows = Vec::new();
     let mut recording_changed = None;
+    let baseline = find_pane_in_namespace(&ctx.state, pane_id, local)
+        .filter(|pane| {
+            pane.pty_generation == generation && state.sequence > pane.terminal.runtime_sequence
+        })
+        .map(|pane| super::runtime_events::RuntimeBaseline::of(&ctx.state, pane));
     if let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
@@ -320,6 +326,11 @@ pub(crate) fn pane_runtime_changed(
                 ],
             ),
         );
+    }
+    if let Some(baseline) = baseline
+        && let Some(pane) = find_pane_in_namespace(&ctx.state, pane_id, local)
+    {
+        baseline.emit_changes(&ctx.state, pane, local);
     }
     // A row the publisher is not showing finished. Attending the pane cannot have acknowledged
     // it - the user was looking at a different tab of the same program - so it alerts regardless,

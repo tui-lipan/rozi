@@ -309,6 +309,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "record-ui",
     "remote-control",
     "remote-extension-runtime",
+    "runtime-events",
     "session-control",
     "sidebar-streams",
     "sidebar-tab-settings",
@@ -340,6 +341,10 @@ ignores it and starts the prompt from `value`.
 
 `prompt` means the UI answers [`prompt`](#prompts). An older binary refuses it as an unknown
 command.
+
+`runtime-events` means [`subscribe`](#subscriptions) and [hooks](hooks.md) accept the
+`agent-state-changed` and `foreground-changed` events. An older binary refuses a subscription that
+names either.
 
 `sidebar-tab-settings` means extension manifests accept a setting's table form and
 [`settings` on a sidebar tab](writing-extensions.md#tab-settings). An older binary rejects a

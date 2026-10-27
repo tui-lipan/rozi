@@ -104,6 +104,9 @@ pub const PROMPT_CAPABILITY: &str = "prompt";
 /// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
 /// older binary ignores the field and starts from `value`.
 pub const PICK_PROMPT_FROM_QUERY_CAPABILITY: &str = "pick-prompt-from-query";
+/// `subscribe` and hooks accept the `agent-state-changed` and `foreground-changed` events. An older
+/// binary refuses a subscription naming either, and warns about a hook that does.
+pub const RUNTIME_EVENTS_CAPABILITY: &str = "runtime-events";
 /// A UI answers `agents-overview`, every agent it knows about in every session and on every
 /// connected host, and `agent-go`, which goes to one of them.
 pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
@@ -151,6 +154,7 @@ impl ApiDescription {
                 RECORD_UI_CAPABILITY,
                 REMOTE_CONTROL_CAPABILITY,
                 crate::extension_runtime::protocol::CAPABILITY,
+                RUNTIME_EVENTS_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
                 SIDEBAR_TAB_SETTINGS_CAPABILITY,

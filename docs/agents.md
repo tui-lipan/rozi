@@ -326,7 +326,9 @@ JSON output also gives each agent's `reason` for its state, the `task` its publi
 reads learns that a run ended even if it never saw the agent working.
 
 For agent automation, discover agents with `rozi --here agents list --format json`, save the
-chosen `ref`, and keep using `--ref` for subsequent operations. `rozi context --format json`
+chosen `ref`, and keep using `--ref` for subsequent operations. To react when an agent starts,
+blocks, or finishes instead of polling, subscribe to the
+[`agent-state-changed`](hooks.md#events-and-fields) event, which carries the same `ref`. `rozi context --format json`
 verifies your own pane and session independently of the session currently on screen.
 See [caller context](control.md#verify-caller-context).
 

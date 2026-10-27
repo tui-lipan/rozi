@@ -613,7 +613,8 @@
 # Client-side commands run on rozi events, launched asynchronously through
 # command_shell, with at most 32 overlapping hook and detached exec jobs.
 # Hooks receive ROZI_EVENT, event fields, and ROZI_SOCKET. Events:
-# pane-spawned, pane-exited, pane-status-changed, bell, focus-changed, workspace-switched,
+# pane-spawned, pane-exited, pane-status-changed, agent-state-changed, foreground-changed,
+# bell, focus-changed, workspace-switched, layout-changed,
 # session-attached, session-detached, session-renamed, session-created,
 # controller-changed, client-joined, client-left, profile-loaded, profile-applied,
 # profile-saved, config-reloaded. See docs/hooks.md.

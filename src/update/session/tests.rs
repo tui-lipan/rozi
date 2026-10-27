@@ -3905,3 +3905,218 @@ fn restored_replay_waits_for_input_readiness_in_current_and_background_attachmen
         }
     });
 }
+
+/// Dispatch one runtime update for pane 1, generation 7, of the backend's on-screen session.
+fn dispatch_runtime(
+    backend: &mut TestBackend<crate::AppRoot>,
+    agents: Vec<crate::session::protocol::AgentRecord>,
+    state: PaneRuntimeState,
+) {
+    let epoch = backend.state().runtime_epoch;
+    backend
+        .dispatch(Msg::SessionPaneRuntimeChanged {
+            epoch,
+            pane_id: 1,
+            local: false,
+            generation: 7,
+            agents,
+            state,
+        })
+        .expect("dispatch runtime");
+}
+
+fn bind_first_pane(backend: &mut TestBackend<crate::AppRoot>) {
+    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+    pane.pty_generation = 7;
+    pane.terminal.bind_session(pane.id, 7);
+}
+
+fn next_event(events: &std::sync::mpsc::Receiver<String>) -> serde_json::Value {
+    serde_json::from_str(&events.try_recv().expect("an event")).unwrap()
+}
+
+/// An agent is reported as it appears, at each change of the state `agents list` gives it, and as
+/// it goes; an update that leaves its state alone says nothing.
+#[test]
+fn agent_state_changes_emit_with_the_agents_list_state_and_ref() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        bind_first_pane(&mut backend);
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::AgentStateChanged,
+        ])));
+        let reference = crate::session::protocol::AgentRef::for_test(1, 7, None);
+        let records = || vec![reference.clone().into()];
+        let detected = |state, sequence| PaneRuntimeState {
+            detected_agent: Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
+                state,
+            }),
+            sequence,
+            ..PaneRuntimeState::default()
+        };
+        use crate::session::protocol::DetectedAgentState::{Blocked, Working};
+
+        dispatch_runtime(&mut backend, records(), detected(Working, 1));
+        let appeared = next_event(&events);
+        assert_eq!(appeared["event"], "agent-state-changed");
+        assert_eq!(appeared["data"]["pane"], "1");
+        assert_eq!(appeared["data"]["agent"], "opencode");
+        assert_eq!(appeared["data"]["state"], "working");
+        assert_eq!(appeared["data"]["previous_state"], "");
+        let named: crate::session::protocol::AgentRef =
+            serde_json::from_str(appeared["data"]["ref"].as_str().unwrap()).unwrap();
+        assert_eq!(named, reference, "`ref` is what `agents get --ref` takes");
+
+        dispatch_runtime(&mut backend, records(), detected(Blocked, 2));
+        let blocked = next_event(&events);
+        assert_eq!(blocked["data"]["state"], "blocked");
+        assert_eq!(blocked["data"]["previous_state"], "working");
+
+        // Another field changed; the agent's state did not.
+        dispatch_runtime(
+            &mut backend,
+            records(),
+            PaneRuntimeState {
+                git_branch: Some("main".into()),
+                ..detected(Blocked, 3)
+            },
+        );
+        assert!(events.try_recv().is_err());
+
+        dispatch_runtime(
+            &mut backend,
+            records(),
+            PaneRuntimeState {
+                sequence: 4,
+                ..PaneRuntimeState::default()
+            },
+        );
+        let gone = next_event(&events);
+        assert_eq!(gone["data"]["state"], "");
+        assert_eq!(gone["data"]["previous_state"], "blocked");
+        assert!(events.try_recv().is_err());
+    });
+}
+
+/// The running program is reported, not the field that keeps naming the last command at a
+/// prompt; and the pane's shell in the foreground is the pane at its prompt.
+#[test]
+fn foreground_changes_report_the_running_program() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        bind_first_pane(&mut backend);
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::ForegroundChanged,
+        ])));
+        use crate::session::protocol::PaneCommandPhase;
+        let foreground = |phase, program: &str, pid, sequence| PaneRuntimeState {
+            command_phase: phase,
+            foreground_program: Some(program.to_string()),
+            foreground_pid: pid,
+            sequence,
+            ..PaneRuntimeState::default()
+        };
+
+        dispatch_runtime(
+            &mut backend,
+            Vec::new(),
+            foreground(PaneCommandPhase::Executing, "cargo", Some(42), 1),
+        );
+        let started = next_event(&events);
+        assert_eq!(started["event"], "foreground-changed");
+        assert_eq!(started["data"]["pane"], "1");
+        assert_eq!(started["data"]["program"], "cargo");
+        assert_eq!(started["data"]["previous_program"], "");
+        assert_eq!(started["data"]["pid"], "42");
+
+        // Shell integration still names `cargo` at the prompt; nothing is running.
+        dispatch_runtime(
+            &mut backend,
+            Vec::new(),
+            foreground(PaneCommandPhase::Prompt, "cargo", None, 2),
+        );
+        let ended = next_event(&events);
+        assert_eq!(ended["data"]["program"], "");
+        assert_eq!(ended["data"]["previous_program"], "cargo");
+        assert_eq!(ended["data"]["pid"], "");
+
+        // Without integration the shell itself is in the foreground: still nothing running. The
+        // server says which program is a shell, so a custom one on a remote host - `xonsh`, which
+        // this client's configuration never names - is a shell all the same.
+        for (shell, sequence) in [("bash", 3), ("xonsh", 4)] {
+            dispatch_runtime(
+                &mut backend,
+                Vec::new(),
+                PaneRuntimeState {
+                    foreground_shell: true,
+                    ..foreground(PaneCommandPhase::Unknown, shell, Some(7), sequence)
+                },
+            );
+            assert!(events.try_recv().is_err(), "{shell} is the prompt");
+        }
+
+        // The same program in a new process group is a new foreground job.
+        dispatch_runtime(
+            &mut backend,
+            Vec::new(),
+            foreground(PaneCommandPhase::Unknown, "claude", Some(50), 5),
+        );
+        assert_eq!(next_event(&events)["data"]["program"], "claude");
+        dispatch_runtime(
+            &mut backend,
+            Vec::new(),
+            foreground(PaneCommandPhase::Unknown, "claude", Some(51), 6),
+        );
+        let restarted = next_event(&events);
+        assert_eq!(restarted["data"]["previous_program"], "claude");
+        assert_eq!(restarted["data"]["pid"], "51");
+    });
+}
+
+/// A scratch pane and a session pane can share an id. `focused` names the one actually in focus:
+/// the visible scratch pane, not the hidden session pane its id happens to match.
+#[test]
+fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        bind_first_pane(&mut backend);
+        assert_eq!(backend.state().current().focused_pane, Some(1));
+        let mut scratch = crate::state::Pane::new(1, 100, Default::default());
+        scratch.pty_generation = 7;
+        scratch.terminal.bind_session(1, 7);
+        let state = backend.state_mut();
+        state.scratch.panes.push(scratch);
+        state.scratch.focused_pane = Some(1);
+        state.scratch_visible = true;
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::ForegroundChanged,
+        ])));
+        let epoch = backend.state().runtime_epoch;
+        let mut focused = |local| {
+            backend
+                .dispatch(Msg::SessionPaneRuntimeChanged {
+                    epoch,
+                    pane_id: 1,
+                    local,
+                    generation: 7,
+                    agents: Vec::new(),
+                    state: PaneRuntimeState {
+                        command_phase: crate::session::protocol::PaneCommandPhase::Executing,
+                        foreground_program: Some("cargo".into()),
+                        sequence: 1,
+                        ..PaneRuntimeState::default()
+                    },
+                })
+                .expect("dispatch runtime");
+            next_event(&events)["data"]["focused"].clone()
+        };
+
+        assert_eq!(focused(true), "true", "the visible scratch pane");
+        assert_eq!(
+            focused(false),
+            "false",
+            "the hidden session pane with its id"
+        );
+    });
+}

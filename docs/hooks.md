@@ -36,6 +36,8 @@ event's fields in the [environment](#environment).
 | `pane-spawned` | A workspace pane is created. | `pane`, `workspace`, `command`, `cwd` |
 | `pane-exited` | A pane's process exit reaches the client. | `pane`, `code`, `focused` |
 | `pane-status-changed` | A pane's reported status changes or clears. Seeding status on attach does not fire it. | `pane`, `status`, `reason`, `previous_status`, `previous_reason`, `focused` |
+| `agent-state-changed` | An agent's state changes, including when it appears in a pane and when it goes. Seeding agents on attach does not fire it. | `pane`, `agent`, `label`, `ref`, `state`, `previous_state`, `reason`, `focused` |
+| `foreground-changed` | The program running in a pane changes, including when the pane returns to its shell prompt. | `pane`, `program`, `previous_program`, `pid`, `focused` |
 | `bell` | A pane rings the terminal bell. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
@@ -58,6 +60,21 @@ Every field is a string:
 - `command` and `cwd` are empty when the pane inherited them.
 - `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`.
 - `controller` and the status fields are empty when there is no value.
+- `agent-state-changed` describes each agent as [`rozi agents list`](agents.md#inspect-and-wait-for-agents)
+  does. `state` and `previous_state` are `working`, `blocked`, `idle`, `done`, or `error`;
+  `previous_state` is empty when the agent appears, and `state` is empty when it goes. `agent` is
+  the agent's ID, such as `claude`, and `label` its name. `reason` is why the agent is in its
+  state, when it says. `ref` is the agent's exact reference as JSON: pass it to
+  `rozi agents get --ref` or `agents wait --ref`. An agent keeps its `ref` across every turn it
+  works through and finishes. An agent replaced in the same pane, such as one relaunched, has a
+  new `ref`, so the replacement reads as one agent going and another appearing.
+- `foreground-changed.program` is the executable name of the program the pane runs, such as
+  `cargo`, and is empty when the pane is at its shell prompt. The pane's shell is the one it was
+  started with, or a common shell such as `bash` or `zsh`, on the machine running the session.
+  `pid` is that program's process group on the same machine, and is empty when nothing runs or the
+  platform cannot read it. The same program restarted in a new process group fires again. rozi
+  samples a pane's foreground, so a command that starts and finishes between two samples may not
+  fire.
 - `layout-changed.author` is `self`, `client`, or `server`.
 - `controller-changed.reason` is `released`, `expired`, or `granted`.
 
@@ -102,8 +119,9 @@ skip hooks once 32 jobs are already running. For state, retries, or long-lived e
 
 Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks, so
 most events in a [shared session](shared-sessions.md) run matching hooks on every client.
-`pane-status-changed` is the exception: every client delivers it to its own subscribers, but only
-the client holding layout control runs its hooks.
+`pane-status-changed`, `agent-state-changed`, and `foreground-changed` are the exceptions: every
+client delivers them to its own subscribers, but only the client holding layout control runs their
+hooks.
 
 No hooks run while every client is detached, and a client that crashes cannot run a final
 `session-detached` hook.

@@ -72,6 +72,8 @@ pub struct ForegroundSnapshot<'a> {
     /// The pane's directory names a filesystem on another host, so neither the resolved executable
     /// path nor the arguments describe anything on the machine that would replay them.
     pub remote: bool,
+    /// `program` is a shell, as the session server judged it on the host running the pane.
+    pub shell: bool,
 }
 
 /// The command a pane is running *right now*, as a line an interactive shell would accept, if it
@@ -93,21 +95,8 @@ pub struct ForegroundSnapshot<'a> {
 /// Neither the path nor the arguments belong to a pane attached over `--remote`: both describe a
 /// process on the far host, which the machine doing the restoring is not. Those panes keep the
 /// bare program name, as they did before either was captured.
-pub fn replayable_foreground_command(
-    snapshot: ForegroundSnapshot<'_>,
-    shells: &std::collections::HashSet<String>,
-) -> Option<String> {
-    use crate::session::protocol::PaneCommandPhase;
-
-    match snapshot.command_phase {
-        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => {}
-        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
-            return None;
-        }
-    }
-    let program = snapshot.program.filter(|program| {
-        !shells.contains(&crate::platform::command::normalized_program_name(program))
-    })?;
+pub fn replayable_foreground_command(snapshot: ForegroundSnapshot<'_>) -> Option<String> {
+    let program = running_program(snapshot.command_phase, snapshot.program, snapshot.shell)?;
     if snapshot.remote {
         return Some(program.to_string());
     }
@@ -241,28 +230,52 @@ pub fn prompt_line(argv: &[String], quoting: PromptQuoting) -> String {
     }
 }
 
-/// Program names that mean "this pane is sitting in a shell", not "this pane is running something".
+/// The program a pane is running right now, other than its shell.
 ///
-/// A configured or resolved interactive shell is added to this by each caller, which knows its own;
-/// the list itself is the part neither side should be maintaining separately.
-pub fn common_shell_basenames() -> std::collections::HashSet<String> {
-    [
-        "bash",
-        "zsh",
-        "fish",
-        "sh",
-        "dash",
-        "ksh",
-        "tcsh",
-        "csh",
-        "nu",
-        "pwsh",
-        "powershell",
-        "cmd",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect()
+/// A reported `program` alone is not enough: shell integration keeps naming the last command while
+/// the shell idles at its prompt. Only a command mid-flight (`Executing`), or a pane with no
+/// integration at all (`Unknown`), whose program comes from the live foreground process group, is
+/// running. A shell in the foreground is the pane sitting at its prompt; `shell` is the session
+/// server's judgment of that, made on the host that runs the pane, since a client's own shell
+/// configuration says nothing about another machine's.
+///
+/// Every reader of what a pane is running - `foreground-changed`, profile capture, resurrection -
+/// asks this, so none of them can tell a different story about the same pane.
+pub fn running_program(
+    command_phase: crate::session::protocol::PaneCommandPhase,
+    program: Option<&str>,
+    shell: bool,
+) -> Option<&str> {
+    use crate::session::protocol::PaneCommandPhase;
+
+    match command_phase {
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => program.filter(|_| !shell),
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
+            None
+        }
+    }
+}
+
+/// Program names that mean "this pane is sitting in a shell", not "this pane is running something",
+/// alongside the shell the session server launched the pane with.
+const COMMON_SHELLS: [&str; 12] = [
+    "bash",
+    "zsh",
+    "fish",
+    "sh",
+    "dash",
+    "ksh",
+    "tcsh",
+    "csh",
+    "nu",
+    "pwsh",
+    "powershell",
+    "cmd",
+];
+
+/// Whether `program`, a normalized basename, is one of [`COMMON_SHELLS`].
+pub fn is_common_shell(program: &str) -> bool {
+    COMMON_SHELLS.contains(&program)
 }
 
 fn validate_argv(argv: &[String]) -> Result<(), String> {

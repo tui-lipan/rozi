@@ -3,6 +3,7 @@ pub(crate) mod lease;
 pub(crate) mod lifecycle;
 pub(crate) mod pane_events;
 pub(crate) mod presentation;
+pub(crate) mod runtime_events;
 pub(crate) mod status;
 
 pub(crate) use control_replies::{

@@ -13,6 +13,8 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   paths, credentials, or captures unless a test fixture explicitly requires scrubbed capture data.
 - Tests must never write to the developer's config, state, cache, or runtime directories. An
   integration test that builds `AppRoot` calls `rozi::test_support::isolate_user_dirs()` first.
+- Test production behavior. Do not reproduce application logic in test-only stand-ins. Read
+  `.agents/instructions/testing.md` before adding, changing, or removing tests.
 - Do not run Cargo commands concurrently in this workspace; they only contend on build locks.
 - New OS-specific behavior belongs behind `src/platform/`. Existing exceptions are not precedent.
 - Reusable framework behavior and framework defects belong in the sibling `../tui-lipan`

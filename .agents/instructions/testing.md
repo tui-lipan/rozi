@@ -3,11 +3,35 @@
 Unit tests usually live beside Rust modules. Integration and smoke tests live under `tests/`.
 Prefer a focused test while editing, then run the baseline checks from the root guide before handoff.
 
+## Coverage and test design
+
+- Test observable production behavior. UI composition tests render `AppRoot` and production views,
+  rather than miniature apps that reconstruct their layout, styling, or callbacks. Assert outcomes,
+  not merely that rendering completes.
+- Prefer real temporary files, typed channels, and isolated processes over mocks. Use a test double
+  at an external boundary when the real dependency would make the test unreliable or impractical;
+  do not mock the Rozi behavior being tested or mutate global process state to substitute for it.
+- Framework widget and rendering algorithms belong in `tui-lipan` tests. Check coverage against the
+  version pinned in `Cargo.lock` before adding or removing overlapping tests. Keep Rozi composition,
+  configuration, routing, and lifecycle assertions even when the underlying widget is covered.
+- When reducing a test matrix, inspect the production paths. Similar output or shared row ownership
+  does not make two cases equivalent if they exercise separate composition or update branches.
+  Preserve each distinct behavioral contract, including transport-specific assertions.
+- Extend existing scenarios and parameterize meaningful variants instead of copying setup or
+  building every combination of independent options. Fixture checks use the actual benchmark or
+  tool builders. Full `AppRoot` views use `rozi::test_support::on_large_stack`; nested pane, border,
+  or animation renders use `rozi::test_support::on_deeper_stack`.
+- Include detailed frames in assertion failures or explicit diagnostics, rather than dumping them
+  on every successful run.
+
 ## Isolation
 
 Tests must not write to the developer's config, state, cache, or runtime directories. Rozi actions
 can persist sidebar preferences, session autosaves, and shell integration, while a running client
 live-reloads config. An unisolated test can alter the UI the developer is using.
+
+When a test spawns a worker, call `isolate_user_dirs()` and acquire config and persisted-state locks
+on that worker thread, not the caller. The scopes below apply on the thread that performs the work.
 
 - Isolation covers reads as well as writes. The runtime directory is what session discovery
   enumerates, so an unisolated sweep lists the developer's live sessions and grows a row list a test

@@ -8,16 +8,12 @@ mod border_modes_smoke;
 mod fullscreen_focus_smoke;
 #[path = "suites/pane/fullscreen_tui_click_focus.rs"]
 mod fullscreen_tui_click_focus;
-#[path = "suites/pane/merged_titlebar_seam_smoke.rs"]
-mod merged_titlebar_seam_smoke;
 #[path = "suites/pane/pane_output_repaint.rs"]
 mod pane_output_repaint;
 #[path = "suites/pane/pane_reveal_smoke.rs"]
 mod pane_reveal_smoke;
 #[path = "suites/pane/pane_slide_smoke.rs"]
 mod pane_slide_smoke;
-#[path = "suites/pane/pane_titlebar_modes_smoke.rs"]
-mod pane_titlebar_modes_smoke;
 #[path = "suites/pane/scratchpad_slide_smoke.rs"]
 mod scratchpad_slide_smoke;
 #[path = "suites/pane/workspace_slide_smoke.rs"]

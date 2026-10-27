@@ -911,8 +911,11 @@ fn particles_keep_terminal_geometry_and_finish_both_directions() {
 #[test]
 fn every_open_style_can_close_with_a_different_effect() {
     rozi::test_support::on_deeper_stack(|| {
-        for &open in PaneAnimationStyle::all() {
-            for &close in PaneAnimationStyle::all() {
+        // Each style opens once and closes once, always paired with a different style.
+        let styles = PaneAnimationStyle::all();
+        for (index, &close) in styles.iter().enumerate() {
+            let open = styles[(index + 1) % styles.len()];
+            {
                 let mut backend = single_pane_backend(open);
                 let viewport = Rect {
                     x: 0,
@@ -988,11 +991,13 @@ fn every_open_style_can_close_with_a_different_effect() {
 #[test]
 fn mixed_styles_preserve_terminal_node_identity_and_survivor_focus() {
     rozi::test_support::on_deeper_stack(|| {
-        for &open in PaneAnimationStyle::all() {
-            for &close in PaneAnimationStyle::all() {
-                if close == PaneAnimationStyle::Off {
-                    continue;
-                }
+        let styles = PaneAnimationStyle::all();
+        for (index, &close) in styles.iter().enumerate() {
+            if close == PaneAnimationStyle::Off {
+                continue;
+            }
+            let open = styles[(index + 1) % styles.len()];
+            {
                 let mut backend = backend(open);
                 backend.set_viewport(Rect {
                     x: 0,

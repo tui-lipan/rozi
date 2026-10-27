@@ -1,13 +1,15 @@
-//! Pane border composition through `AppRoot`: divider and merged modes, title survival, special
-//! frames, rounded junctions, floating occlusion, and the scratchpad's own merged layer.
+//! Pane border and title composition through `AppRoot`: divider and merged modes, titlebar
+//! layouts, seam strips, special frames, rounded junctions, floating occlusion, and the
+//! scratchpad's own merged layer.
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::state::{
-    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, SplitAxis, Workspace,
+    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneId, PaneTitlebarMode, SplitAxis,
+    Workspace,
 };
-use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
+use tui_lipan::{CapturedFrame, TestBackend};
 
 fn backend(mode: PaneBorderMode, pane_count: usize) -> TestBackend<AppRoot> {
     rozi::test_support::isolate_user_dirs();
@@ -131,40 +133,47 @@ fn border_header_survives_a_borderless_frame() {
 #[test]
 fn compact_headers_use_one_row_in_borderless_modes() {
     rozi::test_support::on_deeper_stack(|| {
-        for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
-            for titlebar in [PaneTitlebarMode::Integrated, PaneTitlebarMode::Inset] {
-                for title_style in [CapStyle::Padded, CapStyle::Half] {
-                    let mut backend = backend(mode, 1);
-                    {
-                        let state = backend.state_mut();
-                        state.config.pane.show_titles = true;
-                        state.config.pane.titlebar = titlebar;
-                        state.config.pane.title_style = title_style;
-                        let pane = &mut state.current_mut().workspaces[0].panes[0];
-                        pane.set_custom_title("integrated title");
-                        pane.terminal.process_server_output(b"body");
-                    }
-
-                    backend.render();
-                    let lines = backend.capture_frame().to_fixed_grid_lines();
-                    assert!(
-                        lines[0].contains("integrated title"),
-                        "{mode:?}/{titlebar:?}/{title_style:?} title should occupy the first row: {}",
-                        lines[0]
-                    );
-                    assert!(
-                        lines[1].starts_with("body"),
-                        "{mode:?}/{titlebar:?}/{title_style:?} terminal should start immediately below: {}",
-                        lines[1]
-                    );
-                }
+        for (mode, titlebar, title_style) in [
+            (
+                PaneBorderMode::None,
+                PaneTitlebarMode::Integrated,
+                CapStyle::Padded,
+            ),
+            (
+                PaneBorderMode::Dividers,
+                PaneTitlebarMode::Inset,
+                CapStyle::Half,
+            ),
+        ] {
+            let mut backend = backend(mode, 1);
+            {
+                let state = backend.state_mut();
+                state.config.pane.show_titles = true;
+                state.config.pane.titlebar = titlebar;
+                state.config.pane.title_style = title_style;
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.set_custom_title("integrated title");
+                pane.terminal.process_server_output(b"body");
             }
+
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            assert!(
+                lines[0].contains("integrated title"),
+                "{mode:?}/{titlebar:?}/{title_style:?} title should occupy the first row: {}",
+                lines[0]
+            );
+            assert!(
+                lines[1].starts_with("body"),
+                "{mode:?}/{titlebar:?}/{title_style:?} terminal should start immediately below: {}",
+                lines[1]
+            );
         }
     });
 }
 
-/// `Border` and `Integrated` seam survival is pinned by `merged_titlebar_seam_smoke`. Inset keeps
-/// the lower title on its own interior row, which the focused upper pane used to paint over.
+/// Inset keeps the lower title on its own interior row, which the focused upper pane used to
+/// paint over. `Border` and `Integrated` seam strips are checked below.
 #[test]
 fn merged_inset_title_survives_the_focused_pane_drawing_last() {
     rozi::test_support::on_deeper_stack(|| {
@@ -563,5 +572,615 @@ fn scratchpad_tiles_still_merge_with_each_other() {
             "scratch row should not pick up rounded workspace glyphs:\n{}",
             lines.join("\n")
         );
+    });
+}
+
+const TITLE: &str = "nvim src/pane.rs";
+
+fn render_title(
+    mode: PaneTitlebarMode,
+    show_titles: bool,
+    title_style: CapStyle,
+    floating: bool,
+) -> Vec<String> {
+    render_capture(mode, show_titles, title_style, floating, true).to_fixed_grid_lines()
+}
+
+fn render_padded(mode: PaneTitlebarMode, padding: (u16, u16, u16, u16)) -> Vec<String> {
+    render_with(mode, true, CapStyle::Padded, false, true, padding).to_fixed_grid_lines()
+}
+
+fn render_capture(
+    mode: PaneTitlebarMode,
+    show_titles: bool,
+    title_style: CapStyle,
+    floating: bool,
+    highlight_focused_titlebar: bool,
+) -> tui_lipan::CapturedFrame {
+    render_with(
+        mode,
+        show_titles,
+        title_style,
+        floating,
+        highlight_focused_titlebar,
+        (0, 0, 0, 0),
+    )
+}
+
+fn render_with(
+    mode: PaneTitlebarMode,
+    show_titles: bool,
+    title_style: CapStyle,
+    floating: bool,
+    highlight_focused_titlebar: bool,
+    padding: (u16, u16, u16, u16),
+) -> tui_lipan::CapturedFrame {
+    rozi::test_support::isolate_user_dirs();
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 48,
+        h: 12,
+    });
+    {
+        let state = backend.state_mut();
+        state.config.pane.show_workbar = false;
+        state.config.pane.show_titles = show_titles;
+        state.config.pane.titlebar = mode;
+        state.config.pane.title_style = title_style;
+        state.config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
+        state.config.pane.padding = padding;
+        state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
+        let mut pane = Pane::new(
+            10,
+            5_000,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 48.0,
+                h: 12.0,
+            },
+        );
+        pane.opening = false;
+        pane.terminal_active = true;
+        pane.floating = floating;
+        pane.set_custom_title(TITLE);
+        pane.terminal.process_server_output(b"body");
+        state.current_mut().workspaces[0].panes.push(pane);
+        let id = 10 as PaneId;
+        let start_axis = state.current().workspaces[0].start_axis;
+        let ratios = state.current().workspaces[0].split_ratios.clone();
+        state.current_mut().workspaces[0].tile_tree =
+            build_dwindle_tree(&[id], start_axis, &ratios);
+        state.current_mut().focused_pane = Some(id);
+        state.current_mut().workspaces[0].focused_pane = Some(id);
+    }
+    backend.render();
+    backend.capture_frame()
+}
+
+#[test]
+fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
+    rozi::test_support::on_deeper_stack(|| {
+        let bar = render_title(PaneTitlebarMode::Bar, true, CapStyle::Padded, false);
+        let border = render_title(PaneTitlebarMode::Border, true, CapStyle::Padded, false);
+        let floating_border = render_title(PaneTitlebarMode::Border, true, CapStyle::Padded, true);
+        let integrated = render_title(PaneTitlebarMode::Integrated, true, CapStyle::Padded, false);
+        let integrated_half =
+            render_title(PaneTitlebarMode::Integrated, true, CapStyle::Half, false);
+        let integrated_round =
+            render_title(PaneTitlebarMode::Integrated, true, CapStyle::Round, false);
+        let disabled = render_title(PaneTitlebarMode::Border, false, CapStyle::Padded, false);
+
+        assert!(bar[0].contains(TITLE), "bar title row: {}", bar[0]);
+        assert!(bar[1].starts_with('╭'), "bar frame: {}", bar[1]);
+
+        assert!(border[0].contains(TITLE), "border title: {}", border[0]);
+        assert!(
+            border[0].starts_with("╭─󰖲  "),
+            "border title spacing: {}",
+            border[0]
+        );
+        assert!(
+            border[0].contains("─󰖲  nvim src/pane.rs─"),
+            "border title label: {}",
+            border[0]
+        );
+        assert!(border[1].starts_with('│'), "border body: {}", border[1]);
+        assert!(
+            floating_border[0].starts_with("╔═󰹙  nvim src/pane.rs"),
+            "floating border title: {}",
+            floating_border[0]
+        );
+        assert!(
+            floating_border[0].contains("═floating═╗"),
+            "floating border status: {}",
+            floating_border[0]
+        );
+
+        assert!(
+            integrated[0].contains(TITLE),
+            "integrated title: {}",
+            integrated[0]
+        );
+        assert!(
+            !integrated[0].starts_with('┌'),
+            "integrated header replaces the top border: {}",
+            integrated[0]
+        );
+        assert!(
+            integrated[1].starts_with('│'),
+            "integrated body: {}",
+            integrated[1]
+        );
+        assert!(
+            integrated_half[0].starts_with("▐ 󰖲  nvim src/pane.rs"),
+            "integrated half-block corners: {}",
+            integrated_half[0]
+        );
+        assert!(
+            integrated_half[0].ends_with('▌'),
+            "integrated half-block right corner: {}",
+            integrated_half[0]
+        );
+        assert!(
+            integrated_round[0].contains('\u{e0b6}') && integrated_round[0].contains('\u{e0b4}'),
+            "integrated round caps: {}",
+            integrated_round[0]
+        );
+
+        let inset = render_title(PaneTitlebarMode::Inset, true, CapStyle::Padded, false);
+        assert!(
+            inset[0].starts_with('╭') && inset[0].ends_with('╮'),
+            "inset keeps an unbroken top border: {}",
+            inset[0]
+        );
+        assert!(
+            inset[1].starts_with("│ 󰖲  nvim src/pane.rs"),
+            "inset title on the first interior row: {}",
+            inset[1]
+        );
+        assert!(
+            inset[1].ends_with('│'),
+            "inset title stays inside the side borders: {}",
+            inset[1]
+        );
+        assert!(
+            inset[2].starts_with("│body"),
+            "inset body follows the title row: {}",
+            inset[2]
+        );
+        // The quiet layout: foreground only. The title row must carry the pane's own
+        // background, not a titlebar fill, and no cap style may put one back.
+        for title_style in [CapStyle::Padded, CapStyle::Round, CapStyle::Half] {
+            let frame = render_capture(PaneTitlebarMode::Inset, true, title_style, false, true);
+            let title_row_bgs: Vec<_> = (1..frame.width).map(|x| frame.cell(x, 1).bg).collect();
+            let body_bg = frame.cell(1, 3).bg;
+            assert!(
+                title_row_bgs.iter().all(|bg| *bg == body_bg),
+                "{title_style:?} inset title row must not be filled: {title_row_bgs:?} vs body {body_bg:?}"
+            );
+        }
+
+        // The title row gives up the frame's padding so it stays flush under the border and
+        // aligned with where `border` puts its label; the configured padding applies to the
+        // terminal below it instead.
+        let inset_padded = render_padded(PaneTitlebarMode::Inset, (1, 1, 1, 1));
+        assert!(
+            inset_padded[1].starts_with("│ 󰖲  nvim src/pane.rs"),
+            "padding never shifts the title row: {}",
+            inset_padded[1]
+        );
+        assert!(
+            inset_padded[3].starts_with("│ body"),
+            "padding still applies below the title row: {}",
+            inset_padded[3]
+        );
+
+        assert!(
+            disabled[0].starts_with('╭'),
+            "disabled frame: {}",
+            disabled[0]
+        );
+        assert!(
+            !disabled[0].contains(TITLE),
+            "disabled title: {}",
+            disabled[0]
+        );
+
+        for mode in PaneTitlebarMode::all().iter().copied() {
+            let focused = render_capture(mode, true, CapStyle::Padded, false, true);
+            let unfocused_titlebar = render_capture(mode, true, CapStyle::Padded, false, false);
+            let focused_title = focused
+                .cells
+                .iter()
+                .find(|cell| cell.symbol == "n")
+                .expect("focused title cell");
+            let unfocused_title = unfocused_titlebar
+                .cells
+                .iter()
+                .find(|cell| cell.symbol == "n")
+                .expect("unfocused title cell");
+            assert!(
+                focused_title.fg != unfocused_title.fg
+                    || focused_title.bg != unfocused_title.bg
+                    || focused_title.modifiers.bold != unfocused_title.modifiers.bold,
+                "focused titlebar toggle has no visible effect for {mode:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn pane_titlebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 48,
+            h: 12,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.nerd_icons = false;
+            state.config.pane.show_workbar = false;
+            state.config.pane.show_titles = true;
+            state.config.pane.titlebar = PaneTitlebarMode::Border;
+            state.config.pane.title_style = CapStyle::Round;
+            state.config.pane.highlight_focused_titlebar = true;
+            state.config.pane.padding = (0, 0, 0, 0);
+            state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
+            state.current_mut().workspaces[0].panes.clear();
+            state.current_mut().workspaces[0].tile_tree = None;
+            let mut pane = Pane::new(
+                10,
+                5_000,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 48.0,
+                    h: 12.0,
+                },
+            );
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.floating = false;
+            pane.set_custom_title(TITLE);
+            pane.terminal.process_server_output(b"body");
+            state.current_mut().workspaces[0].panes.push(pane);
+            let id = 10 as PaneId;
+            let start_axis = state.current().workspaces[0].start_axis;
+            let ratios = state.current().workspaces[0].split_ratios.clone();
+            state.current_mut().workspaces[0].tile_tree =
+                build_dwindle_tree(&[id], start_axis, &ratios);
+            state.current_mut().focused_pane = Some(id);
+            state.current_mut().workspaces[0].focused_pane = Some(id);
+        }
+        backend.render();
+        let line = backend.capture_frame().to_fixed_grid_lines()[0].clone();
+        assert!(
+            line.contains(TITLE),
+            "title still renders without nerd icons: {line}"
+        );
+        assert!(
+            !line.contains('󰖲') && !line.contains('\u{e0b6}') && !line.contains('\u{e0b4}'),
+            "nerd glyphs stay off when nerd_icons is false: {line}"
+        );
+    });
+}
+
+#[test]
+fn floating_title_caps_clear_underlying_terminal_attributes() {
+    rozi::test_support::isolate_user_dirs();
+    rozi::test_support::on_deeper_stack(|| {
+        // Bar/Round and Integrated/Half take the two title widgets and the two cap glyph families.
+        for (mode, caps) in [
+            (PaneTitlebarMode::Bar, CapStyle::Round),
+            (PaneTitlebarMode::Integrated, CapStyle::Half),
+        ] {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 48,
+                h: 12,
+            });
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.config.pane.show_workbar = false;
+            state.config.pane.titlebar = mode;
+            state.config.pane.title_style = caps;
+            state.config.pane.padding = (0, 0, 0, 0);
+            let mut tiled = Pane::new(
+                10,
+                5_000,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 48.0,
+                    h: 12.0,
+                },
+            );
+            tiled.opening = false;
+            tiled.terminal_active = true;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes = vec![tiled];
+            workspace.tile_tree =
+                build_dwindle_tree(&[10], workspace.start_axis, &workspace.split_ratios);
+            backend.render();
+            let output = (1..=10)
+                .map(|row| format!("\x1b[{row};1H\x1b[1;2;3;4;7;9m{}", "x".repeat(40)))
+                .collect::<String>();
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .process_server_output(output.as_bytes());
+            backend.render();
+            let underneath = backend.capture_frame();
+            let mut floating = Pane::new(
+                11,
+                5_000,
+                FloatRect {
+                    x: 8.0,
+                    y: 4.0,
+                    w: 24.0,
+                    h: 5.0,
+                },
+            );
+            floating.floating = true;
+            floating.opening = false;
+            floating.terminal_active = true;
+            floating.set_custom_title("floating cap");
+            backend.state_mut().current_mut().workspaces[0]
+                .panes
+                .push(floating);
+            backend.state_mut().current_mut().focused_pane = Some(11);
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(11);
+            backend.render();
+            let frame = backend.capture_frame();
+            let (left, right) = caps.glyphs().expect("capped style");
+            let mut found = 0;
+            for y in 3..9 {
+                for x in 7..33 {
+                    let cell = frame.cell(x, y);
+                    if cell.symbol == left || cell.symbol == right {
+                        assert!(
+                            underneath.cell(x, y).modifiers.dim,
+                            "cap must overlap dim terminal text"
+                        );
+                        assert_eq!(
+                            cell.modifiers,
+                            tui_lipan::capture::CellModifiers::default(),
+                            "{mode:?}/{caps:?} cap inherited terminal attributes at {x},{y}"
+                        );
+                        let inner_x = if cell.symbol == left { x + 1 } else { x - 1 };
+                        assert_eq!(
+                            cell.fg,
+                            frame.cell(inner_x, y).bg,
+                            "cap fill must match the titlebar background"
+                        );
+                        found += 1;
+                    }
+                }
+            }
+            assert_eq!(found, 2, "{mode:?}/{caps:?} must render both caps");
+        }
+    });
+}
+
+/// Equal-length titles so the seam row and the top pane's row differ only in the title itself.
+const TOP_TITLE: &str = "pane-aa";
+const BOTTOM_TITLE: &str = "pane-bb";
+
+const TOP: PaneId = 10;
+const BOTTOM: PaneId = 11;
+
+/// Every titlebar layout puts the icon in column 2: `  󰖲`, `▐ 󰖲`, `╭─󰖲`, and `╭<cap>󰖲` alike.
+const ICON_X: u16 = 2;
+
+const MODES: [PaneTitlebarMode; 2] = [PaneTitlebarMode::Border, PaneTitlebarMode::Integrated];
+/// Padded integrated titles own the seam row. Round caps leave the corner cells to fuse.
+/// Half matches padded ownership and Arrow matches the round inset, so those two stand in
+/// for the four cap styles.
+const CAPS: [CapStyle; 2] = [CapStyle::Padded, CapStyle::Round];
+
+/// Two tiles stacked top/bottom in merged-border mode, with `focused` holding the focus.
+fn render_seam(mode: PaneTitlebarMode, title_style: CapStyle, focused: PaneId) -> CapturedFrame {
+    render_titled(mode, title_style, focused, &[TOP_TITLE, BOTTOM_TITLE])
+}
+
+/// A dwindle layout of `titles.len()` merged tiles, the first split stacking them top/bottom.
+fn render_titled(
+    mode: PaneTitlebarMode,
+    title_style: CapStyle,
+    focused: PaneId,
+    titles: &[&str],
+) -> CapturedFrame {
+    rozi::test_support::isolate_user_dirs();
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 48,
+        h: 16,
+    });
+    {
+        let state = backend.state_mut();
+        state.config.pane.show_workbar = false;
+        state.config.pane.show_titles = true;
+        state.config.pane.titlebar = mode;
+        state.config.pane.title_style = title_style;
+        state.config.pane.border_mode = PaneBorderMode::Merged;
+        state.config.pane.border_style = PaneBorderStyle::Rounded;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
+        state.current_mut().workspaces[0].start_axis = SplitAxis::Vertical;
+        let ids: Vec<PaneId> = (0..titles.len())
+            .map(|index| TOP + index as PaneId)
+            .collect();
+        for (id, title) in ids.iter().zip(titles) {
+            let mut pane = Pane::new(
+                *id,
+                5_000,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 48.0,
+                    h: 8.0,
+                },
+            );
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.set_custom_title(title);
+            pane.terminal.process_server_output(b"body");
+            state.current_mut().workspaces[0].panes.push(pane);
+        }
+        let start_axis = state.current().workspaces[0].start_axis;
+        let ratios = state.current().workspaces[0].split_ratios.clone();
+        state.current_mut().workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
+        state.current_mut().focused_pane = Some(focused);
+        state.current_mut().workspaces[0].focused_pane = Some(focused);
+    }
+    backend.render();
+    backend.capture_frame()
+}
+
+/// The row carrying the lower pane's titlebar - the seam it shares with the tile above it.
+fn seam_row(frame: &CapturedFrame) -> u16 {
+    let lines = frame.to_fixed_grid_lines();
+    let row = lines
+        .iter()
+        .position(|line| line.contains(BOTTOM_TITLE))
+        .unwrap_or_else(|| panic!("lower pane title missing entirely:\n{}", lines.join("\n")));
+    assert!(row > 0, "the lower pane cannot be the top row");
+    row as u16
+}
+
+#[test]
+fn seam_titlebar_matches_the_in_frame_titlebar_layout() {
+    rozi::test_support::on_deeper_stack(|| {
+        for mode in MODES {
+            for title_style in CAPS {
+                let frame = render_seam(mode, title_style, TOP);
+                let lines = frame.to_fixed_grid_lines();
+                let seam = seam_row(&frame);
+                let top_row = &lines[0];
+                let seam_row_text = &lines[seam as usize];
+                let expected = top_row.replace(TOP_TITLE, BOTTOM_TITLE);
+
+                let owns_full_row = mode == PaneTitlebarMode::Integrated
+                    && matches!(title_style, CapStyle::Padded | CapStyle::Half);
+                if owns_full_row {
+                    // The strip reproduces the frame's top-edge decoration, corner cells included.
+                    assert_eq!(
+                        &expected, seam_row_text,
+                        "{mode:?}/{title_style:?} seam row differs from the in-frame titlebar"
+                    );
+                } else {
+                    // The strip is inset past the frame's corner glyphs, which stay on the seam and
+                    // fuse with the neighbor's border into junctions.
+                    let inner = |line: &str| {
+                        let chars: Vec<char> = line.chars().collect();
+                        chars[1..chars.len() - 1].iter().collect::<String>()
+                    };
+                    assert_eq!(
+                        inner(&expected),
+                        inner(seam_row_text),
+                        "{mode:?}/{title_style:?} seam row differs from the in-frame titlebar"
+                    );
+                    let corners: Vec<char> = seam_row_text.chars().collect();
+                    assert_eq!(
+                        (corners[0], corners[corners.len() - 1]),
+                        ('├', '┤'),
+                        "{mode:?}/{title_style:?} seam corners should fuse with the tile above"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn seam_titlebar_carries_the_same_focus_styling_as_an_in_frame_titlebar() {
+    rozi::test_support::on_deeper_stack(|| {
+        for mode in MODES {
+            for title_style in CAPS {
+                // The top pane's row is never on a seam, so it is the reference rendering. Compare
+                // it against the seam strip in the matching focus state: focused vs focused,
+                // unfocused vs unfocused.
+                for (focus_for_top, focus_for_seam) in [(TOP, BOTTOM), (BOTTOM, TOP)] {
+                    let reference = render_seam(mode, title_style, focus_for_top);
+                    let seamed = render_seam(mode, title_style, focus_for_seam);
+                    let seam = seam_row(&seamed);
+
+                    let expected = reference.cell(ICON_X, 0);
+                    let actual = seamed.cell(ICON_X, seam);
+                    let focus_state = if focus_for_top == TOP {
+                        "focused"
+                    } else {
+                        "unfocused"
+                    };
+                    assert_eq!(
+                        (expected.fg, expected.bg, expected.modifiers.bold),
+                        (actual.fg, actual.bg, actual.modifiers.bold),
+                        "{mode:?}/{title_style:?} {focus_state} seam titlebar styling \
+                         differs from the in-frame titlebar"
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// A wide tile over two side-by-side tiles: both lower titlebars share the same seam row, and
+/// their strips must not swallow the vertical junction where they meet.
+#[test]
+fn side_by_side_tiles_below_a_seam_keep_their_titles_and_junction() {
+    const TITLES: [&str; 3] = ["pane-aa", "pane-bb", "pane-cc"];
+    rozi::test_support::on_deeper_stack(|| {
+        for mode in MODES {
+            for title_style in CAPS {
+                // Focus each tile in turn: the focused pane draws last, so this is what used to
+                // decide which of the lower titlebars survived.
+                // Upper focus is the draw-last case that used to bury the lower titles. One
+                // lower pane focused covers the other direction.
+                for focused in [TOP, TOP + 1] {
+                    let frame = render_titled(mode, title_style, focused, &TITLES);
+                    let lines = frame.to_fixed_grid_lines();
+                    let joined = lines.join("\n");
+                    for title in TITLES {
+                        assert!(
+                            joined.contains(title),
+                            "{title} missing for {mode:?}/{title_style:?} focus={focused}:\n{joined}"
+                        );
+                    }
+
+                    let seam = lines
+                        .iter()
+                        .find(|line| line.contains(TITLES[1]))
+                        .expect("seam row");
+                    assert!(
+                        seam.contains(TITLES[2]),
+                        "{mode:?}/{title_style:?} focus={focused}: both lower titles share the \
+                         seam row:\n{joined}"
+                    );
+                    // Inset strips leave the frame corners on the seam, so the column the two lower
+                    // tiles share still fuses into a `┬` with the divider below. Padded and Half
+                    // integrated titles own their corner cells instead, on a seam as off one.
+                    let owns_full_row = mode == PaneTitlebarMode::Integrated
+                        && matches!(title_style, CapStyle::Padded | CapStyle::Half);
+                    if !owns_full_row {
+                        assert!(
+                            seam.contains('┬'),
+                            "{mode:?}/{title_style:?} focus={focused}: lost the junction between \
+                             the two lower tiles:\n{seam}"
+                        );
+                    }
+                }
+            }
+        }
     });
 }

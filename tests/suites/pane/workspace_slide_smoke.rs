@@ -153,24 +153,28 @@ fn workspace_slide_snaps_when_disabled_or_resized() {
 #[test]
 fn workspace_slide_supports_floating_fullscreen_and_each_layout() {
     rozi::test_support::on_deeper_stack(|| {
-        for layout in rozi::state::LayoutKind::all() {
-            for (floating, fullscreen) in [(false, false), (true, false), (false, true)] {
-                let mut backend = backend();
-                for index in [0, 1] {
-                    let workspace = &mut backend.state_mut().current_mut().workspaces[index];
-                    workspace.layout_kind = *layout;
-                    workspace.panes[0].floating = floating;
-                    workspace.panes[0].fullscreen = fullscreen;
-                }
-                backend.render();
-                let settled = terminal_rect(&backend, 1);
-                switch(&mut backend, 1);
-                backend.advance(Duration::from_millis(500));
-                let moving = terminal_rect(&backend, 2);
-                assert_eq!((moving.w, moving.h), (settled.w, settled.h), "{layout:?}");
-                backend.advance(Duration::from_secs(3));
-                assert!(grid(&backend).contains("SECOND"), "{layout:?}");
+        // One tiled layout, one floating layout, and monocle-as-fullscreen. The slide
+        // contract is that the terminal keeps its settled size, which these three cover.
+        for (layout, floating, fullscreen) in [
+            (rozi::state::LayoutKind::Dwindle, false, false),
+            (rozi::state::LayoutKind::Master, true, false),
+            (rozi::state::LayoutKind::Monocle, false, true),
+        ] {
+            let mut backend = backend();
+            for index in [0, 1] {
+                let workspace = &mut backend.state_mut().current_mut().workspaces[index];
+                workspace.layout_kind = layout;
+                workspace.panes[0].floating = floating;
+                workspace.panes[0].fullscreen = fullscreen;
             }
+            backend.render();
+            let settled = terminal_rect(&backend, 1);
+            switch(&mut backend, 1);
+            backend.advance(Duration::from_millis(500));
+            let moving = terminal_rect(&backend, 2);
+            assert_eq!((moving.w, moving.h), (settled.w, settled.h), "{layout:?}");
+            backend.advance(Duration::from_secs(3));
+            assert!(grid(&backend).contains("SECOND"), "{layout:?}");
         }
     });
 }

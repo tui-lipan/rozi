@@ -110,12 +110,18 @@ fn pane_corners(backend: &mut TestBackend<AppRoot>) -> Vec<usize> {
 fn revealing_pushes_the_near_edge_and_leaves_the_far_edge_alone() {
     rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend(SidebarPosition::Left);
+        let viewport = backend.viewport();
+        let content_width =
+            |backend: &TestBackend<AppRoot>| backend.state().content_viewport(viewport).w;
         assert_eq!(pane_corners(&mut backend), vec![0, usize::from(WIDTH) - 1]);
+        assert_eq!(content_width(&backend), WIDTH);
 
         set_visible(&mut backend, true);
         let mut travel = Vec::new();
+        let mut widths = Vec::new();
         for step in IN_FLIGHT {
             backend.advance(Duration::from_millis(step));
+            widths.push(content_width(&backend));
             let corners = pane_corners(&mut backend);
             // Both corners, every frame: the column is resized rather than shoved, so neither of
             // its borders is ever clipped off the screen and no gutter opens beside either.
@@ -138,30 +144,6 @@ fn revealing_pushes_the_near_edge_and_leaves_the_far_edge_alone() {
             "the near edge should advance steadily, got {travel:?}"
         );
         assert!(travel.iter().all(|column| *column < SIDEBAR));
-
-        backend.advance(Duration::from_millis(4_000));
-        assert_eq!(
-            pane_corners(&mut backend),
-            vec![SIDEBAR, usize::from(WIDTH) - 1],
-            "the column lands beside the sidebar, still flush with the far edge"
-        );
-    });
-}
-
-#[test]
-fn the_pane_column_gives_up_its_columns_steadily_rather_than_in_one_step() {
-    rozi::test_support::on_deeper_stack(|| {
-        let mut backend = backend(SidebarPosition::Left);
-        let viewport = backend.viewport();
-        let width = |backend: &TestBackend<AppRoot>| backend.state().content_viewport(viewport).w;
-        assert_eq!(width(&backend), WIDTH);
-
-        set_visible(&mut backend, true);
-        let mut widths = Vec::new();
-        for step in IN_FLIGHT {
-            backend.advance(Duration::from_millis(step));
-            widths.push(width(&backend));
-        }
         assert!(
             widths.windows(2).all(|pair| pair[0] > pair[1]),
             "the pane column should narrow as the sidebar arrives, got {widths:?}"
@@ -169,21 +151,39 @@ fn the_pane_column_gives_up_its_columns_steadily_rather_than_in_one_step() {
         assert!(widths.iter().all(|w| *w > WIDTH - SIDEBAR as u16));
 
         backend.advance(Duration::from_millis(4_000));
-        assert_eq!(width(&backend), WIDTH - SIDEBAR as u16);
+        assert_eq!(
+            pane_corners(&mut backend),
+            vec![SIDEBAR, usize::from(WIDTH) - 1],
+            "the column lands beside the sidebar, still flush with the far edge"
+        );
+        assert_eq!(content_width(&backend), WIDTH - SIDEBAR as u16);
 
-        // And back, the same way.
         set_visible(&mut backend, false);
+        let mut travel = Vec::new();
         let mut widths = Vec::new();
         for step in IN_FLIGHT {
             backend.advance(Duration::from_millis(step));
-            widths.push(width(&backend));
+            widths.push(content_width(&backend));
+            let corners = pane_corners(&mut backend);
+            assert_eq!(corners.len(), 2, "the pane frame should be whole mid-slide");
+            assert_eq!(
+                corners[1],
+                usize::from(WIDTH) - 1,
+                "the far edge must not move"
+            );
+            travel.push(corners[0]);
         }
+        assert!(
+            travel.windows(2).all(|pair| pair[0] > pair[1]),
+            "the near edge should follow the retreating panel, got {travel:?}"
+        );
         assert!(
             widths.windows(2).all(|pair| pair[0] < pair[1]),
             "the pane column should widen as the sidebar leaves, got {widths:?}"
         );
         backend.advance(Duration::from_millis(4_000));
-        assert_eq!(width(&backend), WIDTH);
+        assert_eq!(pane_corners(&mut backend), vec![0, usize::from(WIDTH) - 1]);
+        assert_eq!(content_width(&backend), WIDTH);
     });
 }
 
@@ -258,36 +258,5 @@ fn a_right_dock_pushes_the_pane_column_the_other_way() {
             pane_corners(&mut backend),
             vec![0, usize::from(WIDTH) - SIDEBAR - 1]
         );
-    });
-}
-
-#[test]
-fn retracting_hands_the_columns_back_the_same_way() {
-    rozi::test_support::on_deeper_stack(|| {
-        let mut backend = backend(SidebarPosition::Left);
-        set_visible(&mut backend, true);
-        backend.advance(Duration::from_millis(4_000));
-        assert_eq!(pane_corners(&mut backend)[0], SIDEBAR);
-
-        set_visible(&mut backend, false);
-        let mut travel = Vec::new();
-        for step in IN_FLIGHT {
-            backend.advance(Duration::from_millis(step));
-            let corners = pane_corners(&mut backend);
-            assert_eq!(corners.len(), 2, "the pane frame should be whole mid-slide");
-            assert_eq!(
-                corners[1],
-                usize::from(WIDTH) - 1,
-                "the far edge must not move"
-            );
-            travel.push(corners[0]);
-        }
-        assert!(
-            travel.windows(2).all(|pair| pair[0] > pair[1]),
-            "the near edge should follow the retreating panel, got {travel:?}"
-        );
-
-        backend.advance(Duration::from_millis(4_000));
-        assert_eq!(pane_corners(&mut backend), vec![0, usize::from(WIDTH) - 1]);
     });
 }

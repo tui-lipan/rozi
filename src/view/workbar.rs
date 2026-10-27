@@ -1445,7 +1445,7 @@ mod tests {
 
     #[test]
     fn pointing_hands_are_limited_to_workspace_tabs_and_action_badges() {
-        on_large_stack(|| {
+        crate::test_support::on_deeper_stack(|| {
             use tui_lipan::PointerShape;
             let mut backend = attached_backend();
             backend.state_mut().config.workbar.right[0].segment =
@@ -1467,7 +1467,7 @@ mod tests {
 
     #[test]
     fn title_badge_opens_the_palette_and_session_badge_opens_sessions() {
-        on_large_stack(|| {
+        crate::test_support::on_deeper_stack(|| {
             let mut backend = attached_backend();
             let (width, cells) = frame_cells(&mut backend);
             let (title_x, title_y) = find_run(&cells, width, "rozi").expect("title badge");
@@ -1486,7 +1486,7 @@ mod tests {
 
     #[test]
     fn hovering_title_and_session_badges_lifts_like_a_workspace_tab() {
-        on_large_stack(|| {
+        crate::test_support::on_deeper_stack(|| {
             let mut backend = attached_backend();
             let (width, resting) = frame_cells(&mut backend);
             let (title_x, title_y) = find_run(&resting, width, "rozi").expect("title badge");
@@ -1610,14 +1610,5 @@ mod tests {
             kind,
             mods: tui_lipan::prelude::KeyMods::NONE,
         }
-    }
-
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn workbar badge thread")
-            .join()
-            .expect("workbar badge test");
     }
 }

@@ -91,46 +91,41 @@ fn render_tree(
     ready: impl Fn(&[String]) -> bool + Send + 'static,
 ) -> Vec<String> {
     let cwd = cwd.to_string();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                // Revealing the sidebar after the first frame is a real toggle, so it runs the
-                // real slide; these assertions are about the settled column, not a frame
-                // part-way through it.
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                let tab = SidebarTab::Tree {
-                    view,
-                    config: SidebarTreeConfig::for_view(view),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-            }
-            // Directory reads and `git status` both run as background commands, so the tree needs
-            // a few pump/render cycles before its rows exist.
-            pump_until(&mut backend, |backend| ready(&sidebar_rows(backend, 32)));
-            backend.render();
-            sidebar_rows(&backend, 32)
-        })
-        .expect("spawn tree smoke thread")
-        .join()
-        .expect("tree smoke completes")
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            // Revealing the sidebar after the first frame is a real toggle, so it runs the
+            // real slide; these assertions are about the settled column, not a frame
+            // part-way through it.
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            let tab = SidebarTab::Tree {
+                view,
+                config: SidebarTreeConfig::for_view(view),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        // Directory reads and `git status` both run as background commands, so the tree needs
+        // a few pump/render cycles before its rows exist.
+        pump_until(&mut backend, |backend| ready(&sidebar_rows(backend, 32)));
+        backend.render();
+        sidebar_rows(&backend, 32)
+    })
 }
 
 #[test]
@@ -158,133 +153,141 @@ fn files_tab_uses_unicode_directory_markers_when_nerd_icons_are_off() {
         std::fs::write(repo.0.join(name), "// palette fixture\n").unwrap();
     }
     let cwd = repo.0.to_string_lossy().into_owned();
-    let lines = std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
-                config.explorer = true;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config,
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-            }
-            pump_until(&mut backend, |backend| {
-                let joined = sidebar_rows(backend, 32).join("\n");
-                (joined.contains('▶') || joined.contains('▼')) && joined.contains("Find files")
-            });
+    let lines = rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
+            config.explorer = true;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config,
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        pump_until(&mut backend, |backend| {
+            let joined = sidebar_rows(backend, 32).join("\n");
+            (joined.contains('▶') || joined.contains('▼')) && joined.contains("Find files")
+        });
+        backend.render();
+        let unicode = sidebar_rows(&backend, 32);
+        let src = unicode.iter().find(|row| row.contains("src")).unwrap();
+        assert!(
+            src.contains("├▶ src"),
+            "one-cell guides and one content gap: {src}"
+        );
+        assert!(
+            !unicode
+                .join("\n")
+                .chars()
+                .any(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)),
+            "no Nerd icons in Unicode mode: {unicode:?}"
+        );
+
+        let frame = backend.capture_frame();
+        let (y, row) = frame
+            .to_fixed_grid_lines()
+            .into_iter()
+            .enumerate()
+            .find(|(_, row)| row.contains("├▶ src"))
+            .unwrap();
+        let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
+        assert_eq!(
+            frame.cell(arrow_x as u16, y as u16).fg,
+            backend.state().theme.muted.fg.unwrap().color(),
+            "arrows use the muted theme color"
+        );
+
+        // The global switch changes the mounted tree immediately, without a per-tab option.
+        let icon_color = tui_lipan::prelude::Color::hex_u24(0x35b5a9);
+        backend.state_mut().theme.file_icons.blue = icon_color;
+        backend.state_mut().config.nerd_icons = true;
+        backend.render();
+        let nerd = sidebar_rows(&backend, 32);
+        let src = nerd.iter().find(|row| row.contains("src")).unwrap();
+        assert!(
+            src.contains("├─ src"),
+            "two-cell guides, no arrows, one icon gap: {src}"
+        );
+        assert!(!nerd.join("\n").contains(['▶', '▼']), "no arrows: {nerd:?}");
+        let frame = backend.capture_frame();
+        let (y, row) = frame
+            .to_fixed_grid_lines()
+            .into_iter()
+            .enumerate()
+            .find(|(_, row)| row.contains("├─ src"))
+            .unwrap();
+        let icon_x = row.chars().position(|ch| ch == '').unwrap();
+        assert_eq!(
+            frame.cell(icon_x as u16, y as u16).fg,
+            icon_color,
+            "directory icon uses the active theme's file-icon palette"
+        );
+        assert_ne!(
+            frame.cell(icon_x as u16, y as u16).fg,
+            frame.cell((icon_x + 2) as u16, y as u16).fg,
+            "directory icon has its own semantic color"
+        );
+
+        let original_theme = backend.state().theme.clone();
+        for preset in [
+            rozi::state::ThemePreset::Dracula,
+            rozi::state::ThemePreset::Nord,
+        ] {
+            backend.state_mut().theme = preset.theme();
             backend.render();
-            let unicode = sidebar_rows(&backend, 32);
-            let src = unicode.iter().find(|row| row.contains("src")).unwrap();
-            assert!(
-                src.contains("├▶ src"),
-                "one-cell guides and one content gap: {src}"
-            );
-            assert!(
-                !unicode
-                    .join("\n")
+            let palette = &backend.state().theme.file_icons;
+            let frame = backend.capture_frame();
+            let rows = frame.to_fixed_grid_lines();
+            for (name, color) in [
+                ("src", palette.blue),
+                ("theme.md", palette.azure),
+                ("theme.rs", palette.red),
+                ("theme.toml", palette.grey),
+                ("README.md", palette.yellow),
+            ] {
+                let (y, row) = rows
+                    .iter()
+                    .enumerate()
+                    .find(|(_, row)| row.contains(name))
+                    .unwrap();
+                let x = row
                     .chars()
-                    .any(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)),
-                "no Nerd icons in Unicode mode: {unicode:?}"
-            );
-
-            let frame = backend.capture_frame();
-            let (y, row) = frame
-                .to_fixed_grid_lines()
-                .into_iter()
-                .enumerate()
-                .find(|(_, row)| row.contains("├▶ src"))
-                .unwrap();
-            let arrow_x = row.chars().position(|ch| ch == '▶').unwrap();
-            assert_eq!(
-                frame.cell(arrow_x as u16, y as u16).fg,
-                backend.state().theme.muted.fg.unwrap().color(),
-                "arrows use the muted theme color"
-            );
-
-            // The global switch changes the mounted tree immediately, without a per-tab option.
-            let icon_color = tui_lipan::prelude::Color::hex_u24(0x35b5a9);
-            backend.state_mut().theme.file_icons.blue = icon_color;
-            backend.state_mut().config.nerd_icons = true;
-            backend.render();
-            let nerd = sidebar_rows(&backend, 32);
-            let src = nerd.iter().find(|row| row.contains("src")).unwrap();
-            assert!(
-                src.contains("├─ src"),
-                "two-cell guides, no arrows, one icon gap: {src}"
-            );
-            assert!(!nerd.join("\n").contains(['▶', '▼']), "no arrows: {nerd:?}");
-            let frame = backend.capture_frame();
-            let (y, row) = frame
-                .to_fixed_grid_lines()
-                .into_iter()
-                .enumerate()
-                .find(|(_, row)| row.contains("├─ src"))
-                .unwrap();
-            let icon_x = row.chars().position(|ch| ch == '').unwrap();
-            assert_eq!(
-                frame.cell(icon_x as u16, y as u16).fg,
-                icon_color,
-                "directory icon uses the active theme's file-icon palette"
-            );
-            assert_ne!(
-                frame.cell(icon_x as u16, y as u16).fg,
-                frame.cell((icon_x + 2) as u16, y as u16).fg,
-                "directory icon has its own semantic color"
-            );
-
-            let original_theme = backend.state().theme.clone();
-            for preset in [rozi::state::ThemePreset::Dracula, rozi::state::ThemePreset::Nord] {
-                backend.state_mut().theme = preset.theme();
-                backend.render();
-                let palette = &backend.state().theme.file_icons;
-                let frame = backend.capture_frame();
-                let rows = frame.to_fixed_grid_lines();
-                for (name, color) in [
-                    ("src", palette.blue),
-                    ("theme.md", palette.azure),
-                    ("theme.rs", palette.red),
-                    ("theme.toml", palette.grey),
-                    ("README.md", palette.yellow),
-                ] {
-                    let (y, row) = rows.iter().enumerate().find(|(_, row)| row.contains(name)).unwrap();
-                    let x = row.chars().position(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)).unwrap();
-                    assert_eq!(frame.cell(x as u16, y as u16).fg, color,
-                        "{name} icon must follow {preset:?} file-icon palette after a live theme change");
-                }
+                    .position(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch))
+                    .unwrap();
+                assert_eq!(
+                    frame.cell(x as u16, y as u16).fg,
+                    color,
+                    "{name} icon must follow {preset:?} file-icon palette after a live theme change"
+                );
             }
-            backend.state_mut().theme = original_theme;
-            backend.state_mut().config.nerd_icons = false;
-            backend.render();
-            assert_eq!(
-                sidebar_rows(&backend, 32),
-                unicode,
-                "switch restores Unicode mode"
-            );
-            unicode
-        })
-        .expect("spawn unicode-icon tree smoke thread")
-        .join()
-        .expect("unicode-icon tree smoke completes");
+        }
+        backend.state_mut().theme = original_theme;
+        backend.state_mut().config.nerd_icons = false;
+        backend.render();
+        assert_eq!(
+            sidebar_rows(&backend, 32),
+            unicode,
+            "switch restores Unicode mode"
+        );
+        unicode
+    });
     let joined = lines.join("\n");
     assert!(
         joined.contains('▶') || joined.contains('▼'),
@@ -314,82 +317,76 @@ fn files_tab_shows_a_new_file_without_a_refresh_tick() {
     };
     let cwd = repo.0.to_string_lossy().into_owned();
     let new_file = repo.0.join("appeared-later.rs");
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-            }
-            // A visible tree arms its refresh chain as it mounts, so this is also the signal that
-            // the first listing has been taken - which is what the negative assertion below needs.
-            assert!(
-                pump_until(&mut backend, |backend| backend
-                    .state()
-                    .sidebar
-                    .tree_refresh_armed_epoch
-                    .is_some()),
-                "visible tree has a refresh chain"
-            );
-            assert!(
-                !backend
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        // A visible tree arms its refresh chain as it mounts, so this is also the signal that
+        // the first listing has been taken - which is what the negative assertion below needs.
+        assert!(
+            pump_until(&mut backend, |backend| backend
+                .state()
+                .sidebar
+                .tree_refresh_armed_epoch
+                .is_some()),
+            "visible tree has a refresh chain"
+        );
+        assert!(
+            !backend
+                .capture_frame()
+                .plain_text()
+                .contains("appeared-later.rs"),
+            "the file does not predate its creation"
+        );
+
+        // The watcher starts in the background after the tree mounts, so one write could land
+        // before it does. Recreating the file until its row appears keeps the test independent
+        // of that timing while still never dispatching a refresh.
+        //
+        // The backend's clock is virtual, so the watcher's batch window only closes as it is
+        // advanced. Small steps keep the total far below the tree's 30-second repair reread
+        // within the deadline, so that reread cannot be what makes the row appear.
+        let mut last_write: Option<std::time::Instant> = None;
+        assert!(
+            pump_until(&mut backend, |backend| {
+                if last_write.is_none_or(|at| at.elapsed() > std::time::Duration::from_millis(200))
+                {
+                    let _ = std::fs::remove_file(&new_file);
+                    std::fs::write(&new_file, "// new\n")
+                        .expect("create file after initial listing");
+                    last_write = Some(std::time::Instant::now());
+                }
+                backend.advance(std::time::Duration::from_millis(20));
+                backend
                     .capture_frame()
                     .plain_text()
-                    .contains("appeared-later.rs"),
-                "the file does not predate its creation"
-            );
-
-            // The watcher starts in the background after the tree mounts, so one write could land
-            // before it does. Recreating the file until its row appears keeps the test independent
-            // of that timing while still never dispatching a refresh.
-            //
-            // The backend's clock is virtual, so the watcher's batch window only closes as it is
-            // advanced. Small steps keep the total far below the tree's 30-second repair reread
-            // within the deadline, so that reread cannot be what makes the row appear.
-            let mut last_write: Option<std::time::Instant> = None;
-            assert!(
-                pump_until(&mut backend, |backend| {
-                    if last_write
-                        .is_none_or(|at| at.elapsed() > std::time::Duration::from_millis(200))
-                    {
-                        let _ = std::fs::remove_file(&new_file);
-                        std::fs::write(&new_file, "// new\n")
-                            .expect("create file after initial listing");
-                        last_write = Some(std::time::Instant::now());
-                    }
-                    backend.advance(std::time::Duration::from_millis(20));
-                    backend
-                        .capture_frame()
-                        .plain_text()
-                        .contains("appeared-later.rs")
-                }),
-                "the watcher shows a new file without a refresh or remount"
-            );
-        })
-        .expect("spawn refresh smoke thread")
-        .join()
-        .expect("refresh smoke completes");
+                    .contains("appeared-later.rs")
+            }),
+            "the watcher shows a new file without a refresh or remount"
+        );
+    });
 }
 
 /// The changes view shows only what git reports, with diff stats, and rooted at the repository so
@@ -434,16 +431,111 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
         return;
     };
     let cwd = repo.0.to_string_lossy().into_owned();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 90,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            state.config.sidebar.layout.left.width = 34;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Changes,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Changes),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        let git = backend.state().theme.git_status;
+        // Collect the color of each marker/stat glyph in the right-hand suffix region, so the
+        // left-hand labels (accent-colored, and the theme's accent happens to equal the
+        // untracked purple) cannot be mistaken for a status color.
+        let markers = |backend: &mut TestBackend<AppRoot>| {
+            let frame = backend.capture_frame();
+            let mut seen: Vec<(String, tui_lipan::prelude::Color)> = Vec::new();
+            for y in 0..24u16 {
+                for x in 12..34u16 {
+                    let cell = frame.cell(x, y);
+                    if !cell.symbol.trim().is_empty() {
+                        seen.push((cell.symbol.clone(), cell.fg));
+                    }
+                }
+            }
+            seen
+        };
+        // `git status` has to run and come back before any marker exists; until then the panel
+        // holds its root row and nothing else, which is indistinguishable from a repository
+        // whose markers lost their color.
+        pump_until(&mut backend, |backend| {
+            markers(backend)
+                .iter()
+                .any(|(symbol, color)| symbol == "M" && *color == git.modified)
+        });
+
+        let seen = markers(&mut backend);
+        let colored = |sym: &str, color| seen.iter().any(|(s, c)| s == sym && *c == color);
+
+        assert!(
+            colored("M", git.modified),
+            "modified marker uses the theme modified color: {seen:?}"
+        );
+        assert!(
+            colored("?", git.untracked),
+            "untracked marker uses the theme untracked color: {seen:?}"
+        );
+        assert!(
+            colored("+", git.added),
+            "diff additions use the theme added color: {seen:?}"
+        );
+
+        backend.state_mut().config.nerd_icons = true;
+        backend.render();
+        let seen = markers(&mut backend);
+        for (symbol, color) in [("", git.modified), ("", git.untracked), ("+", git.added)] {
+            assert!(
+                seen.iter().any(|(s, c)| s == symbol && *c == color),
+                "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
+            );
+        }
+        backend.state_mut().theme = rozi::state::ThemePreset::Dracula.theme();
+        backend.render();
+        let changed = backend.state().theme.git_status.modified;
+        assert_ne!(changed, git.modified, "the palette must actually change");
+        assert!(
+            markers(&mut backend)
+                .iter()
+                .any(|(symbol, color)| { symbol == "" && *color == changed }),
+            "the mounted Rozi tree follows the active theme"
+        );
+    });
+}
+
+/// Every scrolling surface in the sidebar uses the right half block thumb: the file tree's own
+/// scrollbar and the shared body scroll view that wraps the non-tree tabs.
+#[test]
+fn sidebar_scrollbars_use_the_half_block_thumb() {
+    rozi::test_support::on_deeper_stack(|| {
+        // Short viewport against this repository, so both surfaces certainly overflow.
+        let has_thumb = |tab: SidebarTab, panes: usize| -> bool {
             rozi::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
                 w: 90,
-                h: 24,
+                h: 12,
             });
             {
                 let state = backend.state_mut();
@@ -451,147 +543,41 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 state.config.animations.sidebar = false;
                 state.config.nerd_icons = false;
                 state.config.sidebar.layout.left.width = 34;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Changes,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Changes),
-                };
                 state.sidebar.panels[0].tabs = vec![tab.id()];
                 state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
                 let pane = state.current().workspaces[0].panes[0].id;
                 state.current_mut().focused_pane = Some(pane);
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-            }
-            let git = backend.state().theme.git_status;
-            // Collect the color of each marker/stat glyph in the right-hand suffix region, so the
-            // left-hand labels (accent-colored, and the theme's accent happens to equal the
-            // untracked purple) cannot be mistaken for a status color.
-            let markers = |backend: &mut TestBackend<AppRoot>| {
-                let frame = backend.capture_frame();
-                let mut seen: Vec<(String, tui_lipan::prelude::Color)> = Vec::new();
-                for y in 0..24u16 {
-                    for x in 12..34u16 {
-                        let cell = frame.cell(x, y);
-                        if !cell.symbol.trim().is_empty() {
-                            seen.push((cell.symbol.clone(), cell.fg));
-                        }
-                    }
+                state.current_mut().workspaces[0].panes[0].terminal.cwd =
+                    Some(env!("CARGO_MANIFEST_DIR").to_string());
+                // The Panes tab needs enough rows to overflow a 12-row viewport.
+                let rect = state.current().workspaces[0].panes[0].floating_rect;
+                for id in 100..(100 + panes as u32) {
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(rozi::state::Pane::new(id, 100, rect));
                 }
-                seen
-            };
-            // `git status` has to run and come back before any marker exists; until then the panel
-            // holds its root row and nothing else, which is indistinguishable from a repository
-            // whose markers lost their color.
+            }
             pump_until(&mut backend, |backend| {
-                markers(backend)
-                    .iter()
-                    .any(|(symbol, color)| symbol == "M" && *color == git.modified)
-            });
+                let frame = backend.capture_frame();
+                (0..12u16).any(|y| (0..34u16).any(|x| frame.cell(x, y).symbol == "▐"))
+            })
+        };
 
-            let seen = markers(&mut backend);
-            let colored = |sym: &str, color| seen.iter().any(|(s, c)| s == sym && *c == color);
-
-            assert!(
-                colored("M", git.modified),
-                "modified marker uses the theme modified color: {seen:?}"
-            );
-            assert!(
-                colored("?", git.untracked),
-                "untracked marker uses the theme untracked color: {seen:?}"
-            );
-            assert!(
-                colored("+", git.added),
-                "diff additions use the theme added color: {seen:?}"
-            );
-
-            backend.state_mut().config.nerd_icons = true;
-            backend.render();
-            let seen = markers(&mut backend);
-            for (symbol, color) in [("", git.modified), ("", git.untracked), ("+", git.added)]
-            {
-                assert!(
-                    seen.iter().any(|(s, c)| s == symbol && *c == color),
-                    "global Nerd icons switch updates Git marks and preserves colors: {seen:?}"
-                );
-            }
-            backend.state_mut().theme = rozi::state::ThemePreset::Dracula.theme();
-            backend.render();
-            let changed = backend.state().theme.git_status.modified;
-            assert_ne!(changed, git.modified, "the palette must actually change");
-            assert!(
-                markers(&mut backend)
-                    .iter()
-                    .any(|(symbol, color)| { symbol == "" && *color == changed }),
-                "the mounted Rozi tree follows the active theme"
-            );
-        })
-        .expect("spawn color smoke thread")
-        .join()
-        .expect("color smoke completes");
-}
-
-/// Every scrolling surface in the sidebar uses the right half block thumb: the file tree's own
-/// scrollbar and the shared body scroll view that wraps the non-tree tabs.
-#[test]
-fn sidebar_scrollbars_use_the_half_block_thumb() {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            // Short viewport against this repository, so both surfaces certainly overflow.
-            let has_thumb = |tab: SidebarTab, panes: usize| -> bool {
-                rozi::test_support::isolate_user_dirs();
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 90,
-                    h: 12,
-                });
-                {
-                    let state = backend.state_mut();
-                    state.sidebar.shown = [true, false];
-                    state.config.animations.sidebar = false;
-                    state.config.nerd_icons = false;
-                    state.config.sidebar.layout.left.width = 34;
-                    state.sidebar.panels[0].tabs = vec![tab.id()];
-                    state.sidebar.panels[0].active_tab = Some(tab.id());
-                    state.config.sidebar.tabs = vec![tab];
-                    let pane = state.current().workspaces[0].panes[0].id;
-                    state.current_mut().focused_pane = Some(pane);
-                    state.current_mut().workspaces[0].focused_pane = Some(pane);
-                    state.current_mut().workspaces[0].panes[0].terminal.cwd =
-                        Some(env!("CARGO_MANIFEST_DIR").to_string());
-                    // The Panes tab needs enough rows to overflow a 12-row viewport.
-                    let rect = state.current().workspaces[0].panes[0].floating_rect;
-                    for id in 100..(100 + panes as u32) {
-                        state.current_mut().workspaces[0]
-                            .panes
-                            .push(rozi::state::Pane::new(id, 100, rect));
-                    }
-                }
-                pump_until(&mut backend, |backend| {
-                    let frame = backend.capture_frame();
-                    (0..12u16).any(|y| (0..34u16).any(|x| frame.cell(x, y).symbol == "▐"))
-                })
-            };
-
-            let tree = SidebarTab::Tree {
-                view: SidebarTreeView::Files,
-                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-            };
-            assert!(
-                has_thumb(tree, 0),
-                "file tree scrollbar uses the half block"
-            );
-            assert!(
-                has_thumb(SidebarTab::Panes, 20),
-                "the sidebar body scroll view uses the half block"
-            );
-        })
-        .expect("spawn scrollbar smoke thread")
-        .join()
-        .expect("scrollbar smoke completes");
+        let tree = SidebarTab::Tree {
+            view: SidebarTreeView::Files,
+            config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+        };
+        assert!(
+            has_thumb(tree, 0),
+            "file tree scrollbar uses the half block"
+        );
+        assert!(
+            has_thumb(SidebarTab::Panes, 20),
+            "the sidebar body scroll view uses the half block"
+        );
+    });
 }
 
 /// With nothing changed the Git tab says so, rather than showing a root row heading an empty list.
@@ -670,154 +656,149 @@ fn expanded_directories_survive_the_tree_re_rooting() {
 
     let cwd = repo.0.to_string_lossy().into_owned();
     let other = elsewhere.to_string_lossy().into_owned();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 90,
-                h: 24,
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 90,
+            h: 24,
+        });
+        let pane = {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            state.config.sidebar.layout.left.width = 34;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+            pane
+        };
+        let rows = |backend: &TestBackend<AppRoot>| sidebar_rows(backend, 34);
+        let shows = |text: &'static str| {
+            move |backend: &mut TestBackend<AppRoot>| {
+                sidebar_rows(backend, 34)
+                    .iter()
+                    .any(|line| line.contains(text))
+            }
+        };
+        let lacks = |text: &'static str| {
+            move |backend: &mut TestBackend<AppRoot>| {
+                !sidebar_rows(backend, 34)
+                    .iter()
+                    .any(|line| line.contains(text))
+            }
+        };
+        pump_until(&mut backend, shows("src"));
+
+        let src_row = (3u16..16)
+            .find(|&row| rows(&backend)[row as usize].contains("src"))
+            .expect("src directory row is visible");
+        for kind in [
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ] {
+            let _ = backend.send_mouse(MouseEvent {
+                x: 5,
+                y: src_row,
+                kind,
+                mods: Default::default(),
             });
-            let pane = {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                state.config.sidebar.layout.left.width = 34;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-                pane
-            };
-            let rows = |backend: &TestBackend<AppRoot>| sidebar_rows(backend, 34);
-            let shows = |text: &'static str| {
-                move |backend: &mut TestBackend<AppRoot>| {
-                    sidebar_rows(backend, 34)
-                        .iter()
-                        .any(|line| line.contains(text))
-                }
-            };
-            let lacks = |text: &'static str| {
-                move |backend: &mut TestBackend<AppRoot>| {
-                    !sidebar_rows(backend, 34)
-                        .iter()
-                        .any(|line| line.contains(text))
-                }
-            };
-            pump_until(&mut backend, shows("src"));
+        }
+        pump_until(&mut backend, shows("inner"));
+        assert!(
+            rows(&backend).iter().any(|line| line.contains("inner")),
+            "the directory starts out expanded: {:?}",
+            rows(&backend)
+        );
 
-            let src_row = (3u16..16)
-                .find(|&row| rows(&backend)[row as usize].contains("src"))
-                .expect("src directory row is visible");
-            for kind in [
-                MouseKind::Down(MouseButton::Left),
-                MouseKind::Up(MouseButton::Left),
-            ] {
-                let _ = backend.send_mouse(MouseEvent {
-                    x: 5,
-                    y: src_row,
-                    kind,
-                    mods: Default::default(),
-                });
-            }
-            pump_until(&mut backend, shows("inner"));
-            assert!(
-                rows(&backend).iter().any(|line| line.contains("inner")),
-                "the directory starts out expanded: {:?}",
-                rows(&backend)
-            );
-
-            // Re-root the tab the way focusing a pane in another directory does.
-            let reroot = |backend: &mut TestBackend<AppRoot>, path: &str| {
-                backend.state_mut().current_mut().workspaces[0].panes[0]
-                    .terminal
-                    .cwd = Some(path.to_string());
-                backend
-                    .dispatch(Msg::FocusPane(pane))
-                    .expect("refocus the pane");
-            };
-            reroot(&mut backend, &other);
-            // The repository's tree is gone once its `src` row is: only then does the absence of
-            // `inner` say anything about the new root.
-            pump_until(&mut backend, lacks("src"));
-            assert!(
-                !rows(&backend).iter().any(|line| line.contains("src")),
-                "the tab re-rooted: {:?}",
-                rows(&backend)
-            );
-            assert!(
-                !rows(&backend).iter().any(|line| line.contains("inner")),
-                "the other directory has a tree of its own: {:?}",
-                rows(&backend)
-            );
-
-            reroot(&mut backend, &repo.0.to_string_lossy());
-            pump_until(&mut backend, shows("inner"));
-            assert!(
-                rows(&backend).iter().any(|line| line.contains("inner")),
-                "coming back restores the expanded directory: {:?}",
-                rows(&backend)
-            );
-
-            // Collapsing is remembered too, or the memory would be a one-way ratchet.
-            let src_row = (3u16..16)
-                .find(|&row| rows(&backend)[row as usize].contains("src"))
-                .expect("src row visible again");
-            for kind in [
-                MouseKind::Down(MouseButton::Left),
-                MouseKind::Up(MouseButton::Left),
-            ] {
-                let _ = backend.send_mouse(MouseEvent {
-                    x: 5,
-                    y: src_row,
-                    kind,
-                    mods: Default::default(),
-                });
-            }
-            let remembers_src = |backend: &TestBackend<AppRoot>| {
-                backend
-                    .state()
-                    .sidebar
-                    .tree_expanded
-                    .values()
-                    .any(|expanded| expanded.iter().any(|path| path.ends_with("src")))
-            };
-            pump_until(&mut backend, |backend| !remembers_src(backend));
-            assert!(
-                !remembers_src(&backend),
-                "collapsing forgets the expansion: {:?}",
-                backend.state().sidebar.tree_expanded
-            );
-            reroot(&mut backend, &other);
-            pump_until(&mut backend, lacks("src"));
-            reroot(&mut backend, &repo.0.to_string_lossy());
-            pump_until(&mut backend, shows("src"));
-            // A wrongly restored expansion would list `src` in the background; give that listing
-            // the time a correct restore took above before calling its absence a pass.
+        // Re-root the tab the way focusing a pane in another directory does.
+        let reroot = |backend: &mut TestBackend<AppRoot>, path: &str| {
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .cwd = Some(path.to_string());
             backend
-                .settle(std::time::Duration::from_millis(150))
-                .expect("settle");
-            backend.render();
-            assert!(
-                !rows(&backend).iter().any(|line| line.contains("inner")),
-                "a collapsed directory stays collapsed: {:?}",
-                rows(&backend)
-            );
-        })
-        .expect("spawn expansion smoke thread")
-        .join()
-        .expect("expansion smoke completes");
+                .dispatch(Msg::FocusPane(pane))
+                .expect("refocus the pane");
+        };
+        reroot(&mut backend, &other);
+        // The repository's tree is gone once its `src` row is: only then does the absence of
+        // `inner` say anything about the new root.
+        pump_until(&mut backend, lacks("src"));
+        assert!(
+            !rows(&backend).iter().any(|line| line.contains("src")),
+            "the tab re-rooted: {:?}",
+            rows(&backend)
+        );
+        assert!(
+            !rows(&backend).iter().any(|line| line.contains("inner")),
+            "the other directory has a tree of its own: {:?}",
+            rows(&backend)
+        );
+
+        reroot(&mut backend, &repo.0.to_string_lossy());
+        pump_until(&mut backend, shows("inner"));
+        assert!(
+            rows(&backend).iter().any(|line| line.contains("inner")),
+            "coming back restores the expanded directory: {:?}",
+            rows(&backend)
+        );
+
+        // Collapsing is remembered too, or the memory would be a one-way ratchet.
+        let src_row = (3u16..16)
+            .find(|&row| rows(&backend)[row as usize].contains("src"))
+            .expect("src row visible again");
+        for kind in [
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ] {
+            let _ = backend.send_mouse(MouseEvent {
+                x: 5,
+                y: src_row,
+                kind,
+                mods: Default::default(),
+            });
+        }
+        let remembers_src = |backend: &TestBackend<AppRoot>| {
+            backend
+                .state()
+                .sidebar
+                .tree_expanded
+                .values()
+                .any(|expanded| expanded.iter().any(|path| path.ends_with("src")))
+        };
+        pump_until(&mut backend, |backend| !remembers_src(backend));
+        assert!(
+            !remembers_src(&backend),
+            "collapsing forgets the expansion: {:?}",
+            backend.state().sidebar.tree_expanded
+        );
+        reroot(&mut backend, &other);
+        pump_until(&mut backend, lacks("src"));
+        reroot(&mut backend, &repo.0.to_string_lossy());
+        pump_until(&mut backend, shows("src"));
+        // A wrongly restored expansion would list `src` in the background; give that listing
+        // the time a correct restore took above before calling its absence a pass.
+        backend
+            .settle(std::time::Duration::from_millis(150))
+            .expect("settle");
+        backend.render();
+        assert!(
+            !rows(&backend).iter().any(|line| line.contains("inner")),
+            "a collapsed directory stays collapsed: {:?}",
+            rows(&backend)
+        );
+    });
 }
 
 /// Clicking a directory row expands it (revealing its children) without running the tab's action,
@@ -835,156 +816,151 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
     std::fs::write(repo.0.join("src/inner/leaf.rs"), "// leaf\n").expect("nested file");
 
     let cwd = repo.0.to_string_lossy().into_owned();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 90,
-                h: 24,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                state.config.sidebar.layout.left.width = 34;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 90,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            state.config.sidebar.layout.left.width = 34;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        let shows = |text: &'static str| {
+            move |backend: &mut TestBackend<AppRoot>| {
+                sidebar_rows(backend, 34)
+                    .iter()
+                    .any(|line| line.contains(text))
             }
-            let shows = |text: &'static str| {
-                move |backend: &mut TestBackend<AppRoot>| {
-                    sidebar_rows(backend, 34)
-                        .iter()
-                        .any(|line| line.contains(text))
-                }
-            };
-            // Pointer and key handling is synchronous; one frame shows its result.
-            let frame = |backend: &mut TestBackend<AppRoot>| {
-                let _ = backend.pump();
-                backend.render();
-            };
-            pump_until(&mut backend, shows("src"));
+        };
+        // Pointer and key handling is synchronous; one frame shows its result.
+        let frame = |backend: &mut TestBackend<AppRoot>| {
+            let _ = backend.pump();
+            backend.render();
+        };
+        pump_until(&mut backend, shows("src"));
 
-            // The cursor is the pointer-hover lift tinted toward the active border, the same
-            // highlight the composed row lists use.
-            let theme = &backend.state().theme;
-            let selection_bg = theme
-                .surface
-                .element
-                .elevate_by(0.08)
-                .blend_toward(theme.border_active, 0.25);
+        // The cursor is the pointer-hover lift tinted toward the active border, the same
+        // highlight the composed row lists use.
+        let theme = &backend.state().theme;
+        let selection_bg = theme
+            .surface
+            .element
+            .elevate_by(0.08)
+            .blend_toward(theme.border_active, 0.25);
 
-            // Find and click the `src` directory row.
-            let row_text = |backend: &TestBackend<AppRoot>, row: u16| -> String {
+        // Find and click the `src` directory row.
+        let row_text = |backend: &TestBackend<AppRoot>, row: u16| -> String {
+            backend.capture_frame().to_fixed_grid_lines()[row as usize]
+                .chars()
+                .take(34)
+                .collect()
+        };
+        // A child row is prefixed by its indent guide, not by plain indentation; the range
+        // starts below the root path row, so the name alone identifies it.
+        let src_row = (3u16..16)
+            .find(|&row| row_text(&backend, row).contains("src"))
+            .expect("src directory row is visible");
+        for kind in [
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ] {
+            let _ = backend.send_mouse(MouseEvent {
+                x: 5,
+                y: src_row,
+                kind,
+                mods: Default::default(),
+            });
+        }
+        pump_until(&mut backend, shows("inner"));
+
+        // The directory expanded: a child now sits directly below it. The action never ran, so
+        // no pane input was produced — asserted structurally by the tree still being the only
+        // thing on screen and the child appearing.
+        let after: Vec<String> = (0..16).map(|row| row_text(&backend, row)).collect();
+        assert!(
+            after.iter().any(|line| line.contains("inner")),
+            "clicking the directory expanded it: {after:?}"
+        );
+
+        // Park the pointer outside the sidebar first: a row still under the mouse is lit for a
+        // reason that has nothing to do with selection.
+        let _ = backend.send_mouse(MouseEvent {
+            x: 80,
+            y: 20,
+            kind: MouseKind::Moved,
+            mods: Default::default(),
+        });
+        frame(&mut backend);
+
+        // A click is a one-shot gesture, not a "this row is now current" state: the sidebar is
+        // a `FocusScope::Exclude` subtree, so clicking never focuses the tree and the row the
+        // widget selected internally leaves no mark behind.
+        let src_after = (3u16..16)
+            .find(|&row| row_text(&backend, row).contains("src"))
+            .expect("src row still visible after expand");
+        let bg = backend.capture_frame().cell(3, src_after).bg;
+        assert_ne!(
+            bg, selection_bg,
+            "an unfocused tree must not paint a selection background"
+        );
+
+        // Entering the sidebar with the keyboard is what makes the cursor real. `focus-sidebar`
+        // is the only way in, precisely because Tab and clicks cannot get here.
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        pump_until(&mut backend, |backend| {
+            (3u16..16).any(|row| {
                 backend.capture_frame().to_fixed_grid_lines()[row as usize]
                     .chars()
                     .take(34)
-                    .collect()
-            };
-            // A child row is prefixed by its indent guide, not by plain indentation; the range
-            // starts below the root path row, so the name alone identifies it.
-            let src_row = (3u16..16)
-                .find(|&row| row_text(&backend, row).contains("src"))
-                .expect("src directory row is visible");
-            for kind in [
-                MouseKind::Down(MouseButton::Left),
-                MouseKind::Up(MouseButton::Left),
-            ] {
-                let _ = backend.send_mouse(MouseEvent {
-                    x: 5,
-                    y: src_row,
-                    kind,
-                    mods: Default::default(),
-                });
-            }
-            pump_until(&mut backend, shows("inner"));
+                    .collect::<String>()
+                    .contains("src")
+                    && backend.capture_frame().cell(3, row).bg == selection_bg
+            })
+        });
+        let focused_row = (3u16..16)
+            .find(|&row| row_text(&backend, row).contains("src"))
+            .expect("src row visible while focused");
+        let focused_bg = backend.capture_frame().cell(3, focused_row).bg;
+        assert_eq!(
+            focused_bg, selection_bg,
+            "a focused tree paints the cursor with the shared row highlight, got {focused_bg:?}"
+        );
 
-            // The directory expanded: a child now sits directly below it. The action never ran, so
-            // no pane input was produced — asserted structurally by the tree still being the only
-            // thing on screen and the child appearing.
-            let after: Vec<String> = (0..16).map(|row| row_text(&backend, row)).collect();
-            assert!(
-                after.iter().any(|line| line.contains("inner")),
-                "clicking the directory expanded it: {after:?}"
-            );
-
-            // Park the pointer outside the sidebar first: a row still under the mouse is lit for a
-            // reason that has nothing to do with selection.
-            let _ = backend.send_mouse(MouseEvent {
-                x: 80,
-                y: 20,
-                kind: MouseKind::Moved,
-                mods: Default::default(),
-            });
-            frame(&mut backend);
-
-            // A click is a one-shot gesture, not a "this row is now current" state: the sidebar is
-            // a `FocusScope::Exclude` subtree, so clicking never focuses the tree and the row the
-            // widget selected internally leaves no mark behind.
-            let src_after = (3u16..16)
-                .find(|&row| row_text(&backend, row).contains("src"))
-                .expect("src row still visible after expand");
-            let bg = backend.capture_frame().cell(3, src_after).bg;
-            assert_ne!(
-                bg, selection_bg,
-                "an unfocused tree must not paint a selection background"
-            );
-
-            // Entering the sidebar with the keyboard is what makes the cursor real. `focus-sidebar`
-            // is the only way in, precisely because Tab and clicks cannot get here.
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            pump_until(&mut backend, |backend| {
-                (3u16..16).any(|row| {
-                    backend.capture_frame().to_fixed_grid_lines()[row as usize]
-                        .chars()
-                        .take(34)
-                        .collect::<String>()
-                        .contains("src")
-                        && backend.capture_frame().cell(3, row).bg == selection_bg
-                })
-            });
-            let focused_row = (3u16..16)
-                .find(|&row| row_text(&backend, row).contains("src"))
-                .expect("src row visible while focused");
-            let focused_bg = backend.capture_frame().cell(3, focused_row).bg;
-            assert_eq!(
-                focused_bg, selection_bg,
-                "a focused tree paints the cursor with the shared row highlight, got {focused_bg:?}"
-            );
-
-            // Escape hands the keyboard back and the cursor goes quiet again.
-            let _ = backend.send_key(KeyEvent {
-                code: KeyCode::Esc,
-                mods: KeyMods::NONE,
-            });
-            frame(&mut backend);
-            let blurred_row = (3u16..16)
-                .find(|&row| row_text(&backend, row).contains("src"))
-                .expect("src row visible after blur");
-            let blurred_bg = backend.capture_frame().cell(3, blurred_row).bg;
-            assert_ne!(
-                blurred_bg, selection_bg,
-                "Escape leaves the sidebar and clears the cursor"
-            );
-        })
-        .expect("spawn click smoke thread")
-        .join()
-        .expect("click smoke completes");
+        // Escape hands the keyboard back and the cursor goes quiet again.
+        let _ = backend.send_key(KeyEvent {
+            code: KeyCode::Esc,
+            mods: KeyMods::NONE,
+        });
+        frame(&mut backend);
+        let blurred_row = (3u16..16)
+            .find(|&row| row_text(&backend, row).contains("src"))
+            .expect("src row visible after blur");
+        let blurred_bg = backend.capture_frame().cell(3, blurred_row).bg;
+        assert_ne!(
+            blurred_bg, selection_bg,
+            "Escape leaves the sidebar and clears the cursor"
+        );
+    });
 }
 
 /// `g` / `G` reach the first and last row on a tree tab, the same rows `Home` / `End` do. The tree
@@ -1000,146 +976,136 @@ fn g_and_shift_g_jump_to_the_ends_of_the_files_tab() {
     }
 
     let cwd = repo.0.to_string_lossy().into_owned();
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(move || {
-            rozi::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 90,
-                h: 24,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.sidebar = false;
-                state.config.nerd_icons = false;
-                state.config.sidebar.layout.left.width = 34;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                let pane = state.current().workspaces[0].panes[0].id;
-                state.current_mut().focused_pane = Some(pane);
-                state.current_mut().workspaces[0].focused_pane = Some(pane);
-                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
-            }
-            assert!(
-                pump_until(&mut backend, |backend| {
-                    backend
-                        .capture_frame()
-                        .to_fixed_grid_lines()
-                        .iter()
-                        .any(|line| line.contains("c.txt"))
-                }),
-                "the tree lists the scratch files"
-            );
-            backend
-                .dispatch(Msg::RunAction(Action::FocusSidebar))
-                .expect("focus sidebar");
-            backend.render();
-
-            let theme = &backend.state().theme;
-            let selection_bg = theme
-                .surface
-                .element
-                .elevate_by(0.08)
-                .blend_toward(theme.border_active, 0.25);
-            let mut cursor_after = |code: KeyCode, mods: KeyMods| -> Option<u16> {
-                let _ = backend.send_key(KeyEvent { code, mods });
-                backend.render();
-                let frame = backend.capture_frame();
-                (0..24u16).find(|&row| frame.cell(3, row).bg == selection_bg)
+    rozi::test_support::on_deeper_stack(move || {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 90,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.sidebar = false;
+            state.config.nerd_icons = false;
+            state.config.sidebar.layout.left.width = 34;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
             };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            let pane = state.current().workspaces[0].panes[0].id;
+            state.current_mut().focused_pane = Some(pane);
+            state.current_mut().workspaces[0].focused_pane = Some(pane);
+            state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
+        }
+        assert!(
+            pump_until(&mut backend, |backend| {
+                backend
+                    .capture_frame()
+                    .to_fixed_grid_lines()
+                    .iter()
+                    .any(|line| line.contains("c.txt"))
+            }),
+            "the tree lists the scratch files"
+        );
+        backend
+            .dispatch(Msg::RunAction(Action::FocusSidebar))
+            .expect("focus sidebar");
+        backend.render();
 
-            let end = cursor_after(KeyCode::End, KeyMods::NONE).expect("End shows the cursor");
-            let home = cursor_after(KeyCode::Home, KeyMods::NONE).expect("Home shows the cursor");
-            assert_ne!(home, end, "the tree needs more than one row");
-            assert_eq!(
-                cursor_after(KeyCode::Char('G'), KeyMods::SHIFT),
-                Some(end),
-                "G lands where End does"
-            );
-            assert_eq!(
-                cursor_after(KeyCode::Char('g'), KeyMods::NONE),
-                Some(home),
-                "g lands where Home does"
-            );
-        })
-        .expect("spawn vim jump thread")
-        .join()
-        .expect("vim jump completes");
+        let theme = &backend.state().theme;
+        let selection_bg = theme
+            .surface
+            .element
+            .elevate_by(0.08)
+            .blend_toward(theme.border_active, 0.25);
+        let mut cursor_after = |code: KeyCode, mods: KeyMods| -> Option<u16> {
+            let _ = backend.send_key(KeyEvent { code, mods });
+            backend.render();
+            let frame = backend.capture_frame();
+            (0..24u16).find(|&row| frame.cell(3, row).bg == selection_bg)
+        };
+
+        let end = cursor_after(KeyCode::End, KeyMods::NONE).expect("End shows the cursor");
+        let home = cursor_after(KeyCode::Home, KeyMods::NONE).expect("Home shows the cursor");
+        assert_ne!(home, end, "the tree needs more than one row");
+        assert_eq!(
+            cursor_after(KeyCode::Char('G'), KeyMods::SHIFT),
+            Some(end),
+            "G lands where End does"
+        );
+        assert_eq!(
+            cursor_after(KeyCode::Char('g'), KeyMods::NONE),
+            Some(home),
+            "g lands where Home does"
+        );
+    });
 }
 
 #[test]
 fn file_rows_and_sidebar_tabs_follow_the_mouse_pointer_preference() {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            rozi::test_support::isolate_user_dirs();
-            let root = tempfile::tempdir().unwrap();
-            std::fs::write(root.path().join("pointer-fixture.txt"), "fixture\n").unwrap();
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                state.sidebar.shown = [true, false];
-                state.config.animations.enabled = false;
-                state.config.nerd_icons = false;
-                let tab = SidebarTab::Tree {
-                    view: SidebarTreeView::Files,
-                    config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
-                };
-                state.sidebar.panels[0].tabs = vec![tab.id()];
-                state.sidebar.panels[0].active_tab = Some(tab.id());
-                state.config.sidebar.tabs = vec![tab];
-                state.current_mut().workspaces[0].panes[0].terminal.cwd =
-                    Some(root.path().to_string_lossy().into_owned());
-            }
-            assert!(pump_until(&mut backend, |backend| sidebar_rows(
-                backend, 32
-            )
+    rozi::test_support::on_deeper_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("pointer-fixture.txt"), "fixture\n").unwrap();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            state.sidebar.shown = [true, false];
+            state.config.animations.enabled = false;
+            state.config.nerd_icons = false;
+            let tab = SidebarTab::Tree {
+                view: SidebarTreeView::Files,
+                config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
+            };
+            state.sidebar.panels[0].tabs = vec![tab.id()];
+            state.sidebar.panels[0].active_tab = Some(tab.id());
+            state.config.sidebar.tabs = vec![tab];
+            state.current_mut().workspaces[0].panes[0].terminal.cwd =
+                Some(root.path().to_string_lossy().into_owned());
+        }
+        assert!(pump_until(&mut backend, |backend| sidebar_rows(
+            backend, 32
+        )
+        .iter()
+        .any(|row| row.contains("pointer-fixture.txt"))));
+        let rows = sidebar_rows(&backend, 32);
+        let (y, row) = rows
             .iter()
-            .any(|row| row.contains("pointer-fixture.txt"))));
-            let rows = sidebar_rows(&backend, 32);
-            let (y, row) = rows
-                .iter()
-                .enumerate()
-                .find(|(_, row)| row.contains("pointer-fixture.txt"))
-                .unwrap();
-            let x = row.chars().position(|c| c == 'p').unwrap() as u16;
-            let y = y as u16;
-            assert_eq!(
-                backend.pointer_shape_at(x, y),
-                Some(tui_lipan::PointerShape::Pointer)
-            );
-            let tab_y = rows.iter().position(|row| row.contains("Files")).unwrap() as u16;
-            let tab_x = rows[tab_y as usize].chars().position(|c| c == 'F').unwrap() as u16;
-            assert_eq!(
-                backend.pointer_shape_at(tab_x, tab_y),
-                Some(tui_lipan::PointerShape::Pointer)
-            );
-            for mode in [
-                rozi::config::MousePointer::Panes,
-                rozi::config::MousePointer::Off,
-            ] {
-                backend.state_mut().config.cursor.pointer = mode;
-                backend.render();
-                assert_eq!(backend.pointer_shape_at(x, y), None);
-                assert_eq!(backend.pointer_shape_at(tab_x, tab_y), None);
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+            .enumerate()
+            .find(|(_, row)| row.contains("pointer-fixture.txt"))
+            .unwrap();
+        let x = row.chars().position(|c| c == 'p').unwrap() as u16;
+        let y = y as u16;
+        assert_eq!(
+            backend.pointer_shape_at(x, y),
+            Some(tui_lipan::PointerShape::Pointer)
+        );
+        let tab_y = rows.iter().position(|row| row.contains("Files")).unwrap() as u16;
+        let tab_x = rows[tab_y as usize].chars().position(|c| c == 'F').unwrap() as u16;
+        assert_eq!(
+            backend.pointer_shape_at(tab_x, tab_y),
+            Some(tui_lipan::PointerShape::Pointer)
+        );
+        for mode in [
+            rozi::config::MousePointer::Panes,
+            rozi::config::MousePointer::Off,
+        ] {
+            backend.state_mut().config.cursor.pointer = mode;
+            backend.render();
+            assert_eq!(backend.pointer_shape_at(x, y), None);
+            assert_eq!(backend.pointer_shape_at(tab_x, tab_y), None);
+        }
+    });
 }

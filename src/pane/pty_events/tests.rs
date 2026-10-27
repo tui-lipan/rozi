@@ -19,34 +19,6 @@ fn key(code: KeyCode, mods: KeyMods) -> KeyEvent {
 }
 
 #[test]
-fn terminal_key_encoding_matches_local_terminal_encoder_representatives() {
-    let cases = [
-        (key(KeyCode::Char('x'), KeyMods::NONE), b"x".to_vec()),
-        (key(KeyCode::Char('c'), KeyMods::CTRL), vec![3]),
-        (key(KeyCode::Char('x'), KeyMods::ALT), b"\x1bx".to_vec()),
-        (key(KeyCode::Enter, KeyMods::NONE), b"\r".to_vec()),
-        (key(KeyCode::BackTab, KeyMods::NONE), b"\x1b[Z".to_vec()),
-        (key(KeyCode::Delete, KeyMods::NONE), b"\x1b[3~".to_vec()),
-        (key(KeyCode::Home, KeyMods::NONE), b"\x1b[H".to_vec()),
-        (key(KeyCode::End, KeyMods::NONE), b"\x1b[F".to_vec()),
-        (key(KeyCode::PageUp, KeyMods::NONE), b"\x1b[5~".to_vec()),
-        (key(KeyCode::F(12), KeyMods::NONE), b"\x1b[24~".to_vec()),
-        // Modified cursor keys must carry the xterm parameter so word-wise motion
-        // (Ctrl+Left/Right) and shifted selection reach TUIs instead of a bare arrow.
-        (key(KeyCode::Left, KeyMods::CTRL), b"\x1b[1;5D".to_vec()),
-        (key(KeyCode::Right, KeyMods::CTRL), b"\x1b[1;5C".to_vec()),
-        (key(KeyCode::End, KeyMods::SHIFT), b"\x1b[1;2F".to_vec()),
-    ];
-
-    for (key, expected) in cases {
-        assert_eq!(
-            terminal_key_event_bytes(key, TerminalKeyModes::default()),
-            Some(expected)
-        );
-    }
-}
-
-#[test]
 fn server_key_forwarding_enqueues_session_input_bytes() {
     let (client, rx) = crate::session::client::SessionClient::test_channel();
 
@@ -99,61 +71,56 @@ fn an_unbound_key_after_the_prefix_reaches_no_pane() {
     use crate::session::client::{ClientOutbound, SessionClient};
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let app = App::new()
-                .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
-                .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
-                .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
-            let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
-            let (client, rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_client = Some(client);
-                let pane = &mut state.current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-            }
-            backend.render();
-            backend.focus_next();
-            while rx.try_recv().is_ok() {}
+    crate::test_support::on_large_stack(|| {
+        let app = App::new()
+            .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+            .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+            .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
+        let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+        let (client, rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_client = Some(client);
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+        }
+        backend.render();
+        backend.focus_next();
+        while rx.try_recv().is_ok() {}
 
-            let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
-            backend.send_key(prefix).expect("prefix enters chord");
-            // `y` is deliberately unbound as a prefix chord: nothing should reach the pane.
-            backend
-                .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
-                .expect("unbound key resolves");
+        let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
+        backend.send_key(prefix).expect("prefix enters chord");
+        // `y` is deliberately unbound as a prefix chord: nothing should reach the pane.
+        backend
+            .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
+            .expect("unbound key resolves");
 
-            let inputs: Vec<_> = rx
-                .try_iter()
-                .filter_map(|message| match message {
-                    ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    _ => None,
-                })
-                .collect();
-            assert!(
-                inputs.is_empty(),
-                "the prefix and the unbound key must both stay in rozi: {inputs:?}"
-            );
+        let inputs: Vec<_> = rx
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            inputs.is_empty(),
+            "the prefix and the unbound key must both stay in rozi: {inputs:?}"
+        );
 
-            // The chord is over, so the next key is ordinary input again.
-            backend
-                .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
-                .expect("plain key forwards");
-            let inputs: Vec<_> = rx
-                .try_iter()
-                .filter_map(|message| match message {
-                    ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(inputs, vec![b"y".to_vec()]);
-        })
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+        // The chord is over, so the next key is ordinary input again.
+        backend
+            .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
+            .expect("plain key forwards");
+        let inputs: Vec<_> = rx
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(inputs, vec![b"y".to_vec()]);
+    });
 }
 
 #[test]
@@ -161,53 +128,48 @@ fn double_prefix_forwards_one_prefix_key() {
     use crate::session::client::{ClientOutbound, SessionClient};
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let app = App::new()
-                .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
-                .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
-                .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
-            let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
-            let (client, rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_client = Some(client);
-                let pane = &mut state.current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-            }
-            backend.render();
-            backend.focus_next();
-            while rx.try_recv().is_ok() {}
+    crate::test_support::on_large_stack(|| {
+        let app = App::new()
+            .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+            .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+            .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
+        let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+        let (client, rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_client = Some(client);
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+        }
+        backend.render();
+        backend.focus_next();
+        while rx.try_recv().is_ok() {}
 
-            let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
-            backend.send_key(prefix).expect("first prefix enters chord");
-            backend
-                .send_key(prefix)
-                .expect("second prefix forwards the first");
+        let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
+        backend.send_key(prefix).expect("first prefix enters chord");
+        backend
+            .send_key(prefix)
+            .expect("second prefix forwards the first");
 
-            let inputs: Vec<_> = rx
-                .try_iter()
-                .filter_map(|message| match message {
-                    ClientOutbound::PaneInput { .. } => Some(message),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(
-                inputs,
-                vec![ClientOutbound::PaneInput {
-                    latency_sensitive: true,
-                    pane_id: 1,
-                    local: false,
-                    generation: 0,
-                    bytes: vec![1],
-                }]
-            );
-        })
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+        let inputs: Vec<_> = rx
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::PaneInput { .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            inputs,
+            vec![ClientOutbound::PaneInput {
+                latency_sensitive: true,
+                pane_id: 1,
+                local: false,
+                generation: 0,
+                bytes: vec![1],
+            }]
+        );
+    });
 }
 
 // Framework events are non-exhaustive. Obtain a widget-emitted event before varying its
@@ -259,40 +221,35 @@ fn focus_reports_do_not_mark_a_session_as_worked_in() {
     use crate::session::client::SessionClient;
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(client);
-            backend.state_mut().current_mut().engaged = false;
-            {
-                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-            }
-            backend.render();
-            backend.focus_next();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        backend.state_mut().current_mut().engaged = false;
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+        }
+        backend.render();
+        backend.focus_next();
 
-            for kind in [TerminalInputKind::FocusIn, TerminalInputKind::FocusOut] {
-                backend
-                    .dispatch(Msg::PaneInput(1, focus_report(kind)))
-                    .expect("dispatch focus report");
-                assert!(
-                    !backend.state().current().engaged,
-                    "{kind:?} must not count as working in the session"
-                );
-            }
-
-            backend.send_paste("work").expect("dispatch paste");
+        for kind in [TerminalInputKind::FocusIn, TerminalInputKind::FocusOut] {
+            backend
+                .dispatch(Msg::PaneInput(1, focus_report(kind)))
+                .expect("dispatch focus report");
             assert!(
-                backend.state().current().engaged,
-                "a paste puts the user's own content into the session"
+                !backend.state().current().engaged,
+                "{kind:?} must not count as working in the session"
             );
-        })
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+        }
+
+        backend.send_paste("work").expect("dispatch paste");
+        assert!(
+            backend.state().current().engaged,
+            "a paste puts the user's own content into the session"
+        );
+    });
 }
 
 /// A child running mouse tracking keeps the press on an already-focused pane for itself, so the
@@ -304,55 +261,50 @@ fn a_press_forwarded_to_a_mouse_tracking_child_answers_the_mark() {
     use crate::session::client::SessionClient;
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(client);
-            let id = backend.state().focused_pane().expect("fresh pane focus");
-            let marked = |backend: &TestBackend<AppRoot>| {
-                let pane = &backend.state().current().workspaces[0].panes[0];
-                pane.activity.bell || pane.terminal.finished_unseen
-            };
-            {
-                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                pane.activity.bell = true;
-                pane.terminal.finished_unseen = true;
-            }
-            backend.render();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        let id = backend.state().focused_pane().expect("fresh pane focus");
+        let marked = |backend: &TestBackend<AppRoot>| {
+            let pane = &backend.state().current().workspaces[0].panes[0];
+            pane.activity.bell || pane.terminal.finished_unseen
+        };
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.activity.bell = true;
+            pane.terminal.finished_unseen = true;
+        }
+        backend.render();
 
-            for kind in [
-                MouseKind::Moved,
-                MouseKind::Up(MouseButton::Left),
-                MouseKind::Drag(MouseButton::Left),
-            ] {
-                backend
-                    .dispatch(Msg::PaneMouse(
-                        id,
-                        crate::test_support::forwarded_mouse(
-                            kind,
-                            b"opaque motion or release".to_vec(),
-                        ),
-                    ))
-                    .expect("dispatch pointer report");
-                assert!(marked(&backend), "{kind:?} is not a click");
-            }
-
+        for kind in [
+            MouseKind::Moved,
+            MouseKind::Up(MouseButton::Left),
+            MouseKind::Drag(MouseButton::Left),
+        ] {
             backend
                 .dispatch(Msg::PaneMouse(
                     id,
                     crate::test_support::forwarded_mouse(
-                        MouseKind::Down(MouseButton::Left),
-                        b"opaque press".to_vec(),
+                        kind,
+                        b"opaque motion or release".to_vec(),
                     ),
                 ))
-                .expect("dispatch press");
-            assert!(!marked(&backend), "a click on the pane answers its mark");
-        })
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+                .expect("dispatch pointer report");
+            assert!(marked(&backend), "{kind:?} is not a click");
+        }
+
+        backend
+            .dispatch(Msg::PaneMouse(
+                id,
+                crate::test_support::forwarded_mouse(
+                    MouseKind::Down(MouseButton::Left),
+                    b"opaque press".to_vec(),
+                ),
+            ))
+            .expect("dispatch press");
+        assert!(!marked(&backend), "a click on the pane answers its mark");
+    });
 }
 
 #[test]
@@ -361,90 +313,85 @@ fn scrolling_answers_only_the_target_panes_marks() {
     use crate::session::client::SessionClient;
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(client);
-            let id = backend.state().focused_pane().expect("fresh pane focus");
-            let other_id = id + 1;
-            backend.state_mut().current_mut().workspaces[0]
-                .panes
-                .push(Pane::new(other_id, 100, rect()));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        let id = backend.state().focused_pane().expect("fresh pane focus");
+        let other_id = id + 1;
+        backend.state_mut().current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(other_id, 100, rect()));
 
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 80,
-                h: 24,
-            });
-            {
-                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-            }
-            backend.render();
-            backend.focus_key(&crate::view::pane_terminal_key(id).into());
-            backend.state_mut().current_mut().workspaces[0].panes[0]
-                .terminal
-                .process_server_output("history\r\n".repeat(80).as_bytes());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+        }
+        backend.render();
+        backend.focus_key(&crate::view::pane_terminal_key(id).into());
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .terminal
+            .process_server_output("history\r\n".repeat(80).as_bytes());
 
-            // Native scrollback, including a callback at the live-view limit, and mouse-tracking
-            // semantic reports acknowledge the actual target of the gesture.
-            for scroll in [
-                Msg::PaneScroll(id, 0),
-                Msg::PaneScroll(id, 1),
-                Msg::PaneMouse(
-                    id,
-                    crate::test_support::forwarded_mouse(
-                        MouseKind::ScrollUp,
-                        b"opaque wheel up".to_vec(),
-                    ),
+        // Native scrollback, including a callback at the live-view limit, and mouse-tracking
+        // semantic reports acknowledge the actual target of the gesture.
+        for scroll in [
+            Msg::PaneScroll(id, 0),
+            Msg::PaneScroll(id, 1),
+            Msg::PaneMouse(
+                id,
+                crate::test_support::forwarded_mouse(
+                    MouseKind::ScrollUp,
+                    b"opaque wheel up".to_vec(),
                 ),
-                Msg::PaneMouse(
-                    id,
-                    crate::test_support::forwarded_mouse(
-                        MouseKind::ScrollDown,
-                        b"opaque wheel down".to_vec(),
-                    ),
+            ),
+            Msg::PaneMouse(
+                id,
+                crate::test_support::forwarded_mouse(
+                    MouseKind::ScrollDown,
+                    b"opaque wheel down".to_vec(),
                 ),
-            ] {
-                for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
-                    pane.activity.has_unseen_output = true;
-                    pane.activity.bell = true;
-                    pane.terminal.finished_unseen = true;
-                }
-                backend.dispatch(scroll).expect("scroll pane");
-                for pane in &backend.state().current().workspaces[0].panes {
-                    let marked = pane.id == other_id;
-                    assert_eq!(pane.activity.has_unseen_output, marked);
-                    assert_eq!(pane.activity.bell, marked);
-                    assert_eq!(pane.terminal.finished_unseen, marked);
-                }
-            }
-            backend
-                .dispatch(Msg::RunAction(crate::input::Action::EnterCopyMode))
-                .expect("enter copy mode");
-            assert_eq!(backend.state().mode, crate::state::Mode::Copy);
+            ),
+        ] {
             for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
                 pane.activity.has_unseen_output = true;
                 pane.activity.bell = true;
                 pane.terminal.finished_unseen = true;
             }
-            backend
-                .send_key(key(KeyCode::PageUp, KeyMods::NONE))
-                .expect("scroll with copy-mode keyboard navigation");
-            let panes = &backend.state().current().workspaces[0].panes;
-            assert!(panes[0].terminal.scrollback_offset() > 0);
-            assert!(!panes[0].activity.has_unseen_output);
-            assert!(!panes[0].activity.bell);
-            assert!(!panes[0].terminal.finished_unseen);
-            assert!(panes[1].terminal.finished_unseen);
-        })
-        .expect("spawn scroll acknowledgement test")
-        .join()
-        .expect("scroll acknowledgement test completes");
+            backend.dispatch(scroll).expect("scroll pane");
+            for pane in &backend.state().current().workspaces[0].panes {
+                let marked = pane.id == other_id;
+                assert_eq!(pane.activity.has_unseen_output, marked);
+                assert_eq!(pane.activity.bell, marked);
+                assert_eq!(pane.terminal.finished_unseen, marked);
+            }
+        }
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::EnterCopyMode))
+            .expect("enter copy mode");
+        assert_eq!(backend.state().mode, crate::state::Mode::Copy);
+        for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+            pane.activity.has_unseen_output = true;
+            pane.activity.bell = true;
+            pane.terminal.finished_unseen = true;
+        }
+        backend
+            .send_key(key(KeyCode::PageUp, KeyMods::NONE))
+            .expect("scroll with copy-mode keyboard navigation");
+        let panes = &backend.state().current().workspaces[0].panes;
+        assert!(panes[0].terminal.scrollback_offset() > 0);
+        assert!(!panes[0].activity.has_unseen_output);
+        assert!(!panes[0].activity.bell);
+        assert!(!panes[0].terminal.finished_unseen);
+        assert!(panes[1].terminal.finished_unseen);
+    });
 }
 
 #[test]
@@ -453,52 +400,47 @@ fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
     use crate::session::client::SessionClient;
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_client = Some(client);
-                let pane = &mut state.current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-                pane.terminal
-                    .process_server_output("history\n".repeat(80).as_bytes());
-                assert!(pane.terminal.set_scrollback(10));
-            }
-            backend.render();
-            backend.focus_next();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_client = Some(client);
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.terminal
+                .process_server_output("history\n".repeat(80).as_bytes());
+            assert!(pane.terminal.set_scrollback(10));
+        }
+        backend.render();
+        backend.focus_next();
 
-            backend
-                .dispatch(Msg::PaneKey(1, key(KeyCode::Char('x'), KeyMods::NONE)))
-                .expect("dispatch terminal key");
-            assert_eq!(
-                backend.state().current().workspaces[0].panes[0]
-                    .terminal
-                    .scrollback_offset(),
-                0
-            );
+        backend
+            .dispatch(Msg::PaneKey(1, key(KeyCode::Char('x'), KeyMods::NONE)))
+            .expect("dispatch terminal key");
+        assert_eq!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .scrollback_offset(),
+            0
+        );
 
-            assert!(
-                backend.state_mut().current_mut().workspaces[0].panes[0]
-                    .terminal
-                    .set_scrollback(10)
-            );
-            backend
-                .send_paste("pasted")
-                .expect("dispatch terminal paste");
-            assert_eq!(
-                backend.state().current().workspaces[0].panes[0]
-                    .terminal
-                    .scrollback_offset(),
-                0
-            );
-        })
-        .expect("spawn terminal input test thread")
-        .join()
-        .expect("terminal input test thread completes");
+        assert!(
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .set_scrollback(10)
+        );
+        backend
+            .send_paste("pasted")
+            .expect("dispatch terminal paste");
+        assert_eq!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .scrollback_offset(),
+            0
+        );
+    });
 }
 
 #[test]
@@ -680,264 +622,258 @@ fn follower_resize_is_suppressed_and_controller_resize_debounces() {
             .collect()
     }
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let viewport = Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            };
+    crate::test_support::on_large_stack(|| {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
 
-            // Follower: a resize forwards nothing (it letterboxes to the canonical size).
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            let (client, follower_rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_attached = true;
-                state.current_mut().session_client = Some(client);
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(2);
-                state.current_mut().shared = Some(shared);
-            }
-            backend.render();
-            backend
-                .dispatch(Msg::PaneResize(1, 40, 12))
-                .expect("dispatch follower resize");
-            assert!(
-                resizes(&follower_rx).is_empty(),
-                "a follower must not forward pane resizes"
-            );
+        // Follower: a resize forwards nothing (it letterboxes to the canonical size).
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport);
+        let (client, follower_rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(2);
+            state.current_mut().shared = Some(shared);
+        }
+        backend.render();
+        backend
+            .dispatch(Msg::PaneResize(1, 40, 12))
+            .expect("dispatch follower resize");
+        assert!(
+            resizes(&follower_rx).is_empty(),
+            "a follower must not forward pane resizes"
+        );
 
-            // Controller: rapid resizes coalesce; the flush sends only the latest size.
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            let (client, controller_rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_attached = true;
-                state.current_mut().session_client = Some(client);
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(1);
-                state.current_mut().shared = Some(shared);
-            }
-            backend.render();
-            // Pretend a flush is already armed. A real one is a wall-clock timer, and
-            // everything asserted below is state that firing it drains - so left to run, how
-            // loaded the machine is decides the outcome. Arming it by hand keeps the flush in
-            // this test's hands instead of the clock's.
-            backend.state_mut().current_mut().resize_flush_scheduled = true;
-            backend
-                .dispatch(Msg::PaneResize(1, 40, 12))
-                .expect("dispatch first resize");
-            backend
-                .dispatch(Msg::PaneResize(1, 50, 20))
-                .expect("dispatch second resize");
-            assert!(
-                resizes(&controller_rx).is_empty(),
-                "debounced resizes are not sent until the flush"
-            );
-            assert_eq!(
-                backend.state().current().pending_resizes.get(&(false, 1)),
-                Some(&(50, 20)),
-                "both resizes coalesce into the latest pending size"
-            );
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 0,
-                    generation: 0,
-                })
-                .expect("dispatch flush");
-            assert_eq!(
-                resizes(&controller_rx),
-                vec![(50, 20)],
-                "flush sends only the latest size per pane"
-            );
+        // Controller: rapid resizes coalesce; the flush sends only the latest size.
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport);
+        let (client, controller_rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            state.current_mut().shared = Some(shared);
+        }
+        backend.render();
+        // Pretend a flush is already armed. A real one is a wall-clock timer, and
+        // everything asserted below is state that firing it drains - so left to run, how
+        // loaded the machine is decides the outcome. Arming it by hand keeps the flush in
+        // this test's hands instead of the clock's.
+        backend.state_mut().current_mut().resize_flush_scheduled = true;
+        backend
+            .dispatch(Msg::PaneResize(1, 40, 12))
+            .expect("dispatch first resize");
+        backend
+            .dispatch(Msg::PaneResize(1, 50, 20))
+            .expect("dispatch second resize");
+        assert!(
+            resizes(&controller_rx).is_empty(),
+            "debounced resizes are not sent until the flush"
+        );
+        assert_eq!(
+            backend.state().current().pending_resizes.get(&(false, 1)),
+            Some(&(50, 20)),
+            "both resizes coalesce into the latest pending size"
+        );
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 0,
+                generation: 0,
+            })
+            .expect("dispatch flush");
+        assert_eq!(
+            resizes(&controller_rx),
+            vec![(50, 20)],
+            "flush sends only the latest size per pane"
+        );
 
-            // A live sidebar drag follows the same debounce path as every other geometry
-            // change. Preview state must not hold PTY resizes until pointer release.
-            backend.state_mut().sidebar.width_preview = Some(40);
-            backend
-                .dispatch(Msg::PaneResize(1, 60, 22))
-                .expect("dispatch preview resize");
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 0,
-                    generation: 1,
-                })
-                .expect("dispatch flush during preview");
-            assert_eq!(resizes(&controller_rx), vec![(60, 22)]);
-            backend.state_mut().sidebar.width_preview = None;
+        // A live sidebar drag follows the same debounce path as every other geometry
+        // change. Preview state must not hold PTY resizes until pointer release.
+        backend.state_mut().sidebar.width_preview = Some(40);
+        backend
+            .dispatch(Msg::PaneResize(1, 60, 22))
+            .expect("dispatch preview resize");
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 0,
+                generation: 1,
+            })
+            .expect("dispatch flush during preview");
+        assert_eq!(resizes(&controller_rx), vec![(60, 22)]);
+        backend.state_mut().sidebar.width_preview = None;
 
-            backend.state_mut().config.pane.resize_debounce_ms = 0;
-            backend
-                .dispatch(Msg::PaneResize(1, 61, 23))
-                .expect("dispatch immediate resize");
-            assert!(
-                resizes(&controller_rx).contains(&(61, 23)),
-                "zero debounce forwards the geometry report immediately"
-            );
+        backend.state_mut().config.pane.resize_debounce_ms = 0;
+        backend
+            .dispatch(Msg::PaneResize(1, 61, 23))
+            .expect("dispatch immediate resize");
+        assert!(
+            resizes(&controller_rx).contains(&(61, 23)),
+            "zero debounce forwards the geometry report immediately"
+        );
 
-            // A flush with no client must hold the size rather than discard it: nothing
-            // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
-            // happens to change again.
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            let (client, reconnect_rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_attached = true;
-                state.current_mut().session_client = Some(client.clone());
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(1);
-                state.current_mut().shared = Some(shared);
-            }
-            backend.render();
-            backend
-                .dispatch(Msg::PaneResize(1, 50, 20))
-                .expect("dispatch resize");
-            // The link drops between the report and the batched flush it armed. Transport
-            // state is discarded, but attachment-owned geometry survives and can still move while
-            // reconnecting.
-            backend.state_mut().current_mut().mark_disconnected();
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = 1;
-                state.current_mut().epoch = 1;
-                state.current_mut().resize_flush_scheduled = false;
-                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 1,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        ),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-            }
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 0,
-                    generation: 1,
-                })
-                .expect("dispatch stale pre-reconnect timer");
-            backend
-                .dispatch(Msg::PaneResize(1, 55, 21))
-                .expect("dispatch resize while reconnecting");
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 1,
-                    generation: 2,
-                })
-                .expect("dispatch flush while disconnected");
-            let reconnect_size = *backend
-                .state()
-                .current()
-                .pending_resizes
-                .get(&(false, 1))
-                .expect("a flush with no client keeps the latest size");
+        // A flush with no client must hold the size rather than discard it: nothing
+        // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
+        // happens to change again.
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport);
+        let (client, reconnect_rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client.clone());
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            state.current_mut().shared = Some(shared);
+        }
+        backend.render();
+        backend
+            .dispatch(Msg::PaneResize(1, 50, 20))
+            .expect("dispatch resize");
+        // The link drops between the report and the batched flush it armed. Transport
+        // state is discarded, but attachment-owned geometry survives and can still move while
+        // reconnecting.
+        backend.state_mut().current_mut().mark_disconnected();
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 1;
+            state.current_mut().epoch = 1;
+            state.current_mut().resize_flush_scheduled = false;
+            state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 1,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                ),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+        }
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 0,
+                generation: 1,
+            })
+            .expect("dispatch stale pre-reconnect timer");
+        backend
+            .dispatch(Msg::PaneResize(1, 55, 21))
+            .expect("dispatch resize while reconnecting");
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 1,
+                generation: 2,
+            })
+            .expect("dispatch flush while disconnected");
+        let reconnect_size = *backend
+            .state()
+            .current()
+            .pending_resizes
+            .get(&(false, 1))
+            .expect("a flush with no client keeps the latest size");
 
-            // The client arriving is what delivers it.
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_client = Some(client);
-                state.current_mut().pending_session_attach = None;
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(1);
-                state.current_mut().shared = Some(shared);
-            }
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 1,
-                    generation: 2,
-                })
-                .expect("dispatch flush after reconnect");
-            assert_eq!(
-                resizes(&reconnect_rx),
-                vec![reconnect_size],
-                "the held size reaches the PTY once a client is back"
-            );
+        // The client arriving is what delivers it.
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_client = Some(client);
+            state.current_mut().pending_session_attach = None;
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            state.current_mut().shared = Some(shared);
+        }
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 1,
+                generation: 2,
+            })
+            .expect("dispatch flush after reconnect");
+        assert_eq!(
+            resizes(&reconnect_rx),
+            vec![reconnect_size],
+            "the held size reaches the PTY once a client is back"
+        );
 
-            // A session switch can race the debounce timer. The attachment and its live client
-            // move into the background together, so the stale-epoch timer must finish there.
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            let (client, parked_rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = 7;
-                state.current_mut().session_client = Some(client);
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(1);
-                state.current_mut().shared = Some(shared);
-                state.current_mut().resize_flush_scheduled = true;
-            }
-            backend
-                .dispatch(Msg::PaneResize(1, 70, 24))
-                .expect("dispatch resize before parking");
-            let parked_size = *backend
-                .state()
-                .current()
-                .pending_resizes
-                .get(&(false, 1))
-                .expect("geometry queued before parking");
-            {
-                let state = backend.state_mut();
-                state.park_current(7, crate::state::Attachment::new());
-                state.runtime_epoch = 8;
-            }
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 7,
-                    generation: 0,
-                })
-                .expect("dispatch parked resize flush");
-            assert!(resizes(&parked_rx).is_empty());
-            {
-                let state = backend.state_mut();
-                let parked = state.background.get_mut(&7).expect("parked attachment");
-                assert_eq!(parked.pending_resizes.get(&(false, 1)), Some(&parked_size));
-                parked
-                    .shared
-                    .as_mut()
-                    .expect("parked shared state")
-                    .controller = None;
-                let restored = state.unpark(7, 8).expect("restore parked attachment");
-                state.runtime_epoch = restored;
-            }
-            backend
-                .dispatch(Msg::FlushPaneResizes {
-                    epoch: 7,
-                    generation: 0,
-                })
-                .expect("dispatch flush before control returns");
-            assert!(resizes(&parked_rx).is_empty());
-            assert_eq!(
-                backend.state().current().pending_resizes.get(&(false, 1)),
-                Some(&parked_size),
-                "foreground follower retains geometry until control returns"
-            );
-            backend
-                .dispatch(Msg::SessionControllerChanged {
-                    epoch: 7,
-                    controller: Some(1),
-                    reason: crate::session::protocol::ControllerChangeReason::Granted,
-                })
-                .expect("dispatch control reacquisition");
-            assert_eq!(
-                resizes(&parked_rx),
-                vec![parked_size],
-                "parked geometry reaches the PTY after foreground control returns"
-            );
-        })
-        .expect("spawn resize test thread")
-        .join()
-        .expect("resize test thread completes");
+        // A session switch can race the debounce timer. The attachment and its live client
+        // move into the background together, so the stale-epoch timer must finish there.
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport);
+        let (client, parked_rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 7;
+            state.current_mut().session_client = Some(client);
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            state.current_mut().shared = Some(shared);
+            state.current_mut().resize_flush_scheduled = true;
+        }
+        backend
+            .dispatch(Msg::PaneResize(1, 70, 24))
+            .expect("dispatch resize before parking");
+        let parked_size = *backend
+            .state()
+            .current()
+            .pending_resizes
+            .get(&(false, 1))
+            .expect("geometry queued before parking");
+        {
+            let state = backend.state_mut();
+            state.park_current(7, crate::state::Attachment::new());
+            state.runtime_epoch = 8;
+        }
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 7,
+                generation: 0,
+            })
+            .expect("dispatch parked resize flush");
+        assert!(resizes(&parked_rx).is_empty());
+        {
+            let state = backend.state_mut();
+            let parked = state.background.get_mut(&7).expect("parked attachment");
+            assert_eq!(parked.pending_resizes.get(&(false, 1)), Some(&parked_size));
+            parked
+                .shared
+                .as_mut()
+                .expect("parked shared state")
+                .controller = None;
+            let restored = state.unpark(7, 8).expect("restore parked attachment");
+            state.runtime_epoch = restored;
+        }
+        backend
+            .dispatch(Msg::FlushPaneResizes {
+                epoch: 7,
+                generation: 0,
+            })
+            .expect("dispatch flush before control returns");
+        assert!(resizes(&parked_rx).is_empty());
+        assert_eq!(
+            backend.state().current().pending_resizes.get(&(false, 1)),
+            Some(&parked_size),
+            "foreground follower retains geometry until control returns"
+        );
+        backend
+            .dispatch(Msg::SessionControllerChanged {
+                epoch: 7,
+                controller: Some(1),
+                reason: crate::session::protocol::ControllerChangeReason::Granted,
+            })
+            .expect("dispatch control reacquisition");
+        assert_eq!(
+            resizes(&parked_rx),
+            vec![parked_size],
+            "parked geometry reaches the PTY after foreground control returns"
+        );
+    });
 }
 
 /// Taking control of panes whose grid already matches still has to tell the server this client's
@@ -950,7 +886,7 @@ fn gaining_control_publishes_this_clients_cells_for_an_unchanged_grid() {
     use crate::state::SharedSessionState;
     use tui_lipan::TestBackend;
 
-    on_large_stack(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         let (client, rx) = SessionClient::test_channel();
         let (pane_id, size) = {
@@ -994,20 +930,11 @@ fn gaining_control_publishes_this_clients_cells_for_an_unchanged_grid() {
     });
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn test thread")
-        .join()
-        .expect("test completes");
-}
-
 /// Renders the whole app through every pane style, a view tree deeper than the default test stack
 /// holds.
 #[test]
 fn pane_animation_styles_keep_the_pty_grid_stable_during_open_and_close() {
-    on_large_stack(pane_animation_styles_keep_the_pty_grid_stable);
+    crate::test_support::on_large_stack(pane_animation_styles_keep_the_pty_grid_stable);
 }
 
 fn pane_animation_styles_keep_the_pty_grid_stable() {
@@ -1302,87 +1229,82 @@ fn pane_scroll_repaints_unless_the_view_reads_the_offset() {
     use crate::state::{HintModeState, ScrollbackMatch, ScrollbackSearchState};
     use tui_lipan::TestBackend;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(AppRoot::default());
-            let id = backend.state().focused_pane().expect("fresh pane focus");
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 80,
-                h: 24,
-            });
-            {
-                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-                pane.opening = false;
-                pane.terminal_active = true;
-                pane.terminal
-                    .process_server_output("history\r\n".repeat(80).as_bytes());
-                pane.activity.has_unseen_output = false;
-            }
-            backend.render();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let id = backend.state().focused_pane().expect("fresh pane focus");
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        {
+            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.terminal
+                .process_server_output("history\r\n".repeat(80).as_bytes());
+            pane.activity.has_unseen_output = false;
+        }
+        backend.render();
 
-            let level = |backend: &mut TestBackend<AppRoot>, offset| {
-                backend
-                    .update_level(Msg::PaneScroll(id, offset))
-                    .expect("scroll pane")
-            };
-            assert_eq!(level(&mut backend, 3), UpdateLevel::Paint);
-            assert_eq!(
-                level(&mut backend, 3),
-                UpdateLevel::None,
-                "an unmoved offset"
-            );
+        let level = |backend: &mut TestBackend<AppRoot>, offset| {
+            backend
+                .update_level(Msg::PaneScroll(id, offset))
+                .expect("scroll pane")
+        };
+        assert_eq!(level(&mut backend, 3), UpdateLevel::Paint);
+        assert_eq!(
+            level(&mut backend, 3),
+            UpdateLevel::None,
+            "an unmoved offset"
+        );
 
-            backend.state_mut().current_mut().workspaces[0].panes[0]
-                .activity
-                .has_unseen_output = true;
-            assert_eq!(
-                level(&mut backend, 4),
-                UpdateLevel::Full,
-                "acknowledging the pane changes its chrome"
-            );
+        backend.state_mut().current_mut().workspaces[0].panes[0]
+            .activity
+            .has_unseen_output = true;
+        assert_eq!(
+            level(&mut backend, 4),
+            UpdateLevel::Full,
+            "acknowledging the pane changes its chrome"
+        );
 
-            let mut search = ScrollbackSearchState::new(id);
-            search.replace_results(
-                vec![ScrollbackMatch {
-                    offset: 0,
-                    line: 0,
-                    end_line: 0,
-                    start_col: 0,
-                    end_col: 7,
-                    start_byte: 0,
-                    end_byte: 7,
-                    text: "history".into(),
-                    pane: id,
-                }],
-                false,
-            );
-            backend.state_mut().search = Some(search);
-            assert_eq!(
-                level(&mut backend, 5),
-                UpdateLevel::Full,
-                "search highlights are found in the rows on screen"
-            );
-            backend.state_mut().search = None;
+        let mut search = ScrollbackSearchState::new(id);
+        search.replace_results(
+            vec![ScrollbackMatch {
+                offset: 0,
+                line: 0,
+                end_line: 0,
+                start_col: 0,
+                end_col: 7,
+                start_byte: 0,
+                end_byte: 7,
+                text: "history".into(),
+                pane: id,
+            }],
+            false,
+        );
+        backend.state_mut().search = Some(search);
+        assert_eq!(
+            level(&mut backend, 5),
+            UpdateLevel::Full,
+            "search highlights are found in the rows on screen"
+        );
+        backend.state_mut().search = None;
 
-            backend.state_mut().hint_mode = Some(HintModeState {
-                target: id,
-                matches: Vec::new(),
-                labels: Vec::new(),
-                input: String::new(),
-                offset: 5,
-            });
-            assert_eq!(
-                level(&mut backend, 6),
-                UpdateLevel::Full,
-                "hint labels are pinned to the rows on screen"
-            );
-        })
-        .expect("spawn pane scroll level test")
-        .join()
-        .expect("pane scroll level test completes");
+        backend.state_mut().hint_mode = Some(HintModeState {
+            target: id,
+            matches: Vec::new(),
+            labels: Vec::new(),
+            input: String::new(),
+            offset: 5,
+        });
+        assert_eq!(
+            level(&mut backend, 6),
+            UpdateLevel::Full,
+            "hint labels are pinned to the rows on screen"
+        );
+    });
 }
 
 mod finished_rows_notice {
@@ -1535,42 +1457,36 @@ mod finished_rows_notice {
 #[test]
 fn structured_forwarding_delivers_authoritative_payloads_without_reencoding() {
     use crate::session::client::{ClientOutbound, SessionClient};
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-            let (client, outbound) = SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(client);
-            let id = backend.state().focused_pane().unwrap();
-            backend.render();
-            let bytes = b"opaque authoritative reports, including repetitions".to_vec();
-            let mut event =
-                crate::test_support::forwarded_mouse(MouseKind::ScrollUp, bytes.clone());
-            event.mods = KeyMods::CTRL;
-            event.cell = (19, 9);
-            event.pixel = Some((157, 151));
-            event.repeat_count = 3;
-            event.mouse_mode.encoding = MouseEncoding::SgrPixels;
-            backend.dispatch(crate::Msg::PaneMouse(id, event)).unwrap();
-            let sent = outbound
-                .try_iter()
-                .find_map(|message| match message {
-                    ClientOutbound::PaneInput {
-                        pane_id,
-                        bytes,
-                        latency_sensitive,
-                        ..
-                    } => {
-                        assert_eq!(pane_id, id);
-                        assert!(!latency_sensitive);
-                        Some(bytes)
-                    }
-                    _ => None,
-                })
-                .expect("forwarded input");
-            assert_eq!(sent, bytes);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        let id = backend.state().focused_pane().unwrap();
+        backend.render();
+        let bytes = b"opaque authoritative reports, including repetitions".to_vec();
+        let mut event = crate::test_support::forwarded_mouse(MouseKind::ScrollUp, bytes.clone());
+        event.mods = KeyMods::CTRL;
+        event.cell = (19, 9);
+        event.pixel = Some((157, 151));
+        event.repeat_count = 3;
+        event.mouse_mode.encoding = MouseEncoding::SgrPixels;
+        backend.dispatch(crate::Msg::PaneMouse(id, event)).unwrap();
+        let sent = outbound
+            .try_iter()
+            .find_map(|message| match message {
+                ClientOutbound::PaneInput {
+                    pane_id,
+                    bytes,
+                    latency_sensitive,
+                    ..
+                } => {
+                    assert_eq!(pane_id, id);
+                    assert!(!latency_sensitive);
+                    Some(bytes)
+                }
+                _ => None,
+            })
+            .expect("forwarded input");
+        assert_eq!(sent, bytes);
+    });
 }

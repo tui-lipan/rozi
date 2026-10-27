@@ -73,138 +73,125 @@ fn settle_command_link(backend: &mut TestBackend<crate::AppRoot>) {
 
 #[test]
 fn animated_titles_update_live_labels_and_preserve_full_refresh_fallbacks() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            backend.state_mut().sidebar.hide_all();
-            backend.state().sidebar_slide.set(0.0);
-            let epoch = backend.state().runtime_epoch;
-            let target = backend.state().current().focused_pane.unwrap();
-            let generation = 42;
-            let source = {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                pane.terminal.process_server_output(b"\x1b]2;old\x07");
-                pane.logging = true;
-                pane.live_title
-                    .bind("icon ", "old [log]", None)
-                    .source
-                    .unwrap()
-            };
-            let message = |title: &str| Msg::SessionOutput {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        backend.state_mut().sidebar.hide_all();
+        backend.state().sidebar_slide.set(0.0);
+        let epoch = backend.state().runtime_epoch;
+        let target = backend.state().current().focused_pane.unwrap();
+        let generation = 42;
+        let source = {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            pane.terminal.process_server_output(b"\x1b]2;old\x07");
+            pane.logging = true;
+            pane.live_title
+                .bind("icon ", "old [log]", None)
+                .source
+                .unwrap()
+        };
+        let message = |title: &str| Msg::SessionOutput {
+            media: None,
+            metadata: crate::session::protocol::OutputMetadata::default(),
+            epoch,
+            pane_id: target,
+            local: false,
+            generation,
+            bytes: format!("\x1b]2;{title}\x07").into_bytes(),
+        };
+        assert_eq!(
+            backend.update_level(message("new title")).unwrap(),
+            tui_lipan::UpdateLevel::TerminalPaint
+        );
+        let title: String = source
+            .snapshot()
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(title.starts_with("icon new title"), "{title}");
+        assert!(title.ends_with(" [log]"), "{title}");
+        backend.state_mut().sidebar.shown = [true, false];
+        assert_eq!(
+            backend.update_level(message("sidebar sees this")).unwrap(),
+            tui_lipan::UpdateLevel::Full
+        );
+        backend.state_mut().sidebar.hide_all();
+        backend.state().sidebar_slide.set(0.5);
+        assert_eq!(
+            backend.update_level(message("closing sidebar")).unwrap(),
+            tui_lipan::UpdateLevel::Full
+        );
+        backend.state().sidebar_slide.set(0.0);
+        crate::pane::lifecycle::find_pane(backend.state(), target)
+            .unwrap()
+            .live_title
+            .bound
+            .set(false);
+        assert_eq!(
+            backend.update_level(message("border title")).unwrap(),
+            tui_lipan::UpdateLevel::Full
+        );
+    });
+}
+
+#[test]
+fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let target = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("focused pane");
+        let generation = 7;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            pane.terminal.process_server_output(b"stale transcript");
+        }
+
+        let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
+        for stale_generation in [generation + 1, generation] {
+            backend
+                .dispatch(Msg::SessionPaneReset {
+                    epoch,
+                    pane_id: target,
+                    generation: stale_generation,
+                    cols: 41,
+                    rows: 13,
+                    cell: Some(session_cell),
+                })
+                .expect("dispatch pane reset");
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            let reset = stale_generation == generation;
+            assert_eq!(
+                pane.terminal
+                    .search_scrollback("stale transcript")
+                    .is_empty(),
+                reset,
+                "only the pane's own generation is reset"
+            );
+            assert_eq!((pane.terminal.cols, pane.terminal.rows) == (41, 13), reset);
+            assert_eq!(pane.terminal.cell_size() == session_cell, reset);
+        }
+
+        backend
+            .dispatch(Msg::SessionOutput {
                 media: None,
                 metadata: crate::session::protocol::OutputMetadata::default(),
                 epoch,
                 pane_id: target,
                 local: false,
                 generation,
-                bytes: format!("\x1b]2;{title}\x07").into_bytes(),
-            };
-            assert_eq!(
-                backend.update_level(message("new title")).unwrap(),
-                tui_lipan::UpdateLevel::TerminalPaint
-            );
-            let title: String = source
-                .snapshot()
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect();
-            assert!(title.starts_with("icon new title"), "{title}");
-            assert!(title.ends_with(" [log]"), "{title}");
-            backend.state_mut().sidebar.shown = [true, false];
-            assert_eq!(
-                backend.update_level(message("sidebar sees this")).unwrap(),
-                tui_lipan::UpdateLevel::Full
-            );
-            backend.state_mut().sidebar.hide_all();
-            backend.state().sidebar_slide.set(0.5);
-            assert_eq!(
-                backend.update_level(message("closing sidebar")).unwrap(),
-                tui_lipan::UpdateLevel::Full
-            );
-            backend.state().sidebar_slide.set(0.0);
-            crate::pane::lifecycle::find_pane(backend.state(), target)
-                .unwrap()
-                .live_title
-                .bound
-                .set(false);
-            assert_eq!(
-                backend.update_level(message("border title")).unwrap(),
-                tui_lipan::UpdateLevel::Full
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
-fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let target = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("focused pane");
-            let generation = 7;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                pane.terminal.process_server_output(b"stale transcript");
-            }
-
-            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
-            for stale_generation in [generation + 1, generation] {
-                backend
-                    .dispatch(Msg::SessionPaneReset {
-                        epoch,
-                        pane_id: target,
-                        generation: stale_generation,
-                        cols: 41,
-                        rows: 13,
-                        cell: Some(session_cell),
-                    })
-                    .expect("dispatch pane reset");
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                let reset = stale_generation == generation;
-                assert_eq!(
-                    pane.terminal
-                        .search_scrollback("stale transcript")
-                        .is_empty(),
-                    reset,
-                    "only the pane's own generation is reset"
-                );
-                assert_eq!((pane.terminal.cols, pane.terminal.rows) == (41, 13), reset);
-                assert_eq!(pane.terminal.cell_size() == session_cell, reset);
-            }
-
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: target,
-                    local: false,
-                    generation,
-                    bytes: b"replayed".to_vec(),
-                })
-                .expect("dispatch replay");
-            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-            assert!(!pane.terminal.search_scrollback("replayed").is_empty());
-        })
-        .expect("spawn pane reset test")
-        .join()
-        .expect("pane reset test completes");
+                bytes: b"replayed".to_vec(),
+            })
+            .expect("dispatch replay");
+        let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+        assert!(!pane.terminal.search_scrollback("replayed").is_empty());
+    });
 }
 
 /// A follower's cells can differ from the controller's, whose cell size the child's PTY reports. An
@@ -214,66 +201,60 @@ fn pane_reset_starts_the_pane_over_at_the_snapshot_geometry() {
 fn a_pane_lays_images_out_in_the_cells_the_server_reports() {
     use base64::Engine as _;
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let target = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("focused pane");
-            let generation = 4;
-            let host_cell = {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                pane.terminal.cell_size()
-            };
-            let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
-            assert_ne!(
-                host_cell, session_cell,
-                "the test needs a follower's own cells"
-            );
-
-            backend
-                .dispatch(Msg::SessionResized {
-                    epoch,
-                    pane_id: target,
-                    local: false,
-                    generation,
-                    cols: 40,
-                    rows: 12,
-                    cell: Some(session_cell),
-                })
-                .expect("dispatch resize");
-            // 224x256 pixels is 16x8 of the controller's 14x32 cells.
-            let payload = base64::engine::general_purpose::STANDARD
-                .encode([10u8, 20, 30, 255].repeat(224 * 256));
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: target,
-                    local: false,
-                    generation,
-                    bytes: format!("\x1b[H\x1b_Ga=T,f=32,s=224,v=256,i=9,q=2;{payload}\x1b\\")
-                        .into_bytes(),
-                })
-                .expect("dispatch image");
-
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let target = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("focused pane");
+        let generation = 4;
+        let host_cell = {
             let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-            assert_eq!(pane.terminal.cell_size(), session_cell);
-            let snapshot = pane.terminal.snapshot();
-            let placement = snapshot.images.first().expect("image placement");
-            assert_eq!((placement.cols, placement.rows), (16, 8));
-        })
-        .expect("spawn session cell test")
-        .join()
-        .expect("session cell test completes");
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            pane.terminal.cell_size()
+        };
+        let session_cell = tui_lipan::TerminalCellSize::new(14, 32);
+        assert_ne!(
+            host_cell, session_cell,
+            "the test needs a follower's own cells"
+        );
+
+        backend
+            .dispatch(Msg::SessionResized {
+                epoch,
+                pane_id: target,
+                local: false,
+                generation,
+                cols: 40,
+                rows: 12,
+                cell: Some(session_cell),
+            })
+            .expect("dispatch resize");
+        // 224x256 pixels is 16x8 of the controller's 14x32 cells.
+        let payload =
+            base64::engine::general_purpose::STANDARD.encode([10u8, 20, 30, 255].repeat(224 * 256));
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id: target,
+                local: false,
+                generation,
+                bytes: format!("\x1b[H\x1b_Ga=T,f=32,s=224,v=256,i=9,q=2;{payload}\x1b\\")
+                    .into_bytes(),
+            })
+            .expect("dispatch image");
+
+        let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+        assert_eq!(pane.terminal.cell_size(), session_cell);
+        let snapshot = pane.terminal.snapshot();
+        let placement = snapshot.images.first().expect("image placement");
+        assert_eq!((placement.cols, placement.rows), (16, 8));
+    });
 }
 
 /// What `clear; icat` writes: the clear, then a 40x40 RGBA image in 4096-byte Kitty chunks.
@@ -324,428 +305,392 @@ fn png_capture(pane: &crate::pane::TerminalPane) -> String {
 /// session disagree and the UI never draws it.
 #[test]
 fn an_image_relayed_in_one_message_with_the_clear_before_it_stays_on_screen() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let target = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("focused pane");
-            let generation = 3;
-            let (cols, rows, palette) = {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                (
-                    pane.terminal.cols,
-                    pane.terminal.rows,
-                    pane.terminal.last_palette,
-                )
-            };
-            // Enough earlier output to leave history for `clear` to erase.
-            let history = "$ earlier output\r\n".repeat(usize::from(rows) * 2);
-            let (clear, image) = clear_then_image();
-            let relayed = [history.as_bytes(), &[clear.as_slice(), &image].concat()];
-            for bytes in relayed {
-                backend
-                    .dispatch(Msg::SessionOutput {
-                        media: None,
-                        metadata: crate::session::protocol::OutputMetadata::default(),
-                        epoch,
-                        pane_id: target,
-                        local: false,
-                        generation,
-                        bytes: bytes.to_vec(),
-                    })
-                    .expect("dispatch pane output");
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let target = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("focused pane");
+        let generation = 3;
+        let (cols, rows, palette) = {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            (
+                pane.terminal.cols,
+                pane.terminal.rows,
+                pane.terminal.last_palette,
+            )
+        };
+        // Enough earlier output to leave history for `clear` to erase.
+        let history = "$ earlier output\r\n".repeat(usize::from(rows) * 2);
+        let (clear, image) = clear_then_image();
+        let relayed = [history.as_bytes(), &[clear.as_slice(), &image].concat()];
+        for bytes in relayed {
+            backend
+                .dispatch(Msg::SessionOutput {
+                    media: None,
+                    metadata: crate::session::protocol::OutputMetadata::default(),
+                    epoch,
+                    pane_id: target,
+                    local: false,
+                    generation,
+                    bytes: bytes.to_vec(),
+                })
+                .expect("dispatch pane output");
+        }
 
-            // The same bytes as the server read them.
-            let mut read_apart = crate::pane::TerminalPane::new(100);
-            read_apart.apply_server_resize(cols, rows);
-            if let Some(palette) = palette {
-                read_apart.set_palette(palette);
-            }
-            for bytes in [history.as_bytes(), &clear, &image] {
-                read_apart.process_server_output(bytes);
-            }
-            let placements = |pane: &crate::pane::TerminalPane| -> Vec<_> {
-                let snapshot = pane.snapshot();
-                snapshot
-                    .images
-                    .iter()
-                    .map(|image| (image.image_id, image.row, image.col, image.rows, image.cols))
-                    .collect()
-            };
-            assert_eq!(placements(&read_apart).len(), 1);
+        // The same bytes as the server read them.
+        let mut read_apart = crate::pane::TerminalPane::new(100);
+        read_apart.apply_server_resize(cols, rows);
+        if let Some(palette) = palette {
+            read_apart.set_palette(palette);
+        }
+        for bytes in [history.as_bytes(), &clear, &image] {
+            read_apart.process_server_output(bytes);
+        }
+        let placements = |pane: &crate::pane::TerminalPane| -> Vec<_> {
+            let snapshot = pane.snapshot();
+            snapshot
+                .images
+                .iter()
+                .map(|image| (image.image_id, image.row, image.col, image.rows, image.cols))
+                .collect()
+        };
+        assert_eq!(placements(&read_apart).len(), 1);
 
-            let pane = crate::pane::lifecycle::find_pane(backend.state(), target).unwrap();
-            assert_eq!(
-                placements(&pane.terminal),
-                placements(&read_apart),
-                "the UI's screen lost the image placement"
-            );
-            assert!(
-                png_capture(&pane.terminal) == png_capture(&read_apart),
-                "the UI's capture differs from the screen that read the output apart"
-            );
-        })
-        .expect("spawn relayed image test")
-        .join()
-        .expect("relayed image test completes");
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), target).unwrap();
+        assert_eq!(
+            placements(&pane.terminal),
+            placements(&read_apart),
+            "the UI's screen lost the image placement"
+        );
+        assert!(
+            png_capture(&pane.terminal) == png_capture(&read_apart),
+            "the UI's capture differs from the screen that read the output apart"
+        );
+    });
 }
 
 #[test]
 fn background_output_arms_the_alert_pulse_without_the_global_sweep() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            settle_command_link(&mut backend);
-            let epoch = backend.state().runtime_epoch;
-            let pane_id = 77;
-            let generation = 9;
-            let mut pane =
-                crate::state::Pane::new(pane_id, 100, tui_lipan::prelude::FloatRect::default());
-            pane.pty_generation = generation;
-            pane.terminal.bind_session(pane_id, generation);
-            backend.state_mut().current_mut().workspaces[1]
-                .panes
-                .push(pane);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        settle_command_link(&mut backend);
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = 77;
+        let generation = 9;
+        let mut pane =
+            crate::state::Pane::new(pane_id, 100, tui_lipan::prelude::FloatRect::default());
+        pane.pty_generation = generation;
+        pane.terminal.bind_session(pane_id, generation);
+        backend.state_mut().current_mut().workspaces[1]
+            .panes
+            .push(pane);
 
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    bytes: vec![7],
-                })
-                .expect("deliver background bell");
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                bytes: vec![7],
+            })
+            .expect("deliver background bell");
 
-            assert!(
-                backend.state().alert_pulse_armed,
-                "the output edge must arm the pulse before its reduced epilogue"
-            );
-        })
-        .expect("spawn output alert test")
-        .join()
-        .expect("output alert test completes");
+        assert!(
+            backend.state().alert_pulse_armed,
+            "the output edge must arm the pulse before its reduced epilogue"
+        );
+    });
 }
 
 #[test]
 fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let target = backend
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let target = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("focused pane");
+        let generation = 7;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            pane.terminal
+                .process_server_output(&search_output_lines(700));
+        }
+        let old_epoch = install_search_scan(&mut backend, target, "needle");
+        assert!(matches!(
+            crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 100),
+            crate::ops::search::SearchScanAdvance::Running { .. }
+        ));
+        assert!(
+            !backend
                 .state()
-                .current()
-                .focused_pane
-                .expect("focused pane");
-            let generation = 7;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                pane.terminal
-                    .process_server_output(&search_output_lines(700));
-            }
-            let old_epoch = install_search_scan(&mut backend, target, "needle");
-            assert!(matches!(
-                crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 100),
-                crate::ops::search::SearchScanAdvance::Running { .. }
-            ));
-            assert!(
-                !backend
-                    .state()
-                    .search
-                    .as_ref()
-                    .expect("partial search")
-                    .matches
-                    .is_empty()
-            );
+                .search
+                .as_ref()
+                .expect("partial search")
+                .matches
+                .is_empty()
+        );
 
-            let level = backend
-                .update_level(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: target,
-                    local: false,
-                    generation,
-                    bytes: b"live needle\r\n".to_vec(),
-                })
-                .expect("apply live output");
-            assert_eq!(level, tui_lipan::UpdateLevel::Full);
-            let restarted_epoch = backend.state().search_scan_epoch;
-            assert_ne!(old_epoch, restarted_epoch);
-            let search = backend.state().search.as_ref().expect("restarted search");
-            assert!(!search.matches.is_empty());
-            assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
-            assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
-            assert_eq!(
-                search.scan.as_ref().expect("scan").panes.as_ref(),
-                &[target]
-            );
-            assert_eq!(
-                crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 1),
-                crate::ops::search::SearchScanAdvance::Stale
-            );
+        let level = backend
+            .update_level(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id: target,
+                local: false,
+                generation,
+                bytes: b"live needle\r\n".to_vec(),
+            })
+            .expect("apply live output");
+        assert_eq!(level, tui_lipan::UpdateLevel::Full);
+        let restarted_epoch = backend.state().search_scan_epoch;
+        assert_ne!(old_epoch, restarted_epoch);
+        let search = backend.state().search.as_ref().expect("restarted search");
+        assert!(!search.matches.is_empty());
+        assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
+        assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
+        assert_eq!(
+            search.scan.as_ref().expect("scan").panes.as_ref(),
+            &[target]
+        );
+        assert_eq!(
+            crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 1),
+            crate::ops::search::SearchScanAdvance::Stale
+        );
 
-            let stale_level = backend
-                .update_level(Msg::SearchScanChunk { epoch: old_epoch })
-                .expect("deliver stale queued chunk");
-            assert_eq!(stale_level, tui_lipan::UpdateLevel::None);
-            assert_eq!(
-                backend.state().search_scan_scheduled_epoch,
-                Some(restarted_epoch)
-            );
-            backend
-                .update_level(Msg::SearchScanChunk { epoch: old_epoch })
-                .expect("reject duplicate stale chunk");
-            assert_eq!(
-                backend.state().search_scan_scheduled_epoch,
-                Some(restarted_epoch)
-            );
+        let stale_level = backend
+            .update_level(Msg::SearchScanChunk { epoch: old_epoch })
+            .expect("deliver stale queued chunk");
+        assert_eq!(stale_level, tui_lipan::UpdateLevel::None);
+        assert_eq!(
+            backend.state().search_scan_scheduled_epoch,
+            Some(restarted_epoch)
+        );
+        backend
+            .update_level(Msg::SearchScanChunk { epoch: old_epoch })
+            .expect("reject duplicate stale chunk");
+        assert_eq!(
+            backend.state().search_scan_scheduled_epoch,
+            Some(restarted_epoch)
+        );
 
-            let offset_before_activation =
-                crate::pane::lifecycle::find_pane(backend.state(), target)
-                    .unwrap()
-                    .terminal
-                    .scrollback_offset();
-            backend
-                .update_level(Msg::SearchActivate(0))
-                .expect("refreshing result is not actionable");
-            assert!(backend.state().search.is_some());
-            assert_eq!(
-                crate::pane::lifecycle::find_pane(backend.state(), target)
-                    .unwrap()
-                    .terminal
-                    .scrollback_offset(),
-                offset_before_activation
-            );
-        })
-        .expect("spawn partial live-output search test")
-        .join()
-        .expect("partial live-output search test completes");
+        let offset_before_activation = crate::pane::lifecycle::find_pane(backend.state(), target)
+            .unwrap()
+            .terminal
+            .scrollback_offset();
+        backend
+            .update_level(Msg::SearchActivate(0))
+            .expect("refreshing result is not actionable");
+        assert!(backend.state().search.is_some());
+        assert_eq!(
+            crate::pane::lifecycle::find_pane(backend.state(), target)
+                .unwrap()
+                .terminal
+                .scrollback_offset(),
+            offset_before_activation
+        );
+    });
 }
 
 #[test]
 fn pane_output_restarts_a_completed_search() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let target = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("focused pane");
-            let generation = 9;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(target, generation);
-                pane.terminal
-                    .process_server_output(&search_output_lines(40));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let target = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("focused pane");
+        let generation = 9;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(target, generation);
+            pane.terminal
+                .process_server_output(&search_output_lines(40));
+        }
+        let old_epoch = install_search_scan(&mut backend, target, "needle");
+        loop {
+            if matches!(
+                crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 17),
+                crate::ops::search::SearchScanAdvance::Complete { .. }
+            ) {
+                break;
             }
-            let old_epoch = install_search_scan(&mut backend, target, "needle");
-            loop {
-                if matches!(
-                    crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 17),
-                    crate::ops::search::SearchScanAdvance::Complete { .. }
-                ) {
-                    break;
-                }
-            }
-            backend.state_mut().search_scan_scheduled_epoch = None;
-            assert!(
-                !backend
-                    .state()
-                    .search
-                    .as_ref()
-                    .expect("completed search")
-                    .matches
-                    .is_empty()
-            );
-            {
-                let search = backend.state_mut().search.as_mut().unwrap();
-                search.current = 5;
-                search.refresh_match_status();
-            }
-            let visible_items = Arc::clone(&backend.state().search.as_ref().unwrap().items);
-
-            backend
-                .update_level(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: target,
-                    local: false,
-                    generation,
-                    bytes: b"post-completion\r\n".to_vec(),
-                })
-                .expect("apply output after completion");
-            let restarted_epoch = backend.state().search_scan_epoch;
-            assert_ne!(old_epoch, restarted_epoch);
-            let search = backend.state().search.as_ref().expect("restarted search");
-            assert!(!search.matches.is_empty());
-            assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
-            assert_eq!(search.current, 5);
-            assert!(Arc::ptr_eq(&search.items, &visible_items));
-            assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
-            assert_eq!(
-                backend.state().search_scan_scheduled_epoch,
-                Some(restarted_epoch)
-            );
-
-            while backend
+        }
+        backend.state_mut().search_scan_scheduled_epoch = None;
+        assert!(
+            !backend
                 .state()
                 .search
                 .as_ref()
-                .is_some_and(|search| search.scan.is_some())
-            {
-                let _ = crate::ops::search::advance_search_scan(
-                    backend.state_mut(),
-                    restarted_epoch,
-                    crate::ops::search::SEARCH_LINES_PER_CHUNK,
-                );
-            }
-            assert_eq!(backend.state().search.as_ref().unwrap().current, 5);
-        })
-        .expect("spawn completed live-output search test")
-        .join()
-        .expect("completed live-output search test completes");
+                .expect("completed search")
+                .matches
+                .is_empty()
+        );
+        {
+            let search = backend.state_mut().search.as_mut().unwrap();
+            search.current = 5;
+            search.refresh_match_status();
+        }
+        let visible_items = Arc::clone(&backend.state().search.as_ref().unwrap().items);
+
+        backend
+            .update_level(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id: target,
+                local: false,
+                generation,
+                bytes: b"post-completion\r\n".to_vec(),
+            })
+            .expect("apply output after completion");
+        let restarted_epoch = backend.state().search_scan_epoch;
+        assert_ne!(old_epoch, restarted_epoch);
+        let search = backend.state().search.as_ref().expect("restarted search");
+        assert!(!search.matches.is_empty());
+        assert!(search.refresh_matches.as_ref().is_some_and(Vec::is_empty));
+        assert_eq!(search.current, 5);
+        assert!(Arc::ptr_eq(&search.items, &visible_items));
+        assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
+        assert_eq!(
+            backend.state().search_scan_scheduled_epoch,
+            Some(restarted_epoch)
+        );
+
+        while backend
+            .state()
+            .search
+            .as_ref()
+            .is_some_and(|search| search.scan.is_some())
+        {
+            let _ = crate::ops::search::advance_search_scan(
+                backend.state_mut(),
+                restarted_epoch,
+                crate::ops::search::SEARCH_LINES_PER_CHUNK,
+            );
+        }
+        assert_eq!(backend.state().search.as_ref().unwrap().current, 5);
+    });
 }
 
 #[test]
 fn bell_events_include_focused_for_current_panes() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let pane_id = backend.state().current().focused_pane.unwrap();
-            let generation = 42;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(pane_id, generation);
-            }
-            let events = backend
-                .state()
-                .event_hub
-                .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
-            backend
-                .update_level(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    bytes: vec![7],
-                })
-                .unwrap();
-            assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
-            backend.state_mut().current_mut().focused_pane = None;
-            backend
-                .update_level(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    bytes: vec![7],
-                })
-                .unwrap();
-            assert!(events.recv().unwrap().contains("\"focused\":\"false\""));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = backend.state().current().focused_pane.unwrap();
+        let generation = 42;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(pane_id, generation);
+        }
+        let events = backend
+            .state()
+            .event_hub
+            .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+        backend
+            .update_level(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                bytes: vec![7],
+            })
+            .unwrap();
+        assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
+        backend.state_mut().current_mut().focused_pane = None;
+        backend
+            .update_level(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                bytes: vec![7],
+            })
+            .unwrap();
+        assert!(events.recv().unwrap().contains("\"focused\":\"false\""));
+    });
 }
 
 #[test]
 fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let pane_id = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("fresh pane focus");
-            let generation = 42;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(pane_id, generation);
-            }
-            let events = backend
-                .state()
-                .event_hub
-                .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("fresh pane focus");
+        let generation = 42;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(pane_id, generation);
+        }
+        let events = backend
+            .state()
+            .event_hub
+            .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
 
-            backend
-                .set_window_focused(false)
-                .expect("lose host-window focus");
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    bytes: vec![7],
-                })
-                .expect("deliver BEL while unfocused");
-            assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
-            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
-            assert!(pane.activity.has_unseen_output);
-            assert!(pane.activity.bell);
+        backend
+            .set_window_focused(false)
+            .expect("lose host-window focus");
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                bytes: vec![7],
+            })
+            .expect("deliver BEL while unfocused");
+        assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+        assert!(pane.activity.has_unseen_output);
+        assert!(pane.activity.bell);
 
-            backend
-                .set_window_focused(true)
-                .expect("gain host-window focus");
-            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
-            assert!(pane.activity.has_unseen_output);
-            assert!(pane.activity.bell);
+        backend
+            .set_window_focused(true)
+            .expect("gain host-window focus");
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+        assert!(pane.activity.has_unseen_output);
+        assert!(pane.activity.bell);
 
-            backend
-                .dispatch(Msg::PaneKey(
-                    pane_id,
-                    tui_lipan::KeyEvent {
-                        code: tui_lipan::KeyCode::Char('x'),
-                        mods: tui_lipan::KeyMods::NONE,
-                    },
-                ))
-                .expect("type into the focused pane");
-            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
-            assert!(!pane.activity.has_unseen_output);
-            assert!(!pane.activity.bell);
-        })
-        .expect("spawn bell focus lifecycle test")
-        .join()
-        .expect("bell focus lifecycle test completes");
+        backend
+            .dispatch(Msg::PaneKey(
+                pane_id,
+                tui_lipan::KeyEvent {
+                    code: tui_lipan::KeyCode::Char('x'),
+                    mods: tui_lipan::KeyMods::NONE,
+                },
+            ))
+            .expect("type into the focused pane");
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+        assert!(!pane.activity.has_unseen_output);
+        assert!(!pane.activity.bell);
+    });
 }
 
 #[test]
@@ -774,51 +719,45 @@ fn generic_activity_bell_still_marks_the_pane() {
 fn unwatched_bell_marks(
     configure: impl FnOnce(&mut crate::pane::TerminalPane) + Send + 'static,
 ) -> bool {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let pane_id = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("fresh pane focus");
-            let generation = 42;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(pane_id, generation);
-                configure(&mut pane.terminal);
-            }
-            let events = backend
-                .state()
-                .event_hub
-                .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+    crate::test_support::on_large_stack(move || {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("fresh pane focus");
+        let generation = 42;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(pane_id, generation);
+            configure(&mut pane.terminal);
+        }
+        let events = backend
+            .state()
+            .event_hub
+            .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
 
-            backend
-                .set_window_focused(false)
-                .expect("lose host-window focus");
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    bytes: vec![7],
-                })
-                .expect("deliver BEL while unfocused");
-            assert!(events.recv().unwrap().contains("\"pane\""));
-            let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
-            assert!(pane.activity.has_unseen_output);
-            pane.activity.bell
-        })
-        .expect("spawn unwatched bell test")
-        .join()
-        .expect("unwatched bell test completes")
+        backend
+            .set_window_focused(false)
+            .expect("lose host-window focus");
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                bytes: vec![7],
+            })
+            .expect("deliver BEL while unfocused");
+        assert!(events.recv().unwrap().contains("\"pane\""));
+        let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
+        assert!(pane.activity.has_unseen_output);
+        pane.activity.bell
+    })
 }
 
 fn finished_record(
@@ -834,217 +773,200 @@ fn finished_record(
 
 #[test]
 fn finished_unseen_survives_background_updates_and_the_return_to_the_window() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let pane_id = backend
-                .state()
-                .current()
-                .focused_pane
-                .expect("fresh pane focus");
-            let generation = 42;
-            {
-                let pane =
-                    crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
-                pane.pty_generation = generation;
-                pane.terminal.bind_session(pane_id, generation);
-                pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
-                    value: crate::session::protocol::pane_status::WORKING.into(),
-                    reason: None,
-                    set_at: 1,
-                });
-                pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                    agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code")
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = backend
+            .state()
+            .current()
+            .focused_pane
+            .expect("fresh pane focus");
+        let generation = 42;
+        {
+            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+            pane.pty_generation = generation;
+            pane.terminal.bind_session(pane_id, generation);
+            pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+                value: crate::session::protocol::pane_status::WORKING.into(),
+                reason: None,
+                set_at: 1,
+            });
+            pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state: crate::session::protocol::DetectedAgentState::Idle,
+            });
+            pane.agents = vec![finished_record(pane_id, generation, 0)];
+        }
+        let agents = backend.state().current().workspaces[0].panes[0]
+            .agents
+            .clone();
+        backend
+            .state_mut()
+            .agent_attention
+            .observe_records(&agents, crate::state::FirstSighting::Baseline);
+
+        backend
+            .set_window_focused(false)
+            .expect("lose host-window focus");
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                agents: vec![finished_record(pane_id, generation, 1)],
+                state: PaneRuntimeState {
+                    sequence: 1,
+                    status: Some(crate::session::protocol::PaneStatus {
+                        value: crate::session::protocol::pane_status::IDLE.into(),
+                        reason: None,
+                        set_at: 2,
+                    }),
+                    detected_agent: Some(crate::session::protocol::DetectedAgent {
+                        agent: crate::session::protocol::AgentIdentity::new(
+                            "claude",
+                            "Claude Code",
+                        )
                         .into(),
-                    state: crate::session::protocol::DetectedAgentState::Idle,
-                });
-                pane.agents = vec![finished_record(pane_id, generation, 0)];
-            }
-            let agents = backend.state().current().workspaces[0].panes[0]
-                .agents
-                .clone();
-            backend
-                .state_mut()
-                .agent_attention
-                .observe_records(&agents, crate::state::FirstSighting::Baseline);
+                        state: crate::session::protocol::DetectedAgentState::Idle,
+                    }),
+                    ..PaneRuntimeState::default()
+                },
+            })
+            .expect("deliver finished edge while unfocused");
+        backend
+            .dispatch(Msg::WorkbarTick)
+            .expect("ordinary post-update pass");
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), pane_id)
+                .expect("finished pane")
+                .finished_unseen(&backend.state().agent_attention)
+        );
 
-            backend
-                .set_window_focused(false)
-                .expect("lose host-window focus");
-            backend
-                .dispatch(Msg::SessionPaneRuntimeChanged {
-                    epoch,
-                    pane_id,
-                    local: false,
-                    generation,
-                    agents: vec![finished_record(pane_id, generation, 1)],
-                    state: PaneRuntimeState {
-                        sequence: 1,
-                        status: Some(crate::session::protocol::PaneStatus {
-                            value: crate::session::protocol::pane_status::IDLE.into(),
-                            reason: None,
-                            set_at: 2,
-                        }),
-                        detected_agent: Some(crate::session::protocol::DetectedAgent {
-                            agent: crate::session::protocol::AgentIdentity::new(
-                                "claude",
-                                "Claude Code",
-                            )
-                            .into(),
-                            state: crate::session::protocol::DetectedAgentState::Idle,
-                        }),
-                        ..PaneRuntimeState::default()
-                    },
-                })
-                .expect("deliver finished edge while unfocused");
-            backend
-                .dispatch(Msg::WorkbarTick)
-                .expect("ordinary post-update pass");
-            assert!(
-                crate::pane::lifecycle::find_pane(backend.state(), pane_id)
-                    .expect("finished pane")
-                    .finished_unseen(&backend.state().agent_attention)
-            );
+        // The run finished while the user was away, in the pane they were already sitting in.
+        // Coming back must not silently swallow that: the mark waits for an actual keystroke.
+        backend
+            .set_window_focused(true)
+            .expect("gain host-window focus");
+        backend
+            .dispatch(Msg::WorkbarTick)
+            .expect("ordinary post-update pass");
+        assert!(
+            crate::pane::lifecycle::find_pane(backend.state(), pane_id)
+                .expect("finished pane")
+                .finished_unseen(&backend.state().agent_attention)
+        );
 
-            // The run finished while the user was away, in the pane they were already sitting in.
-            // Coming back must not silently swallow that: the mark waits for an actual keystroke.
-            backend
-                .set_window_focused(true)
-                .expect("gain host-window focus");
-            backend
-                .dispatch(Msg::WorkbarTick)
-                .expect("ordinary post-update pass");
-            assert!(
-                crate::pane::lifecycle::find_pane(backend.state(), pane_id)
-                    .expect("finished pane")
-                    .finished_unseen(&backend.state().agent_attention)
-            );
-
-            backend
-                .dispatch(Msg::PaneKey(
-                    pane_id,
-                    tui_lipan::KeyEvent {
-                        code: tui_lipan::KeyCode::Char('x'),
-                        mods: tui_lipan::KeyMods::NONE,
-                    },
-                ))
-                .expect("type into the focused pane");
-            assert!(
-                !crate::pane::lifecycle::find_pane(backend.state(), pane_id)
-                    .expect("finished pane")
-                    .finished_unseen(&backend.state().agent_attention)
-            );
-        })
-        .expect("spawn finished focus lifecycle test")
-        .join()
-        .expect("finished focus lifecycle test completes");
+        backend
+            .dispatch(Msg::PaneKey(
+                pane_id,
+                tui_lipan::KeyEvent {
+                    code: tui_lipan::KeyCode::Char('x'),
+                    mods: tui_lipan::KeyMods::NONE,
+                },
+            ))
+            .expect("type into the focused pane");
+        assert!(
+            !crate::pane::lifecycle::find_pane(backend.state(), pane_id)
+                .expect("finished pane")
+                .finished_unseen(&backend.state().agent_attention)
+        );
+    });
 }
 
 #[test]
 fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, _outbound) = SessionClient::test_channel();
-            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = 4;
-                state.current_mut().epoch = 4;
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().session_client = Some(client);
-                state.current_mut().session_attached = true;
-                state.current_mut().pending_session_attach = None;
-                state.current_mut().connection = crate::state::ConnectionState::Connected;
-                state.current_mut().remote_host = Some("workbox".to_string());
-                state.current_mut().remote_target = Some(target.clone());
-                state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
-                    pane_id: 4,
-                    rect: crate::layout::shared::FracRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 0.0,
-                        h: 0.0,
-                    },
-                });
-                state.current().remote_drag_snap.set(Some(4));
-                state.park_current(4, crate::state::Attachment::new());
-                state.runtime_epoch = 5;
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, _outbound) = SessionClient::test_channel();
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 4;
+            state.current_mut().epoch = 4;
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().session_client = Some(client);
+            state.current_mut().session_attached = true;
+            state.current_mut().pending_session_attach = None;
+            state.current_mut().connection = crate::state::ConnectionState::Connected;
+            state.current_mut().remote_host = Some("workbox".to_string());
+            state.current_mut().remote_target = Some(target.clone());
+            state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+                pane_id: 4,
+                rect: crate::layout::shared::FracRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                },
+            });
+            state.current().remote_drag_snap.set(Some(4));
+            state.park_current(4, crate::state::Attachment::new());
+            state.runtime_epoch = 5;
+        }
 
-            assert_eq!(backend.state().runtime_epoch, 5);
-            let before = backend
-                .state()
-                .background
-                .get(&4)
-                .expect("parked before drop");
-            assert_eq!(before.session_name.as_deref(), Some("dev"));
-            assert!(before.pending_session_attach.is_none());
+        assert_eq!(backend.state().runtime_epoch, 5);
+        let before = backend
+            .state()
+            .background
+            .get(&4)
+            .expect("parked before drop");
+        assert_eq!(before.session_name.as_deref(), Some("dev"));
+        assert!(before.pending_session_attach.is_none());
 
-            backend
-                .dispatch(Msg::SessionDisconnected {
-                    epoch: 4,
-                    name: "dev".to_string(),
-                })
-                .expect("dispatch parked disconnect");
+        backend
+            .dispatch(Msg::SessionDisconnected {
+                epoch: 4,
+                name: "dev".to_string(),
+            })
+            .expect("dispatch parked disconnect");
 
-            let parked = backend
-                .state()
-                .background
-                .get(&4)
-                .expect("retained session");
-            assert_eq!(
-                parked.connection,
-                crate::state::ConnectionState::Disconnected
-            );
-            assert!(!parked.session_attached);
-            assert!(parked.session_client.is_none());
-            assert_eq!(parked.remote_drag, None);
-            assert_eq!(parked.remote_drag_snap.get(), None);
-            assert_eq!(parked.remote_target.as_ref(), Some(&target));
-            assert_eq!(parked.session_name.as_deref(), Some("dev"));
-        })
-        .expect("spawn parked-disconnect test")
-        .join()
-        .expect("parked-disconnect test completes");
+        let parked = backend
+            .state()
+            .background
+            .get(&4)
+            .expect("retained session");
+        assert_eq!(
+            parked.connection,
+            crate::state::ConnectionState::Disconnected
+        );
+        assert!(!parked.session_attached);
+        assert!(parked.session_client.is_none());
+        assert_eq!(parked.remote_drag, None);
+        assert_eq!(parked.remote_drag_snap.get(), None);
+        assert_eq!(parked.remote_target.as_ref(), Some(&target));
+        assert_eq!(parked.session_name.as_deref(), Some("dev"));
+    });
 }
 
 #[test]
 fn parked_rename_updates_retained_identity() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = 8;
-                state.current_mut().session_name = Some("before".to_string());
-                state.park_current(8, crate::state::Attachment::new());
-                state.runtime_epoch = 9;
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 8;
+            state.current_mut().session_name = Some("before".to_string());
+            state.park_current(8, crate::state::Attachment::new());
+            state.runtime_epoch = 9;
+        }
 
+        backend
+            .dispatch(Msg::SessionRenamed {
+                epoch: 8,
+                session: "after".to_string(),
+            })
+            .expect("dispatch parked rename");
+
+        assert_eq!(
             backend
-                .dispatch(Msg::SessionRenamed {
-                    epoch: 8,
-                    session: "after".to_string(),
-                })
-                .expect("dispatch parked rename");
-
-            assert_eq!(
-                backend
-                    .state()
-                    .background
-                    .get(&8)
-                    .and_then(|attachment| attachment.session_name.as_deref()),
-                Some("after")
-            );
-        })
-        .expect("spawn parked-rename test")
-        .join()
-        .expect("parked-rename test completes");
+                .state()
+                .background
+                .get(&8)
+                .and_then(|attachment| attachment.session_name.as_deref()),
+            Some("after")
+        );
+    });
 }
 
 /// The rule a host monitor's summaries are graded against, where there is no pane to consult.
@@ -1634,39 +1556,33 @@ fn hold_on_exit_excludes_disabled_and_closing_panes() {
 
 #[test]
 fn parked_non_controller_defers_exit_until_control_returns() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let mut attachment = crate::state::Attachment::new();
-            attachment.epoch = 9;
-            let mut pane =
-                crate::state::Pane::new(4, 100, tui_lipan::prelude::FloatRect::default());
-            pane.pty_generation = 7;
-            attachment.workspaces[0].panes.push(pane);
-            let mut shared = crate::state::SharedSessionState::new(1);
-            shared.controller = Some(2);
-            attachment.shared = Some(shared);
-            backend.state_mut().background.insert(9, attachment);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let mut attachment = crate::state::Attachment::new();
+        attachment.epoch = 9;
+        let mut pane = crate::state::Pane::new(4, 100, tui_lipan::prelude::FloatRect::default());
+        pane.pty_generation = 7;
+        attachment.workspaces[0].panes.push(pane);
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(2);
+        attachment.shared = Some(shared);
+        backend.state_mut().background.insert(9, attachment);
 
-            backend
-                .dispatch(Msg::SessionExited {
-                    epoch: 9,
-                    pane_id: 4,
-                    local: false,
-                    generation: 7,
-                    code: 0,
-                })
-                .expect("parked exit");
+        backend
+            .dispatch(Msg::SessionExited {
+                epoch: 9,
+                pane_id: 4,
+                local: false,
+                generation: 7,
+                code: 0,
+            })
+            .expect("parked exit");
 
-            assert_eq!(
-                backend.state().background[&9].pending_background_closes,
-                vec![(4, 7)]
-            );
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+        assert_eq!(
+            backend.state().background[&9].pending_background_closes,
+            vec![(4, 7)]
+        );
+    });
 }
 
 /// A follower attached to a session whose lease belongs to client 2.
@@ -1694,71 +1610,61 @@ fn drag_at(x: f32) -> crate::state::RemoteDrag {
 
 #[test]
 fn a_relayed_drag_is_mirrored_and_cleared_by_its_own_end() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = follower_backend();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = follower_backend();
 
-            assert_eq!(
-                backend
-                    .update_level(Msg::SessionDragChanged {
-                        epoch: 0,
-                        author: 2,
-                        drag: Some(drag_at(0.1)),
-                    })
-                    .expect("mirror the controller's lift"),
-                tui_lipan::UpdateLevel::Full,
-                "a foreground drag update must redraw the current attachment"
-            );
-            assert_eq!(backend.state().current().remote_drag, Some(drag_at(0.1)));
+        assert_eq!(
+            backend
+                .update_level(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 2,
+                    drag: Some(drag_at(0.1)),
+                })
+                .expect("mirror the controller's lift"),
+            tui_lipan::UpdateLevel::Full,
+            "a foreground drag update must redraw the current attachment"
+        );
+        assert_eq!(backend.state().current().remote_drag, Some(drag_at(0.1)));
 
-            assert_eq!(
-                backend
-                    .update_level(Msg::SessionDragChanged {
-                        epoch: 0,
-                        author: 2,
-                        drag: None,
-                    })
-                    .expect("the gesture ends"),
-                tui_lipan::UpdateLevel::Full,
-                "a foreground drag clear must redraw the current attachment"
-            );
-            assert_eq!(backend.state().current().remote_drag, None);
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+        assert_eq!(
+            backend
+                .update_level(Msg::SessionDragChanged {
+                    epoch: 0,
+                    author: 2,
+                    drag: None,
+                })
+                .expect("the gesture ends"),
+            tui_lipan::UpdateLevel::Full,
+            "a foreground drag clear must redraw the current attachment"
+        );
+        assert_eq!(backend.state().current().remote_drag, None);
+    });
 }
 
 /// The relay is one broadcast to everyone, author included. Adopting its own echo would make the
 /// controller carry a copy of its pane one round trip behind the pointer.
 #[test]
 fn a_client_ignores_the_echo_of_its_own_drag() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = follower_backend();
-            backend
-                .state_mut()
-                .current_mut()
-                .shared
-                .as_mut()
-                .unwrap()
-                .controller = Some(1);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = follower_backend();
+        backend
+            .state_mut()
+            .current_mut()
+            .shared
+            .as_mut()
+            .unwrap()
+            .controller = Some(1);
 
-            backend
-                .dispatch(Msg::SessionDragChanged {
-                    epoch: 0,
-                    author: 1,
-                    drag: Some(drag_at(0.1)),
-                })
-                .expect("own echo");
+        backend
+            .dispatch(Msg::SessionDragChanged {
+                epoch: 0,
+                author: 1,
+                drag: Some(drag_at(0.1)),
+            })
+            .expect("own echo");
 
-            assert_eq!(backend.state().current().remote_drag, None);
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+        assert_eq!(backend.state().current().remote_drag, None);
+    });
 }
 
 /// The backstop for a `DragEnd` that never arrives - a controller killed with a pane still lifted.
@@ -1766,183 +1672,170 @@ fn a_client_ignores_the_echo_of_its_own_drag() {
 /// falls back into the authoritative layout instead of hanging over it for the rest of the session.
 #[test]
 fn losing_the_controller_stops_lifting_whatever_it_was_carrying() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = follower_backend();
-            backend.state_mut().current_mut().remote_drag = Some(drag_at(0.1));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = follower_backend();
+        backend.state_mut().current_mut().remote_drag = Some(drag_at(0.1));
 
-            backend
-                .dispatch(Msg::SessionControllerChanged {
-                    epoch: 0,
-                    controller: Some(3),
-                    reason: crate::session::protocol::ControllerChangeReason::Expired,
-                })
-                .expect("the controller dropped mid-gesture");
+        backend
+            .dispatch(Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: Some(3),
+                reason: crate::session::protocol::ControllerChangeReason::Expired,
+            })
+            .expect("the controller dropped mid-gesture");
 
-            assert_eq!(
-                backend.state().current().remote_drag,
-                None,
-                "a lift with nobody behind it must not outlive its controller"
-            );
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+        assert_eq!(
+            backend.state().current().remote_drag,
+            None,
+            "a lift with nobody behind it must not outlive its controller"
+        );
+    });
 }
 
 #[test]
 fn remote_drag_presence_stays_with_the_parked_attachment_and_clears_there() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = follower_backend();
-            let mut parked = crate::state::Attachment::new();
-            parked.epoch = 9;
-            parked.session_attached = true;
-            let mut shared = crate::state::SharedSessionState::new(1);
-            shared.controller = Some(2);
-            parked.shared = Some(shared);
-            backend.state_mut().background.insert(9, parked);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = follower_backend();
+        let mut parked = crate::state::Attachment::new();
+        parked.epoch = 9;
+        parked.session_attached = true;
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(2);
+        parked.shared = Some(shared);
+        backend.state_mut().background.insert(9, parked);
 
-            assert_eq!(
-                backend
-                    .update_level(Msg::SessionDragChanged {
-                        epoch: 9,
-                        author: 2,
-                        drag: Some(drag_at(0.1)),
-                    })
-                    .expect("drag for another attachment"),
-                tui_lipan::UpdateLevel::None,
-                "a background drag update must not redraw the foreground"
-            );
-
-            assert_eq!(backend.state().current().remote_drag, None);
-            assert_eq!(
-                backend.state().background[&9].remote_drag,
-                Some(drag_at(0.1))
-            );
-            assert_eq!(
-                backend
-                    .update_level(Msg::SessionDragChanged {
-                        epoch: 9,
-                        author: 2,
-                        drag: None,
-                    })
-                    .expect("clear the parked attachment's drag"),
-                tui_lipan::UpdateLevel::None,
-                "clearing a background drag must not redraw the foreground"
-            );
-            assert_eq!(backend.state().background[&9].remote_drag, None);
-
-            backend.state_mut().current_mut().remote_drag = Some(drag_at(0.2));
+        assert_eq!(
             backend
-                .state_mut()
-                .park_current(0, crate::state::Attachment::new());
-            backend.state_mut().runtime_epoch = 1;
-            assert_eq!(
-                backend.state().background[&0].remote_drag,
-                Some(drag_at(0.2))
-            );
-            backend
-                .dispatch(Msg::SessionControllerChanged {
-                    epoch: 0,
-                    controller: Some(3),
-                    reason: crate::session::protocol::ControllerChangeReason::Expired,
+                .update_level(Msg::SessionDragChanged {
+                    epoch: 9,
+                    author: 2,
+                    drag: Some(drag_at(0.1)),
                 })
-                .expect("clear the parked attachment's stale drag");
-            assert_eq!(backend.state().background[&0].remote_drag, None);
-            let restored = backend
-                .state_mut()
-                .unpark(0, 1)
-                .expect("switch back to the parked attachment");
-            backend.state_mut().runtime_epoch = restored;
-            assert_eq!(backend.state().current().remote_drag, None);
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+                .expect("drag for another attachment"),
+            tui_lipan::UpdateLevel::None,
+            "a background drag update must not redraw the foreground"
+        );
+
+        assert_eq!(backend.state().current().remote_drag, None);
+        assert_eq!(
+            backend.state().background[&9].remote_drag,
+            Some(drag_at(0.1))
+        );
+        assert_eq!(
+            backend
+                .update_level(Msg::SessionDragChanged {
+                    epoch: 9,
+                    author: 2,
+                    drag: None,
+                })
+                .expect("clear the parked attachment's drag"),
+            tui_lipan::UpdateLevel::None,
+            "clearing a background drag must not redraw the foreground"
+        );
+        assert_eq!(backend.state().background[&9].remote_drag, None);
+
+        backend.state_mut().current_mut().remote_drag = Some(drag_at(0.2));
+        backend
+            .state_mut()
+            .park_current(0, crate::state::Attachment::new());
+        backend.state_mut().runtime_epoch = 1;
+        assert_eq!(
+            backend.state().background[&0].remote_drag,
+            Some(drag_at(0.2))
+        );
+        backend
+            .dispatch(Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: Some(3),
+                reason: crate::session::protocol::ControllerChangeReason::Expired,
+            })
+            .expect("clear the parked attachment's stale drag");
+        assert_eq!(backend.state().background[&0].remote_drag, None);
+        let restored = backend
+            .state_mut()
+            .unpark(0, 1)
+            .expect("switch back to the parked attachment");
+        backend.state_mut().runtime_epoch = restored;
+        assert_eq!(backend.state().current().remote_drag, None);
+    });
 }
 
 #[test]
 fn first_relayed_lift_arms_tile_animation_and_abnormal_clear_snaps_the_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = follower_backend();
-            {
-                let workspace = backend.state_mut().current_mut().active_workspace_mut();
-                workspace.panes.clear();
-                workspace.panes.extend((1..=2).map(|id| {
-                    crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default())
-                }));
-            }
-            let mut drag = drag_at(0.1);
-            drag.pane_id = 1;
-            backend
-                .dispatch(Msg::SessionDragChanged {
-                    epoch: 0,
-                    author: 2,
-                    drag: Some(drag),
-                })
-                .expect("relay the first lift");
-            assert_eq!(
-                backend.state().animation,
-                crate::layout::anim::GeometryAnimation::TileFloat
-            );
-            let carried = &backend.state().current().workspaces[0].panes[0];
-            let neighbour = &backend.state().current().workspaces[0].panes[1];
-            assert!(!crate::layout::anim::geometry_animation_enabled(
-                backend.state(),
-                carried,
-                false
-            ));
-            assert!(crate::layout::anim::geometry_animation_enabled(
-                backend.state(),
-                neighbour,
-                false
-            ));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = follower_backend();
+        {
+            let workspace = backend.state_mut().current_mut().active_workspace_mut();
+            workspace.panes.clear();
+            workspace.panes.extend((1..=2).map(|id| {
+                crate::state::Pane::new(id, 100, tui_lipan::prelude::FloatRect::default())
+            }));
+        }
+        let mut drag = drag_at(0.1);
+        drag.pane_id = 1;
+        backend
+            .dispatch(Msg::SessionDragChanged {
+                epoch: 0,
+                author: 2,
+                drag: Some(drag),
+            })
+            .expect("relay the first lift");
+        assert_eq!(
+            backend.state().animation,
+            crate::layout::anim::GeometryAnimation::TileFloat
+        );
+        let carried = &backend.state().current().workspaces[0].panes[0];
+        let neighbour = &backend.state().current().workspaces[0].panes[1];
+        assert!(!crate::layout::anim::geometry_animation_enabled(
+            backend.state(),
+            carried,
+            false
+        ));
+        assert!(crate::layout::anim::geometry_animation_enabled(
+            backend.state(),
+            neighbour,
+            false
+        ));
 
-            backend
-                .update_level(Msg::SessionControllerChanged {
-                    epoch: 0,
-                    controller: Some(3),
-                    reason: crate::session::protocol::ControllerChangeReason::Expired,
-                })
-                .expect("clear the abandoned lift");
-            assert_eq!(backend.state().current().remote_drag, None);
-            assert_eq!(
-                backend.state().animation,
-                crate::layout::anim::GeometryAnimation::TileFloat
-            );
-            let carried = &backend.state().current().workspaces[0].panes[0];
-            let neighbour = &backend.state().current().workspaces[0].panes[1];
-            assert!(!crate::layout::anim::geometry_animation_enabled(
-                backend.state(),
-                carried,
-                false
-            ));
-            assert!(crate::layout::anim::geometry_animation_enabled(
-                backend.state(),
-                neighbour,
-                false
-            ));
-            backend.render();
-            assert_eq!(
-                backend.state().current().remote_drag_snap.get(),
-                None,
-                "the abnormal-clear snap marker lasts for one rendered frame"
-            );
-        })
-        .expect("spawn test")
-        .join()
-        .expect("join test");
+        backend
+            .update_level(Msg::SessionControllerChanged {
+                epoch: 0,
+                controller: Some(3),
+                reason: crate::session::protocol::ControllerChangeReason::Expired,
+            })
+            .expect("clear the abandoned lift");
+        assert_eq!(backend.state().current().remote_drag, None);
+        assert_eq!(
+            backend.state().animation,
+            crate::layout::anim::GeometryAnimation::TileFloat
+        );
+        let carried = &backend.state().current().workspaces[0].panes[0];
+        let neighbour = &backend.state().current().workspaces[0].panes[1];
+        assert!(!crate::layout::anim::geometry_animation_enabled(
+            backend.state(),
+            carried,
+            false
+        ));
+        assert!(crate::layout::anim::geometry_animation_enabled(
+            backend.state(),
+            neighbour,
+            false
+        ));
+        backend.render();
+        assert_eq!(
+            backend.state().current().remote_drag_snap.get(),
+            None,
+            "the abnormal-clear snap marker lasts for one rendered frame"
+        );
+    });
 }
 
 #[test]
 fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes() {
     // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_body);
+    crate::test_support::on_large_stack(
+        disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_body,
+    );
 }
 
 fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_body() {
@@ -2105,143 +1998,132 @@ fn roster_diff_emits_joins_and_leaves_with_the_new_count() {
 
 #[test]
 fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
-            pane.pty_generation = 7;
-            pane.terminal.bind_session(pane.id, 7);
-            let events = backend.state().event_hub.subscribe(Some(HashSet::from([
-                crate::events::EventKind::PaneStatusChanged,
-            ])));
-            let status = crate::session::protocol::PaneStatus {
-                value: "blocked".into(),
-                reason: Some("needs approval".into()),
-                set_at: 1,
-            };
-            let runtime = PaneRuntimeState {
-                status: Some(status.clone()),
-                detected_agent: Some(crate::session::protocol::DetectedAgent {
-                    agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode")
-                        .into(),
-                    state: crate::session::protocol::DetectedAgentState::Blocked,
-                }),
-                sequence: 1,
-                ..PaneRuntimeState::default()
-            };
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+        pane.pty_generation = 7;
+        pane.terminal.bind_session(pane.id, 7);
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::PaneStatusChanged,
+        ])));
+        let status = crate::session::protocol::PaneStatus {
+            value: "blocked".into(),
+            reason: Some("needs approval".into()),
+            set_at: 1,
+        };
+        let runtime = PaneRuntimeState {
+            status: Some(status.clone()),
+            detected_agent: Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("opencode", "OpenCode").into(),
+                state: crate::session::protocol::DetectedAgentState::Blocked,
+            }),
+            sequence: 1,
+            ..PaneRuntimeState::default()
+        };
 
-            backend
-                .dispatch(Msg::SessionPaneRuntimeChanged {
-                    epoch,
-                    pane_id: 1,
-                    local: false,
-                    generation: 7,
-                    agents: Vec::new(),
-                    state: runtime.clone(),
-                })
-                .expect("dispatch status transition");
-            let event: serde_json::Value =
-                serde_json::from_str(&events.try_recv().expect("transition event")).unwrap();
-            assert_eq!(event["event"], "pane-status-changed");
-            assert_eq!(event["data"]["pane"], "1");
-            assert_eq!(event["data"]["status"], "blocked");
-            assert_eq!(event["data"]["reason"], "needs approval");
-            assert_eq!(event["data"]["previous_status"], "");
-            assert_eq!(
-                backend.state().current().workspaces[0].panes[0]
-                    .terminal
-                    .detected_agent
-                    .as_ref()
-                    .map(|agent| agent.agent.id.clone()),
-                Some("opencode".to_string())
-            );
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id: 1,
+                local: false,
+                generation: 7,
+                agents: Vec::new(),
+                state: runtime.clone(),
+            })
+            .expect("dispatch status transition");
+        let event: serde_json::Value =
+            serde_json::from_str(&events.try_recv().expect("transition event")).unwrap();
+        assert_eq!(event["event"], "pane-status-changed");
+        assert_eq!(event["data"]["pane"], "1");
+        assert_eq!(event["data"]["status"], "blocked");
+        assert_eq!(event["data"]["reason"], "needs approval");
+        assert_eq!(event["data"]["previous_status"], "");
+        assert_eq!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .detected_agent
+                .as_ref()
+                .map(|agent| agent.agent.id.clone()),
+            Some("opencode".to_string())
+        );
 
-            backend
-                .dispatch(Msg::SessionPaneRuntimeChanged {
-                    epoch,
-                    pane_id: 1,
-                    local: false,
-                    generation: 7,
-                    agents: Vec::new(),
-                    state: runtime,
-                })
-                .expect("dispatch duplicate status");
-            assert!(events.try_recv().is_err());
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id: 1,
+                local: false,
+                generation: 7,
+                agents: Vec::new(),
+                state: runtime,
+            })
+            .expect("dispatch duplicate status");
+        assert!(events.try_recv().is_err());
 
-            backend
-                .dispatch(Msg::SessionPaneRuntimeChanged {
-                    epoch,
-                    pane_id: 1,
-                    local: false,
-                    generation: 7,
-                    agents: Vec::new(),
-                    state: PaneRuntimeState {
-                        status: None,
-                        sequence: 0,
-                        ..PaneRuntimeState::default()
-                    },
-                })
-                .expect("dispatch stale status");
-            assert_eq!(
-                backend.state().current().workspaces[0].panes[0]
-                    .terminal
-                    .reported_status,
-                Some(status)
-            );
-            assert!(
-                backend.state().current().workspaces[0].panes[0]
-                    .terminal
-                    .detected_agent
-                    .is_some()
-            );
-            assert!(events.try_recv().is_err());
-        })
-        .expect("spawn runtime status test thread")
-        .join()
-        .expect("runtime status test thread completes");
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id: 1,
+                local: false,
+                generation: 7,
+                agents: Vec::new(),
+                state: PaneRuntimeState {
+                    status: None,
+                    sequence: 0,
+                    ..PaneRuntimeState::default()
+                },
+            })
+            .expect("dispatch stale status");
+        assert_eq!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .reported_status,
+            Some(status)
+        );
+        assert!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .detected_agent
+                .is_some()
+        );
+        assert!(events.try_recv().is_err());
+    });
 }
 
 #[test]
 fn parked_runtime_updates_keep_background_metadata_current() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = 4;
-                let pane = &mut state.current_mut().workspaces[0].panes[0];
-                pane.pty_generation = 7;
-                pane.terminal.bind_session(pane.id, 7);
-                state.park_current(4, crate::state::Attachment::new());
-                state.runtime_epoch = 5;
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 4;
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.pty_generation = 7;
+            pane.terminal.bind_session(pane.id, 7);
+            state.park_current(4, crate::state::Attachment::new());
+            state.runtime_epoch = 5;
+        }
 
-            backend
-                .dispatch(Msg::SessionPaneRuntimeChanged {
-                    epoch: 4,
-                    pane_id: 1,
-                    local: false,
-                    generation: 7,
-                    agents: Vec::new(),
-                    state: PaneRuntimeState {
-                        cwd: Some("/remote/project".to_string()),
-                        foreground_program: Some("cargo".to_string()),
-                        sequence: 1,
-                        ..PaneRuntimeState::default()
-                    },
-                })
-                .expect("dispatch parked runtime update");
+        backend
+            .dispatch(Msg::SessionPaneRuntimeChanged {
+                epoch: 4,
+                pane_id: 1,
+                local: false,
+                generation: 7,
+                agents: Vec::new(),
+                state: PaneRuntimeState {
+                    cwd: Some("/remote/project".to_string()),
+                    foreground_program: Some("cargo".to_string()),
+                    sequence: 1,
+                    ..PaneRuntimeState::default()
+                },
+            })
+            .expect("dispatch parked runtime update");
 
-            let pane = &backend.state().background[&4].workspaces[0].panes[0];
-            assert_eq!(pane.terminal.cwd.as_deref(), Some("/remote/project"));
-            assert_eq!(pane.terminal.foreground_program.as_deref(), Some("cargo"));
-        })
-        .expect("spawn parked runtime test")
-        .join()
-        .expect("parked runtime test completes");
+        let pane = &backend.state().background[&4].workspaces[0].panes[0];
+        assert_eq!(pane.terminal.cwd.as_deref(), Some("/remote/project"));
+        assert_eq!(pane.terminal.foreground_program.as_deref(), Some("cargo"));
+    });
 }
 
 /// A failed *local* attach must not install another pending attach: a local ephemeral is
@@ -2250,309 +2132,275 @@ fn parked_runtime_updates_keep_background_metadata_current() {
 /// path returns no command, so nothing is spawned.
 #[test]
 fn local_attach_failure_does_not_retry_into_an_ephemeral_loop() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach::new(
-                    42,
-                    crate::state::AttachRequest::new(
-                        "eph-local",
-                        crate::state::AttachMode::JoinOrStart,
-                    )
-                    .with_access(crate::state::AttachAccess::Writable {
-                        on_attach: Some(crate::config::SessionOnAttach::Take),
-                    }),
-                ));
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 42,
-                    message: "no local server".into(),
-                })
-                .expect("dispatch local attach failure");
-            assert!(
-                backend.state().current().pending_session_attach.is_none(),
-                "a local ephemeral failure must clear the pending attach and not re-arm one"
-            );
-        })
-        .expect("spawn no-loop test thread")
-        .join()
-        .expect("no-loop test thread completes");
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach::new(
+                42,
+                crate::state::AttachRequest::new(
+                    "eph-local",
+                    crate::state::AttachMode::JoinOrStart,
+                )
+                .with_access(crate::state::AttachAccess::Writable {
+                    on_attach: Some(crate::config::SessionOnAttach::Take),
+                }),
+            ));
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 42,
+                message: "no local server".into(),
+            })
+            .expect("dispatch local attach failure");
+        assert!(
+            backend.state().current().pending_session_attach.is_none(),
+            "a local ephemeral failure must clear the pending attach and not re-arm one"
+        );
+    });
 }
 
 #[test]
 fn retained_remote_reconnect_failure_stays_offline_and_remote() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().remote_host = Some("workbox".to_string());
-                state.current_mut().remote_target = Some(target.clone());
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 42,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                        )),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().remote_host = Some("workbox".to_string());
+            state.current_mut().remote_target = Some(target.clone());
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 42,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                )
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ))),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+        }
 
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 42,
-                    message: "offline".to_string(),
-                })
-                .expect("dispatch reconnect failure");
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 42,
+                message: "offline".to_string(),
+            })
+            .expect("dispatch reconnect failure");
 
-            assert!(backend.state().current().pending_session_attach.is_none());
-            assert_eq!(
-                backend.state().current().connection,
-                crate::state::ConnectionState::Unreachable
-            );
-            assert_eq!(
-                backend.state().current().remote_target.as_ref(),
-                Some(&target)
-            );
-            assert_eq!(
-                backend.state().current().session_name.as_deref(),
-                Some("dev")
-            );
-        })
-        .expect("spawn retained reconnect test")
-        .join()
-        .expect("retained reconnect test completes");
+        assert!(backend.state().current().pending_session_attach.is_none());
+        assert_eq!(
+            backend.state().current().connection,
+            crate::state::ConnectionState::Unreachable
+        );
+        assert_eq!(
+            backend.state().current().remote_target.as_ref(),
+            Some(&target)
+        );
+        assert_eq!(
+            backend.state().current().session_name.as_deref(),
+            Some("dev")
+        );
+    });
 }
 
 #[test]
 fn lost_remote_session_requires_explicit_recreation() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
-            let epoch = backend.state().runtime_epoch;
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().remote_host = Some("workbox".to_string());
-                state.current_mut().remote_target = Some(target);
-                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                        )),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-                state.askpass = Some(crate::state::AskpassState::new(
-                    crate::state::AskpassPrompt {
-                        id: u64::MAX - 9,
-                        session: "reconnect".to_string(),
-                        attach_epoch: Some(epoch),
-                        kind: crate::session::remote::AskpassKind::Secret,
-                        prompt: "Password:".to_string(),
-                        error: None,
-                    },
-                ));
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+        let epoch = backend.state().runtime_epoch;
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().remote_host = Some("workbox".to_string());
+            state.current_mut().remote_target = Some(target);
+            state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                )
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ))),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+            state.askpass = Some(crate::state::AskpassState::new(
+                crate::state::AskpassPrompt {
+                    id: u64::MAX - 9,
+                    session: "reconnect".to_string(),
+                    attach_epoch: Some(epoch),
+                    kind: crate::session::remote::AskpassKind::Secret,
+                    prompt: "Password:".to_string(),
+                    error: None,
+                },
+            ));
+        }
 
-            backend
-                .dispatch(Msg::SessionLost {
-                    epoch,
-                    message: "the original remote session `dev` is gone".to_string(),
-                })
-                .expect("mark session lost");
-            assert!(backend.state().current().remote_session_lost);
-            assert_eq!(
-                backend.state().current().connection,
-                crate::state::ConnectionState::Unreachable
-            );
-            assert!(backend.state().current().pending_session_attach.is_none());
-            assert!(
-                backend.state().askpass.is_none(),
-                "a prompt owned by the lost attach must not outlive it"
-            );
+        backend
+            .dispatch(Msg::SessionLost {
+                epoch,
+                message: "the original remote session `dev` is gone".to_string(),
+            })
+            .expect("mark session lost");
+        assert!(backend.state().current().remote_session_lost);
+        assert_eq!(
+            backend.state().current().connection,
+            crate::state::ConnectionState::Unreachable
+        );
+        assert!(backend.state().current().pending_session_attach.is_none());
+        assert!(
+            backend.state().askpass.is_none(),
+            "a prompt owned by the lost attach must not outlive it"
+        );
 
-            backend
-                .dispatch(Msg::RetrySessionReconnect)
-                .expect("ordinary retry is refused for a lost session");
-            assert!(backend.state().current().pending_session_attach.is_none());
+        backend
+            .dispatch(Msg::RetrySessionReconnect)
+            .expect("ordinary retry is refused for a lost session");
+        assert!(backend.state().current().pending_session_attach.is_none());
 
-            backend.render();
+        backend.render();
+        backend
+            .send_key(tui_lipan::prelude::KeyEvent {
+                code: tui_lipan::prelude::KeyCode::Enter,
+                mods: tui_lipan::prelude::KeyMods::NONE,
+            })
+            .expect("Enter on the modal starts explicit recreation");
+        assert!(
             backend
-                .send_key(tui_lipan::prelude::KeyEvent {
-                    code: tui_lipan::prelude::KeyCode::Enter,
-                    mods: tui_lipan::prelude::KeyMods::NONE,
-                })
-                .expect("Enter on the modal starts explicit recreation");
-            assert!(
-                backend
-                    .state()
-                    .current()
-                    .pending_session_attach
-                    .as_ref()
-                    .is_some_and(|pending| pending.request.is_reconnect())
-            );
-            assert_eq!(
-                backend.state().current().connection,
-                crate::state::ConnectionState::Reconnecting
-            );
-        })
-        .expect("spawn lost-session test")
-        .join()
-        .expect("lost-session test completes");
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .is_some_and(|pending| pending.request.is_reconnect())
+        );
+        assert_eq!(
+            backend.state().current().connection,
+            crate::state::ConnectionState::Reconnecting
+        );
+    });
 }
 
 #[test]
 fn retry_session_reconnect_is_a_noop_unless_the_session_is_unreachable() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().pending_session_attach = None;
-                state.current_mut().connection = crate::state::ConnectionState::Connected;
-            }
-            backend
-                .dispatch(Msg::RetrySessionReconnect)
-                .expect("dispatch ignored retry");
-            assert_eq!(
-                backend.state().current().connection,
-                crate::state::ConnectionState::Connected
-            );
-            assert!(backend.state().current().pending_session_attach.is_none());
-        })
-        .expect("spawn retry noop test")
-        .join()
-        .expect("retry noop test completes");
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().pending_session_attach = None;
+            state.current_mut().connection = crate::state::ConnectionState::Connected;
+        }
+        backend
+            .dispatch(Msg::RetrySessionReconnect)
+            .expect("dispatch ignored retry");
+        assert_eq!(
+            backend.state().current().connection,
+            crate::state::ConnectionState::Connected
+        );
+        assert!(backend.state().current().pending_session_attach.is_none());
+    });
 }
 
 #[test]
 fn abandoning_a_remote_reconnect_stays_offline_and_opens_sessions() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
-            let epoch_before;
-            {
-                let state = backend.state_mut();
-                state.runtime_epoch = u64::MAX - 8;
-                state.show_session_picker = false;
-                state.session_picker = None;
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().remote_host = Some("workbox".to_string());
-                state.current_mut().remote_target = Some(target.clone());
-                state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
-                epoch_before = state.runtime_epoch;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: epoch_before,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                        )),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+        let epoch_before;
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = u64::MAX - 8;
+            state.show_session_picker = false;
+            state.session_picker = None;
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().remote_host = Some("workbox".to_string());
+            state.current_mut().remote_target = Some(target.clone());
+            state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
+            epoch_before = state.runtime_epoch;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: epoch_before,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                )
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "workbox".into(),
+                ))),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+        }
 
-            backend
-                .dispatch(Msg::AbandonSessionReconnect)
-                .expect("dispatch abandon reconnect");
+        backend
+            .dispatch(Msg::AbandonSessionReconnect)
+            .expect("dispatch abandon reconnect");
 
-            let state = backend.state();
-            assert!(state.current().pending_session_attach.is_none());
-            assert_eq!(
-                state.current().connection,
-                crate::state::ConnectionState::Unreachable
-            );
-            assert_eq!(state.current().session_name.as_deref(), Some("dev"));
-            assert_eq!(state.current().remote_target.as_ref(), Some(&target));
-            assert!(state.show_session_picker, "Esc must open Sessions");
-            assert_ne!(
-                state.runtime_epoch, epoch_before,
-                "in-flight attach results must be invalidated"
-            );
-            crate::session::bootstrap::finish_cancelled_remote_attach(epoch_before);
-        })
-        .expect("spawn abandon reconnect test")
-        .join()
-        .expect("abandon reconnect test completes");
+        let state = backend.state();
+        assert!(state.current().pending_session_attach.is_none());
+        assert_eq!(
+            state.current().connection,
+            crate::state::ConnectionState::Unreachable
+        );
+        assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+        assert_eq!(state.current().remote_target.as_ref(), Some(&target));
+        assert!(state.show_session_picker, "Esc must open Sessions");
+        assert_ne!(
+            state.runtime_epoch, epoch_before,
+            "in-flight attach results must be invalidated"
+        );
+        crate::session::bootstrap::finish_cancelled_remote_attach(epoch_before);
+    });
 }
 
 /// A local reconnect that fails leaves the session instead of rendering its dead panes as though
 /// the client were still inside it.
 #[test]
 fn local_reconnect_failure_leaves_the_session() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".to_string());
-                state.current_mut().mark_disconnected();
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 42,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            crate::state::AttachMode::Reconnect,
-                        ),
-                        client: None,
-                        left: None,
-                        parked_epoch: None,
-                    });
-            }
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("dev".to_string());
+            state.current_mut().mark_disconnected();
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 42,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    crate::state::AttachMode::Reconnect,
+                ),
+                client: None,
+                left: None,
+                parked_epoch: None,
+            });
+        }
 
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 42,
-                    message: "Session `dev` is busy or not accepting clients".to_string(),
-                })
-                .expect("dispatch local reconnect failure");
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 42,
+                message: "Session `dev` is busy or not accepting clients".to_string(),
+            })
+            .expect("dispatch local reconnect failure");
 
-            let current = backend.state().current();
-            assert!(current.pending_session_attach.is_none());
-            assert_eq!(current.session_name, None);
-            assert!(!current.session_attached);
-            assert!(
-                !backend
-                    .state()
-                    .background
-                    .values()
-                    .any(|attachment| { attachment.session_name.as_deref() == Some("dev") })
-            );
-        })
-        .expect("spawn local reconnect failure test")
-        .join()
-        .expect("local reconnect failure test completes");
+        let current = backend.state().current();
+        assert!(current.pending_session_attach.is_none());
+        assert_eq!(current.session_name, None);
+        assert!(!current.session_attached);
+        assert!(
+            !backend
+                .state()
+                .background
+                .values()
+                .any(|attachment| { attachment.session_name.as_deref() == Some("dev") })
+        );
+    });
 }
 
 /// A failed *remote* connect that had parked a live session restores that session rather than
@@ -2562,68 +2410,62 @@ fn local_reconnect_failure_leaves_the_session() {
 /// the dead empty connect attachment is discarded.
 #[test]
 fn failed_remote_connect_restores_the_parked_session_not_a_follower_ephemeral() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let target = crate::session::remote::RemoteTarget::Alias("windev".to_string());
-            {
-                let state = backend.state_mut();
-                // The live local session, parked into the background under epoch 1 when the
-                // connect started.
-                let mut parked = crate::state::Attachment::new();
-                parked.epoch = 1;
-                parked.session_name = Some("eph-local".to_string());
-                parked.session_attached = true;
-                parked.connection = crate::state::ConnectionState::Connected;
-                state.background.insert(1, parked);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let target = crate::session::remote::RemoteTarget::Alias("windev".to_string());
+        {
+            let state = backend.state_mut();
+            // The live local session, parked into the background under epoch 1 when the
+            // connect started.
+            let mut parked = crate::state::Attachment::new();
+            parked.epoch = 1;
+            parked.session_name = Some("eph-local".to_string());
+            parked.session_attached = true;
+            parked.connection = crate::state::ConnectionState::Connected;
+            state.background.insert(1, parked);
 
-                // The current attachment is the fresh empty one the connect installed; it never
-                // attached.
-                state.runtime_epoch = 2;
-                state.current_mut().epoch = 2;
-                state.current_mut().remote_host = Some("windev".to_string());
-                state.current_mut().remote_target = Some(target.clone());
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 2,
-                        request: crate::state::AttachRequest::new(
-                            "eph-windev",
-                            crate::state::AttachMode::JoinOrStart,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("windev".into()),
-                        )),
-                        client: None,
-                        left: None,
-                        parked_epoch: Some(1),
-                    });
-            }
+            // The current attachment is the fresh empty one the connect installed; it never
+            // attached.
+            state.runtime_epoch = 2;
+            state.current_mut().epoch = 2;
+            state.current_mut().remote_host = Some("windev".to_string());
+            state.current_mut().remote_target = Some(target.clone());
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 2,
+                request: crate::state::AttachRequest::new(
+                    "eph-windev",
+                    crate::state::AttachMode::JoinOrStart,
+                )
+                .on_host(Some(crate::session::remote::RemoteTarget::Alias(
+                    "windev".into(),
+                ))),
+                client: None,
+                left: None,
+                parked_epoch: Some(1),
+            });
+        }
 
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 2,
-                    message: "could not resolve hostname windev".to_string(),
-                })
-                .expect("dispatch remote connect failure");
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 2,
+                message: "could not resolve hostname windev".to_string(),
+            })
+            .expect("dispatch remote connect failure");
 
-            // Restored onto the parked local session, not a fresh ephemeral, and no longer
-            // pointed at the remote host.
-            assert_eq!(
-                backend.state().current().session_name.as_deref(),
-                Some("eph-local")
-            );
-            assert!(backend.state().current().session_attached);
-            assert_eq!(backend.state().current().remote_target, None);
-            assert!(backend.state().current().pending_session_attach.is_none());
-            // The parked entry is gone (now current) and the dead connect attachment was not
-            // retained in its place.
-            assert!(!backend.state().background.contains_key(&1));
-            assert!(!backend.state().background.contains_key(&2));
-        })
-        .expect("spawn failed-connect-restore test")
-        .join()
-        .expect("failed-connect-restore test completes");
+        // Restored onto the parked local session, not a fresh ephemeral, and no longer
+        // pointed at the remote host.
+        assert_eq!(
+            backend.state().current().session_name.as_deref(),
+            Some("eph-local")
+        );
+        assert!(backend.state().current().session_attached);
+        assert_eq!(backend.state().current().remote_target, None);
+        assert!(backend.state().current().pending_session_attach.is_none());
+        // The parked entry is gone (now current) and the dead connect attachment was not
+        // retained in its place.
+        assert!(!backend.state().background.contains_key(&1));
+        assert!(!backend.state().background.contains_key(&2));
+    });
 }
 
 /// A failed *local* create also restores the parked session — creating now parks the current
@@ -2631,53 +2473,44 @@ fn failed_remote_connect_restores_the_parked_session_not_a_follower_ephemeral() 
 /// the broken empty attachment either. (The remote-only ephemeral fallback stays remote-only.)
 #[test]
 fn failed_local_create_restores_the_parked_session() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            {
-                let state = backend.state_mut();
-                let mut parked = crate::state::Attachment::new();
-                parked.epoch = 1;
-                parked.session_name = Some("eph-local".to_string());
-                parked.session_attached = true;
-                parked.connection = crate::state::ConnectionState::Connected;
-                state.background.insert(1, parked);
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            let mut parked = crate::state::Attachment::new();
+            parked.epoch = 1;
+            parked.session_name = Some("eph-local".to_string());
+            parked.session_attached = true;
+            parked.connection = crate::state::ConnectionState::Connected;
+            state.background.insert(1, parked);
 
-                state.runtime_epoch = 2;
-                state.current_mut().epoch = 2;
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        parked_epoch: Some(1),
-                        ..crate::state::PendingSessionAttach::new(
-                            2,
-                            crate::state::AttachRequest::new(
-                                "work",
-                                crate::state::AttachMode::Create,
-                            ),
-                        )
-                    });
-            }
+            state.runtime_epoch = 2;
+            state.current_mut().epoch = 2;
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                parked_epoch: Some(1),
+                ..crate::state::PendingSessionAttach::new(
+                    2,
+                    crate::state::AttachRequest::new("work", crate::state::AttachMode::Create),
+                )
+            });
+        }
 
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 2,
-                    message: "could not start session server".to_string(),
-                })
-                .expect("dispatch local create failure");
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 2,
+                message: "could not start session server".to_string(),
+            })
+            .expect("dispatch local create failure");
 
-            assert_eq!(
-                backend.state().current().session_name.as_deref(),
-                Some("eph-local")
-            );
-            assert!(backend.state().current().session_attached);
-            assert!(backend.state().current().pending_session_attach.is_none());
-            assert!(!backend.state().background.contains_key(&1));
-            assert!(!backend.state().background.contains_key(&2));
-        })
-        .expect("spawn failed-local-create test")
-        .join()
-        .expect("failed-local-create test completes");
+        assert_eq!(
+            backend.state().current().session_name.as_deref(),
+            Some("eph-local")
+        );
+        assert!(backend.state().current().session_attached);
+        assert!(backend.state().current().pending_session_attach.is_none());
+        assert!(!backend.state().background.contains_key(&1));
+        assert!(!backend.state().background.contains_key(&2));
+    });
 }
 
 /// Attaching where another client already holds the lease: the client must ask what to do
@@ -2703,76 +2536,71 @@ fn attach_policy_result(
     mode_override: Option<crate::config::SessionOnAttach>,
 ) -> (bool, bool) {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, outbound) = SessionClient::test_channel();
-            backend.state_mut().config.session.on_attach = mode;
-            let access = if read_only {
-                crate::state::AttachAccess::ReadOnly
-            } else {
-                crate::state::AttachAccess::Writable {
-                    on_attach: mode_override,
-                }
-            };
-            let attach_mode = if reconnect {
-                crate::state::AttachMode::Reconnect
-            } else {
-                crate::state::AttachMode::Join
-            };
-            let mut pending = crate::state::PendingSessionAttach::new(
-                1,
-                crate::state::AttachRequest::new("dev", attach_mode).with_access(access),
-            );
-            pending.client = Some(client);
-            backend.state_mut().current_mut().pending_session_attach = Some(pending);
-            backend
-                .dispatch(Msg::SessionAttached {
-                    epoch: 1,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
-                    session: "dev".into(),
-                    client_id: 2,
-                    panes: Vec::new(),
-                    layout_rev: 0,
-                    layout: None,
-                    controller,
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover,
-                    read_only,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("dispatch attach");
-            let requested = outbound.try_iter().any(|message| {
-                matches!(
-                    message,
-                    crate::session::client::ClientOutbound::Control(
-                        crate::session::protocol::ClientMessage::RequestControl
-                    )
-                )
-            });
-            assert_eq!(
-                backend
-                    .state()
-                    .current()
-                    .shared
-                    .as_ref()
-                    .unwrap()
-                    .controller,
+    crate::test_support::on_large_stack(move || {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().config.session.on_attach = mode;
+        let access = if read_only {
+            crate::state::AttachAccess::ReadOnly
+        } else {
+            crate::state::AttachAccess::Writable {
+                on_attach: mode_override,
+            }
+        };
+        let attach_mode = if reconnect {
+            crate::state::AttachMode::Reconnect
+        } else {
+            crate::state::AttachMode::Join
+        };
+        let mut pending = crate::state::PendingSessionAttach::new(
+            1,
+            crate::state::AttachRequest::new("dev", attach_mode).with_access(access),
+        );
+        pending.client = Some(client);
+        backend.state_mut().current_mut().pending_session_attach = Some(pending);
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch: 1,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                session: "dev".into(),
+                client_id: 2,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
                 controller,
-                "only the server can transfer control"
-            );
-            assert!(
-                backend.state().current().pending_session_attach.is_none(),
-                "the attempt and its override end with the landing"
-            );
-            tx.send((backend.state().follow_prompt.is_some(), requested))
-                .expect("report result");
-        })
-        .expect("spawn follow-prompt test")
-        .join()
-        .expect("follow-prompt test completes");
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover,
+                read_only,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("dispatch attach");
+        let requested = outbound.try_iter().any(|message| {
+            matches!(
+                message,
+                crate::session::client::ClientOutbound::Control(
+                    crate::session::protocol::ClientMessage::RequestControl
+                )
+            )
+        });
+        assert_eq!(
+            backend
+                .state()
+                .current()
+                .shared
+                .as_ref()
+                .unwrap()
+                .controller,
+            controller,
+            "only the server can transfer control"
+        );
+        assert!(
+            backend.state().current().pending_session_attach.is_none(),
+            "the attempt and its override end with the landing"
+        );
+        tx.send((backend.state().follow_prompt.is_some(), requested))
+            .expect("report result");
+    });
     rx.recv().expect("test result")
 }
 
@@ -2829,183 +2657,161 @@ fn pending_attach(
 /// newer attach replaces, takes its override with it, so the next landing follows the config.
 #[test]
 fn an_attach_override_ends_with_its_attempt() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::config::SessionOnAttach::{Ask, Take};
+    crate::test_support::on_large_stack(|| {
+        use crate::config::SessionOnAttach::{Ask, Take};
 
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            backend.state_mut().config.session.on_attach = Ask;
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(pending_attach(1, Some(Take), None));
-            backend
-                .dispatch(Msg::SessionAttachFailed {
-                    epoch: 1,
-                    message: "no such session".into(),
-                })
-                .expect("dispatch failure");
-            assert!(backend.state().current().pending_session_attach.is_none());
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        backend.state_mut().config.session.on_attach = Ask;
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(pending_attach(1, Some(Take), None));
+        backend
+            .dispatch(Msg::SessionAttachFailed {
+                epoch: 1,
+                message: "no such session".into(),
+            })
+            .expect("dispatch failure");
+        assert!(backend.state().current().pending_session_attach.is_none());
 
-            let (stale, _stale_rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(pending_attach(2, Some(Take), Some(stale)));
-            let (client, outbound) = SessionClient::test_channel();
-            backend.state_mut().runtime_epoch = 3;
-            backend.state_mut().current_mut().epoch = 3;
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(pending_attach(3, None, Some(client)));
+        let (stale, _stale_rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(pending_attach(2, Some(Take), Some(stale)));
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().runtime_epoch = 3;
+        backend.state_mut().current_mut().epoch = 3;
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(pending_attach(3, None, Some(client)));
 
-            assert_eq!(
-                land_on_occupied_session(&mut backend, 3, &outbound),
-                (true, false),
-                "the replaced attempt's --take-control must not reach this landing"
-            );
-        })
-        .expect("spawn override lifetime test")
-        .join()
-        .expect("override lifetime test completes");
+        assert_eq!(
+            land_on_occupied_session(&mut backend, 3, &outbound),
+            (true, false),
+            "the replaced attempt's --take-control must not reach this landing"
+        );
+    });
 }
 
 /// The configured policy is read when the attach lands, so a config reload during the connect
 /// applies to it, while an override given with the attach still wins.
 #[test]
 fn attach_policy_reads_the_config_at_landing_and_the_override_wins() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::config::SessionOnAttach::{Ask, Follow, Take};
+    crate::test_support::on_large_stack(|| {
+        use crate::config::SessionOnAttach::{Ask, Follow, Take};
 
-            for (override_mode, expected) in [(None, (false, true)), (Some(Follow), (false, false))]
-            {
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                backend.state_mut().config.session.on_attach = Ask;
-                let (client, outbound) = SessionClient::test_channel();
-                backend.state_mut().current_mut().pending_session_attach =
-                    Some(pending_attach(1, override_mode, Some(client)));
-                backend.state_mut().config.session.on_attach = Take;
-                assert_eq!(
-                    land_on_occupied_session(&mut backend, 1, &outbound),
-                    expected,
-                    "override {override_mode:?}"
-                );
-            }
-        })
-        .expect("spawn config-at-landing test")
-        .join()
-        .expect("config-at-landing test completes");
+        for (override_mode, expected) in [(None, (false, true)), (Some(Follow), (false, false))] {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            backend.state_mut().config.session.on_attach = Ask;
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(pending_attach(1, override_mode, Some(client)));
+            backend.state_mut().config.session.on_attach = Take;
+            assert_eq!(
+                land_on_occupied_session(&mut backend, 1, &outbound),
+                expected,
+                "override {override_mode:?}"
+            );
+        }
+    });
 }
 
 /// How far an attach landing moves the session view revision that drives the switch reveal.
 fn session_view_revision_step(reconnect: bool) -> u64 {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch: 1,
-                    request: crate::state::AttachRequest::new(
-                        "dev",
-                        if reconnect {
-                            crate::state::AttachMode::Reconnect
-                        } else {
-                            crate::state::AttachMode::Join
-                        },
-                    ),
-                    client: Some(client),
-                    left: None,
-                    parked_epoch: None,
-                });
-            let before = backend.state().session_view_revision;
-            backend
-                .dispatch(Msg::SessionAttached {
-                    epoch: 1,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
-                    session: "dev".into(),
-                    client_id: 1,
-                    panes: Vec::new(),
-                    layout_rev: 0,
-                    layout: None,
-                    controller: Some(1),
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover: false,
-                    read_only: false,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("dispatch attach");
-            backend.state().session_view_revision - before
-        })
-        .expect("spawn session-reveal test")
-        .join()
-        .expect("session-reveal test completes")
+    crate::test_support::on_large_stack(move || {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: 1,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    if reconnect {
+                        crate::state::AttachMode::Reconnect
+                    } else {
+                        crate::state::AttachMode::Join
+                    },
+                ),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
+            });
+        let before = backend.state().session_view_revision;
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch: 1,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                session: "dev".into(),
+                client_id: 1,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: false,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("dispatch attach");
+        backend.state().session_view_revision - before
+    })
 }
 
 /// Attach onto an empty server that seeds pane 7 from client state, and report how that pane
 /// arrived: `(opening, has_open_snapshot, terminal_active)` and whether a spawn reflow began.
 fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, _rx) = SessionClient::test_channel();
-            {
-                let state = backend.state_mut();
-                let workspace = &mut state.current_mut().workspaces[0];
-                workspace.panes.push(crate::state::Pane::new(
-                    7,
-                    0,
-                    tui_lipan::prelude::FloatRect::default(),
-                ));
-                crate::layout::tiling::append_tiled_window(workspace, 7);
-                state.current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 1,
-                        request: crate::state::AttachRequest::new(
-                            "dev",
-                            if reconnect {
-                                crate::state::AttachMode::Reconnect
-                            } else {
-                                crate::state::AttachMode::JoinOrStart
-                            },
-                        ),
-                        client: Some(client),
-                        left: None,
-                        parked_epoch: None,
-                    });
-            }
-            backend
-                .update_level(Msg::SessionAttached {
-                    epoch: 1,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
-                    session: "dev".into(),
-                    client_id: 1,
-                    panes: Vec::new(),
-                    layout_rev: 0,
-                    layout: None,
-                    controller: Some(1),
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover: false,
-                    read_only: false,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("dispatch attach");
-            let state = backend.state();
-            let pane = crate::pane::lifecycle::find_pane(state, 7).expect("seeded pane");
-            (
-                (
-                    pane.opening,
-                    pane.opening_animation.is_some(),
-                    pane.terminal_active,
+    crate::test_support::on_large_stack(move || {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, _rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes.push(crate::state::Pane::new(
+                7,
+                0,
+                tui_lipan::prelude::FloatRect::default(),
+            ));
+            crate::layout::tiling::append_tiled_window(workspace, 7);
+            state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 1,
+                request: crate::state::AttachRequest::new(
+                    "dev",
+                    if reconnect {
+                        crate::state::AttachMode::Reconnect
+                    } else {
+                        crate::state::AttachMode::JoinOrStart
+                    },
                 ),
-                state.animation == crate::layout::anim::GeometryAnimation::Spawn,
-            )
-        })
-        .expect("spawn seeded-pane test")
-        .join()
-        .expect("seeded-pane test completes")
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
+            });
+        }
+        backend
+            .update_level(Msg::SessionAttached {
+                epoch: 1,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                session: "dev".into(),
+                client_id: 1,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: false,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("dispatch attach");
+        let state = backend.state();
+        let pane = crate::pane::lifecycle::find_pane(state, 7).expect("seeded pane");
+        (
+            (
+                pane.opening,
+                pane.opening_animation.is_some(),
+                pane.terminal_active,
+            ),
+            state.animation == crate::layout::anim::GeometryAnimation::Spawn,
+        )
+    })
 }
 
 /// A new session's first panes arrive with the session, under its reveal: open and live at once,
@@ -3093,96 +2899,91 @@ fn reconnecting_to_an_occupied_session_does_not_interrupt_with_follow_prompt() {
 
 #[test]
 fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, rx) = SessionClient::test_channel();
-            let path = PathBuf::from("legacy-profile.toml");
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch: 1,
-                    request: crate::state::AttachRequest::new(
-                        "eph-test",
-                        crate::state::AttachMode::JoinOrStart,
-                    )
-                    .with_intent(crate::state::AttachIntent::ProfileSeed {
-                        profile: "legacy-profile".into(),
-                        path: path.clone(),
-                    }),
-                    client: Some(client),
-                    left: None,
-                    parked_epoch: None,
-                });
-            backend.state_mut().show_profile_picker = true;
-            backend.state_mut().profile_picker =
-                Some(crate::state::ProfilePickerState::new(Vec::new()));
-            let events = backend.state().event_hub.subscribe(Some(HashSet::from([
-                crate::events::EventKind::ProfileLoaded,
-            ])));
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, rx) = SessionClient::test_channel();
+        let path = PathBuf::from("legacy-profile.toml");
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: 1,
+                request: crate::state::AttachRequest::new(
+                    "eph-test",
+                    crate::state::AttachMode::JoinOrStart,
+                )
+                .with_intent(crate::state::AttachIntent::ProfileSeed {
+                    profile: "legacy-profile".into(),
+                    path: path.clone(),
+                }),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
+            });
+        backend.state_mut().show_profile_picker = true;
+        backend.state_mut().profile_picker =
+            Some(crate::state::ProfilePickerState::new(Vec::new()));
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::ProfileLoaded,
+        ])));
 
-            backend
-                .dispatch(Msg::SessionAttached {
-                    epoch: 1,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
-                        "ephemeral",
-                    ),
-                    session: "eph-test".into(),
-                    client_id: 1,
-                    panes: Vec::new(),
-                    layout_rev: 0,
-                    layout: None,
-                    controller: Some(1),
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover: false,
-                    read_only: false,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("dispatch attach");
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch: 1,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                    "ephemeral",
+                ),
+                session: "eph-test".into(),
+                client_id: 1,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: false,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("dispatch attach");
 
-            assert_eq!(backend.state().current().origin.profile, None);
-            assert!(!backend.state().show_profile_picker);
-            assert!(backend.state().profile_picker.is_none());
-            assert!(rx.try_iter().any(|message| matches!(
-                message,
-                crate::session::client::ClientOutbound::Control(
-                    crate::session::protocol::ClientMessage::SetSessionOrigin { origin }
-                ) if origin.profile.as_deref() == Some("legacy-profile")
-            )));
-            assert!(events.try_recv().is_err());
-            backend
-                .dispatch(Msg::SessionOriginSet {
-                    epoch: 1,
-                    origin: crate::session::origin::SessionOrigin {
-                        profile: Some("legacy-profile".to_string()),
-                        ..Default::default()
-                    },
-                })
-                .expect("acknowledge session origin");
-            assert_eq!(
-                backend.state().current().origin.profile.as_deref(),
-                Some("legacy-profile")
-            );
+        assert_eq!(backend.state().current().origin.profile, None);
+        assert!(!backend.state().show_profile_picker);
+        assert!(backend.state().profile_picker.is_none());
+        assert!(rx.try_iter().any(|message| matches!(
+            message,
+            crate::session::client::ClientOutbound::Control(
+                crate::session::protocol::ClientMessage::SetSessionOrigin { origin }
+            ) if origin.profile.as_deref() == Some("legacy-profile")
+        )));
+        assert!(events.try_recv().is_err());
+        backend
+            .dispatch(Msg::SessionOriginSet {
+                epoch: 1,
+                origin: crate::session::origin::SessionOrigin {
+                    profile: Some("legacy-profile".to_string()),
+                    ..Default::default()
+                },
+            })
+            .expect("acknowledge session origin");
+        assert_eq!(
+            backend.state().current().origin.profile.as_deref(),
+            Some("legacy-profile")
+        );
 
-            let event: serde_json::Value =
-                serde_json::from_str(&events.try_recv().expect("profile-loaded event"))
-                    .expect("event json");
-            assert_eq!(
-                event,
-                serde_json::json!({
-                    "event": "profile-loaded",
-                    "data": {
-                        "profile": "legacy-profile",
-                        "path": path.display().to_string(),
-                        "session": "eph-test"
-                    }
-                })
-            );
-        })
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+        let event: serde_json::Value =
+            serde_json::from_str(&events.try_recv().expect("profile-loaded event"))
+                .expect("event json");
+        assert_eq!(
+            event,
+            serde_json::json!({
+                "event": "profile-loaded",
+                "data": {
+                    "profile": "legacy-profile",
+                    "path": path.display().to_string(),
+                    "session": "eph-test"
+                }
+            })
+        );
+    });
 }
 
 fn colliding_namespace_backend() -> TestBackend<crate::AppRoot> {
@@ -3212,246 +3013,232 @@ fn namespace_text(backend: &TestBackend<crate::AppRoot>, local: bool) -> String 
 
 #[test]
 fn colliding_pane_ids_route_session_events_by_namespace() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = colliding_namespace_backend();
-            let epoch = backend.state().runtime_epoch;
+    crate::test_support::on_large_stack(|| {
+        let mut backend = colliding_namespace_backend();
+        let epoch = backend.state().runtime_epoch;
 
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: 7,
-                    local: false,
-                    generation: 1,
-                    bytes: b"shared-out\r\n".to_vec(),
-                })
-                .expect("shared output");
-            backend
-                .dispatch(Msg::SessionOutput {
-                    media: None,
-                    metadata: crate::session::protocol::OutputMetadata::default(),
-                    epoch,
-                    pane_id: 7,
-                    local: true,
-                    generation: 1,
-                    bytes: b"local-out\r\n".to_vec(),
-                })
-                .expect("local output");
-            assert!(
-                namespace_text(&backend, false).contains("shared-out"),
-                "shared output must land on the attachment pane"
-            );
-            assert!(
-                !namespace_text(&backend, false).contains("local-out"),
-                "local output must not land on the attachment pane"
-            );
-            assert!(
-                namespace_text(&backend, true).contains("local-out"),
-                "local output must land on the scratch pane"
-            );
-            assert!(
-                !namespace_text(&backend, true).contains("shared-out"),
-                "shared output must not land on the scratch pane"
-            );
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id: 7,
+                local: false,
+                generation: 1,
+                bytes: b"shared-out\r\n".to_vec(),
+            })
+            .expect("shared output");
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                metadata: crate::session::protocol::OutputMetadata::default(),
+                epoch,
+                pane_id: 7,
+                local: true,
+                generation: 1,
+                bytes: b"local-out\r\n".to_vec(),
+            })
+            .expect("local output");
+        assert!(
+            namespace_text(&backend, false).contains("shared-out"),
+            "shared output must land on the attachment pane"
+        );
+        assert!(
+            !namespace_text(&backend, false).contains("local-out"),
+            "local output must not land on the attachment pane"
+        );
+        assert!(
+            namespace_text(&backend, true).contains("local-out"),
+            "local output must land on the scratch pane"
+        );
+        assert!(
+            !namespace_text(&backend, true).contains("shared-out"),
+            "shared output must not land on the scratch pane"
+        );
 
-            backend
-                .dispatch(Msg::SessionResized {
-                    epoch,
-                    pane_id: 7,
-                    local: false,
-                    generation: 1,
-                    cols: 40,
-                    rows: 12,
-                    cell: None,
-                })
-                .expect("shared resize");
-            backend
-                .dispatch(Msg::SessionResized {
-                    epoch,
-                    pane_id: 7,
-                    local: true,
-                    generation: 1,
-                    cols: 20,
-                    rows: 8,
-                    cell: None,
-                })
-                .expect("local resize");
-            assert_eq!(
-                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
-                    .unwrap()
-                    .terminal
-                    .cols,
-                40
-            );
-            assert_eq!(
-                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
-                    .unwrap()
-                    .terminal
-                    .rows,
-                8
-            );
+        backend
+            .dispatch(Msg::SessionResized {
+                epoch,
+                pane_id: 7,
+                local: false,
+                generation: 1,
+                cols: 40,
+                rows: 12,
+                cell: None,
+            })
+            .expect("shared resize");
+        backend
+            .dispatch(Msg::SessionResized {
+                epoch,
+                pane_id: 7,
+                local: true,
+                generation: 1,
+                cols: 20,
+                rows: 8,
+                cell: None,
+            })
+            .expect("local resize");
+        assert_eq!(
+            crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                .unwrap()
+                .terminal
+                .cols,
+            40
+        );
+        assert_eq!(
+            crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                .unwrap()
+                .terminal
+                .rows,
+            8
+        );
 
-            backend.state_mut().config.pane.hold_on_exit = false;
-            backend
-                .dispatch(Msg::SessionExited {
-                    epoch,
-                    pane_id: 7,
-                    local: false,
-                    generation: 1,
-                    code: 0,
-                })
-                .expect("shared exit");
-            assert!(
-                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
-                    .is_some_and(|pane| pane.closing),
-                "shared exit must close the attachment pane"
-            );
-            assert!(
-                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
-                    .is_some_and(|pane| !pane.closing),
-                "shared exit must not close the scratch pane"
-            );
+        backend.state_mut().config.pane.hold_on_exit = false;
+        backend
+            .dispatch(Msg::SessionExited {
+                epoch,
+                pane_id: 7,
+                local: false,
+                generation: 1,
+                code: 0,
+            })
+            .expect("shared exit");
+        assert!(
+            crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+                .is_some_and(|pane| pane.closing),
+            "shared exit must close the attachment pane"
+        );
+        assert!(
+            crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                .is_some_and(|pane| !pane.closing),
+            "shared exit must not close the scratch pane"
+        );
 
-            backend
-                .dispatch(Msg::SessionExited {
-                    epoch,
-                    pane_id: 7,
-                    local: true,
-                    generation: 1,
-                    code: 0,
-                })
-                .expect("local exit");
-            assert!(
-                crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
-                    .is_some_and(|pane| pane.closing),
-                "local exit must close the scratch pane"
-            );
-        })
-        .expect("spawn colliding namespace test")
-        .join()
-        .expect("colliding namespace test completes");
+        backend
+            .dispatch(Msg::SessionExited {
+                epoch,
+                pane_id: 7,
+                local: true,
+                generation: 1,
+                code: 0,
+            })
+            .expect("local exit");
+        assert!(
+            crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+                .is_some_and(|pane| pane.closing),
+            "local exit must close the scratch pane"
+        );
+    });
 }
 
 #[test]
 fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = colliding_namespace_backend();
-            {
-                let state = backend.state_mut();
-                let workspace = &mut state.current_mut().workspaces[0];
-                workspace.panes.retain(|pane| pane.id == 7);
-                workspace.tile_tree = Some(crate::layout::tiling::DwindleTree::Leaf(7));
-                workspace.focused_pane = Some(7);
-                state.current_mut().focused_pane = Some(7);
-                state.scratch.panes[0].terminal.title = Some("scratch-title".into());
-            }
-            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch: 2,
-                    request: crate::state::AttachRequest::new(
-                        "dev",
-                        crate::state::AttachMode::Join,
-                    ),
-                    client: Some(client),
-                    left: None,
-                    parked_epoch: None,
-                });
-            let mut runtime = PaneRuntimeState::default();
-            runtime.rows.push(crate::session::protocol::PublishedRow {
-                publisher: "sessions".into(),
-                kind: crate::session::protocol::PublisherKind::Agent,
-                live_session: None,
-                reported: false,
-                id: "shared-row".into(),
-                title: "Shared row".into(),
-                status: "working".into(),
-                reason: None,
-                active: true,
-                work_started_at: None,
-                cwd: None,
-                project: None,
-                native_session: None,
+    crate::test_support::on_large_stack(|| {
+        let mut backend = colliding_namespace_backend();
+        {
+            let state = backend.state_mut();
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes.retain(|pane| pane.id == 7);
+            workspace.tile_tree = Some(crate::layout::tiling::DwindleTree::Leaf(7));
+            workspace.focused_pane = Some(7);
+            state.current_mut().focused_pane = Some(7);
+            state.scratch.panes[0].terminal.title = Some("scratch-title".into());
+        }
+        let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: 2,
+                request: crate::state::AttachRequest::new("dev", crate::state::AttachMode::Join),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
             });
-            let session_instance = crate::session::protocol::SessionInstanceId::for_test("shared");
-            let agent_ref = crate::session::protocol::AgentRef {
-                pane: crate::session::protocol::PaneRef {
-                    session_instance: session_instance.clone(),
+        let mut runtime = PaneRuntimeState::default();
+        runtime.rows.push(crate::session::protocol::PublishedRow {
+            publisher: "sessions".into(),
+            kind: crate::session::protocol::PublisherKind::Agent,
+            live_session: None,
+            reported: false,
+            id: "shared-row".into(),
+            title: "Shared row".into(),
+            status: "working".into(),
+            reason: None,
+            active: true,
+            work_started_at: None,
+            cwd: None,
+            project: None,
+            native_session: None,
+        });
+        let session_instance = crate::session::protocol::SessionInstanceId::for_test("shared");
+        let agent_ref = crate::session::protocol::AgentRef {
+            pane: crate::session::protocol::PaneRef {
+                session_instance: session_instance.clone(),
+                pane_id: 7,
+                generation: 1,
+            },
+            slot: None,
+            incarnation: 4,
+        };
+        runtime.integration = Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+            integration: "hook-before-attach".into(),
+            identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
+            reference: agent_ref.clone(),
+            state: crate::session::protocol::AgentState::Blocked,
+            reason: Some("approval".into()),
+            native_session: Some("native-123".into()),
+            seq: 8,
+            reported_at_unix_ms: 42,
+        }));
+
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch: 2,
+                session_instance,
+                session: "dev".into(),
+                client_id: 1,
+                panes: vec![crate::session::protocol::PaneMeta {
+                    scrollback: 100,
                     pane_id: 7,
                     generation: 1,
-                },
-                slot: None,
-                incarnation: 4,
-            };
-            runtime.integration =
-                Some(Box::new(crate::session::protocol::AgentIntegrationReport {
-                    integration: "hook-before-attach".into(),
-                    identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
-                    reference: agent_ref.clone(),
-                    state: crate::session::protocol::AgentState::Blocked,
-                    reason: Some("approval".into()),
-                    native_session: Some("native-123".into()),
-                    seq: 8,
-                    reported_at_unix_ms: 42,
-                }));
+                    agents: vec![agent_ref.into()],
+                    cols: 80,
+                    rows: 24,
+                    pid: Some(42),
+                    title: Some("shared-title".into()),
+                    original_user: None,
+                    exited: None,
+                    logging: false,
+                    runtime,
+                }],
+                layout_rev: 1,
+                layout: Some(layout),
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: false,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("attach shared pane");
 
-            backend
-                .dispatch(Msg::SessionAttached {
-                    epoch: 2,
-                    session_instance,
-                    session: "dev".into(),
-                    client_id: 1,
-                    panes: vec![crate::session::protocol::PaneMeta {
-                        scrollback: 100,
-                        pane_id: 7,
-                        generation: 1,
-                        agents: vec![agent_ref.into()],
-                        cols: 80,
-                        rows: 24,
-                        pid: Some(42),
-                        title: Some("shared-title".into()),
-                        original_user: None,
-                        exited: None,
-                        logging: false,
-                        runtime,
-                    }],
-                    layout_rev: 1,
-                    layout: Some(layout),
-                    controller: Some(1),
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover: false,
-                    read_only: false,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("attach shared pane");
-
-            let shared = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
-                .expect("shared pane");
-            assert_eq!(shared.terminal.title.as_deref(), Some("shared-title"));
-            assert_eq!(shared.terminal.published_rows[0].id, "shared-row");
-            assert_eq!(
-                shared
-                    .terminal
-                    .agent_integration
-                    .as_ref()
-                    .map(|integration| integration.state),
-                Some(crate::session::protocol::AgentState::Blocked)
-            );
-            let scratch = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
-                .expect("scratch pane");
-            assert_eq!(scratch.terminal.title.as_deref(), Some("scratch-title"));
-            assert!(scratch.terminal.published_rows.is_empty());
-        })
-        .expect("spawn namespace attach test")
-        .join()
-        .expect("namespace attach test completes");
+        let shared = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, false)
+            .expect("shared pane");
+        assert_eq!(shared.terminal.title.as_deref(), Some("shared-title"));
+        assert_eq!(shared.terminal.published_rows[0].id, "shared-row");
+        assert_eq!(
+            shared
+                .terminal
+                .agent_integration
+                .as_ref()
+                .map(|integration| integration.state),
+            Some(crate::session::protocol::AgentState::Blocked)
+        );
+        let scratch = crate::pane::lifecycle::find_pane_in_namespace(backend.state(), 7, true)
+            .expect("scratch pane");
+        assert_eq!(scratch.terminal.title.as_deref(), Some("scratch-title"));
+        assert!(scratch.terminal.published_rows.is_empty());
+    });
 }
 
 /// A popup lives outside every workspace, so the generic teardown cannot find it: `local` with
@@ -3459,66 +3246,63 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
 /// interception a failed popup spawn left a dead pane on screen for the rest of the session.
 #[test]
 fn a_failed_popup_spawn_tears_the_popup_down() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let generation = {
-                let state = backend.state_mut();
-                let mut pane = crate::state::Pane::new(
-                    crate::state::POPUP_PANE_ID,
-                    100,
-                    tui_lipan::prelude::FloatRect::default(),
-                );
-                pane.opening = false;
-                // A `keep_open` popup must still go: there is no process to keep open.
-                pane.identity.keep_open = true;
-                let generation = pane.pty_generation;
-                state.popup = Some(pane);
-                generation
-            };
-            backend.render();
-
-            let epoch = backend.state().runtime_epoch;
-            backend
-                .dispatch(Msg::SessionSpawnResult {
-                    epoch,
-                    pane_id: crate::state::POPUP_PANE_ID,
-                    local: true,
-                    generation,
-                    pid: None,
-                    ok: false,
-                    error: Some("no such command".to_string()),
-                })
-                .expect("failed popup spawn");
-
-            assert!(
-                backend
-                    .state()
-                    .popup
-                    .as_ref()
-                    .is_some_and(|pane| pane.closing),
-                "the popup must be marked closing so its prune can drop it"
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let generation = {
+            let state = backend.state_mut();
+            let mut pane = crate::state::Pane::new(
+                crate::state::POPUP_PANE_ID,
+                100,
+                tui_lipan::prelude::FloatRect::default(),
             );
+            pane.opening = false;
+            // A `keep_open` popup must still go: there is no process to keep open.
+            pane.identity.keep_open = true;
+            let generation = pane.pty_generation;
+            state.popup = Some(pane);
+            generation
+        };
+        backend.render();
 
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .dispatch(Msg::SessionSpawnResult {
+                epoch,
+                pane_id: crate::state::POPUP_PANE_ID,
+                local: true,
+                generation,
+                pid: None,
+                ok: false,
+                error: Some("no such command".to_string()),
+            })
+            .expect("failed popup spawn");
+
+        assert!(
             backend
-                .dispatch(Msg::PruneClosed(
-                    epoch,
-                    crate::state::POPUP_PANE_ID,
-                    generation,
-                ))
-                .expect("prune the closed popup");
-            assert!(backend.state().popup.is_none(), "the popup must be dropped");
-        })
-        .expect("spawn popup teardown test thread")
-        .join()
-        .expect("popup teardown test thread panicked");
+                .state()
+                .popup
+                .as_ref()
+                .is_some_and(|pane| pane.closing),
+            "the popup must be marked closing so its prune can drop it"
+        );
+
+        backend
+            .dispatch(Msg::PruneClosed(
+                epoch,
+                crate::state::POPUP_PANE_ID,
+                generation,
+            ))
+            .expect("prune the closed popup");
+        assert!(backend.state().popup.is_none(), "the popup must be dropped");
+    });
 }
 
 #[test]
 fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change() {
     // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body);
+    crate::test_support::on_large_stack(
+        scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body,
+    );
 }
 
 fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body() {
@@ -3545,19 +3329,10 @@ fn scratch_agent_acknowledgement_survives_an_attachment_epoch_change_body() {
     assert!(backend.state().pending_agent_report_replies.is_empty());
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn test thread")
-        .join()
-        .expect("test completes");
-}
-
 #[test]
 fn attached_agent_acknowledgement_rejects_another_epoch() {
     // Renders the whole app, a view tree deeper than the default test stack holds.
-    on_large_stack(attached_agent_acknowledgement_rejects_another_epoch_body);
+    crate::test_support::on_large_stack(attached_agent_acknowledgement_rejects_another_epoch_body);
 }
 
 fn attached_agent_acknowledgement_rejects_another_epoch_body() {
@@ -3639,33 +3414,28 @@ fn the_update_popup_exit_reports_what_is_left() {
         backend
     }
 
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let installed = exit_update_popup(0);
-            let toast = installed
-                .state()
-                .replaceable_toasts
-                .values()
-                .next()
-                .expect("a successful update is followed up")
-                .content()
-                .replace('\u{0}', " ");
-            assert!(toast.starts_with("rozi v9.9.9 installed"), "{toast}");
-            assert!(toast.contains("quit and start rozi again"), "{toast}");
-            assert!(installed.state().popup.is_some(), "the popup stays open");
-            assert!(installed.state().update_started);
+    crate::test_support::on_large_stack(|| {
+        let installed = exit_update_popup(0);
+        let toast = installed
+            .state()
+            .replaceable_toasts
+            .values()
+            .next()
+            .expect("a successful update is followed up")
+            .content()
+            .replace('\u{0}', " ");
+        assert!(toast.starts_with("rozi v9.9.9 installed"), "{toast}");
+        assert!(toast.contains("quit and start rozi again"), "{toast}");
+        assert!(installed.state().popup.is_some(), "the popup stays open");
+        assert!(installed.state().update_started);
 
-            let failed = exit_update_popup(1);
-            assert!(failed.state().replaceable_toasts.is_empty());
-            assert!(
-                !failed.state().update_started,
-                "a failed update is offered again"
-            );
-        })
-        .expect("spawn update popup test thread")
-        .join()
-        .expect("update popup test thread panicked");
+        let failed = exit_update_popup(1);
+        assert!(failed.state().replaceable_toasts.is_empty());
+        assert!(
+            !failed.state().update_started,
+            "a failed update is offered again"
+        );
+    });
 }
 
 /// Attaching adopts panes that are already live, so no open/activate timer ever runs to hand one
@@ -3674,63 +3444,55 @@ fn the_update_popup_exit_reports_what_is_left() {
 /// the pane is clicked.
 #[test]
 fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            backend.set_viewport(tui_lipan::prelude::Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        backend.render();
+        let epoch = backend.state().runtime_epoch;
+        let (client, _rx) = SessionClient::test_channel();
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch,
+                request: crate::state::AttachRequest::new("dev", crate::state::AttachMode::Join),
+                client: Some(client),
+                left: None,
+                parked_epoch: None,
             });
-            backend.render();
-            let epoch = backend.state().runtime_epoch;
-            let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().current_mut().pending_session_attach =
-                Some(crate::state::PendingSessionAttach {
-                    epoch,
-                    request: crate::state::AttachRequest::new(
-                        "dev",
-                        crate::state::AttachMode::Join,
-                    ),
-                    client: Some(client),
-                    left: None,
-                    parked_epoch: None,
-                });
 
-            backend
-                .dispatch(Msg::SessionAttached {
-                    epoch,
-                    session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
-                    session: "dev".to_string(),
-                    client_id: 1,
-                    panes: vec![
-                        crate::session::protocol::PaneMeta::for_test(7, 0, 100),
-                        crate::session::protocol::PaneMeta::for_test(9, 0, 100),
-                    ],
-                    layout_rev: 1,
-                    layout: Some(attached_layout(&[7, 9])),
-                    controller: Some(1),
-                    clients: Vec::new(),
-                    input_locked: false,
-                    allow_takeover: true,
-                    read_only: false,
-                    origin: crate::session::origin::SessionOrigin::default(),
-                })
-                .expect("attach to a populated session");
-            backend.render();
+        backend
+            .dispatch(Msg::SessionAttached {
+                epoch,
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
+                session: "dev".to_string(),
+                client_id: 1,
+                panes: vec![
+                    crate::session::protocol::PaneMeta::for_test(7, 0, 100),
+                    crate::session::protocol::PaneMeta::for_test(9, 0, 100),
+                ],
+                layout_rev: 1,
+                layout: Some(attached_layout(&[7, 9])),
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: true,
+                read_only: false,
+                origin: crate::session::origin::SessionOrigin::default(),
+            })
+            .expect("attach to a populated session");
+        backend.render();
 
-            assert_eq!(backend.state().current().focused_pane, Some(7));
-            assert_eq!(
-                backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::pane_terminal_key(7).as_str()),
-                "the adopted focused pane must own the keyboard without a click"
-            );
-        })
-        .expect("spawn attach focus test thread")
-        .join()
-        .expect("attach focus test thread panicked");
+        assert_eq!(backend.state().current().focused_pane, Some(7));
+        assert_eq!(
+            backend.focused_key().map(|key| key.as_ref()),
+            Some(crate::view::pane_terminal_key(7).as_str()),
+            "the adopted focused pane must own the keyboard without a click"
+        );
+    });
 }
 
 /// A minimal authoritative layout: one workspace of live tiled panes, the shape a server sends on
@@ -3777,74 +3539,61 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
 
 #[test]
 fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            backend.state_mut().current_mut().shared =
-                Some(crate::state::SharedSessionState::new(1));
-            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
-            let events = backend.state().event_hub.subscribe(Some(HashSet::from([
-                crate::events::EventKind::LayoutChanged,
-            ])));
-            for (rev, author, expected) in [(5, 1, "self"), (6, 0, "server"), (7, 2, "client")] {
-                backend
-                    .update_level(Msg::SessionLayoutCommitted {
-                        epoch,
-                        rev,
-                        author,
-                        layout: layout.clone(),
-                        live: false,
-                    })
-                    .unwrap();
-                let event: serde_json::Value =
-                    serde_json::from_str(&events.recv().unwrap()).unwrap();
-                assert_eq!(
-                    event,
-                    serde_json::json!({
-                        "event": "layout-changed",
-                        "data": {"revision": rev.to_string(), "author": expected}
-                    })
-                );
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        backend.state_mut().current_mut().shared = Some(crate::state::SharedSessionState::new(1));
+        let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
+        let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+            crate::events::EventKind::LayoutChanged,
+        ])));
+        for (rev, author, expected) in [(5, 1, "self"), (6, 0, "server"), (7, 2, "client")] {
+            backend
+                .update_level(Msg::SessionLayoutCommitted {
+                    epoch,
+                    rev,
+                    author,
+                    layout: layout.clone(),
+                    live: false,
+                })
+                .unwrap();
+            let event: serde_json::Value = serde_json::from_str(&events.recv().unwrap()).unwrap();
+            assert_eq!(
+                event,
+                serde_json::json!({
+                    "event": "layout-changed",
+                    "data": {"revision": rev.to_string(), "author": expected}
+                })
+            );
+        }
+    });
 }
 
 /// A live revision is a step of the controller's gesture: the follower draws it where it lands
 /// instead of easing toward it. An ordinary revision keeps the default transition.
 #[test]
 fn a_live_layout_revision_is_applied_without_easing() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let epoch = backend.state().runtime_epoch;
-            backend.state_mut().current_mut().shared =
-                Some(crate::state::SharedSessionState::new(1));
-            let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
-            for (rev, live, expected) in [
-                (5, true, crate::layout::anim::GeometryAnimation::None),
-                (6, false, crate::layout::anim::GeometryAnimation::TileFloat),
-            ] {
-                backend
-                    .update_level(Msg::SessionLayoutCommitted {
-                        epoch,
-                        rev,
-                        author: 2,
-                        layout: layout.clone(),
-                        live,
-                    })
-                    .unwrap();
-                assert_eq!(backend.state().animation, expected, "live: {live}");
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        backend.state_mut().current_mut().shared = Some(crate::state::SharedSessionState::new(1));
+        let layout = crate::layout::shared::shared_layout_from_state(backend.state(), (80, 24));
+        for (rev, live, expected) in [
+            (5, true, crate::layout::anim::GeometryAnimation::None),
+            (6, false, crate::layout::anim::GeometryAnimation::TileFloat),
+        ] {
+            backend
+                .update_level(Msg::SessionLayoutCommitted {
+                    epoch,
+                    rev,
+                    author: 2,
+                    layout: layout.clone(),
+                    live,
+                })
+                .unwrap();
+            assert_eq!(backend.state().animation, expected, "live: {live}");
+        }
+    });
 }
 
 #[test]
@@ -3904,32 +3653,66 @@ fn mixed_graphics_and_cells_keep_the_broader_terminal_frame() {
 
 #[test]
 fn parsed_output_is_acknowledged_only_by_successful_presentation_reports() {
-    std::thread::Builder::new().stack_size(8 * 1024 * 1024).spawn(|| {
+    crate::test_support::on_large_stack(|| {
         crate::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(crate::AppRoot::default());
         let (client, outbound) = SessionClient::test_channel();
         backend.state_mut().current_mut().session_client = Some(client);
         let pane_id = backend.state().current().focused_pane.unwrap();
-        let generation = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap().pty_generation;
+        let generation = crate::pane::lifecycle::find_pane(backend.state(), pane_id)
+            .unwrap()
+            .pty_generation;
         let epoch = backend.state().runtime_epoch;
-        backend.dispatch(Msg::SessionOutput {
-            media: None,
-            epoch, pane_id, local: false, generation,
-            metadata: crate::session::protocol::OutputMetadata { sequence: 7, ..Default::default() },
-            bytes: b"visible output".to_vec(),
-        }).unwrap();
-        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
-        let terminal_id = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap().terminal.stable_terminal_id();
-        let report = tui_lipan::PresentedTerminal { stable_terminal_id: terminal_id, token: 7 };
-        backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
+        backend
+            .dispatch(Msg::SessionOutput {
+                media: None,
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                metadata: crate::session::protocol::OutputMetadata {
+                    sequence: 7,
+                    ..Default::default()
+                },
+                bytes: b"visible output".to_vec(),
+            })
+            .unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(
+            message,
+            crate::session::client::ClientOutbound::PresentationAcks(_)
+        )));
+        let terminal_id = crate::pane::lifecycle::find_pane(backend.state(), pane_id)
+            .unwrap()
+            .terminal
+            .stable_terminal_id();
+        let report = tui_lipan::PresentedTerminal {
+            stable_terminal_id: terminal_id,
+            token: 7,
+        };
+        backend
+            .dispatch(Msg::TerminalPresented(vec![report]))
+            .unwrap();
         let sent: Vec<_> = outbound.try_iter().collect();
         assert!(sent.iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(acks)
             if acks == &[crate::session::protocol::PresentationAck { local: false, pane_id, generation, sequence: 7 }])));
-        backend.dispatch(Msg::TerminalPresented(vec![report])).unwrap();
-        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
-        backend.dispatch(Msg::TerminalPresented(vec![tui_lipan::PresentedTerminal { stable_terminal_id: u64::MAX, token: 8 }])).unwrap();
-        assert!(!outbound.try_iter().any(|message| matches!(message, crate::session::client::ClientOutbound::PresentationAcks(_))));
-    }).unwrap().join().unwrap();
+        backend
+            .dispatch(Msg::TerminalPresented(vec![report]))
+            .unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(
+            message,
+            crate::session::client::ClientOutbound::PresentationAcks(_)
+        )));
+        backend
+            .dispatch(Msg::TerminalPresented(vec![tui_lipan::PresentedTerminal {
+                stable_terminal_id: u64::MAX,
+                token: 8,
+            }]))
+            .unwrap();
+        assert!(!outbound.try_iter().any(|message| matches!(
+            message,
+            crate::session::client::ClientOutbound::PresentationAcks(_)
+        )));
+    });
 }
 
 /// The renderer keeps its startup cadence across config reloads, so the cadence it reports to the
@@ -3937,164 +3720,135 @@ fn parsed_output_is_acknowledged_only_by_successful_presentation_reports() {
 /// UI is not presenting at.
 #[test]
 fn presentation_interest_reports_the_runtime_frame_rate_not_a_reloaded_one() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            crate::test_support::isolate_user_dirs();
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            let (client, outbound) = SessionClient::test_channel();
-            backend.state_mut().current_mut().session_client = Some(client);
-            let runtime = backend.state().runtime_frame_rate();
-            let reloaded = if runtime == 30 { 60 } else { 30 };
-            backend.state_mut().config.frame_rate = reloaded;
-            let pane_id = backend.state().current().focused_pane.unwrap();
-            backend.dispatch(Msg::FocusPane(pane_id)).unwrap();
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let (client, outbound) = SessionClient::test_channel();
+        backend.state_mut().current_mut().session_client = Some(client);
+        let runtime = backend.state().runtime_frame_rate();
+        let reloaded = if runtime == 30 { 60 } else { 30 };
+        backend.state_mut().config.frame_rate = reloaded;
+        let pane_id = backend.state().current().focused_pane.unwrap();
+        backend.dispatch(Msg::FocusPane(pane_id)).unwrap();
 
-            let interest = &backend.state().current().presentation_interest;
-            assert!(!interest.is_empty());
-            assert!(
-                interest
-                    .values()
-                    .all(|pane| pane.frames_per_second == runtime),
-                "interest must follow the runtime cadence {runtime}, not {reloaded}: {interest:?}"
-            );
-            assert!(outbound.try_iter().any(|message| matches!(message,
+        let interest = &backend.state().current().presentation_interest;
+        assert!(!interest.is_empty());
+        assert!(
+            interest
+                .values()
+                .all(|pane| pane.frames_per_second == runtime),
+            "interest must follow the runtime cadence {runtime}, not {reloaded}: {interest:?}"
+        );
+        assert!(outbound.try_iter().any(|message| matches!(message,
                 crate::session::client::ClientOutbound::PresentationInterest(panes)
                     if !panes.is_empty()
                         && panes.iter().all(|pane| pane.frames_per_second == runtime))));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    });
 }
 
 #[test]
 fn attachment_keeps_the_remote_path_family_across_disconnect() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::platform::paths::PathFamily;
-            let mut backend = TestBackend::new(crate::AppRoot::default());
-            for family in [PathFamily::Windows, PathFamily::Posix] {
-                let (mut client, _rx) = SessionClient::test_channel();
-                client.path_family = family;
-                backend.state_mut().current_mut().pending_session_attach =
-                    Some(crate::state::PendingSessionAttach {
-                        epoch: 1,
-                        request: crate::state::AttachRequest::new(
-                            "remote-path-family",
-                            crate::state::AttachMode::Join,
-                        )
-                        .on_host(Some(
-                            crate::session::remote::RemoteTarget::Alias("session-host".into()),
-                        )),
-                        client: Some(client),
-                        left: None,
-                        parked_epoch: None,
-                    });
-                backend
-                    .dispatch(Msg::SessionAttached {
-                        epoch: 1,
-                        session_instance: crate::session::protocol::SessionInstanceId::for_test(
-                            "remote-path-family",
-                        ),
-                        session: "remote-path-family".into(),
-                        client_id: 1,
-                        panes: Vec::new(),
-                        layout_rev: 0,
-                        layout: None,
-                        controller: Some(1),
-                        clients: Vec::new(),
-                        input_locked: false,
-                        allow_takeover: false,
-                        read_only: false,
-                        origin: crate::session::origin::SessionOrigin::default(),
-                    })
-                    .expect("attach remote session");
-                assert_eq!(backend.state().current().path_family, family);
-                backend.state_mut().current_mut().mark_disconnected();
-                assert_eq!(backend.state().current().path_family, family);
-            }
-        })
-        .expect("spawn path family test")
-        .join()
-        .expect("path family test completes");
+    crate::test_support::on_large_stack(|| {
+        use crate::platform::paths::PathFamily;
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        for family in [PathFamily::Windows, PathFamily::Posix] {
+            let (mut client, _rx) = SessionClient::test_channel();
+            client.path_family = family;
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch: 1,
+                    request: crate::state::AttachRequest::new(
+                        "remote-path-family",
+                        crate::state::AttachMode::Join,
+                    )
+                    .on_host(Some(
+                        crate::session::remote::RemoteTarget::Alias("session-host".into()),
+                    )),
+                    client: Some(client),
+                    left: None,
+                    parked_epoch: None,
+                });
+            backend
+                .dispatch(Msg::SessionAttached {
+                    epoch: 1,
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                        "remote-path-family",
+                    ),
+                    session: "remote-path-family".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 0,
+                    layout: None,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: false,
+                    read_only: false,
+                    origin: crate::session::origin::SessionOrigin::default(),
+                })
+                .expect("attach remote session");
+            assert_eq!(backend.state().current().path_family, family);
+            backend.state_mut().current_mut().mark_disconnected();
+            assert_eq!(backend.state().current().path_family, family);
+        }
+    });
 }
 
 #[test]
 fn restored_replay_waits_for_input_readiness_in_current_and_background_attachments() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::session::client::ClientOutbound;
-            use crate::session::protocol::PaneCommandPhase;
+    crate::test_support::on_large_stack(|| {
+        use crate::session::client::ClientOutbound;
+        use crate::session::protocol::PaneCommandPhase;
 
-            for background in [false, true] {
-                for use_fallback in [false, true] {
-                    let mut backend = TestBackend::new(crate::AppRoot::default());
-                    let (client, outbound) = SessionClient::test_channel();
-                    let epoch = backend.state().runtime_epoch;
-                    let pane_id = backend.state().current().workspaces[0].panes[0].id;
-                    let generation = 7;
-                    {
-                        let attachment = backend.state_mut().current_mut();
-                        attachment.workspaces[0].panes[0].pty_generation = generation;
-                        attachment.session_client = Some(client);
-                        attachment
-                            .pending_replay_inputs
-                            .insert((pane_id, generation), "printf restored-command".into());
-                    }
-                    if background {
-                        backend
-                            .state_mut()
-                            .park_current(epoch, crate::state::Attachment::new());
-                        backend.state_mut().runtime_epoch = epoch + 1;
-                    }
-                    let runtime = |sequence, command_phase| Msg::SessionPaneRuntimeChanged {
-                        epoch,
-                        pane_id,
-                        local: false,
-                        generation,
-                        agents: Vec::new(),
-                        state: PaneRuntimeState {
-                            sequence,
-                            command_phase,
-                            ..PaneRuntimeState::default()
-                        },
-                    };
+        for background in [false, true] {
+            for use_fallback in [false, true] {
+                let mut backend = TestBackend::new(crate::AppRoot::default());
+                let (client, outbound) = SessionClient::test_channel();
+                let epoch = backend.state().runtime_epoch;
+                let pane_id = backend.state().current().workspaces[0].panes[0].id;
+                let generation = 7;
+                {
+                    let attachment = backend.state_mut().current_mut();
+                    attachment.workspaces[0].panes[0].pty_generation = generation;
+                    attachment.session_client = Some(client);
+                    attachment
+                        .pending_replay_inputs
+                        .insert((pane_id, generation), "printf restored-command".into());
+                }
+                if background {
                     backend
-                        .dispatch(runtime(1, PaneCommandPhase::Prompt))
-                        .unwrap();
-                    let attachment = backend.state().attachment_for_epoch(epoch).unwrap();
-                    assert!(
-                        attachment
-                            .pending_replay_inputs
-                            .contains_key(&(pane_id, generation))
-                    );
-                    assert!(
-                        !outbound
-                            .try_iter()
-                            .any(|message| matches!(message, ClientOutbound::PaneInput { .. }))
-                    );
+                        .state_mut()
+                        .park_current(epoch, crate::state::Attachment::new());
+                    backend.state_mut().runtime_epoch = epoch + 1;
+                }
+                let runtime = |sequence, command_phase| Msg::SessionPaneRuntimeChanged {
+                    epoch,
+                    pane_id,
+                    local: false,
+                    generation,
+                    agents: Vec::new(),
+                    state: PaneRuntimeState {
+                        sequence,
+                        command_phase,
+                        ..PaneRuntimeState::default()
+                    },
+                };
+                backend
+                    .dispatch(runtime(1, PaneCommandPhase::Prompt))
+                    .unwrap();
+                let attachment = backend.state().attachment_for_epoch(epoch).unwrap();
+                assert!(
+                    attachment
+                        .pending_replay_inputs
+                        .contains_key(&(pane_id, generation))
+                );
+                assert!(
+                    !outbound
+                        .try_iter()
+                        .any(|message| matches!(message, ClientOutbound::PaneInput { .. }))
+                );
 
-                    if use_fallback {
-                        backend
-                            .dispatch(Msg::ReplayInputDeadline {
-                                epoch,
-                                pane_id,
-                                generation,
-                            })
-                            .unwrap();
-                    } else {
-                        backend
-                            .dispatch(runtime(2, PaneCommandPhase::Input))
-                            .unwrap();
-                    }
-                    // A subsequent readiness report or an already scheduled deadline must not
-                    // deliver the command a second time.
-                    backend
-                        .dispatch(runtime(3, PaneCommandPhase::Input))
-                        .unwrap();
+                if use_fallback {
                     backend
                         .dispatch(Msg::ReplayInputDeadline {
                             epoch,
@@ -4102,38 +3856,52 @@ fn restored_replay_waits_for_input_readiness_in_current_and_background_attachmen
                             generation,
                         })
                         .unwrap();
-                    assert!(
-                        backend
-                            .state()
-                            .attachment_for_epoch(epoch)
-                            .unwrap()
-                            .pending_replay_inputs
-                            .is_empty()
-                    );
-                    let inputs: Vec<_> = outbound
-                        .try_iter()
-                        .filter_map(|message| match message {
-                            ClientOutbound::PaneInput {
-                                pane_id: target,
-                                generation: actual_generation,
-                                local,
-                                bytes,
-                                ..
-                            } => {
-                                assert_eq!(
-                                    (target, actual_generation, local),
-                                    (pane_id, generation, false)
-                                );
-                                Some(bytes)
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    assert_eq!(inputs, vec![b"printf restored-command\r".to_vec()]);
+                } else {
+                    backend
+                        .dispatch(runtime(2, PaneCommandPhase::Input))
+                        .unwrap();
                 }
+                // A subsequent readiness report or an already scheduled deadline must not
+                // deliver the command a second time.
+                backend
+                    .dispatch(runtime(3, PaneCommandPhase::Input))
+                    .unwrap();
+                backend
+                    .dispatch(Msg::ReplayInputDeadline {
+                        epoch,
+                        pane_id,
+                        generation,
+                    })
+                    .unwrap();
+                assert!(
+                    backend
+                        .state()
+                        .attachment_for_epoch(epoch)
+                        .unwrap()
+                        .pending_replay_inputs
+                        .is_empty()
+                );
+                let inputs: Vec<_> = outbound
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::PaneInput {
+                            pane_id: target,
+                            generation: actual_generation,
+                            local,
+                            bytes,
+                            ..
+                        } => {
+                            assert_eq!(
+                                (target, actual_generation, local),
+                                (pane_id, generation, false)
+                            );
+                            Some(bytes)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(inputs, vec![b"printf restored-command\r".to_vec()]);
             }
-        })
-        .expect("spawn replay readiness test")
-        .join()
-        .expect("replay readiness test completes");
+        }
+    });
 }

@@ -232,14 +232,22 @@ fn request(command: crate::control::ControlCommand) -> crate::control::ControlRe
 /// Drive both public control dispatchers through a sequence of edits from the same document.
 #[test]
 fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
-    std::thread::Builder::new().stack_size(16 * 1024 * 1024).spawn(|| {
+    crate::test_support::on_deeper_stack(|| {
         use crate::control::{ControlCommand as C, ControlEnvelope, ControlLayoutKind as K};
         use crate::session::client::SessionClient;
         use tui_lipan::TestBackend;
         let mut ui = TestBackend::new(crate::AppRoot::default());
-        let viewport = Rect { x: 0, y: 0, w: 100, h: 30 };
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
         ui.set_viewport(viewport);
-        for ws in &mut ui.state_mut().current_mut().workspaces { ws.panes.clear(); ws.tile_tree = None; }
+        for ws in &mut ui.state_mut().current_mut().workspaces {
+            ws.panes.clear();
+            ws.tile_tree = None;
+        }
         for id in [1, 2, 3] {
             let mut pane = crate::state::Pane::new(id, 7, FloatRect::default());
             pane.pty_generation = 1;
@@ -247,11 +255,15 @@ fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
         }
         let bounds = ui.state().canvas_bounds_from_terminal_viewport(viewport);
         let canvas = (bounds.w.max(1.0) as u16, bounds.h.max(1.0) as u16);
-        ui.state_mut().current_mut().workspaces[0].split_ratios.clear();
+        ui.state_mut().current_mut().workspaces[0]
+            .split_ratios
+            .clear();
         let layout = crate::layout::shared::shared_layout_from_state(ui.state(), canvas);
         let mut server = SessionServer::new_named("parity");
         server.layout = Some(layout.clone());
-        for id in [1, 2, 3] { server.panes.insert(id, test_pane(1)); }
+        for id in [1, 2, 3] {
+            server.panes.insert(id, test_pane(1));
+        }
         let (client, _outbound) = SessionClient::test_channel();
         let mut shared = crate::state::SharedSessionState::new(1);
         shared.controller = Some(1);
@@ -262,44 +274,126 @@ fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
         ui.state_mut().current_mut().session_attached = true;
 
         let pane_edit = |floating, fullscreen, split_ratio, width_ratio| C::PaneSet {
-            target: 2, floating, fullscreen, rect: None, rect_fraction: None,
-            split_ratio, width_ratio, if_revision: None,
+            target: 2,
+            floating,
+            fullscreen,
+            rect: None,
+            rect_fraction: None,
+            split_ratio,
+            width_ratio,
+            if_revision: None,
         };
         let commands = [
-            C::LayoutSet { workspace: 1, layout: Some(K::Master), master_ratio: None, if_revision: None },
-            C::LayoutSet { workspace: 1, layout: None, master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)), if_revision: None },
-            C::LayoutSet { workspace: 1, layout: None, master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)), if_revision: None },
-            C::LayoutSet { workspace: 1, layout: Some(K::Master), master_ratio: Some(0.65), if_revision: None },
-            C::LayoutSet { workspace: 1, layout: Some(K::Scrollable), master_ratio: None, if_revision: None },
+            C::LayoutSet {
+                workspace: 1,
+                layout: Some(K::Master),
+                master_ratio: None,
+                if_revision: None,
+            },
+            C::LayoutSet {
+                workspace: 1,
+                layout: None,
+                master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)),
+                if_revision: None,
+            },
+            C::LayoutSet {
+                workspace: 1,
+                layout: None,
+                master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)),
+                if_revision: None,
+            },
+            C::LayoutSet {
+                workspace: 1,
+                layout: Some(K::Master),
+                master_ratio: Some(0.65),
+                if_revision: None,
+            },
+            C::LayoutSet {
+                workspace: 1,
+                layout: Some(K::Scrollable),
+                master_ratio: None,
+                if_revision: None,
+            },
             pane_edit(None, None, None, Some(0.7)),
-            C::LayoutSet { workspace: 1, layout: Some(K::Dwindle), master_ratio: None, if_revision: None },
+            C::LayoutSet {
+                workspace: 1,
+                layout: Some(K::Dwindle),
+                master_ratio: None,
+                if_revision: None,
+            },
             pane_edit(None, None, Some(0.6), None),
             pane_edit(Some(true), Some(true), None, None),
-            C::PaneSet { target: 2, floating: None, fullscreen: None, rect: None,
-                rect_fraction: Some(crate::control::FractionRect { x: -0.1, y: 0.2, width: 0.45, height: 0.6 }),
-                split_ratio: None, width_ratio: None, if_revision: None },
+            C::PaneSet {
+                target: 2,
+                floating: None,
+                fullscreen: None,
+                rect: None,
+                rect_fraction: Some(crate::control::FractionRect {
+                    x: -0.1,
+                    y: 0.2,
+                    width: 0.45,
+                    height: 0.6,
+                }),
+                split_ratio: None,
+                width_ratio: None,
+                if_revision: None,
+            },
             pane_edit(Some(false), Some(false), None, None),
-            C::PaneSwap { target: 1, with: 2, if_revision: None },
-            C::PaneMove { target: 2, workspace: 3, if_revision: None },
-            C::PaneClose { target: 2, if_revision: None },
+            C::PaneSwap {
+                target: 1,
+                with: 2,
+                if_revision: None,
+            },
+            C::PaneMove {
+                target: 2,
+                workspace: 3,
+                if_revision: None,
+            },
+            C::PaneClose {
+                target: 2,
+                if_revision: None,
+            },
         ];
         for command in commands {
             let (reply, response) = std::sync::mpsc::channel();
-            ui.dispatch(crate::Msg::ControlRequest(ControlEnvelope { request: request(command.clone()), reply, worker: None })).unwrap();
+            ui.dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                request: request(command.clone()),
+                reply,
+                worker: None,
+            }))
+            .unwrap();
             let response = response.recv().unwrap();
             assert!(response.ok, "UI {command:?}: {response:?}");
-            let messages = server.handle_session_control(99, "parity".into(), PROTOCOL_VERSION,
-                protocol::MIN_SUPPORTED_PROTOCOL, None, request(command.clone()));
+            let messages = server.handle_session_control(
+                99,
+                "parity".into(),
+                PROTOCOL_VERSION,
+                protocol::MIN_SUPPORTED_PROTOCOL,
+                None,
+                request(command.clone()),
+            );
             assert!(messages.iter().any(|(_, message)| matches!(message, ServerMessage::SessionControlResult { response, .. } if response.ok)), "headless {command:?}: {messages:?}");
-            let headless = messages.iter().find_map(|(_, message)| match message {
-                ServerMessage::SessionControlResult { response, .. } => Some(response), _ => None
-            }).unwrap();
-            assert_eq!(response.data.as_ref().and_then(|data| data.get("changed")), headless.data.as_ref().and_then(|data| data.get("changed")), "{command:?}");
-            assert_eq!(ui.state().current().shared.as_ref().unwrap().assumed_rev, server.layout_rev, "{command:?}");
+            let headless = messages
+                .iter()
+                .find_map(|(_, message)| match message {
+                    ServerMessage::SessionControlResult { response, .. } => Some(response),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(
+                response.data.as_ref().and_then(|data| data.get("changed")),
+                headless.data.as_ref().and_then(|data| data.get("changed")),
+                "{command:?}"
+            );
+            assert_eq!(
+                ui.state().current().shared.as_ref().unwrap().assumed_rev,
+                server.layout_rev,
+                "{command:?}"
+            );
             let actual = crate::layout::shared::shared_layout_from_state(ui.state(), canvas);
             assert_eq!(Some(&actual), server.layout.as_ref(), "{command:?}");
         }
-    }).unwrap().join().unwrap();
+    });
 }
 
 #[test]
@@ -485,12 +579,7 @@ impl StartupSpawns {
 }
 
 fn startup_test(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::test_support::on_deeper_stack(body);
 }
 
 #[test]

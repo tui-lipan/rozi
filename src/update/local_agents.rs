@@ -120,19 +120,12 @@ mod tests {
         }
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test completes");
-    }
-
     #[test]
     fn busy_probe_keeps_agent_visible_and_preserves_alert_baseline() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(busy_probe_keeps_agent_visible_and_preserves_alert_baseline_body);
+        crate::test_support::on_large_stack(
+            busy_probe_keeps_agent_visible_and_preserves_alert_baseline_body,
+        );
     }
 
     fn busy_probe_keeps_agent_visible_and_preserves_alert_baseline_body() {
@@ -231,7 +224,9 @@ mod tests {
     #[test]
     fn local_monitor_snapshot_replaces_stale_state_and_recovers() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(local_monitor_snapshot_replaces_stale_state_and_recovers_body);
+        crate::test_support::on_large_stack(
+            local_monitor_snapshot_replaces_stale_state_and_recovers_body,
+        );
     }
 
     fn local_monitor_snapshot_replaces_stale_state_and_recovers_body() {

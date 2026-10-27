@@ -227,15 +227,6 @@ mod tests {
 
     const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     /// A client that writes screenshots into `dir`, with the flash on, whose mount has delivered
     /// the command link a screenshot reports back through.
     fn backend_writing_to(dir: &Path) -> TestBackend<AppRoot> {
@@ -330,7 +321,7 @@ mod tests {
 
     #[test]
     fn screenshot_pane_saves_the_focused_pane_at_the_configured_scale() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend_writing_to(dir.path());
             backend.state_mut().config.capture.scale = 2;
@@ -394,7 +385,7 @@ mod tests {
     /// the tint is gone once the fade has run.
     #[test]
     fn a_pane_screenshot_flashes_the_pane_and_then_settles() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend_writing_to(dir.path());
             {
@@ -435,7 +426,7 @@ mod tests {
     /// would otherwise still be fading out when the next frame paints.
     #[test]
     fn screenshot_after_a_pending_control_capture_waits_for_picker_exit() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             for style in [
                 crate::layout::anim::PickerAnimationStyle::Fade,
                 crate::layout::anim::PickerAnimationStyle::Portal,
@@ -504,7 +495,7 @@ mod tests {
 
     #[test]
     fn screenshot_ui_from_the_palette_saves_the_ui_as_it_was_before_the_palette_opened() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             for style in [
                 crate::layout::anim::PickerAnimationStyle::Fade,
                 crate::layout::anim::PickerAnimationStyle::Portal,
@@ -605,7 +596,7 @@ mod tests {
     /// screenshot's file landing does not end a later one's wait.
     #[test]
     fn a_ui_screenshot_waits_until_its_own_frame_is_taken() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend_writing_to(dir.path());
             let waiting = |backend: &TestBackend<AppRoot>| {
@@ -643,7 +634,7 @@ mod tests {
 
     #[test]
     fn with_animations_off_a_screenshot_is_confirmed_without_a_flash() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend_writing_to(dir.path());
             backend.state_mut().config.animations.enabled = false;
@@ -662,7 +653,7 @@ mod tests {
 
     #[test]
     fn a_directory_that_cannot_be_used_is_an_error_toast() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let not_a_directory = dir.path().join("taken");
             std::fs::write(&not_a_directory, b"keep").unwrap();

@@ -719,21 +719,16 @@ mod tests {
     }
 
     fn with_backend(body: impl FnOnce(&mut TestBackend<AppRoot>) + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 96,
-                    h: 40,
-                });
-                body(&mut backend);
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+        crate::test_support::on_large_stack(move || {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            body(&mut backend);
+        });
     }
 
     fn primed_connecting_picker(

@@ -3072,7 +3072,7 @@ mod tests {
     #[test]
     fn a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(
+        crate::test_support::on_large_stack(
             a_recording_pane_ends_its_title_row_with_a_red_dot_in_every_titlebar_layout_body,
         );
     }
@@ -3151,7 +3151,9 @@ mod tests {
     #[test]
     fn with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab_body);
+        crate::test_support::on_large_stack(
+            with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab_body,
+        );
     }
 
     fn with_titles_hidden_the_dot_moves_to_the_border_corner_or_else_the_tab_body() {
@@ -3179,7 +3181,9 @@ mod tests {
     #[test]
     fn a_recording_on_another_workspace_marks_that_workspace_tab() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_recording_on_another_workspace_marks_that_workspace_tab_body);
+        crate::test_support::on_large_stack(
+            a_recording_on_another_workspace_marks_that_workspace_tab_body,
+        );
     }
 
     fn a_recording_on_another_workspace_marks_that_workspace_tab_body() {
@@ -3199,19 +3203,10 @@ mod tests {
         );
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test completes");
-    }
-
     #[test]
     fn a_fullscreen_pane_marks_the_recordings_it_covers() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_fullscreen_pane_marks_the_recordings_it_covers_body);
+        crate::test_support::on_large_stack(a_fullscreen_pane_marks_the_recordings_it_covers_body);
     }
 
     fn a_fullscreen_pane_marks_the_recordings_it_covers_body() {
@@ -3278,7 +3273,9 @@ mod tests {
     #[test]
     fn a_workspace_tab_dot_blinks_without_the_tab_changing_width() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(a_workspace_tab_dot_blinks_without_the_tab_changing_width_body);
+        crate::test_support::on_large_stack(
+            a_workspace_tab_dot_blinks_without_the_tab_changing_width_body,
+        );
     }
 
     fn a_workspace_tab_dot_blinks_without_the_tab_changing_width_body() {
@@ -3318,7 +3315,7 @@ mod tests {
     #[test]
     fn the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(
+        crate::test_support::on_large_stack(
             the_title_dot_vanishes_on_the_calm_phase_and_holds_steady_without_motion_body,
         );
     }

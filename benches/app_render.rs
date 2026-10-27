@@ -18,64 +18,12 @@
 mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
-use rozi::AppRoot;
-use rozi::layout::tiling::build_dwindle_tree;
 use rozi::session::protocol::Frame;
-use rozi::state::{Pane, PaneId};
 use std::hint::black_box;
-use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
-
-const VIEWPORT: Rect = Rect {
-    x: 0,
-    y: 0,
-    w: 200,
-    h: 60,
-};
+use support::backend_with_panes;
 
 /// Layout recursion on a deep dwindle tree overflows the default 2MB test stack.
 const STACK_SIZE: usize = 16 * 1024 * 1024;
-
-/// A backend with `panes` tiled panes, each pre-filled with `corpus` so every pane carries a
-/// realistic styled snapshot rather than an empty screen.
-///
-/// The setup details here are load-bearing and are pinned by `tests/bench_setup_sanity.rs`:
-/// `opening` must be cleared (an opening pane animates in from nothing) and ids must start past
-/// the pane `State::new` seeds (a reused id inherits stale transition entries). Getting either
-/// wrong renders an almost empty frame while the state still looks correct.
-fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<AppRoot> {
-    let mut backend = TestBackend::new(AppRoot::default());
-    backend.set_viewport(VIEWPORT);
-    {
-        let state = backend.state_mut();
-        state.current_mut().workspaces[0].panes.clear();
-        state.current_mut().workspaces[0].tile_tree = None;
-        let rect = FloatRect {
-            x: 0.0,
-            y: 0.0,
-            w: f32::from(VIEWPORT.w),
-            h: f32::from(VIEWPORT.h),
-        };
-        let mut ids = Vec::with_capacity(panes);
-        for index in 0..panes {
-            let id = index as PaneId + 10;
-            let mut pane = Pane::new(id, 5_000, rect);
-            pane.opening = false;
-            pane.terminal_active = true;
-            pane.terminal.process_server_output(corpus);
-            state.current_mut().workspaces[0].panes.push(pane);
-            ids.push(id);
-        }
-        let start_axis = state.current().workspaces[0].start_axis;
-        let ratios = state.current().workspaces[0].split_ratios.clone();
-        state.current_mut().workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
-        state.current_mut().next_pane_id = panes as PaneId + 10;
-        state.current_mut().focused_pane = Some(10);
-        state.current_mut().workspaces[0].focused_pane = Some(10);
-    }
-    backend.render();
-    backend
-}
 
 fn app_render(c: &mut Criterion) {
     // A screenful of styled output per pane: the realistic steady state for a working mux, and the

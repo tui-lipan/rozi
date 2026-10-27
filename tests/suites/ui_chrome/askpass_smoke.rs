@@ -76,18 +76,9 @@ fn picker_backend() -> TestBackend<AppRoot> {
     backend
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
-}
-
 #[test]
 fn a_password_prompt_names_the_account_and_masks_what_is_typed() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Secret, "dev@workbox's password: ");
         type_text(&mut backend, "hunter2");
         let frame = rendered_lines(&mut backend);
@@ -108,7 +99,7 @@ fn a_password_prompt_names_the_account_and_masks_what_is_typed() {
 /// carries the whole question and echoes the answer back.
 #[test]
 fn a_host_key_prompt_shows_the_fingerprint_and_does_not_mask_the_answer() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         // A real-length digest, because the length is the point: inside OpenSSH's sentence a
         // 43-character fingerprint is what breaks across the wrap.
         let mut backend = askpass_backend(
@@ -148,7 +139,7 @@ fn a_host_key_prompt_shows_the_fingerprint_and_does_not_mask_the_answer() {
 /// whose helper is still holding a connection open for an answer.
 #[test]
 fn a_second_prompt_queues_behind_the_one_on_screen() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Secret, "dev@first's password: ");
         backend
             .dispatch(prompt_msg(8, "ssh-2", "dev@second's password: "))
@@ -170,7 +161,7 @@ fn a_second_prompt_queues_behind_the_one_on_screen() {
 /// ssh has what it asked for.
 #[test]
 fn answering_the_last_prompt_closes_the_modal() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Secret, "dev@workbox's password: ");
         backend
             .dispatch(rozi::Msg::SubmitRemoteAskpass)
@@ -184,7 +175,7 @@ fn answering_the_last_prompt_closes_the_modal() {
 /// belongs to a different ssh that is still waiting.
 #[test]
 fn an_expired_prompt_is_dropped_without_disturbing_the_queue() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Secret, "dev@first's password: ");
         backend
             .dispatch(prompt_msg(8, "ssh-2", "dev@second's password: "))
@@ -209,7 +200,7 @@ fn an_expired_prompt_is_dropped_without_disturbing_the_queue() {
 /// the picker keeps its state and the user returns to exactly what they left.
 #[test]
 fn the_prompt_stacks_on_the_remote_picker_and_leaves_it_mounted() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         let frame = rendered_lines(&mut backend);
         assert!(frame.contains("Remote hosts"), "picker is up:\n{frame}");
@@ -244,7 +235,7 @@ fn the_prompt_stacks_on_the_remote_picker_and_leaves_it_mounted() {
 /// dismissed one dialog would leave the user pressing Esc at nine of them.
 #[test]
 fn refusing_one_prompt_silences_the_retries_behind_it() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         backend
             .dispatch(prompt_msg(7, "ssh-1", "dev@workbox's password: "))
@@ -270,7 +261,7 @@ fn refusing_one_prompt_silences_the_retries_behind_it() {
 /// connection the user has just called off.
 #[test]
 fn refusing_a_prompt_gives_up_on_the_host_probe() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         // `update_level` throughout, not `dispatch`: activating starts a real SSH probe of
         // `workbox`, and `dispatch` keeps draining replies. Whenever that probe failed fast enough,
@@ -316,7 +307,7 @@ fn refusing_a_prompt_gives_up_on_the_host_probe() {
 /// otherwise it reads as a submit that did nothing.
 #[test]
 fn a_rejected_password_says_so_when_ssh_asks_again() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         backend
             .dispatch(prompt_msg(7, "ssh-1", "dev@workbox's password: "))
@@ -345,7 +336,7 @@ fn a_rejected_password_says_so_when_ssh_asks_again() {
 /// colourless capture cannot see it.
 #[test]
 fn the_prompt_fades_the_picker_behind_it() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         backend.render();
         // A cell on the picker's left border, outside where the narrower prompt is drawn.
@@ -378,7 +369,7 @@ fn channel_sum(color: tui_lipan::prelude::Color) -> u32 {
 
 #[test]
 fn remote_install_names_what_it_would_write_and_offers_the_two_answers() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(
             AskpassKind::Install { probe_epoch: None },
             "Host: dev@workbox\nDestination: ~/.local/share/rozi/remote/0.0.17/rozi\nVersion: 0.0.17",
@@ -403,7 +394,7 @@ fn remote_install_names_what_it_would_write_and_offers_the_two_answers() {
 /// stands out from the labels beside it.
 #[test]
 fn remote_install_highlights_the_host_against_muted_labels() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(
             AskpassKind::Install { probe_epoch: None },
             "Host: dev@workbox\nDestination: ~/.local/share/rozi/remote/0.0.17/rozi\nVersion: 0.0.17",
@@ -426,7 +417,7 @@ fn remote_install_highlights_the_host_against_muted_labels() {
 /// After `Install`, the copy can take a while; the host row says what is happening meanwhile.
 #[test]
 fn an_accepted_install_shows_the_host_as_installing() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
         backend.state_mut().config.animations.picker =
@@ -470,7 +461,7 @@ fn an_accepted_install_shows_the_host_as_installing() {
 /// the ssh that asked, which is not the same as calling the connection off.
 #[test]
 fn a_permission_prompt_is_answered_by_choosing_and_no_is_still_an_answer() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(
             AskpassKind::Confirm,
             "Allow use of key /home/dev/.ssh/id_ed25519?\n\
@@ -511,7 +502,7 @@ fn label_cell(backend: &mut TestBackend<AppRoot>, label: &str) -> (u16, u16) {
 /// word of it. A grid of characters cannot see that, so this measures the fill.
 #[test]
 fn the_focused_answer_is_filled_and_the_other_one_is_not() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Confirm, "Allow use of key?");
         let (yes_x, yes_y) = label_cell(&mut backend, "Yes");
         let (no_x, no_y) = label_cell(&mut backend, "No");
@@ -527,7 +518,7 @@ fn the_focused_answer_is_filled_and_the_other_one_is_not() {
 /// Focus is the selection in an answer row, so what the arrows move is what `Enter` commits.
 #[test]
 fn the_answer_row_opens_on_the_affirmative_and_the_arrows_walk_it() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = askpass_backend(AskpassKind::Confirm, "Allow use of key?");
         backend.render();
         assert!(
@@ -554,7 +545,7 @@ fn the_answer_row_opens_on_the_affirmative_and_the_arrows_walk_it() {
 
 #[test]
 fn remote_install_policy_and_abandoned_probes_do_not_open_a_modal() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         for policy in [
             rozi::config::RemoteInstallPolicy::Always,
             rozi::config::RemoteInstallPolicy::Never,
@@ -600,7 +591,7 @@ fn row_of(frame: &str, needle: &str) -> usize {
 /// below its top, the way every stacked card does. Over the panes it is centred like any dialog.
 #[test]
 fn an_ssh_prompt_over_a_dialog_sits_one_row_below_its_top() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = picker_backend();
         let parent_top = row_of(&rendered_lines(&mut backend), "Remote hosts");
         backend

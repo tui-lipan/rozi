@@ -319,85 +319,80 @@ mod tests {
 
     #[test]
     fn clicking_a_pane_dismisses_hint_mode_instead_of_moving_focus() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::state::{Mode, Pane};
-                use crate::{AppRoot, Msg};
-                use tui_lipan::TestBackend;
-                use tui_lipan::prelude::Rect;
+        crate::test_support::on_large_stack(|| {
+            use crate::state::{Mode, Pane};
+            use crate::{AppRoot, Msg};
+            use tui_lipan::TestBackend;
+            use tui_lipan::prelude::Rect;
 
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    let rect = tui_lipan::prelude::FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 80.0,
-                        h: 24.0,
-                    };
-                    state.current_mut().workspaces[0].panes.clear();
-                    state.current_mut().workspaces[0].tile_tree = None;
-                    for id in [1, 2] {
-                        state.current_mut().workspaces[0]
-                            .panes
-                            .push(Pane::new(id, 100, rect));
-                        crate::layout::tiling::append_tiled_window(
-                            &mut state.current_mut().workspaces[0],
-                            id,
-                        );
-                    }
-                    crate::ops::focus::focus_pane(state, 1);
-                    state.hint_mode = Some(HintModeState {
-                        target: 1,
-                        matches: Vec::new(),
-                        labels: Vec::new(),
-                        input: String::new(),
-                        offset: 0,
-                    });
-                    state.mode = Mode::Hint;
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = tui_lipan::prelude::FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                state.current_mut().workspaces[0].panes.clear();
+                state.current_mut().workspaces[0].tile_tree = None;
+                for id in [1, 2] {
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(Pane::new(id, 100, rect));
+                    crate::layout::tiling::append_tiled_window(
+                        &mut state.current_mut().workspaces[0],
+                        id,
+                    );
                 }
+                crate::ops::focus::focus_pane(state, 1);
+                state.hint_mode = Some(HintModeState {
+                    target: 1,
+                    matches: Vec::new(),
+                    labels: Vec::new(),
+                    input: String::new(),
+                    offset: 0,
+                });
+                state.mode = Mode::Hint;
+            }
 
-                backend.dispatch(Msg::FocusPane(2)).expect("click pane 2");
+            backend.dispatch(Msg::FocusPane(2)).expect("click pane 2");
 
-                assert!(backend.state().hint_mode.is_none());
-                assert_eq!(backend.state().mode, Mode::Normal);
-                assert_eq!(
-                    backend.state().current().focused_pane,
-                    Some(1),
-                    "the click that dismissed hint mode must not also move focus"
-                );
+            assert!(backend.state().hint_mode.is_none());
+            assert_eq!(backend.state().mode, Mode::Normal);
+            assert_eq!(
+                backend.state().current().focused_pane,
+                Some(1),
+                "the click that dismissed hint mode must not also move focus"
+            );
 
-                // The release completing that click reaches a pane running mouse tracking. It is
-                // consumed with the press: forwarded, it would hand pane 2 the focus and the child
-                // a button-up it never saw pressed.
-                backend
-                    .dispatch(Msg::PaneMouse(
-                        2,
-                        crate::test_support::forwarded_mouse(
-                            tui_lipan::core::event::MouseKind::Up(
-                                tui_lipan::core::event::MouseButton::Left,
-                            ),
-                            b"opaque release".to_vec(),
+            // The release completing that click reaches a pane running mouse tracking. It is
+            // consumed with the press: forwarded, it would hand pane 2 the focus and the child
+            // a button-up it never saw pressed.
+            backend
+                .dispatch(Msg::PaneMouse(
+                    2,
+                    crate::test_support::forwarded_mouse(
+                        tui_lipan::core::event::MouseKind::Up(
+                            tui_lipan::core::event::MouseButton::Left,
                         ),
-                    ))
-                    .expect("click release");
-                assert_eq!(backend.state().current().focused_pane, Some(1));
-                assert!(!backend.state().consumed_pointer_click);
+                        b"opaque release".to_vec(),
+                    ),
+                ))
+                .expect("click release");
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+            assert!(!backend.state().consumed_pointer_click);
 
-                // With the mode gone the same click focuses normally.
-                backend.dispatch(Msg::FocusPane(2)).expect("click again");
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+            // With the mode gone the same click focuses normally.
+            backend.dispatch(Msg::FocusPane(2)).expect("click again");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+        });
     }
 
     #[test]

@@ -91,12 +91,7 @@ fn rendered(backend: &mut TestBackend<AppRoot>) -> String {
 }
 
 fn on_deep_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
+    rozi::test_support::on_deeper_stack(body);
 }
 
 #[test]

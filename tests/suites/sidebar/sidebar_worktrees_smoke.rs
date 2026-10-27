@@ -104,18 +104,9 @@ fn sidebar_lines(backend: &mut TestBackend<AppRoot>, width: usize) -> Vec<String
         .collect()
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(body)
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 #[test]
 fn the_tab_lists_checkouts_compactly_with_their_session_state() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = seeded(100, 30);
         let lines = sidebar_lines(&mut backend, 32);
         let text = lines.join("\n");
@@ -160,7 +151,7 @@ fn the_tab_lists_checkouts_compactly_with_their_session_state() {
 
 #[test]
 fn work_status_uses_the_detail_line_and_keeps_session_state_on_the_rail() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         use rozi::git::pull_requests::{PullRequestStatus, WorkStatus};
         let mut backend = seeded(100, 30);
         let listing = &mut backend.state_mut().sidebar.worktrees;
@@ -219,7 +210,7 @@ fn a_long_branch_yields_to_the_status_rail_and_the_hover_action() {
             .find(|line| line.contains("feat/show"))
             .expect("the primary checkout row")
     };
-    on_large_stack(move || {
+    rozi::test_support::on_deeper_stack(move || {
         let resting = render(false);
         assert!(resting.contains('…'), "{resting:?}");
         assert!(resting.contains("…  Primary ○"), "{resting:?}");
@@ -249,7 +240,7 @@ fn a_held_session_keeps_its_own_marker_on_the_rail() {
             .find(|line| line.contains("master"))
             .expect("the primary checkout row")
     };
-    on_large_stack(move || {
+    rozi::test_support::on_deeper_stack(move || {
         use rozi::state::ConnectionState;
         for (connection, marker, verb) in [
             (ConnectionState::Connected, "Primary ◐", "switch"),
@@ -268,7 +259,7 @@ fn a_held_session_keeps_its_own_marker_on_the_rail() {
 /// armed row says the removal lifts the lock first.
 #[test]
 fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         const STALE: &str = "/home/me/src/rozi/.claude/worktrees/abandoned";
         let mut backend = seeded(100, 30);
         backend
@@ -322,7 +313,7 @@ fn a_stale_lock_is_marked_and_removable_while_a_live_one_is_not() {
 
 #[test]
 fn a_pane_outside_any_repository_says_so() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = seeded(100, 30);
         {
             let listing = &mut backend.state_mut().sidebar.worktrees;

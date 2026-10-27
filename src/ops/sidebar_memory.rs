@@ -116,41 +116,36 @@ pub(crate) mod tests {
 
     #[test]
     fn quit_and_hangup_save_visible_or_restored_docks_without_toggle_writes() {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let _persist = crate::test_support::lock_persisted_state();
-                let file = MemoryFile::new();
-                for exit in [Msg::RunAction(Action::Quit), Msg::Hangup] {
-                    for hidden in [false, true] {
-                        for remembered in [[true, false], [false, true], [true, true]] {
-                            let mut backend = TestBackend::new(AppRoot::default());
-                            backend.state_mut().config.session.autosave = false;
-                            backend.state_mut().sidebar.shown = remembered;
-                            backend.state_mut().sidebar.restore = [false, false];
-                            std::fs::write(&file.path, "unchanged until exit").unwrap();
-                            // Every visibility command can run without writing the memory file.
-                            for action in [Action::ToggleLeftSidebar, Action::ToggleRightSidebar] {
-                                backend.dispatch(Msg::RunAction(action)).unwrap();
-                                backend.dispatch(Msg::RunAction(action)).unwrap();
-                            }
-                            if hidden {
-                                backend
-                                    .dispatch(Msg::RunAction(Action::ToggleSidebar))
-                                    .unwrap();
-                            }
-                            assert_eq!(
-                                std::fs::read_to_string(&file.path).unwrap(),
-                                "unchanged until exit"
-                            );
-                            backend.dispatch(exit.clone()).unwrap();
-                            assert_eq!(load().unwrap(), Some(remembered));
+        crate::test_support::on_deeper_stack(|| {
+            let _persist = crate::test_support::lock_persisted_state();
+            let file = MemoryFile::new();
+            for exit in [Msg::RunAction(Action::Quit), Msg::Hangup] {
+                for hidden in [false, true] {
+                    for remembered in [[true, false], [false, true], [true, true]] {
+                        let mut backend = TestBackend::new(AppRoot::default());
+                        backend.state_mut().config.session.autosave = false;
+                        backend.state_mut().sidebar.shown = remembered;
+                        backend.state_mut().sidebar.restore = [false, false];
+                        std::fs::write(&file.path, "unchanged until exit").unwrap();
+                        // Every visibility command can run without writing the memory file.
+                        for action in [Action::ToggleLeftSidebar, Action::ToggleRightSidebar] {
+                            backend.dispatch(Msg::RunAction(action)).unwrap();
+                            backend.dispatch(Msg::RunAction(action)).unwrap();
                         }
+                        if hidden {
+                            backend
+                                .dispatch(Msg::RunAction(Action::ToggleSidebar))
+                                .unwrap();
+                        }
+                        assert_eq!(
+                            std::fs::read_to_string(&file.path).unwrap(),
+                            "unchanged until exit"
+                        );
+                        backend.dispatch(exit.clone()).unwrap();
+                        assert_eq!(load().unwrap(), Some(remembered));
                     }
                 }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+            }
+        });
     }
 }

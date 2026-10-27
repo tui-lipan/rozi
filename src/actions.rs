@@ -684,20 +684,15 @@ mod tests {
         use crate::Msg;
         use tui_lipan::{TestBackend, UpdateLevel};
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(AppRoot::default());
-                assert_eq!(
-                    backend
-                        .update_level(Msg::RunAction(Action::ToggleDevtools))
-                        .expect("toggle devtools update"),
-                    UpdateLevel::None
-                );
-            })
-            .expect("spawn devtools action test thread")
-            .join()
-            .expect("devtools action test thread completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            assert_eq!(
+                backend
+                    .update_level(Msg::RunAction(Action::ToggleDevtools))
+                    .expect("toggle devtools update"),
+                UpdateLevel::None
+            );
+        });
     }
 
     #[test]
@@ -750,24 +745,19 @@ mod tests {
     fn visible_scratch_workspace_is_the_active_pane_target() {
         use tui_lipan::TestBackend;
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.state_mut().scratch_visible = true;
-                backend
-                    .state_mut()
-                    .scratch
-                    .panes
-                    .push(crate::state::Pane::new(42, 100, FloatRect::default()));
-                backend.state_mut().scratch.focused_pane = Some(42);
-                assert_eq!(backend.state().focused_pane(), Some(42));
-                assert_eq!(backend.state().active_workspace_ref().panes[0].id, 42);
-                assert_eq!(backend.state().current().focused_pane, Some(1));
-            })
-            .expect("spawn scratchpad action test thread")
-            .join()
-            .expect("scratchpad action test thread completes");
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().scratch_visible = true;
+            backend
+                .state_mut()
+                .scratch
+                .panes
+                .push(crate::state::Pane::new(42, 100, FloatRect::default()));
+            backend.state_mut().scratch.focused_pane = Some(42);
+            assert_eq!(backend.state().focused_pane(), Some(42));
+            assert_eq!(backend.state().active_workspace_ref().panes[0].id, 42);
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+        });
     }
 
     #[test]
@@ -776,38 +766,33 @@ mod tests {
         use crate::state::Pane;
         use tui_lipan::TestBackend;
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(AppRoot::default());
-                let mut blocked = Pane::new(
-                    2,
-                    100,
-                    FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 40.0,
-                        h: 20.0,
-                    },
-                );
-                blocked.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
-                    value: "BLOCKED".to_string(),
-                    reason: None,
-                    set_at: 1,
-                });
-                backend.state_mut().current_mut().workspaces[1]
-                    .panes
-                    .push(blocked);
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let mut blocked = Pane::new(
+                2,
+                100,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 20.0,
+                },
+            );
+            blocked.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+                value: "BLOCKED".to_string(),
+                reason: None,
+                set_at: 1,
+            });
+            backend.state_mut().current_mut().workspaces[1]
+                .panes
+                .push(blocked);
 
-                backend
-                    .dispatch(Msg::RunAction(Action::FocusNextBlockedPane))
-                    .expect("focus blocked pane");
-                assert_eq!(backend.state().current().active_workspace, 1);
-                assert_eq!(backend.state().current().focused_pane, Some(2));
-            })
-            .expect("spawn blocked focus action test")
-            .join()
-            .expect("blocked focus action test completes");
+            backend
+                .dispatch(Msg::RunAction(Action::FocusNextBlockedPane))
+                .expect("focus blocked pane");
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+        });
     }
 
     #[test]
@@ -818,86 +803,81 @@ mod tests {
         use crate::state::SharedSessionState;
         use tui_lipan::TestBackend;
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let viewport = Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                };
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(viewport);
-                let (client, rx) = SessionClient::test_channel();
-                {
-                    let state = backend.state_mut();
-                    // The sidebar reserves its columns only once its slide lands, so the canonical
-                    // canvas asserted below is the settled one; this test is about the actions and
-                    // the commit, not about the frames in between.
-                    state.config.animations.sidebar = false;
-                    state.current_mut().session_attached = true;
-                    state.current_mut().session_client = Some(client);
-                    let mut shared = SharedSessionState::new(1);
-                    shared.controller = Some(1);
-                    state.current_mut().shared = Some(shared);
-                }
+        crate::test_support::on_large_stack(|| {
+            let viewport = Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            };
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(viewport);
+            let (client, rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                // The sidebar reserves its columns only once its slide lands, so the canonical
+                // canvas asserted below is the settled one; this test is about the actions and
+                // the commit, not about the frames in between.
+                state.config.animations.sidebar = false;
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(1);
+                state.current_mut().shared = Some(shared);
+            }
 
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleSidebar))
+                .expect("toggle controller sidebar");
+            assert!(backend.state().sidebar_shown());
+            // Toggling is client-local: it must not write the config default back.
+            assert!(!backend.state().config.sidebar.startup);
+            assert_eq!(
                 backend
-                    .dispatch(Msg::RunAction(Action::ToggleSidebar))
-                    .expect("toggle controller sidebar");
-                assert!(backend.state().sidebar_shown());
-                // Toggling is client-local: it must not write the config default back.
-                assert!(!backend.state().config.sidebar.startup);
-                assert_eq!(
-                    backend
-                        .state()
-                        .canvas_bounds_from_terminal_viewport(viewport)
-                        .w,
-                    68.0
-                );
-                backend
-                    .dispatch(Msg::SidebarCycleTab(true))
-                    .expect("cycle sidebar tab");
-                assert_eq!(
-                    backend.state().sidebar.active_tab(),
-                    Some(&crate::config::SidebarTabId::new("agents"))
-                );
-                backend
-                    .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
-                    .expect("flush controller layout");
-                let committed = rx
-                    .try_iter()
-                    .filter_map(|message| match message {
-                        ClientOutbound::Control(ClientMessage::CommitLayout { layout, .. }) => {
-                            Some((layout.canvas_cols, layout.canvas_rows))
-                        }
-                        _ => None,
-                    })
-                    .last();
-                assert_eq!(committed, Some((68, 29)));
+                    .state()
+                    .canvas_bounds_from_terminal_viewport(viewport)
+                    .w,
+                68.0
+            );
+            backend
+                .dispatch(Msg::SidebarCycleTab(true))
+                .expect("cycle sidebar tab");
+            assert_eq!(
+                backend.state().sidebar.active_tab(),
+                Some(&crate::config::SidebarTabId::new("agents"))
+            );
+            backend
+                .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
+                .expect("flush controller layout");
+            let committed = rx
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::CommitLayout { layout, .. }) => {
+                        Some((layout.canvas_cols, layout.canvas_rows))
+                    }
+                    _ => None,
+                })
+                .last();
+            assert_eq!(committed, Some((68, 29)));
 
-                let (follower_client, follower_rx) = SessionClient::test_channel();
-                {
-                    let state = backend.state_mut();
-                    state.current_mut().session_client = Some(follower_client);
-                    state.sidebar.hide_all();
-                    state.current_mut().shared.as_mut().unwrap().controller = Some(2);
-                }
-                backend
-                    .dispatch(Msg::RunAction(Action::ToggleSidebar))
-                    .expect("toggle follower sidebar");
-                backend
-                    .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
-                    .expect("attempt follower flush");
-                assert!(follower_rx.try_iter().all(|message| !matches!(
-                    message,
-                    ClientOutbound::Control(ClientMessage::CommitLayout { .. })
-                )));
-            })
-            .expect("spawn sidebar action test thread")
-            .join()
-            .expect("sidebar action test thread completes");
+            let (follower_client, follower_rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_client = Some(follower_client);
+                state.sidebar.hide_all();
+                state.current_mut().shared.as_mut().unwrap().controller = Some(2);
+            }
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleSidebar))
+                .expect("toggle follower sidebar");
+            backend
+                .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
+                .expect("attempt follower flush");
+            assert!(follower_rx.try_iter().all(|message| !matches!(
+                message,
+                ClientOutbound::Control(ClientMessage::CommitLayout { .. })
+            )));
+        });
     }
 
     #[test]
@@ -909,55 +889,50 @@ mod tests {
         use crate::state::SharedSessionState;
         use tui_lipan::TestBackend;
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                let (client, rx) = SessionClient::test_channel();
-                {
-                    let state = backend.state_mut();
-                    state.current_mut().session_attached = true;
-                    state.current_mut().session_client = Some(client);
-                    let mut shared = SharedSessionState::new(1);
-                    shared.controller = Some(2); // follower
-                    state.current_mut().shared = Some(shared);
-                }
-                backend.render();
-                let before = backend.state_mut().current_mut().workspaces[0].panes.len();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let (client, rx) = SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(2); // follower
+                state.current_mut().shared = Some(shared);
+            }
+            backend.render();
+            let before = backend.state_mut().current_mut().workspaces[0].panes.len();
 
-                backend
-                    .dispatch(Msg::RunAction(Action::Spawn))
-                    .expect("dispatch spawn");
+            backend
+                .dispatch(Msg::RunAction(Action::Spawn))
+                .expect("dispatch spawn");
 
-                assert_eq!(
-                    backend.state_mut().current_mut().workspaces[0].panes.len(),
-                    before,
-                    "a follower's spawn is a no-op"
-                );
-                let spawns = rx
-                    .try_iter()
-                    .filter(|msg| {
-                        matches!(
-                            msg,
-                            ClientOutbound::Control(ClientMessage::SpawnPane { .. })
-                        )
-                    })
-                    .count();
-                assert_eq!(spawns, 0, "a gated action must not emit a frame");
+            assert_eq!(
+                backend.state_mut().current_mut().workspaces[0].panes.len(),
+                before,
+                "a follower's spawn is a no-op"
+            );
+            let spawns = rx
+                .try_iter()
+                .filter(|msg| {
+                    matches!(
+                        msg,
+                        ClientOutbound::Control(ClientMessage::SpawnPane { .. })
+                    )
+                })
+                .count();
+            assert_eq!(spawns, 0, "a gated action must not emit a frame");
 
-                // Focus is local and still works for a follower.
-                backend.dispatch(Msg::FocusPane(1)).expect("dispatch focus");
-                assert_eq!(backend.state_mut().current_mut().focused_pane, Some(1));
-            })
-            .expect("spawn gate test thread")
-            .join()
-            .expect("gate test thread completes");
+            // Focus is local and still works for a follower.
+            backend.dispatch(Msg::FocusPane(1)).expect("dispatch focus");
+            assert_eq!(backend.state_mut().current_mut().focused_pane, Some(1));
+        });
     }
 
     #[test]
@@ -977,12 +952,9 @@ mod tests {
 
     /// Run `body` on a thread with enough stack for a `TestBackend`-hosted app.
     fn with_backend(body: impl FnOnce(tui_lipan::TestBackend<AppRoot>) + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || body(tui_lipan::TestBackend::new(AppRoot::default())))
-            .expect("spawn toast test thread")
-            .join()
-            .expect("toast test thread completes");
+        crate::test_support::on_large_stack(move || {
+            body(tui_lipan::TestBackend::new(AppRoot::default()))
+        });
     }
 
     /// The slot a content-keyed toast lands in, so a test can look it up the way `notify` does.
@@ -1282,39 +1254,34 @@ mod tests {
         use crate::state::SettingsNumberEditor;
         use tui_lipan::TestBackend;
 
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(AppRoot::default());
-                backend.state_mut().show_settings = true;
-                backend.state_mut().settings_number_editor =
-                    Some(SettingsNumberEditor::padding((1, 1, 1, 1)));
-                let (reply, replies) = std::sync::mpsc::channel();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().settings_number_editor =
+                Some(SettingsNumberEditor::padding((1, 1, 1, 1)));
+            let (reply, replies) = std::sync::mpsc::channel();
 
-                // Control requests call `execute_action` directly, bypassing `Msg::RunAction`.
-                backend
-                    .dispatch(Msg::ControlRequest(ControlEnvelope {
-                        request: ControlRequest {
-                            command: ControlCommand::RunAction {
-                                action: "command-palette".into(),
-                            },
-                            source_pane: None,
-                            source_session: None,
-                            extension: None,
-                            caller_context: None,
-                            credential: None,
+            // Control requests call `execute_action` directly, bypassing `Msg::RunAction`.
+            backend
+                .dispatch(Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::RunAction {
+                            action: "command-palette".into(),
                         },
-                        reply,
-                        worker: None,
-                    }))
-                    .expect("dispatch control action");
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply,
+                    worker: None,
+                }))
+                .expect("dispatch control action");
 
-                assert!(replies.recv().expect("control response").ok);
-                assert!(backend.state().show_palette);
-                assert!(backend.state().settings_number_editor.is_none());
-            })
-            .expect("spawn direct action test thread")
-            .join()
-            .expect("direct action test thread completes");
+            assert!(replies.recv().expect("control response").ok);
+            assert!(backend.state().show_palette);
+            assert!(backend.state().settings_number_editor.is_none());
+        });
     }
 }

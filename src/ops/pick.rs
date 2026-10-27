@@ -481,16 +481,11 @@ mod tests {
     use crate::state::PickRow;
 
     fn with_backend(body: impl FnOnce(&mut TestBackend<crate::AppRoot>) + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(move || {
-                crate::test_support::isolate_user_dirs();
-                let mut backend = TestBackend::new(crate::AppRoot::default());
-                body(&mut backend);
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+        crate::test_support::on_large_stack(move || {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            body(&mut backend);
+        });
     }
 
     #[test]

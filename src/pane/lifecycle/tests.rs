@@ -34,12 +34,7 @@ fn spawn_request(pane_id: PaneId, generation: u64, identity: PaneIdentity) -> Pa
 }
 
 pub(crate) fn in_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("join test thread")
+    crate::test_support::on_large_stack(body)
 }
 
 fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::AppRoot> {
@@ -1007,123 +1002,113 @@ fn pane_env_advertises_the_binary_locally_but_not_remotely() {
 /// later revealed that stale pane, leaving the actually-focused one off screen.
 #[test]
 fn spawning_into_the_scratchpad_parks_the_scrollable_anchor_on_the_new_pane() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::AppRoot;
-            use crate::state::Pane;
-            use tui_lipan::TestBackend;
-            use tui_lipan::prelude::{FloatRect, Rect};
+    crate::test_support::on_large_stack(|| {
+        use crate::AppRoot;
+        use crate::state::Pane;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::{FloatRect, Rect};
 
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
-            {
-                let state = backend.state_mut();
-                let mut pane = Pane::new(1, 100, FloatRect::default());
-                pane.opening = false;
-                state.scratch.panes.push(pane);
-                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
-                state.scratch.focused_pane = Some(1);
-                state.scratch.scrollable_anchor = Some(1);
-                state.scratch_visible = true;
-            }
-            backend.render();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            let mut pane = Pane::new(1, 100, FloatRect::default());
+            pane.opening = false;
+            state.scratch.panes.push(pane);
+            crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
+            state.scratch.focused_pane = Some(1);
+            state.scratch.scrollable_anchor = Some(1);
+            state.scratch_visible = true;
+        }
+        backend.render();
 
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::Spawn))
+            .expect("spawn into the scratchpad");
+
+        let spawned = backend
+            .state()
+            .scratch
+            .focused_pane
+            .expect("the spawn takes focus");
+        assert_ne!(spawned, 1, "a second pane was created");
+        assert_eq!(
+            backend.state().scratch.scrollable_anchor,
+            Some(spawned),
+            "the strip must be parked on the pane that now has focus"
+        );
+        assert!(
             backend
-                .dispatch(crate::Msg::RunAction(crate::input::Action::Spawn))
-                .expect("spawn into the scratchpad");
-
-            let spawned = backend
-                .state()
-                .scratch
-                .focused_pane
-                .expect("the spawn takes focus");
-            assert_ne!(spawned, 1, "a second pane was created");
-            assert_eq!(
-                backend.state().scratch.scrollable_anchor,
-                Some(spawned),
-                "the strip must be parked on the pane that now has focus"
-            );
-            assert!(
-                backend
-                    .state()
-                    .scratch
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == spawned)
-                    .and_then(|pane| pane.opening_animation)
-                    .is_some(),
-                "an additional scratch pane must snapshot its opening recipe"
-            );
-        })
-        .expect("spawn scratch anchor test thread")
-        .join()
-        .expect("scratch anchor test thread panicked");
-}
-
-#[test]
-fn spawning_a_floating_scratch_pane_uses_the_client_canvas() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use crate::AppRoot;
-            use crate::state::Pane;
-            use tui_lipan::TestBackend;
-            use tui_lipan::prelude::{FloatRect, Rect};
-
-            let viewport = Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            };
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            {
-                let state = backend.state_mut();
-                let mut pane = Pane::new(1, 100, FloatRect::default());
-                pane.opening = false;
-                state.scratch.panes.push(pane);
-                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
-                state.scratch.focused_pane = Some(1);
-                state.scratch_visible = true;
-            }
-
-            backend
-                .dispatch(crate::Msg::RunAction(crate::input::Action::SpawnFloat))
-                .expect("spawn floating scratch pane");
-
-            let id = backend
-                .state()
-                .scratch
-                .focused_pane
-                .expect("spawn takes focus");
-            let pane = backend
                 .state()
                 .scratch
                 .panes
                 .iter()
-                .find(|pane| pane.id == id)
-                .expect("spawned scratch pane");
-            let canvas = backend
-                .state()
-                .canvas_bounds_from_terminal_viewport(viewport);
-            let dock = crate::scratchpad::deployed_rect(backend.state(), viewport);
-            assert!(pane.floating);
-            assert!(pane.floating_rect.x >= canvas.x);
-            assert!(pane.floating_rect.y >= canvas.y);
-            assert!(pane.floating_rect.x + pane.floating_rect.w <= canvas.x + canvas.w);
-            assert!(pane.floating_rect.y + pane.floating_rect.h <= canvas.y + canvas.h);
-            assert!(pane.floating_rect.y < dock.y);
-        })
-        .expect("spawn floating scratch test thread")
-        .join()
-        .expect("floating scratch spawn test panicked");
+                .find(|pane| pane.id == spawned)
+                .and_then(|pane| pane.opening_animation)
+                .is_some(),
+            "an additional scratch pane must snapshot its opening recipe"
+        );
+    });
+}
+
+#[test]
+fn spawning_a_floating_scratch_pane_uses_the_client_canvas() {
+    crate::test_support::on_large_stack(|| {
+        use crate::AppRoot;
+        use crate::state::Pane;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::{FloatRect, Rect};
+
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport);
+        {
+            let state = backend.state_mut();
+            let mut pane = Pane::new(1, 100, FloatRect::default());
+            pane.opening = false;
+            state.scratch.panes.push(pane);
+            crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
+            state.scratch.focused_pane = Some(1);
+            state.scratch_visible = true;
+        }
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::SpawnFloat))
+            .expect("spawn floating scratch pane");
+
+        let id = backend
+            .state()
+            .scratch
+            .focused_pane
+            .expect("spawn takes focus");
+        let pane = backend
+            .state()
+            .scratch
+            .panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .expect("spawned scratch pane");
+        let canvas = backend
+            .state()
+            .canvas_bounds_from_terminal_viewport(viewport);
+        let dock = crate::scratchpad::deployed_rect(backend.state(), viewport);
+        assert!(pane.floating);
+        assert!(pane.floating_rect.x >= canvas.x);
+        assert!(pane.floating_rect.y >= canvas.y);
+        assert!(pane.floating_rect.x + pane.floating_rect.w <= canvas.x + canvas.w);
+        assert!(pane.floating_rect.y + pane.floating_rect.h <= canvas.y + canvas.h);
+        assert!(pane.floating_rect.y < dock.y);
+    });
 }
 
 #[test]

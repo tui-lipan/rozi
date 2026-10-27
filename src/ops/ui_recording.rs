@@ -757,15 +757,6 @@ mod tests {
     use crate::input::Action;
     use crate::recording::{RecorderOptions, RecordingEnd, Replay, ReplayStep};
 
-    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     /// A client with motion off, so nothing paints unless a test makes it, whose mount has
     /// delivered the command link a finished recording reports back through.
     fn backend() -> TestBackend<AppRoot> {
@@ -925,7 +916,7 @@ mod tests {
 
     #[test]
     fn a_ui_recording_writes_what_the_ui_painted_indicator_and_meta_included() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("ui.rozirec");
             let mut backend = backend();
@@ -975,7 +966,7 @@ mod tests {
 
     #[test]
     fn a_hidden_indicator_stays_off_the_screen_and_out_of_the_recording() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             let flagged = dir.path().join("flag.rozirec");
@@ -1003,7 +994,7 @@ mod tests {
 
     #[test]
     fn frames_faster_than_max_fps_wait_and_the_latest_is_written_when_the_ceiling_allows() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("ceiling.rozirec");
             let mut backend = backend();
@@ -1050,7 +1041,7 @@ mod tests {
 
     #[test]
     fn a_frame_that_changes_the_meta_is_written_at_once() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("meta.rozirec");
             let mut backend = backend();
@@ -1090,7 +1081,7 @@ mod tests {
 
     #[test]
     fn a_mark_lands_on_the_frame_still_waiting_for_the_ceiling() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("mark.rozirec");
             let mut backend = backend();
@@ -1121,7 +1112,7 @@ mod tests {
 
     #[test]
     fn a_flush_armed_before_a_mark_wrote_its_frame_does_nothing() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("stale.rozirec");
             let mut backend = backend();
@@ -1171,7 +1162,7 @@ mod tests {
 
     #[test]
     fn a_frame_the_writer_refuses_keeps_its_meta_until_it_is_written() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             started(&mut backend, &dir.path().join("first.rozirec"), Some(1));
@@ -1270,7 +1261,7 @@ mod tests {
 
     #[test]
     fn stopping_writes_the_waiting_frame_when_it_was_painted() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("stop.rozirec");
             let mut backend = backend();
@@ -1299,7 +1290,7 @@ mod tests {
 
     #[test]
     fn requests_a_ui_recording_cannot_serve_are_refused() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             for command in [
@@ -1360,7 +1351,7 @@ mod tests {
 
     #[test]
     fn the_deadline_and_leaving_rozi_each_end_a_recording() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             let timed = dir.path().join("timed.rozirec");
@@ -1393,7 +1384,7 @@ mod tests {
 
     #[test]
     fn the_palette_command_names_the_file_and_says_where_it_went() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             backend.state_mut().config.recording.dir = Some(dir.path().to_path_buf());
@@ -1444,7 +1435,7 @@ mod tests {
 
     #[test]
     fn the_mark_prompt_marks_the_ui_recording() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("marked.rozirec");
             let mut backend = backend();
@@ -1476,7 +1467,7 @@ mod tests {
 
     #[test]
     fn follower_recording_uses_overlay_when_controller_hides_fullscreen_titles() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             started(
@@ -1510,7 +1501,7 @@ mod tests {
 
     #[test]
     fn the_indicator_says_rec_blinks_its_dot_and_survives_a_hidden_workbar() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let dir = tempfile::tempdir().unwrap();
             let mut backend = backend();
             assert_eq!(crate::view::ui_recording_label(backend.state()), None);

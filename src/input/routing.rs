@@ -294,60 +294,55 @@ mod tests {
 
     #[test]
     fn workspace_arrival_and_framework_focus_preserve_marks_until_pane_input() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                use crate::Msg;
-                use crate::layout::tiling::append_tiled_window;
-                use crate::state::Pane;
-                use tui_lipan::TestBackend;
+        crate::test_support::on_large_stack(|| {
+            use crate::Msg;
+            use crate::layout::tiling::append_tiled_window;
+            use crate::state::Pane;
+            use tui_lipan::TestBackend;
 
-                for acknowledgement in [
-                    Msg::FocusPane(2),
-                    Msg::PaneKey(2, key(KeyCode::Char('x'), KeyMods::NONE)),
-                ] {
-                    let mut backend = TestBackend::new(AppRoot::default());
-                    let state = backend.state_mut();
-                    state.window_focused = true;
-                    state.config.animations.enabled = false;
-                    let rect = state.current().workspaces[0].panes[0].floating_rect;
-                    let mut pane = Pane::new(2, 100, rect);
-                    pane.opening = false;
-                    pane.terminal_active = true;
-                    pane.activity.has_unseen_output = true;
-                    pane.activity.bell = true;
-                    pane.terminal.finished_unseen = true;
-                    let workspace = &mut state.current_mut().workspaces[1];
-                    workspace.panes.push(pane);
-                    append_tiled_window(workspace, 2);
-                    workspace.focused_pane = Some(2);
+            for acknowledgement in [
+                Msg::FocusPane(2),
+                Msg::PaneKey(2, key(KeyCode::Char('x'), KeyMods::NONE)),
+            ] {
+                let mut backend = TestBackend::new(AppRoot::default());
+                let state = backend.state_mut();
+                state.window_focused = true;
+                state.config.animations.enabled = false;
+                let rect = state.current().workspaces[0].panes[0].floating_rect;
+                let mut pane = Pane::new(2, 100, rect);
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.activity.has_unseen_output = true;
+                pane.activity.bell = true;
+                pane.terminal.finished_unseen = true;
+                let workspace = &mut state.current_mut().workspaces[1];
+                workspace.panes.push(pane);
+                append_tiled_window(workspace, 2);
+                workspace.focused_pane = Some(2);
 
+                backend
+                    .dispatch(Msg::RunAction(Action::SwitchWorkspace(1)))
+                    .expect("switch to marked workspace");
+                assert_eq!(backend.state().focused_pane(), Some(2));
+                // Include the focus-transition hook after the app restores workspace focus.
+                // Repeated synchronization must not count as acknowledgement either.
+                for _ in 0..2 {
                     backend
-                        .dispatch(Msg::RunAction(Action::SwitchWorkspace(1)))
-                        .expect("switch to marked workspace");
-                    assert_eq!(backend.state().focused_pane(), Some(2));
-                    // Include the focus-transition hook after the app restores workspace focus.
-                    // Repeated synchronization must not count as acknowledgement either.
-                    for _ in 0..2 {
-                        backend
-                            .dispatch(Msg::FrameworkFocusEnteredPane(Some(2)))
-                            .expect("framework catches up to selected pane");
-                        let pane = &backend.state().current().workspaces[1].panes[0];
-                        assert!(pane.activity.has_unseen_output);
-                        assert!(pane.activity.bell);
-                        assert!(pane.terminal.finished_unseen);
-                    }
-
-                    backend.dispatch(acknowledgement).expect("act on pane");
+                        .dispatch(Msg::FrameworkFocusEnteredPane(Some(2)))
+                        .expect("framework catches up to selected pane");
                     let pane = &backend.state().current().workspaces[1].panes[0];
-                    assert!(!pane.activity.has_unseen_output);
-                    assert!(!pane.activity.bell);
-                    assert!(!pane.terminal.finished_unseen);
+                    assert!(pane.activity.has_unseen_output);
+                    assert!(pane.activity.bell);
+                    assert!(pane.terminal.finished_unseen);
                 }
-            })
-            .expect("spawn workspace focus test")
-            .join()
-            .expect("workspace focus test completes");
+
+                backend.dispatch(acknowledgement).expect("act on pane");
+                let pane = &backend.state().current().workspaces[1].panes[0];
+                assert!(!pane.activity.has_unseen_output);
+                assert!(!pane.activity.bell);
+                assert!(!pane.terminal.finished_unseen);
+            }
+        });
     }
 
     #[test]

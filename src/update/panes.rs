@@ -789,7 +789,9 @@ mod tests {
     #[test]
     fn the_pulse_chain_stops_once_the_last_recording_ends() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(the_pulse_chain_stops_once_the_last_recording_ends_body);
+        crate::test_support::on_large_stack(
+            the_pulse_chain_stops_once_the_last_recording_ends_body,
+        );
     }
 
     fn the_pulse_chain_stops_once_the_last_recording_ends_body() {
@@ -827,19 +829,10 @@ mod tests {
         assert!(!state.alert_pulse_phase && !state.alert_pulse_calm_phase);
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test completes");
-    }
-
     #[test]
     fn finish_open_keeps_its_snapshot_until_activation() {
         // Renders the whole app, a view tree deeper than the default test stack holds.
-        on_large_stack(finish_open_keeps_its_snapshot_until_activation_body);
+        crate::test_support::on_large_stack(finish_open_keeps_its_snapshot_until_activation_body);
     }
 
     fn finish_open_keeps_its_snapshot_until_activation_body() {

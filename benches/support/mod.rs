@@ -1,14 +1,18 @@
 #![allow(dead_code)]
 
+use rozi::AppRoot;
 use rozi::layout::shared::{
     FracRect, SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace,
 };
+use rozi::layout::tiling::build_dwindle_tree;
 use rozi::layout::tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
 use rozi::session::protocol::{
     ClientInfo, PROTOCOL_VERSION, PaneCommandPhase, PaneCwdSource, PaneMeta, PaneRuntimeState,
     ServerMessage,
 };
-use tui_lipan::prelude::TerminalScreen;
+use rozi::state::{Pane, PaneId};
+use tui_lipan::TestBackend;
+use tui_lipan::prelude::{FloatRect, Rect, TerminalScreen};
 
 const CORPUS_BYTES: usize = 256 * 1024;
 pub const SEARCH_COLS: u16 = 250;
@@ -282,4 +286,53 @@ fn repeat_to_size(pattern: &[u8], size: usize) -> Vec<u8> {
         bytes.extend_from_slice(&pattern[..remaining.min(pattern.len())]);
     }
     bytes
+}
+
+const VIEWPORT: Rect = Rect {
+    x: 0,
+    y: 0,
+    w: 200,
+    h: 60,
+};
+
+/// A backend with `panes` tiled panes, each pre-filled with `corpus` so every pane carries a
+/// realistic styled snapshot rather than an empty screen.
+///
+/// The setup details here are load-bearing and are pinned by `tests/suites/pane/bench_setup_sanity.rs`:
+/// `opening` must be cleared (an opening pane animates in from nothing) and ids must start past
+/// the pane `State::new` seeds (a reused id inherits stale transition entries). Getting either
+/// wrong renders an almost empty frame while the state still looks correct.
+pub fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<AppRoot> {
+    rozi::test_support::isolate_user_dirs();
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(VIEWPORT);
+    {
+        let state = backend.state_mut();
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: f32::from(VIEWPORT.w),
+            h: f32::from(VIEWPORT.h),
+        };
+        let mut ids = Vec::with_capacity(panes);
+        for index in 0..panes {
+            let id = index as PaneId + 10;
+            let mut pane = Pane::new(id, 5_000, rect);
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.terminal.process_server_output(corpus);
+            state.current_mut().workspaces[0].panes.push(pane);
+            ids.push(id);
+        }
+        let start_axis = state.current().workspaces[0].start_axis;
+        let ratios = state.current().workspaces[0].split_ratios.clone();
+        state.current_mut().workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
+        state.current_mut().next_pane_id = panes as PaneId + 10;
+        state.current_mut().focused_pane = Some(10);
+        state.current_mut().workspaces[0].focused_pane = Some(10);
+    }
+    backend.render();
+    backend
 }

@@ -703,166 +703,151 @@ mod tests {
 
     #[test]
     fn floating_scratch_panes_render_against_the_client_canvas() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let pane_id = 1 << 31;
-                let generation = {
-                    let state = backend.state_mut();
-                    state.scratch_visible = true;
-                    let mut pane = crate::state::Pane::new(
-                        pane_id,
-                        100,
-                        FloatRect {
-                            x: 20.0,
-                            y: 4.0,
-                            w: 30.0,
-                            h: 8.0,
-                        },
-                    );
-                    pane.floating = true;
-                    pane.opening = false;
-                    let generation = pane.pty_generation;
-                    state.scratch.panes.push(pane);
-                    state.scratch.focused_pane = Some(pane_id);
-                    generation
-                };
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let pane_id = 1 << 31;
+            let generation = {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                let mut pane = crate::state::Pane::new(
+                    pane_id,
+                    100,
+                    FloatRect {
+                        x: 20.0,
+                        y: 4.0,
+                        w: 30.0,
+                        h: 8.0,
+                    },
+                );
+                pane.floating = true;
+                pane.opening = false;
+                let generation = pane.pty_generation;
+                state.scratch.panes.push(pane);
+                state.scratch.focused_pane = Some(pane_id);
+                generation
+            };
 
-                backend.render();
+            backend.render();
 
-                let dropdown = deployed_rect(backend.state(), VIEWPORT);
-                let canvas = backend
-                    .state()
-                    .canvas_bounds_from_terminal_viewport(VIEWPORT);
-                assert!(
-                    backend
-                        .rect_of_key(&"rozi-scratch-resize-strip".into())
-                        .is_none(),
-                    "a floating-only scratch overlay has no dock edge to resize"
-                );
-                assert!(
-                    backend.rect_of_key(&"rozi-scratch-shield".into()).is_none(),
-                    "a floating-only scratch overlay has no dock surface"
-                );
-                assert!(
-                    backend.rect_of_key(&"rozi-scratch-scrim".into()).is_some(),
-                    "clicking outside a floating scratch pane still dismisses the overlay"
-                );
-                let rendered = backend
-                    .rect_of_key(&view::pane_window_key(pane_id, generation).into())
-                    .expect("floating scratch pane is rendered");
-                let rendered = FloatRect {
-                    x: f32::from(rendered.x),
-                    y: f32::from(rendered.y) - f32::from(backend.state().content_top_offset()),
-                    w: f32::from(rendered.w),
-                    h: f32::from(rendered.h),
-                };
-                assert_rect_inside(rendered, canvas);
-                assert!(
-                    rendered.y + rendered.h < dropdown.y,
-                    "{rendered:?} should float above docked bounds {dropdown:?}"
-                );
-            })
-            .expect("spawn scratch floating render test")
-            .join()
-            .expect("scratch floating render test panicked");
+            let dropdown = deployed_rect(backend.state(), VIEWPORT);
+            let canvas = backend
+                .state()
+                .canvas_bounds_from_terminal_viewport(VIEWPORT);
+            assert!(
+                backend
+                    .rect_of_key(&"rozi-scratch-resize-strip".into())
+                    .is_none(),
+                "a floating-only scratch overlay has no dock edge to resize"
+            );
+            assert!(
+                backend.rect_of_key(&"rozi-scratch-shield".into()).is_none(),
+                "a floating-only scratch overlay has no dock surface"
+            );
+            assert!(
+                backend.rect_of_key(&"rozi-scratch-scrim".into()).is_some(),
+                "clicking outside a floating scratch pane still dismisses the overlay"
+            );
+            let rendered = backend
+                .rect_of_key(&view::pane_window_key(pane_id, generation).into())
+                .expect("floating scratch pane is rendered");
+            let rendered = FloatRect {
+                x: f32::from(rendered.x),
+                y: f32::from(rendered.y) - f32::from(backend.state().content_top_offset()),
+                w: f32::from(rendered.w),
+                h: f32::from(rendered.h),
+            };
+            assert_rect_inside(rendered, canvas);
+            assert!(
+                rendered.y + rendered.h < dropdown.y,
+                "{rendered:?} should float above docked bounds {dropdown:?}"
+            );
+        });
     }
 
     #[test]
     fn fullscreen_scratch_pane_renders_across_the_client_viewport() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let pane_id = 1 << 31;
-                let generation = {
-                    let state = backend.state_mut();
-                    state.scratch_visible = true;
-                    state.scratch_height = Some(0.4);
-                    let mut pane = crate::state::Pane::new(pane_id, 100, FloatRect::default());
-                    pane.fullscreen = true;
-                    pane.opening = false;
-                    let generation = pane.pty_generation;
-                    state.scratch.panes.push(pane);
-                    crate::layout::tiling::append_tiled_window(&mut state.scratch, pane_id);
-                    state.scratch.focused_pane = Some(pane_id);
-                    generation
-                };
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let pane_id = 1 << 31;
+            let generation = {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                state.scratch_height = Some(0.4);
+                let mut pane = crate::state::Pane::new(pane_id, 100, FloatRect::default());
+                pane.fullscreen = true;
+                pane.opening = false;
+                let generation = pane.pty_generation;
+                state.scratch.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, pane_id);
+                state.scratch.focused_pane = Some(pane_id);
+                generation
+            };
 
-                backend.render();
+            backend.render();
 
-                let expected = crate::layout::geometry::viewport_bounds(
-                    backend.state().content_viewport(VIEWPORT),
-                );
-                let rendered = backend
-                    .rect_of_key(&view::pane_window_key(pane_id, generation).into())
-                    .expect("fullscreen scratch pane is rendered");
-                let rendered = FloatRect {
-                    x: f32::from(rendered.x),
-                    y: f32::from(rendered.y),
-                    w: f32::from(rendered.w),
-                    h: f32::from(rendered.h),
-                };
-                assert!((rendered.x - expected.x).abs() <= 1.0);
-                assert!((rendered.y - expected.y).abs() <= 1.0);
-                assert!((rendered.w - expected.w).abs() <= 1.0);
-                assert!((rendered.h - expected.h).abs() <= 1.0);
-                assert!(rendered.h > deployed_rect(backend.state(), VIEWPORT).h);
-            })
-            .expect("spawn scratch fullscreen render test")
-            .join()
-            .expect("scratch fullscreen render test panicked");
+            let expected = crate::layout::geometry::viewport_bounds(
+                backend.state().content_viewport(VIEWPORT),
+            );
+            let rendered = backend
+                .rect_of_key(&view::pane_window_key(pane_id, generation).into())
+                .expect("fullscreen scratch pane is rendered");
+            let rendered = FloatRect {
+                x: f32::from(rendered.x),
+                y: f32::from(rendered.y),
+                w: f32::from(rendered.w),
+                h: f32::from(rendered.h),
+            };
+            assert!((rendered.x - expected.x).abs() <= 1.0);
+            assert!((rendered.y - expected.y).abs() <= 1.0);
+            assert!((rendered.w - expected.w).abs() <= 1.0);
+            assert!((rendered.h - expected.h).abs() <= 1.0);
+            assert!(rendered.h > deployed_rect(backend.state(), VIEWPORT).h);
+        });
     }
 
     #[test]
     fn hiding_and_showing_preserves_docked_and_floating_geometry() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let floating_rect = FloatRect {
-                    x: 24.0,
-                    y: 5.0,
-                    w: 34.0,
-                    h: 10.0,
-                };
-                {
-                    let state = backend.state_mut();
-                    state.scratch_visible = true;
-                    state.scratch_height = Some(0.55);
-                    let mut pane = crate::state::Pane::new(1 << 31, 100, floating_rect);
-                    pane.floating = true;
-                    pane.opening = false;
-                    state.scratch.panes.push(pane);
-                    state.scratch.focused_pane = Some(1 << 31);
-                }
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let floating_rect = FloatRect {
+                x: 24.0,
+                y: 5.0,
+                w: 34.0,
+                h: 10.0,
+            };
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                state.scratch_height = Some(0.55);
+                let mut pane = crate::state::Pane::new(1 << 31, 100, floating_rect);
+                pane.floating = true;
+                pane.opening = false;
+                state.scratch.panes.push(pane);
+                state.scratch.focused_pane = Some(1 << 31);
+            }
 
-                backend
-                    .dispatch(crate::Msg::RunAction(
-                        crate::input::Action::ToggleScratchpad,
-                    ))
-                    .expect("hide scratchpad");
-                assert!(!backend.state().scratch_visible);
-                backend
-                    .dispatch(crate::Msg::RunAction(
-                        crate::input::Action::ToggleScratchpad,
-                    ))
-                    .expect("show scratchpad");
+            backend
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::ToggleScratchpad,
+                ))
+                .expect("hide scratchpad");
+            assert!(!backend.state().scratch_visible);
+            backend
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::ToggleScratchpad,
+                ))
+                .expect("show scratchpad");
 
-                assert!(backend.state().scratch_visible);
-                assert_eq!(backend.state().scratch_height, Some(0.55));
-                assert_eq!(
-                    backend.state().scratch.panes[0].floating_rect,
-                    floating_rect
-                );
-            })
-            .expect("spawn scratch hide/show test")
-            .join()
-            .expect("scratch hide/show test panicked");
+            assert!(backend.state().scratch_visible);
+            assert_eq!(backend.state().scratch_height, Some(0.55));
+            assert_eq!(
+                backend.state().scratch.panes[0].floating_rect,
+                floating_rect
+            );
+        });
     }
 
     /// Every layout computation reads its box from `layout_bounds`, so this is what makes the
@@ -894,39 +879,34 @@ mod tests {
     /// (a split drag) reset the policy.
     #[test]
     fn dragging_the_top_edge_snaps_instead_of_easing() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                {
-                    let state = backend.state_mut();
-                    state
-                        .scratch
-                        .panes
-                        .push(crate::state::Pane::new(1, 100, FloatRect::default()));
-                    crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
-                    state.scratch.focused_pane = Some(1);
-                    state.scratch_visible = true;
-                    state.animation = GeometryAnimation::TileFloat;
-                }
-                backend.render();
-                let start = scratch_height_fraction(backend.state());
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            {
+                let state = backend.state_mut();
+                state
+                    .scratch
+                    .panes
+                    .push(crate::state::Pane::new(1, 100, FloatRect::default()));
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1);
+                state.scratch.focused_pane = Some(1);
+                state.scratch_visible = true;
+                state.animation = GeometryAnimation::TileFloat;
+            }
+            backend.render();
+            let start = scratch_height_fraction(backend.state());
 
-                backend
-                    .dispatch(crate::Msg::BeginScratchResize(24))
-                    .expect("begin scratch resize");
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
+            backend
+                .dispatch(crate::Msg::BeginScratchResize(24))
+                .expect("begin scratch resize");
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
 
-                backend
-                    .dispatch(crate::Msg::ScratchResize(24, 20))
-                    .expect("drag scratch edge");
-                assert_eq!(backend.state().animation, GeometryAnimation::None);
-                assert!(scratch_height_fraction(backend.state()) > start);
-            })
-            .expect("spawn scratch resize test thread")
-            .join()
-            .expect("scratch resize test thread panicked");
+            backend
+                .dispatch(crate::Msg::ScratchResize(24, 20))
+                .expect("drag scratch edge");
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!(scratch_height_fraction(backend.state()) > start);
+        });
     }
 
     /// A left|right split puts both panes on the dropdown's top border; a stacked one puts only
@@ -961,153 +941,142 @@ mod tests {
     /// off the bottom rather than a shrink in place.
     #[test]
     fn a_closing_scratch_pane_shrinks_where_it_sits() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let generation = {
-                    let state = backend.state_mut();
-                    for id in 1..=2 {
-                        let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
-                        pane.opening = false;
-                        pane.opening_animation = None;
-                        state.scratch.panes.push(pane);
-                        crate::layout::tiling::append_tiled_window(&mut state.scratch, id);
-                    }
-                    state.scratch.focused_pane = Some(2);
-                    state.scratch_visible = true;
-                    state.scratch.panes[1].pty_generation
-                };
-                backend.render();
-                // The slide transition reads ~0.0 on the frame the toggle lands on, so the layer
-                // must not be gated on it having moved yet.
-                assert!(
-                    backend
-                        .rect_of_key(&view::pane_window_key(2, generation).into())
-                        .is_some(),
-                    "the scratch layer must mount on the frame the toggle lands on"
-                );
-                // Let the dropdown finish deploying before measuring the close.
-                backend.advance(std::time::Duration::from_millis(400));
-
-                let dropdown = deployed_rect(backend.state(), VIEWPORT);
-                let live = backend
-                    .rect_of_key(&"rozi-scratch-pane-clip-2".into())
-                    .or_else(|| backend.rect_of_key(&view::pane_window_key(2, generation).into()))
-                    .expect("pane 2 is on screen");
-
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let generation = {
+                let state = backend.state_mut();
+                for id in 1..=2 {
+                    let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    pane.opening_animation = None;
+                    state.scratch.panes.push(pane);
+                    crate::layout::tiling::append_tiled_window(&mut state.scratch, id);
+                }
+                state.scratch.focused_pane = Some(2);
+                state.scratch_visible = true;
+                state.scratch.panes[1].pty_generation
+            };
+            backend.render();
+            // The slide transition reads ~0.0 on the frame the toggle lands on, so the layer
+            // must not be gated on it having moved yet.
+            assert!(
                 backend
-                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
-                    .expect("close the focused scratch pane");
-                backend.advance(std::time::Duration::from_millis(400));
+                    .rect_of_key(&view::pane_window_key(2, generation).into())
+                    .is_some(),
+                "the scratch layer must mount on the frame the toggle lands on"
+            );
+            // Let the dropdown finish deploying before measuring the close.
+            backend.advance(std::time::Duration::from_millis(400));
 
-                let closing = backend
-                    .rect_of_key(&"rozi-scratch-pane-clip-2".into())
-                    .expect("a closing pane stays mounted for its exit animation");
-                // Inside the dropdown, and shrunk toward where it was - not translated away.
-                let top = dropdown.y + f32::from(backend.state().content_top_offset());
-                let bottom = f32::from(closing.y) + f32::from(closing.h);
-                assert!(
-                    f32::from(closing.y) >= top - 1.0 && bottom <= top + dropdown.h + 1.0,
-                    "closing {closing:?} left the dropdown at y {top}..{}",
-                    top + dropdown.h
-                );
-                assert!(
-                    closing.w < live.w && closing.h <= live.h,
-                    "closing {closing:?} should be shrinking from {live:?}"
-                );
-            })
-            .expect("spawn closing pane test thread")
-            .join()
-            .expect("closing pane test thread panicked");
+            let dropdown = deployed_rect(backend.state(), VIEWPORT);
+            let live = backend
+                .rect_of_key(&"rozi-scratch-pane-clip-2".into())
+                .or_else(|| backend.rect_of_key(&view::pane_window_key(2, generation).into()))
+                .expect("pane 2 is on screen");
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close the focused scratch pane");
+            backend.advance(std::time::Duration::from_millis(400));
+
+            let closing = backend
+                .rect_of_key(&"rozi-scratch-pane-clip-2".into())
+                .expect("a closing pane stays mounted for its exit animation");
+            // Inside the dropdown, and shrunk toward where it was - not translated away.
+            let top = dropdown.y + f32::from(backend.state().content_top_offset());
+            let bottom = f32::from(closing.y) + f32::from(closing.h);
+            assert!(
+                f32::from(closing.y) >= top - 1.0 && bottom <= top + dropdown.h + 1.0,
+                "closing {closing:?} left the dropdown at y {top}..{}",
+                top + dropdown.h
+            );
+            assert!(
+                closing.w < live.w && closing.h <= live.h,
+                "closing {closing:?} should be shrinking from {live:?}"
+            );
+        });
     }
 
     /// The last scratch pane is retained for the dropdown retract. Off must stay hidden at its
     /// full rect for that whole window, instead of snapping to the Scale close inset.
     #[test]
     fn an_off_last_scratch_pane_stays_full_size_and_hidden_while_retained() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                crate::test_support::isolate_user_dirs();
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let generation = {
-                    let state = backend.state_mut();
-                    state.config.animations.pane_open_style =
-                        crate::layout::anim::PaneAnimationStyle::Off;
-                    state.config.animations.pane_close_style =
-                        crate::layout::anim::PaneAnimationStyle::Off;
-                    state.config.animations.geometry_duration =
-                        std::time::Duration::from_millis(220);
-                    state.config.pane.show_titles = false;
-                    let mut pane = crate::state::Pane::new(1 << 31, 100, FloatRect::default());
-                    pane.opening = false;
-                    pane.opening_animation = None;
-                    pane.terminal_active = true;
-                    let _ = pane
-                        .terminal
-                        .process_server_output(b"OFF-SCRATCH-HIDDEN\r\n");
-                    state.scratch.panes.push(pane);
-                    crate::layout::tiling::append_tiled_window(&mut state.scratch, 1 << 31);
-                    state.scratch.focused_pane = Some(1 << 31);
-                    state.scratch_visible = true;
-                    state.scratch.panes[0].pty_generation
-                };
-                backend.render();
-                backend.advance(std::time::Duration::from_millis(400));
-                let live = backend
-                    .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
-                    .expect("deployed scratch pane");
-                assert!(
-                    marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
-                    "the settled Off pane should be readable before close"
-                );
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let generation = {
+                let state = backend.state_mut();
+                state.config.animations.pane_open_style =
+                    crate::layout::anim::PaneAnimationStyle::Off;
+                state.config.animations.pane_close_style =
+                    crate::layout::anim::PaneAnimationStyle::Off;
+                state.config.animations.geometry_duration = std::time::Duration::from_millis(220);
+                state.config.pane.show_titles = false;
+                let mut pane = crate::state::Pane::new(1 << 31, 100, FloatRect::default());
+                pane.opening = false;
+                pane.opening_animation = None;
+                pane.terminal_active = true;
+                let _ = pane
+                    .terminal
+                    .process_server_output(b"OFF-SCRATCH-HIDDEN\r\n");
+                state.scratch.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(&mut state.scratch, 1 << 31);
+                state.scratch.focused_pane = Some(1 << 31);
+                state.scratch_visible = true;
+                state.scratch.panes[0].pty_generation
+            };
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(400));
+            let live = backend
+                .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
+                .expect("deployed scratch pane");
+            assert!(
+                marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                "the settled Off pane should be readable before close"
+            );
 
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close the last scratch pane");
+            backend.render();
+
+            let pane = backend
+                .state()
+                .scratch
+                .panes
+                .iter()
+                .find(|pane| pane.id == 1 << 31)
+                .expect("the last scratch pane stays retained for the dropdown retract");
+            assert!(pane.closing);
+            let closing = backend
+                .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
+                .expect("retained Off pane is still described");
+            assert!(
+                closing.w + 1 >= live.w && closing.h + 1 >= live.h,
+                "Off close snapped to the inset: closing {closing:?} from {live:?}"
+            );
+            assert!(
+                !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                "a retained Off pane stayed visible on the close frame"
+            );
+
+            backend.advance(std::time::Duration::from_millis(40));
+            assert!(
                 backend
-                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
-                    .expect("close the last scratch pane");
-                backend.render();
-
-                let pane = backend
                     .state()
                     .scratch
                     .panes
                     .iter()
-                    .find(|pane| pane.id == 1 << 31)
-                    .expect("the last scratch pane stays retained for the dropdown retract");
-                assert!(pane.closing);
-                let closing = backend
-                    .rect_of_key(&view::pane_window_key(1 << 31, generation).into())
-                    .expect("retained Off pane is still described");
-                assert!(
-                    closing.w + 1 >= live.w && closing.h + 1 >= live.h,
-                    "Off close snapped to the inset: closing {closing:?} from {live:?}"
-                );
-                assert!(
-                    !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
-                    "a retained Off pane stayed visible on the close frame"
-                );
-
-                backend.advance(std::time::Duration::from_millis(40));
-                assert!(
-                    backend
-                        .state()
-                        .scratch
-                        .panes
-                        .iter()
-                        .any(|pane| pane.id == 1 << 31 && pane.closing),
-                    "scratch retention should outlast a zero-delay prune"
-                );
-                assert!(
-                    !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
-                    "a retained Off pane became visible during the dropdown retract"
-                );
-            })
-            .expect("spawn off scratch close test thread")
-            .join()
-            .expect("off scratch close test thread panicked");
+                    .any(|pane| pane.id == 1 << 31 && pane.closing),
+                "scratch retention should outlast a zero-delay prune"
+            );
+            assert!(
+                !marker_visible(&backend, "OFF-SCRATCH-HIDDEN"),
+                "a retained Off pane became visible during the dropdown retract"
+            );
+        });
     }
 
     fn marker_visible(backend: &tui_lipan::TestBackend<AppRoot>, marker: &str) -> bool {
@@ -1131,49 +1100,44 @@ mod tests {
 
     #[test]
     fn a_floating_only_scratch_pane_stays_mounted_for_its_close_animation() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                let pane_id = 1 << 31;
-                {
-                    let state = backend.state_mut();
-                    state.scratch_visible = true;
-                    let mut pane = crate::state::Pane::new(
-                        pane_id,
-                        100,
-                        FloatRect {
-                            x: 20.0,
-                            y: 6.0,
-                            w: 32.0,
-                            h: 10.0,
-                        },
-                    );
-                    pane.floating = true;
-                    pane.opening = false;
-                    pane.opening_animation = None;
-                    state.scratch.panes.push(pane);
-                    state.scratch.focused_pane = Some(pane_id);
-                }
-                backend.render();
-
-                backend
-                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
-                    .expect("close floating scratch pane");
-                backend.advance(std::time::Duration::from_millis(10));
-
-                assert!(!backend.state().scratch_visible);
-                assert!(
-                    backend
-                        .rect_of_key(&format!("rozi-scratch-pane-clip-{pane_id}").into())
-                        .is_some(),
-                    "the floating pane must remain mounted while its close animation runs"
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            let pane_id = 1 << 31;
+            {
+                let state = backend.state_mut();
+                state.scratch_visible = true;
+                let mut pane = crate::state::Pane::new(
+                    pane_id,
+                    100,
+                    FloatRect {
+                        x: 20.0,
+                        y: 6.0,
+                        w: 32.0,
+                        h: 10.0,
+                    },
                 );
-            })
-            .expect("spawn floating scratch close test")
-            .join()
-            .expect("floating scratch close test panicked");
+                pane.floating = true;
+                pane.opening = false;
+                pane.opening_animation = None;
+                state.scratch.panes.push(pane);
+                state.scratch.focused_pane = Some(pane_id);
+            }
+            backend.render();
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close floating scratch pane");
+            backend.advance(std::time::Duration::from_millis(10));
+
+            assert!(!backend.state().scratch_visible);
+            assert!(
+                backend
+                    .rect_of_key(&format!("rozi-scratch-pane-clip-{pane_id}").into())
+                    .is_some(),
+                "the floating pane must remain mounted while its close animation runs"
+            );
+        });
     }
 
     /// Closing a pane hands the keyboard to its nearest neighbour, exactly as in a workspace.
@@ -1181,48 +1145,43 @@ mod tests {
     /// pane no matter which one had just closed.
     #[test]
     fn closing_a_scratch_pane_focuses_the_nearest_neighbour() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                backend.set_viewport(VIEWPORT);
-                {
-                    let state = backend.state_mut();
-                    for id in 1..=3 {
-                        let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
-                        pane.opening = false;
-                        state.scratch.panes.push(pane);
-                    }
-                    // 1 | (2 over 3): closing 3 must land on 2, its own split partner, not on 1.
-                    state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
-                        axis: crate::state::SplitAxis::Horizontal,
-                        ratio: 0.5,
-                        first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
-                        second: Box::new(crate::layout::tiling::DwindleTree::Split {
-                            axis: crate::state::SplitAxis::Vertical,
-                            ratio: 0.5,
-                            first: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
-                            second: Box::new(crate::layout::tiling::DwindleTree::Leaf(3)),
-                        }),
-                    });
-                    state.scratch.focused_pane = Some(3);
-                    state.scratch_visible = true;
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            backend.set_viewport(VIEWPORT);
+            {
+                let state = backend.state_mut();
+                for id in 1..=3 {
+                    let mut pane = crate::state::Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    state.scratch.panes.push(pane);
                 }
-                backend.render();
+                // 1 | (2 over 3): closing 3 must land on 2, its own split partner, not on 1.
+                state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
+                    axis: crate::state::SplitAxis::Horizontal,
+                    ratio: 0.5,
+                    first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
+                    second: Box::new(crate::layout::tiling::DwindleTree::Split {
+                        axis: crate::state::SplitAxis::Vertical,
+                        ratio: 0.5,
+                        first: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
+                        second: Box::new(crate::layout::tiling::DwindleTree::Leaf(3)),
+                    }),
+                });
+                state.scratch.focused_pane = Some(3);
+                state.scratch_visible = true;
+            }
+            backend.render();
 
-                backend
-                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
-                    .expect("close the focused scratch pane");
-                assert_eq!(backend.state().scratch.focused_pane, Some(2));
-                assert_eq!(
-                    backend.state().current().focused_pane,
-                    Some(1),
-                    "the hidden workspace keeps its own focus"
-                );
-            })
-            .expect("spawn close focus test thread")
-            .join()
-            .expect("close focus test thread panicked");
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close the focused scratch pane");
+            assert_eq!(backend.state().scratch.focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().focused_pane,
+                Some(1),
+                "the hidden workspace keeps its own focus"
+            );
+        });
     }
 
     fn state_with_test_runtime() -> (
@@ -1316,39 +1275,34 @@ mod tests {
 
     #[test]
     fn reopening_after_repeated_session_changes_never_spawns_a_duplicate() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
-                let (mut scratch, receiver) = state_with_test_runtime();
-                scratch.scratch_visible = true;
-                backend.state_mut().scratch = scratch.scratch;
-                backend.state_mut().scratch_runtime = scratch.scratch_runtime.take();
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let (mut scratch, receiver) = state_with_test_runtime();
+            scratch.scratch_visible = true;
+            backend.state_mut().scratch = scratch.scratch;
+            backend.state_mut().scratch_runtime = scratch.scratch_runtime.take();
 
-                for epoch in 1..=4 {
-                    hide_state_for_session_switch(backend.state_mut());
-                    backend.state_mut().runtime_epoch = epoch;
-                    backend
-                        .dispatch(crate::Msg::RunAction(
-                            crate::input::Action::ToggleScratchpad,
-                        ))
-                        .expect("reopen scratchpad");
-                    assert_eq!(backend.state().scratch.panes.len(), 1);
-                }
-                while let Ok(message) = receiver.try_recv() {
-                    assert!(
-                        !matches!(
-                            message,
-                            crate::session::client::ClientOutbound::Control(
-                                crate::session::protocol::ClientMessage::SpawnPane { .. }
-                            )
-                        ),
-                        "reopening an existing scratchpad must not spawn another PTY"
-                    );
-                }
-            })
-            .expect("spawn scratch dedup test thread")
-            .join()
-            .expect("scratch dedup test thread panicked");
+            for epoch in 1..=4 {
+                hide_state_for_session_switch(backend.state_mut());
+                backend.state_mut().runtime_epoch = epoch;
+                backend
+                    .dispatch(crate::Msg::RunAction(
+                        crate::input::Action::ToggleScratchpad,
+                    ))
+                    .expect("reopen scratchpad");
+                assert_eq!(backend.state().scratch.panes.len(), 1);
+            }
+            while let Ok(message) = receiver.try_recv() {
+                assert!(
+                    !matches!(
+                        message,
+                        crate::session::client::ClientOutbound::Control(
+                            crate::session::protocol::ClientMessage::SpawnPane { .. }
+                        )
+                    ),
+                    "reopening an existing scratchpad must not spawn another PTY"
+                );
+            }
+        });
     }
 }

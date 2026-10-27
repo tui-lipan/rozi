@@ -228,12 +228,7 @@ mod tests {
 
     #[test]
     fn clicks_and_shift_hints_pass_literal_values_and_source_directory() {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(check_opening_routes)
-            .unwrap()
-            .join()
-            .unwrap();
+        crate::test_support::on_large_stack(check_opening_routes);
     }
 
     fn check_opening_routes() {

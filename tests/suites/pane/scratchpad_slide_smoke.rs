@@ -60,15 +60,6 @@ fn backend() -> TestBackend<AppRoot> {
     backend
 }
 
-fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn scratchpad-slide smoke test")
-        .join()
-        .expect("scratchpad-slide smoke test completes");
-}
-
 fn set_visible(backend: &mut TestBackend<AppRoot>, visible: bool) {
     backend.state_mut().scratch_visible = visible;
     backend.state_mut().animation = GeometryAnimation::TileFloat;
@@ -101,7 +92,7 @@ fn pane_rect(backend: &TestBackend<AppRoot>) -> Rect {
 
 #[test]
 fn the_dropdown_slides_without_resizing_its_terminal() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         assert_eq!(dropdown_rows(&mut backend), None, "hidden to start with");
         set_visible(&mut backend, true);
@@ -146,7 +137,7 @@ fn the_dropdown_slides_without_resizing_its_terminal() {
 /// The slide must stop painting at the tile area, before either the workbar or its gap.
 #[test]
 fn a_sliding_dropdown_cannot_paint_over_a_bottom_workbar() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         for gap in [false, true] {
             let mut backend = backend();
             {
@@ -185,7 +176,7 @@ fn a_sliding_dropdown_cannot_paint_over_a_bottom_workbar() {
 
 #[test]
 fn a_terminal_resize_snaps_the_dropdown_instead_of_animating_it() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         set_visible(&mut backend, true);
         backend.advance(Duration::from_millis(4_000));
@@ -223,7 +214,7 @@ fn a_terminal_resize_snaps_the_dropdown_instead_of_animating_it() {
 /// full geometry transition - and the dropdown hangs a line short of home and crawls the rest.
 #[test]
 fn the_last_row_lands_with_the_rest_of_the_deploy() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         // Real durations: the bug is a disagreement between two clocks, so the deploy has to be
         // sampled against the geometry transition it would otherwise leak into. The height matters
@@ -262,7 +253,7 @@ fn the_last_row_lands_with_the_rest_of_the_deploy() {
 
 #[test]
 fn scratchpad_border_style_is_independent_of_floating() {
-    on_large_stack(|| {
+    rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         {
             let pane = &mut backend.state_mut().config.pane;

@@ -17,7 +17,7 @@ fn row(text: &str) -> SidebarCommandRow {
 /// poll already running was launched against the old one.
 #[test]
 fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         {
@@ -83,7 +83,7 @@ fn a_command_tab_repolls_when_the_focused_pane_changes_directory() {
 /// the remote pane's path, which names a directory on another machine.
 #[test]
 fn a_command_tab_never_carries_a_directory_into_a_remote_session() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let focused = backend.state().current().workspaces[0].panes[0].id;
         backend.state_mut().current_mut().focused_pane = Some(focused);
@@ -121,7 +121,7 @@ fn a_command_tab_never_carries_a_directory_into_a_remote_session() {
 /// poll lands.
 #[test]
 fn a_hidden_command_tab_never_shows_output_from_a_directory_it_has_left() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         let tab = SidebarTab::Command {
@@ -215,7 +215,7 @@ fn show_files_tab(backend: &mut TestBackend<AppRoot>) {
 
 #[test]
 fn visible_tree_refresh_ticks_git_and_rejects_stale_chains() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         show_files_tab(&mut backend);
         backend.state_mut().sidebar.tree_refresh_armed_epoch = Some(7);
@@ -243,7 +243,7 @@ fn visible_tree_refresh_ticks_git_and_rejects_stale_chains() {
 
 #[test]
 fn tree_refresh_loop_arms_once_and_disarms_when_hidden() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         show_files_tab(&mut backend);
 
@@ -298,15 +298,6 @@ fn open_sessions_tab_unswept(backend: &mut TestBackend<AppRoot>, epoch: u64) {
     state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
     state.sidebar.sessions_epoch = epoch;
     state.command_link = None;
-}
-
-fn on_test_thread(test: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(test)
-        .expect("spawn sidebar test")
-        .join()
-        .expect("sidebar test completes");
 }
 
 /// Pretend an attach is already in flight so PTY-creating sidebar actions queue into
@@ -391,7 +382,7 @@ fn tree_roots_track_the_focused_pane_and_settle_when_unchanged() {
     let repo = repo.to_string_lossy().into_owned();
     let outside = dir.path().to_string_lossy().into_owned();
 
-    on_test_thread(move || {
+    crate::test_support::on_large_stack(move || {
         let mut backend = settled_backend();
         let pane = backend.state().current().workspaces[0].panes[0].id;
         {
@@ -447,7 +438,7 @@ fn tree_roots_track_the_focused_pane_and_settle_when_unchanged() {
 
 #[test]
 fn stale_remote_tree_results_cannot_repopulate_a_replaced_root() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let epoch = backend.state().runtime_epoch;
         backend
@@ -486,7 +477,7 @@ fn stale_remote_tree_results_cannot_repopulate_a_replaced_root() {
 
 #[test]
 fn transient_remote_refresh_errors_keep_the_last_successful_data() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let epoch = backend.state().runtime_epoch;
         backend
@@ -556,7 +547,7 @@ fn transient_remote_refresh_errors_keep_the_last_successful_data() {
 /// finished changing the working tree — without waiting for the periodic fallback.
 #[test]
 fn finishing_a_command_refreshes_git_status_once() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let pane = backend.state().current().workspaces[0].panes[0].id;
         {
@@ -596,7 +587,7 @@ fn finishing_a_command_refreshes_git_status_once() {
 /// dropped activation returns `Update::none()`, so `dispatch` reports no redraw.
 #[test]
 fn tree_activation_runs_for_files_and_skips_directories_and_stale_clicks() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Tree {
             view: crate::config::SidebarTreeView::Files,
@@ -628,7 +619,7 @@ fn tree_activation_runs_for_files_and_skips_directories_and_stale_clicks() {
 #[test]
 fn ctrl_tree_activation_inserts_literal_paths_and_never_runs_the_click_command() {
     use crate::session::client::{ClientOutbound, SessionClient};
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let (client, outbound) = SessionClient::test_channel();
         let mut config =
@@ -695,7 +686,7 @@ fn ctrl_tree_activation_inserts_literal_paths_and_never_runs_the_click_command()
 /// `; rm -rf ~`, and the spawned command string must not be able to carry it.
 #[test]
 fn tree_run_actions_pass_the_path_as_env_never_in_the_command() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let mut config =
             crate::config::SidebarTreeConfig::for_view(crate::config::SidebarTreeView::Changes);
@@ -771,43 +762,38 @@ fn path_substitution_is_literal_and_send_only() {
 
 #[test]
 fn sidebar_focus_switches_workspace_and_clears_activity() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = settled_backend();
-            let mut pane = Pane::new(
-                2,
-                100,
-                FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 40.0,
-                    h: 20.0,
-                },
-            );
-            pane.activity.has_unseen_output = true;
-            backend.state_mut().current_mut().workspaces[1]
-                .panes
-                .push(pane);
-            backend
-                .dispatch(crate::Msg::SidebarFocusPane(2))
-                .expect("focus sidebar pane");
-            assert_eq!(backend.state().current().active_workspace, 1);
-            assert_eq!(backend.state().current().focused_pane, Some(2));
-            assert!(
-                !backend.state().current().workspaces[1].panes[0]
-                    .activity
-                    .has_unseen_output
-            );
-        })
-        .expect("spawn sidebar focus test")
-        .join()
-        .expect("sidebar focus test completes");
+    crate::test_support::on_large_stack(|| {
+        let mut backend = settled_backend();
+        let mut pane = Pane::new(
+            2,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 40.0,
+                h: 20.0,
+            },
+        );
+        pane.activity.has_unseen_output = true;
+        backend.state_mut().current_mut().workspaces[1]
+            .panes
+            .push(pane);
+        backend
+            .dispatch(crate::Msg::SidebarFocusPane(2))
+            .expect("focus sidebar pane");
+        assert_eq!(backend.state().current().active_workspace, 1);
+        assert_eq!(backend.state().current().focused_pane, Some(2));
+        assert!(
+            !backend.state().current().workspaces[1].panes[0]
+                .activity
+                .has_unseen_output
+        );
+    });
 }
 
 #[test]
 fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -857,7 +843,7 @@ fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
 
 #[test]
 fn current_session_results_apply() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         open_sessions_tab_unswept(&mut backend, 7);
         backend
@@ -875,7 +861,7 @@ fn current_session_results_apply() {
 /// flight; disconnecting takes two activations of that same row.
 #[test]
 fn host_connect_and_two_click_disconnect() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
         {
@@ -967,7 +953,7 @@ fn host_connect_and_two_click_disconnect() {
 /// rather than read as "Reached" with the disconnect ✕.
 #[test]
 fn cached_rows_do_not_mark_an_idle_host_reached() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
         {
@@ -1012,7 +998,7 @@ fn cached_rows_do_not_mark_an_idle_host_reached() {
 /// confirmation can never be committed by a gesture that meant something else.
 #[test]
 fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1083,7 +1069,7 @@ fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
 /// "+ New session" creates on that host.
 #[test]
 fn new_pane_row_spawns_on_the_named_workspace() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1143,7 +1129,7 @@ fn hold_split_drag(backend: &mut TestBackend<AppRoot>) {
 /// revision.
 #[test]
 fn a_sidebar_spawn_ends_a_split_drag_first() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1170,7 +1156,7 @@ fn a_sidebar_spawn_ends_a_split_drag_first() {
 /// Likewise a user's close from the sidebar ends the gesture before the pane goes.
 #[test]
 fn a_sidebar_close_ends_a_split_drag_first() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1210,7 +1196,7 @@ fn a_sidebar_close_ends_a_split_drag_first() {
 /// get wrong.
 #[test]
 fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1264,7 +1250,7 @@ fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
 /// A stale leave from the previous row must not clear the row the pointer entered afterward.
 #[test]
 fn row_hover_ignores_a_stale_leave_from_the_previous_row() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         backend
             .dispatch(crate::Msg::SidebarRowHover {
@@ -1314,7 +1300,7 @@ fn row_hover_ignores_a_stale_leave_from_the_previous_row() {
 /// instead of freezing on "No local sessions" until it is reopened.
 #[test]
 fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         // `settled_backend` wires the command link, which the re-arm sends through.
         let mut backend = settled_backend();
         {
@@ -1349,7 +1335,7 @@ fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
 /// so a hop command never ran and left a pending attach nothing would complete.
 #[test]
 fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
         {
@@ -1424,7 +1410,7 @@ fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
 /// fresh ephemeral. The killed one is gone; other choices stay available via the picker.
 #[test]
 fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         {
             let state = backend.state_mut();
@@ -1492,7 +1478,7 @@ fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
 /// only `Idle`, the disconnected state, is left alone.
 #[test]
 fn a_connected_host_is_still_swept_after_a_probe_fails() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
         {
@@ -1563,7 +1549,7 @@ fn probe_targets_for_test(
 /// seeded from config by the handler, so the registry entry exists to receive the outcome.
 #[test]
 fn host_probe_errors_are_recorded_then_cleared() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let target = crate::session::remote::RemoteTarget::Alias("prod".to_string());
         {
@@ -1734,7 +1720,7 @@ fn activate_launcher(
 /// command exits, so a build that fails in milliseconds leaves its errors on screen.
 #[test]
 fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let spawn = activate_launcher(
             UserCommandAction::run("cargo build"),
             Some("/home/x/work/rozi"),
@@ -1755,7 +1741,7 @@ fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
 /// identity and the wire request, so a popup running a fast command flashed and vanished.
 #[test]
 fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let spawn = activate_launcher(UserCommandAction::popup("date"), Some("/home/x/notes"));
         assert_eq!(spawn.pane_id, crate::state::POPUP_PANE_ID);
         assert_eq!(spawn.cwd.as_deref(), Some("/home/x/notes"));
@@ -1780,7 +1766,7 @@ fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
 /// runs an action from another section.
 #[test]
 fn grouped_launcher_rows_stay_inert_at_headers_and_keep_entry_indices_aligned() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let backend = settled_backend();
         let id = SidebarTabId::new("agents");
         let entry = |label: &str, group: Option<&str>| crate::config::SidebarLauncherEntry {
@@ -1843,7 +1829,7 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
     );
     assert!(rows.iter().all(|row| !row.error));
 
-    on_test_thread(move || {
+    crate::test_support::on_large_stack(move || {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         let tab = SidebarTab::Command {
@@ -1880,7 +1866,7 @@ fn group_prefix_lines_become_inert_headers_with_the_marker_stripped() {
 
 #[test]
 fn launcher_click_revalidates_config_epoch_tab_and_index() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("launch");
         backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
@@ -1926,7 +1912,7 @@ fn launcher_click_revalidates_config_epoch_tab_and_index() {
 
 #[test]
 fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Command {
@@ -1980,7 +1966,7 @@ fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
 
 #[test]
 fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         {
@@ -2017,7 +2003,7 @@ fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
 
 #[test]
 fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = settled_backend();
         let id = SidebarTabId::new("rows");
         {
@@ -2065,7 +2051,7 @@ fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
 
 #[test]
 fn sessions_and_command_panels_refresh_together() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         // The command panel starts through the command link, so it has to be wired first.
         let mut backend = settled_backend();
         let command_id = SidebarTabId::new("rows");
@@ -2163,7 +2149,7 @@ fn send_sidebar_key(backend: &mut TestBackend<AppRoot>, code: KeyCode, mods: Key
 /// SIDEBAR mode because the tree's placeholder was not a focus target.
 #[test]
 fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let files = SidebarTab::Tree {
             view: crate::config::SidebarTreeView::Files,
             config: crate::config::SidebarTreeConfig::for_view(
@@ -2193,7 +2179,7 @@ fn cycling_tabs_in_an_empty_workspace_keeps_the_sidebar_focused() {
 /// `shift` set; Alt directions use the same spatial arrangement as the arrows.
 #[test]
 fn modified_vim_keys_mirror_the_modified_arrows() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let _config = crate::test_support::lock_config_file();
         let mut backend = focused_sidebar_backend(vec![SidebarTab::activity(), SidebarTab::Panes]);
         assert_eq!(
@@ -2272,7 +2258,7 @@ fn modified_vim_keys_mirror_the_modified_arrows() {
 /// `G` is Shift+g, and the shifted-key branch must not swallow it before it reaches the cursor.
 #[test]
 fn shift_g_still_jumps_to_the_last_row() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Panes]);
         let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
         for id in [2, 3] {
@@ -2296,7 +2282,7 @@ fn shift_g_still_jumps_to_the_last_row() {
 
 #[test]
 fn a_mounted_remote_tree_delivers_its_outstanding_request_after_a_layout_change() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::{ClientMessage, WireDirEntry};
         let mut backend = settled_backend();
@@ -2474,7 +2460,7 @@ fn remote_tree_showing(
 /// loading until the user moves to another pane.
 #[test]
 fn a_remote_tree_refetches_through_the_client_that_reconnects() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let (mut backend, _) = remote_tree_showing("loaded.rs");
 
         // The link drops and the reconnect starts under a new epoch, with no client yet. The
@@ -2503,7 +2489,7 @@ fn a_remote_tree_refetches_through_the_client_that_reconnects() {
 /// tree once it reconnects.
 #[test]
 fn a_remote_session_switched_to_offline_never_shows_the_previous_sessions_tree() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let (mut backend, _) = remote_tree_showing("loaded-from-a.rs");
 
         // What switching to a parked session whose link dropped leaves behind: a new epoch and
@@ -2536,7 +2522,7 @@ fn a_remote_session_switched_to_offline_never_shows_the_previous_sessions_tree()
 
 #[test]
 fn remote_directory_requests_reject_old_sessions_but_survive_configuration_changes() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::ClientMessage;
         let mut backend = settled_backend();
@@ -2597,7 +2583,7 @@ fn monitored_agent(
 /// top, wherever it runs, and Enter lands on an agent in the session on screen.
 #[test]
 fn the_agents_tab_lists_what_needs_attention_across_hosts_and_focuses_a_local_agent() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Agents]);
         let pane = {
             let state = backend.state_mut();
@@ -2695,7 +2681,7 @@ fn project(
 /// Repeated session rows preserve focus within a checkout, while other checkouts remain reachable.
 #[test]
 fn project_session_activation_preserves_focus_within_the_current_checkout() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
         {
             let state = backend.state_mut();
@@ -2737,7 +2723,7 @@ fn project_session_activation_preserves_focus_within_the_current_checkout() {
 
 #[test]
 fn projects_keep_long_session_names_and_work_counts_visible() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
@@ -2767,7 +2753,7 @@ fn projects_keep_long_session_names_and_work_counts_visible() {
 
 #[test]
 fn project_guides_gain_hover_contrast_and_restore_their_color_on_leave() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
@@ -2819,7 +2805,7 @@ fn project_guides_gain_hover_contrast_and_restore_their_color_on_leave() {
 /// Label activation must resolve expansion in the clicked panel, independently of keyboard focus.
 #[test]
 fn project_label_clicks_toggle_the_clicked_panel_when_another_panel_is_active() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects, SidebarTab::Sessions]);
         {
             let state = backend.state_mut();
@@ -2908,7 +2894,7 @@ fn project_label_clicks_toggle_the_clicked_panel_when_another_panel_is_active() 
 /// closes it: Left on a session steps out to its checkout, Left again collapses it, Right reopens.
 #[test]
 fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
         {
             let state = backend.state_mut();
@@ -2930,7 +2916,6 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
             .iter()
             .map(|line| line.chars().take(31).collect::<String>())
             .collect();
-        eprintln!("{}", sidebar.join("\n"));
         let at = |needle: &str| {
             sidebar
                 .iter()
@@ -3112,7 +3097,7 @@ fn stream_snapshot(json: &str) -> crate::state::SidebarSnapshot {
 /// withdraws nothing.
 #[test]
 fn stream_tabs_merge_producers_and_route_events_to_the_owner() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let id = SidebarTabId::new("deploys");
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Stream {
             name: id.clone(),
@@ -3219,7 +3204,7 @@ fn stream_tabs_merge_producers_and_route_events_to_the_owner() {
 /// A local process cannot publish into an extension's tab, or into a tab that is not a stream.
 #[test]
 fn stream_admission_refuses_other_owners_and_other_kinds() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Panes]);
         let (_, refused) = open_stream(&mut backend, 1, "git-tools.branches", None);
         assert!(refused.is_err(), "an extension's tab");
@@ -3278,7 +3263,7 @@ fn json_command_output_becomes_rows_or_says_why_not() {
 /// Activating a JSON tab's row runs its `on_click` with the row's id and label.
 #[test]
 fn a_json_tab_row_runs_on_click_with_its_id() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let id = SidebarTabId::new("deps");
         let tab = SidebarTab::Command {
             name: id.clone(),
@@ -3341,7 +3326,7 @@ fn a_json_tab_row_runs_on_click_with_its_id() {
 /// press; its `close` action is the row's ✕, confirmed the same way.
 #[test]
 fn stream_actions_confirm_on_the_row_before_they_fire() {
-    on_test_thread(|| {
+    crate::test_support::on_large_stack(|| {
         let id = SidebarTabId::new("deploys");
         let mut backend = focused_sidebar_backend(vec![SidebarTab::Stream {
             name: id.clone(),

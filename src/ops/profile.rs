@@ -645,15 +645,6 @@ mod tests {
         ))
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
-    }
-
     #[test]
     fn profile_names_are_trimmed_and_reject_paths() {
         assert_eq!(normalize_profile_name("  dev  ").as_deref(), Some("dev"));
@@ -669,7 +660,7 @@ mod tests {
     /// other mode, must leave the startup mode alone.
     #[test]
     fn unstarring_the_default_profile_resets_a_profile_startup_mode() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let open_on_default = |backend: &mut TestBackend<AppRoot>, startup| {
@@ -726,7 +717,7 @@ mod tests {
     /// ephemeral; a named session keeps the name the user chose.
     #[test]
     fn capturing_an_ephemeral_session_does_not_rename_it() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (client, rx) = crate::session::client::SessionClient::test_channel();
             let mut backend = TestBackend::new(AppRoot::default());
             {
@@ -775,7 +766,7 @@ mod tests {
 
     #[test]
     fn capture_prompt_is_a_plain_capture_from_ephemeral_and_named_sessions() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().config.animations.picker =
                 crate::layout::anim::PickerAnimationStyle::Off;
@@ -805,7 +796,7 @@ mod tests {
     /// It previously returned a bare update, leaving a confirmation armed indefinitely.
     #[test]
     fn replace_arms_on_the_shared_confirm_clock_and_expires_with_it() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             let path = temp_profile_path();
@@ -853,7 +844,7 @@ mod tests {
 
     #[test]
     fn save_prompt_prefills_named_session_but_not_ephemeral_session() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().current_mut().session_name = Some("dev".to_string());
@@ -908,7 +899,7 @@ mod tests {
 
     #[test]
     fn picker_query_and_selection_dispatch_reset_transient_state() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![
                 entry("one", PathBuf::from("one.toml")),
@@ -937,7 +928,7 @@ mod tests {
 
     #[test]
     fn selecting_profile_dispatches_named_profile_seed_attach() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
 
@@ -980,7 +971,7 @@ mod tests {
     /// than a fresh profile seed starting a second attachment under the same name.
     #[test]
     fn selecting_a_profile_whose_session_is_held_offline_reconnects_it() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
 
@@ -1029,7 +1020,7 @@ mod tests {
     /// without reading the profile, so one that no longer parses cannot stand in the way.
     #[test]
     fn selecting_a_profile_with_a_saved_session_restores_it_without_reading_the_profile() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             const NAME: &str = "restore-over-broken-profile";
             let path = temp_profile_path();
             std::fs::write(&path, "this is [not toml").expect("write broken profile");
@@ -1074,7 +1065,7 @@ mod tests {
     /// profile's session, so it must not mark the profile as running; a local one does.
     #[test]
     fn only_a_local_session_on_screen_stands_for_a_profile() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_name = Some("dev".into());
             backend.state_mut().current_mut().remote_target = Some(
@@ -1113,7 +1104,7 @@ mod tests {
 
     #[test]
     fn open_as_queues_entered_session_with_selected_profile_seed() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1156,7 +1147,7 @@ mod tests {
 
     #[test]
     fn open_as_without_name_queues_ephemeral_profile_seed() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1196,7 +1187,7 @@ mod tests {
 
     #[test]
     fn replacing_session_emits_profile_applied_not_profile_loaded() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1236,7 +1227,7 @@ mod tests {
 
     #[test]
     fn replace_from_the_launcher_is_inert() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let mut backend = TestBackend::new(AppRoot::default());
@@ -1268,7 +1259,7 @@ mod tests {
 
     #[test]
     fn apply_profile_command_does_not_open_from_the_launcher() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::ApplyProfile))
@@ -1280,7 +1271,7 @@ mod tests {
 
     #[test]
     fn selecting_the_attached_profile_is_inert() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &Profile::default()).expect("write profile");
             let mut backend = TestBackend::new(AppRoot::default());

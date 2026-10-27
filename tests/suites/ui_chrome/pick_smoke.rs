@@ -87,18 +87,9 @@ fn type_query(backend: &mut TestBackend<AppRoot>, query: &str) {
     }
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("test thread panicked");
-}
-
 #[test]
 fn pick_overlay_renders_groups_descriptions_and_disabled_reason() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let (mut backend, _rx) = pick_backend(100, 30);
         let frame = rendered_lines(&mut backend);
 
@@ -128,7 +119,7 @@ fn pick_overlay_renders_groups_descriptions_and_disabled_reason() {
 
 #[test]
 fn pick_overlay_filters_rows() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let (mut backend, _rx) = pick_backend(100, 30);
         type_query(&mut backend, "feat");
         let frame = rendered_lines(&mut backend);
@@ -143,7 +134,7 @@ fn pick_overlay_filters_rows() {
 
 #[test]
 fn typing_a_miss_on_a_populated_picker_shows_no_matches() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let (mut backend, _rx) = pick_backend(100, 30);
         type_query(&mut backend, "zzzzz-not-a-branch");
         let frame = rendered_lines(&mut backend);
@@ -160,7 +151,7 @@ fn typing_a_miss_on_a_populated_picker_shows_no_matches() {
 
 #[test]
 fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -212,7 +203,7 @@ fn an_empty_collection_shows_producer_copy_and_a_filter_miss_says_no_matches() {
 
 #[test]
 fn a_masked_prompt_hides_its_seed_value() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -269,7 +260,7 @@ fn a_masked_prompt_hides_its_seed_value() {
 /// script name. The label is what the user is choosing between, so it must survive whole.
 #[test]
 fn a_long_description_never_costs_a_row_its_label() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         rozi::test_support::isolate_user_dirs();
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -331,7 +322,7 @@ fn a_long_description_never_costs_a_row_its_label() {
 /// keystroke ran a window command instead of filtering.
 #[test]
 fn a_picker_takes_the_keyboard_from_app_chords() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let (mut backend, _rx) = pick_backend(100, 30);
         backend.render();
         assert!(
@@ -427,7 +418,7 @@ fn press(backend: &mut TestBackend<AppRoot>, code: KeyCode) {
 /// its own rows, and the filter typed on one page is waiting there on the way back.
 #[test]
 fn a_tabbed_picker_switches_pages_and_keeps_each_filter() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let (mut backend, rx) = tabbed_pick_backend(100, 30);
         let frame = rendered_lines(&mut backend);
         assert!(frame.contains("Branches"), "strip rendered:\n{frame}");

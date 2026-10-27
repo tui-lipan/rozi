@@ -1279,12 +1279,7 @@ mod tests {
 
     fn run_drain_test(test: impl FnOnce() + Send + 'static) {
         // Full-app test setup and update dispatch can exceed the harness's default 2 MiB stack.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn drain test")
-            .join()
-            .expect("drain test panicked");
+        crate::test_support::on_large_stack(test);
     }
 
     #[test]

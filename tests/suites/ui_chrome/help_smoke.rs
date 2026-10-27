@@ -61,12 +61,7 @@ fn modal_rows(frame: &str) -> usize {
 fn the_keybindings_modal_is_sized_by_its_list_and_scrolls_once_capped() {
     // The full keybinding list is a deep element tree; the default test stack overflows building
     // it, the same way the extensions manager's does.
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn help smoke thread")
-        .join()
-        .expect("help smoke completes");
+    rozi::test_support::on_large_stack(body);
 }
 
 fn body() {
@@ -160,12 +155,7 @@ fn body() {
 
 #[test]
 fn keybindings_footer_keeps_wrapped_hints_visible() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(wrapped_hints_body)
-        .expect("spawn wrapped hints smoke thread")
-        .join()
-        .expect("wrapped hints smoke completes");
+    rozi::test_support::on_large_stack(wrapped_hints_body);
 }
 
 fn wrapped_hints_body() {

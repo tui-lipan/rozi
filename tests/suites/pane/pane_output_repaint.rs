@@ -74,18 +74,9 @@ fn output_to(bytes: &str, local: bool) -> rozi::Msg {
     }
 }
 
-fn on_large_stack(body: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn test thread")
-        .join()
-        .expect("test completes");
-}
-
 #[test]
 fn output_to_a_visible_pane_asks_for_a_repaint() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = backend();
         // The first chunk carries the pane out of `Starting`, which the titlebar renders - so that
         // one is a rebuild. Every chunk after it is pure screen movement.
@@ -115,7 +106,7 @@ fn output_to_a_visible_pane_asks_for_a_repaint() {
 
 #[test]
 fn osc_title_changes_repaint_all_live_title_modes() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         for mode in [
             PaneTitlebarMode::Bar,
             PaneTitlebarMode::Inset,
@@ -186,7 +177,7 @@ fn osc_title_changes_repaint_all_live_title_modes() {
 
 #[test]
 fn osc_title_changes_still_rebuild_border_titles() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = backend();
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Border;
         backend.update_level(output("ready\r\n")).expect("settle");
@@ -210,7 +201,7 @@ fn osc_title_changes_still_rebuild_border_titles() {
 
 #[test]
 fn output_to_an_unrendered_pane_asks_for_no_frame_at_all() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         let mut backend = backend();
         let _ = backend.update_level(output("ready\r\n")).expect("settle");
         backend.render();
@@ -228,7 +219,7 @@ fn output_to_an_unrendered_pane_asks_for_no_frame_at_all() {
 
 #[test]
 fn mouse_pointer_requests_follow_unfocused_panes_without_rebuilding_the_view() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use tui_lipan::PointerShape;
         let mut backend = backend();
         backend.state_mut().config.pane.focus_on_hover = false;
@@ -249,7 +240,7 @@ fn mouse_pointer_requests_follow_unfocused_panes_without_rebuilding_the_view() {
 
 #[test]
 fn tiled_split_boundaries_request_resize_pointers() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use tui_lipan::PointerShape;
         let mut backend = backend();
         backend.state_mut().config.animations.enabled = false;
@@ -267,7 +258,7 @@ fn tiled_split_boundaries_request_resize_pointers() {
 
 #[test]
 fn pane_chrome_does_not_keep_the_childs_hand_pointer() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use tui_lipan::PointerShape;
         let mut backend = backend();
         backend.state_mut().config.animations.enabled = false;
@@ -292,7 +283,7 @@ fn pane_chrome_does_not_keep_the_childs_hand_pointer() {
 
 #[test]
 fn pane_resize_pointers_distinguish_all_four_corners() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::state::{LayoutTarget, ResizeCorner, ResizeSession};
         use tui_lipan::PointerShape;
         let mut backend = backend();
@@ -327,7 +318,7 @@ fn pane_resize_pointers_distinguish_all_four_corners() {
 
 #[test]
 fn moving_pane_requests_grabbing_and_restores_text_after_release() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::state::MoveSession;
         use tui_lipan::PointerShape;
         let mut backend = backend();
@@ -357,7 +348,7 @@ fn moving_pane_requests_grabbing_and_restores_text_after_release() {
 
 #[test]
 fn modifier_drag_pointers_are_active_before_button_release() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use tui_lipan::PointerShape;
         use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
         for (button, shape) in [
@@ -418,7 +409,7 @@ fn modifier_drag_pointers_are_active_before_button_release() {
 
 #[test]
 fn mouse_pointer_modes_filter_pane_requests_and_chrome_at_runtime() {
-    on_large_stack(|| {
+    rozi::test_support::on_large_stack(|| {
         use rozi::config::MousePointer;
         use tui_lipan::PointerShape;
         let mut backend = backend();

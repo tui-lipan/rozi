@@ -135,22 +135,155 @@ fn golden_layout_commit_json_shape() {
     );
 }
 
-#[test]
-fn protocol_frame_round_trips() {
-    let msg = ClientMessage::Attach {
-        capabilities: None,
-        session: "dev".into(),
-        protocol_version: PROTOCOL_VERSION,
-        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-        label: "alice".into(),
-        read_only: false,
-        shares_filesystem: true,
-        expected_server_nonce: None,
-    };
+fn assert_frame_round_trip<T>(message: &T)
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
+{
     let mut buf = Vec::new();
-    write_frame(&mut buf, &msg).unwrap();
-    let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
-    assert_eq!(decoded, msg);
+    write_frame(&mut buf, message).unwrap();
+    let decoded: T = read_frame(&mut &buf[..]).unwrap();
+    assert_eq!(&decoded, message);
+}
+
+#[test]
+fn framed_messages_round_trip() {
+    let rect = crate::layout::shared::FracRect {
+        x: 0.125,
+        y: 0.25,
+        w: 0.5,
+        h: 0.375,
+    };
+    let clients = [
+        ClientMessage::DragUpdate { pane_id: 3, rect },
+        ClientMessage::DragEnd,
+        ClientMessage::ListDirectory {
+            path: "/srv/project".into(),
+            show_hidden: true,
+        },
+        ClientMessage::Worktree {
+            request_id: 47,
+            request: WorktreeRequest::Remove {
+                cwd: "C:\\code\\repo".into(),
+                path: "C:\\code\\repo-worktrees\\feature".into(),
+                force: false,
+                unlock_stale: true,
+                delete_branch: crate::git::worktrees::BranchDeletion {
+                    local: true,
+                    remote: true,
+                },
+            },
+        },
+        ClientMessage::ReportPaneRows {
+            pane_id: 3,
+            local: false,
+            generation: 2,
+            publisher: "opencode".into(),
+            kind: PublisherKind::Agent,
+            rows: vec![
+                PublishedRow {
+                    publisher: "sessions".into(),
+                    kind: PublisherKind::Agent,
+                    live_session: None,
+                    reported: false,
+                    id: "ses_abc".into(),
+                    title: "audit the widget layer".into(),
+                    status: "working".into(),
+                    reason: None,
+                    active: true,
+                    work_started_at: Some(120),
+                    cwd: None,
+                    project: None,
+                    native_session: None,
+                },
+                PublishedRow {
+                    publisher: "sessions".into(),
+                    kind: PublisherKind::Agent,
+                    live_session: None,
+                    reported: false,
+                    id: "ses_def".into(),
+                    title: "fix the flaky test".into(),
+                    status: "blocked".into(),
+                    reason: Some("permission required".into()),
+                    active: false,
+                    work_started_at: None,
+                    cwd: None,
+                    project: None,
+                    native_session: None,
+                },
+            ],
+        },
+        ClientMessage::RequestRuntimeMetrics,
+    ];
+    for message in clients {
+        assert_frame_round_trip(&message);
+    }
+
+    let servers = [
+        ServerMessage::DragChanged {
+            author: 7,
+            drag: Some(crate::state::RemoteDrag { pane_id: 3, rect }),
+        },
+        ServerMessage::DragChanged {
+            author: 7,
+            drag: None,
+        },
+        ServerMessage::DirectoryListing {
+            path: "/srv/project".into(),
+            entries: vec![
+                WireDirEntry {
+                    name: "src".into(),
+                    is_dir: true,
+                    is_symlink: false,
+                    symlink_target: None,
+                    ignored: false,
+                    git_staged: None,
+                    git_unstaged: Some(WireChangeState::Modified),
+                },
+                // A link rides its target along: the client cannot read it from the other host.
+                WireDirEntry {
+                    name: "guide-link.md".into(),
+                    is_dir: false,
+                    is_symlink: true,
+                    symlink_target: Some("AGENTS.md".into()),
+                    ignored: false,
+                    git_staged: None,
+                    git_unstaged: None,
+                },
+            ],
+            error: None,
+        },
+        ServerMessage::ChangeListing {
+            root: "/srv/project".into(),
+            changes: vec![WireChange {
+                path: "src/lib.rs".into(),
+                state: WireChangeState::Modified,
+                staged: false,
+            }],
+            error: None,
+        },
+        ServerMessage::WorktreeResult {
+            request_id: 47,
+            result: WorktreeResult::Removed {
+                path: "C:\\code\\repo-worktrees\\feature".into(),
+                branches: vec![crate::git::worktrees::BranchOutcome::Kept {
+                    branch: "feature".into(),
+                    copy: crate::git::worktrees::BranchCopy::Remote {
+                        remote: Some("origin".into()),
+                    },
+                    reason: "not merged".into(),
+                }],
+            },
+        },
+        ServerMessage::RuntimeMetrics {
+            metrics: Box::new(ServerRuntimeMetrics {
+                sampled_at_unix_ms: 42,
+                ..ServerRuntimeMetrics::default()
+            }),
+        },
+    ];
+    for message in servers {
+        assert_frame_round_trip(&message);
+    }
 }
 
 #[test]
@@ -175,153 +308,6 @@ fn pane_meta_from_older_peer_defaults_original_user() {
     let decoded: PaneMeta = serde_json::from_value(value).unwrap();
     assert_eq!(decoded.original_user, None);
 }
-
-#[test]
-fn session_origin_shape_round_trips() {
-    let msg = ClientMessage::SetSessionOrigin {
-        origin: crate::session::origin::SessionOrigin {
-            profile: Some("work".into()),
-            ..Default::default()
-        },
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &msg).unwrap();
-    let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
-    assert_eq!(decoded, msg);
-}
-
-#[test]
-fn worktree_rpc_keeps_request_id_and_remote_path_opaque() {
-    let request = ClientMessage::Worktree {
-        request_id: 47,
-        request: WorktreeRequest::Remove {
-            cwd: "C:\\code\\repo".into(),
-            path: "C:\\code\\repo-worktrees\\feature".into(),
-            force: false,
-            unlock_stale: true,
-            delete_branch: crate::git::worktrees::BranchDeletion {
-                local: true,
-                remote: true,
-            },
-        },
-    };
-    let mut bytes = Vec::new();
-    write_frame(&mut bytes, &request).unwrap();
-    let decoded: ClientMessage = read_frame(&mut &bytes[..]).unwrap();
-    assert_eq!(decoded, request);
-
-    let response = ServerMessage::WorktreeResult {
-        request_id: 47,
-        result: WorktreeResult::Removed {
-            path: "C:\\code\\repo-worktrees\\feature".into(),
-            branches: vec![crate::git::worktrees::BranchOutcome::Kept {
-                branch: "feature".into(),
-                copy: crate::git::worktrees::BranchCopy::Remote {
-                    remote: Some("origin".into()),
-                },
-                reason: "not merged".into(),
-            }],
-        },
-    };
-    bytes.clear();
-    write_frame(&mut bytes, &response).unwrap();
-    let decoded: ServerMessage = read_frame(&mut &bytes[..]).unwrap();
-    assert_eq!(decoded, response);
-}
-
-#[test]
-fn drag_messages_round_trip() {
-    let rect = crate::layout::shared::FracRect {
-        x: 0.125,
-        y: 0.25,
-        w: 0.5,
-        h: 0.375,
-    };
-    for message in [
-        ClientMessage::DragUpdate { pane_id: 3, rect },
-        ClientMessage::DragEnd,
-    ] {
-        let mut buf = Vec::new();
-        write_frame(&mut buf, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(),
-            message
-        );
-    }
-
-    for drag in [Some(crate::state::RemoteDrag { pane_id: 3, rect }), None] {
-        let message = ServerMessage::DragChanged { author: 7, drag };
-        let mut buf = Vec::new();
-        write_frame(&mut buf, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
-            message
-        );
-    }
-}
-
-#[test]
-fn file_tree_messages_round_trip() {
-    let request = ClientMessage::ListDirectory {
-        path: "/srv/project".into(),
-        show_hidden: true,
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &request).unwrap();
-    assert_eq!(
-        read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(),
-        request
-    );
-
-    let listing = ServerMessage::DirectoryListing {
-        path: "/srv/project".into(),
-        entries: vec![
-            WireDirEntry {
-                name: "src".into(),
-                is_dir: true,
-                is_symlink: false,
-                symlink_target: None,
-                ignored: false,
-                git_staged: None,
-                git_unstaged: Some(WireChangeState::Modified),
-            },
-            // A link rides its target along: the client cannot read it from the other host.
-            WireDirEntry {
-                name: "guide-link.md".into(),
-                is_dir: false,
-                is_symlink: true,
-                symlink_target: Some("AGENTS.md".into()),
-                ignored: false,
-                git_staged: None,
-                git_unstaged: None,
-            },
-        ],
-        error: None,
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &listing).unwrap();
-    assert_eq!(
-        read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
-        listing
-    );
-
-    let changes = ServerMessage::ChangeListing {
-        root: "/srv/project".into(),
-        changes: vec![WireChange {
-            path: "src/lib.rs".into(),
-            state: WireChangeState::Modified,
-            staged: false,
-        }],
-        error: None,
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &changes).unwrap();
-    assert_eq!(
-        read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
-        changes
-    );
-}
-
 #[test]
 fn a_session_server_that_would_drop_a_pane_size_is_refused_before_it_spawns() {
     const {
@@ -379,27 +365,6 @@ fn only_the_exact_version_negotiates() {
         negotiate_protocol(PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1, 1, 1).is_err(),
         "an older-only peer is rejected"
     );
-
-    let request = ClientMessage::RequestRuntimeMetrics;
-    let mut bytes = Vec::new();
-    write_frame(&mut bytes, &request).unwrap();
-    assert_eq!(
-        read_frame::<_, ClientMessage>(&mut &bytes[..]).unwrap(),
-        request
-    );
-
-    let sample = ServerMessage::RuntimeMetrics {
-        metrics: Box::new(ServerRuntimeMetrics {
-            sampled_at_unix_ms: 42,
-            ..ServerRuntimeMetrics::default()
-        }),
-    };
-    let mut bytes = Vec::new();
-    write_frame(&mut bytes, &sample).unwrap();
-    assert_eq!(
-        read_frame::<_, ServerMessage>(&mut &bytes[..]).unwrap(),
-        sample
-    );
 }
 
 #[test]
@@ -426,53 +391,6 @@ fn pane_status_message_round_trips() {
         })
     );
 }
-
-#[test]
-fn pane_rows_message_round_trips() {
-    let msg = ClientMessage::ReportPaneRows {
-        pane_id: 3,
-        local: false,
-        generation: 2,
-        publisher: "opencode".into(),
-        kind: crate::session::protocol::PublisherKind::Agent,
-        rows: vec![
-            PublishedRow {
-                publisher: "sessions".into(),
-                kind: crate::session::protocol::PublisherKind::Agent,
-                live_session: None,
-                reported: false,
-                id: "ses_abc".into(),
-                title: "audit the widget layer".into(),
-                status: "working".into(),
-                reason: None,
-                active: true,
-                work_started_at: Some(120),
-                cwd: None,
-                project: None,
-                native_session: None,
-            },
-            PublishedRow {
-                publisher: "sessions".into(),
-                kind: crate::session::protocol::PublisherKind::Agent,
-                live_session: None,
-                reported: false,
-                id: "ses_def".into(),
-                title: "fix the flaky test".into(),
-                status: "blocked".into(),
-                reason: Some("permission required".into()),
-                active: false,
-                work_started_at: None,
-                cwd: None,
-                project: None,
-                native_session: None,
-            },
-        ],
-    };
-    let mut buf = Vec::new();
-    write_frame(&mut buf, &msg).unwrap();
-    assert_eq!(read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(), msg);
-}
-
 /// The overwhelming majority of panes publish nothing, and must not pay for the field.
 #[test]
 fn a_pane_without_rows_does_not_serialize_the_key() {
@@ -685,21 +603,33 @@ fn golden_request_control_and_pong_json_shape() {
 }
 
 #[test]
-fn grant_control_and_input_lock_round_trip() {
-    for message in [
+fn client_messages_round_trip() {
+    let messages = [
+        ClientMessage::Attach {
+            capabilities: None,
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+            label: "alice".into(),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        },
+        ClientMessage::SetSessionOrigin {
+            origin: crate::session::origin::SessionOrigin {
+                profile: Some("work".into()),
+                ..Default::default()
+            },
+        },
         ClientMessage::GrantControl { to: 7 },
         ClientMessage::DeclineControl { to: 7 },
         ClientMessage::EvictClient { target: 7 },
         ClientMessage::RequestControl,
         ClientMessage::SetControlTakeover { allowed: true },
         ClientMessage::SetInputLock { locked: true },
-    ] {
-        let mut bytes = Vec::new();
-        write_frame(&mut bytes, &message).unwrap();
-        assert_eq!(
-            read_frame::<_, ClientMessage>(&mut &bytes[..]).unwrap(),
-            message
-        );
+    ];
+    for message in messages {
+        assert_frame_round_trip(&message);
     }
 }
 

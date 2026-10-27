@@ -2612,12 +2612,7 @@ mod reconciler_tests {
     /// Run in a generous stack: mounting the full app in `TestBackend` overflows the default test
     /// stack, matching the pattern used by the snapshot tests in `main.rs`.
     fn in_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn test thread")
-            .join()
-            .expect("join test thread")
+        crate::test_support::on_large_stack(body)
     }
 
     fn attach_follower(backend: &mut TestBackend<AppRoot>, client: SessionClient) {

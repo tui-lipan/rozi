@@ -67,55 +67,50 @@ fn launcher_backend() -> TestBackend<AppRoot> {
 #[test]
 fn a_sessionless_client_renders_the_launcher_panel() {
     let _env = env_lock();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = launcher_backend();
-            assert!(backend.state().is_launcher());
-            backend.render();
-            let lines = backend.capture_frame().to_fixed_grid_lines();
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = launcher_backend();
+        assert!(backend.state().is_launcher());
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
 
-            assert!(
-                lines.iter().any(|line| line.contains("No session")),
-                "the launcher must name its own state, got {lines:#?}"
-            );
-            // The hint reflows, so each way out is checked on its own rather than as one line.
-            assert!(
-                lines.iter().any(|line| line.contains("pick a session")),
-                "the launcher must say how to reach the picker, got {lines:#?}"
-            );
-            assert!(
-                lines.iter().any(|line| line.contains("shell")),
-                "the launcher must say how to start a session, got {lines:#?}"
-            );
-            assert!(
-                lines
-                    .iter()
-                    .any(|line| line.contains("Ctrl+A q / Ctrl+A d") && line.contains("leave")),
-                "the launcher must say how to leave, got {lines:#?}"
-            );
-            // The launcher claims a bare Enter (`input::routing::launcher_start_key`); advertising
-            // only the spawn binding here is what made the state look like a dead end.
-            assert!(
-                lines
-                    .iter()
-                    .any(|line| line.contains("Enter / Ctrl+A Enter") && line.contains("shell")),
-                "the launcher must offer the bare Enter it accepts, got {lines:#?}"
-            );
-            // Prefix and held-modifier spellings resolve to the same table entry
-            // (`config::schema::scheme_shortcuts`), so listing both would be one binding said twice.
-            assert!(
-                !lines.iter().any(|line| line.contains("Alt+Enter")),
-                "the modifier spelling is the same binding as the prefix one, got {lines:#?}"
-            );
-            assert!(
-                !lines.iter().any(|line| line.contains("Empty workspace")),
-                "the empty-workspace hint is about panes, not sessions"
-            );
-        })
-        .expect("spawn launcher smoke thread")
-        .join()
-        .expect("launcher smoke completes");
+        assert!(
+            lines.iter().any(|line| line.contains("No session")),
+            "the launcher must name its own state, got {lines:#?}"
+        );
+        // The hint reflows, so each way out is checked on its own rather than as one line.
+        assert!(
+            lines.iter().any(|line| line.contains("pick a session")),
+            "the launcher must say how to reach the picker, got {lines:#?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("shell")),
+            "the launcher must say how to start a session, got {lines:#?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Ctrl+A q / Ctrl+A d") && line.contains("leave")),
+            "the launcher must say how to leave, got {lines:#?}"
+        );
+        // The launcher claims a bare Enter (`input::routing::launcher_start_key`); advertising
+        // only the spawn binding here is what made the state look like a dead end.
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Enter / Ctrl+A Enter") && line.contains("shell")),
+            "the launcher must offer the bare Enter it accepts, got {lines:#?}"
+        );
+        // Prefix and held-modifier spellings resolve to the same table entry
+        // (`config::schema::scheme_shortcuts`), so listing both would be one binding said twice.
+        assert!(
+            !lines.iter().any(|line| line.contains("Alt+Enter")),
+            "the modifier spelling is the same binding as the prefix one, got {lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("Empty workspace")),
+            "the empty-workspace hint is about panes, not sessions"
+        );
+    });
 }
 
 /// Open-config (and other PTY actions) must not invent a blank local pane in the launcher. They
@@ -124,76 +119,66 @@ fn a_sessionless_client_renders_the_launcher_panel() {
 fn open_config_in_launcher_defers_until_ephemeral_attaches() {
     let _env = env_lock();
     let _editor = EditorEnv::pinned_to_an_existing_program();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = launcher_backend();
-            assert!(backend.state().is_launcher());
-            backend
-                .dispatch(Msg::RunAction(Action::OpenConfigFile))
-                .expect("open-config from launcher");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = launcher_backend();
+        assert!(backend.state().is_launcher());
+        backend
+            .dispatch(Msg::RunAction(Action::OpenConfigFile))
+            .expect("open-config from launcher");
 
-            assert!(
-                matches!(
-                    backend.state().pending_session_action,
-                    Some(PendingSessionAction::OpenConfigFile)
-                ),
-                "open-config must be deferred, got {:?}",
-                backend.state().pending_session_action
-            );
-            assert!(
-                backend.state().current().pending_session_attach.is_some(),
-                "an ephemeral attach must be in flight"
-            );
-            assert!(
-                backend
-                    .state()
-                    .current()
-                    .workspaces
-                    .iter()
-                    .all(|workspace| workspace.panes.is_empty()),
-                "no blank local pane before the session client exists"
-            );
-            assert!(backend.state().current().pending_spawns.is_empty());
-        })
-        .expect("spawn open-config launcher test")
-        .join()
-        .expect("open-config launcher test completes");
+        assert!(
+            matches!(
+                backend.state().pending_session_action,
+                Some(PendingSessionAction::OpenConfigFile)
+            ),
+            "open-config must be deferred, got {:?}",
+            backend.state().pending_session_action
+        );
+        assert!(
+            backend.state().current().pending_session_attach.is_some(),
+            "an ephemeral attach must be in flight"
+        );
+        assert!(
+            backend
+                .state()
+                .current()
+                .workspaces
+                .iter()
+                .all(|workspace| workspace.panes.is_empty()),
+            "no blank local pane before the session client exists"
+        );
+        assert!(backend.state().current().pending_spawns.is_empty());
+    });
 }
 
 #[test]
 fn user_run_command_in_launcher_defers_until_ephemeral_attaches() {
     let _env = env_lock();
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = launcher_backend();
-            backend.state_mut().config.user_commands = vec![UserCommand {
-                action: UserCommandAction::run("htop"),
-                trigger: rozi::config::BindingExpr::parse("ctrl-a h").expect("trigger"),
-                bindings: vec![KeyBinding::from_str("ctrl-a h").expect("binding")],
-                hint: "ctrl+a h".to_string(),
-                label: None,
-            }];
-            backend
-                .dispatch(Msg::RunAction(Action::RunUserCommand(0)))
-                .expect("user run from launcher");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = launcher_backend();
+        backend.state_mut().config.user_commands = vec![UserCommand {
+            action: UserCommandAction::run("htop"),
+            trigger: rozi::config::BindingExpr::parse("ctrl-a h").expect("trigger"),
+            bindings: vec![KeyBinding::from_str("ctrl-a h").expect("binding")],
+            hint: "ctrl+a h".to_string(),
+            label: None,
+        }];
+        backend
+            .dispatch(Msg::RunAction(Action::RunUserCommand(0)))
+            .expect("user run from launcher");
 
-            assert!(matches!(
-                backend.state().pending_session_action,
-                Some(PendingSessionAction::UserCommand { .. })
-            ));
-            assert!(backend.state().current().pending_session_attach.is_some());
-            assert!(
-                backend
-                    .state()
-                    .current()
-                    .workspaces
-                    .iter()
-                    .all(|workspace| workspace.panes.is_empty())
-            );
-        })
-        .expect("spawn user-run launcher test")
-        .join()
-        .expect("user-run launcher test completes");
+        assert!(matches!(
+            backend.state().pending_session_action,
+            Some(PendingSessionAction::UserCommand { .. })
+        ));
+        assert!(backend.state().current().pending_session_attach.is_some());
+        assert!(
+            backend
+                .state()
+                .current()
+                .workspaces
+                .iter()
+                .all(|workspace| workspace.panes.is_empty())
+        );
+    });
 }

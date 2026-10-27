@@ -457,20 +457,11 @@ mod tests {
             .expect("answered")
     }
 
-    fn on_test_thread(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     /// The credential is the identity. A request that names another extension, or a generation
     /// of its own choosing, is attributed to whatever the credential was issued for.
     #[test]
     fn a_credential_overrides_whatever_identity_the_request_claims() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             backend
                 .state_mut()
@@ -523,7 +514,7 @@ mod tests {
 
     #[test]
     fn a_revoked_or_retired_worker_is_refused_when_its_request_is_handled() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
             let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
@@ -551,7 +542,7 @@ mod tests {
     /// sees no panes and touches none: typing into one would run a command on this client.
     #[test]
     fn a_worker_reaches_panes_only_while_a_session_on_its_host_is_on_screen() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &HostKey::Local);
             let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
@@ -600,7 +591,7 @@ mod tests {
     /// to the local pane.
     #[test]
     fn scratchpad_panes_stay_out_of_reach_even_when_their_ids_collide() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
             let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
@@ -662,7 +653,7 @@ mod tests {
     /// by running an action that would.
     #[test]
     fn commands_that_could_run_something_on_this_client_are_refused() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
             let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
@@ -725,7 +716,7 @@ mod tests {
     /// on this client. A placed process must never get a pane there.
     #[test]
     fn a_split_never_lands_in_the_client_local_scratchpad() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             show_session_on(&mut backend, &pc());
             let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
@@ -763,7 +754,7 @@ mod tests {
 
     #[test]
     fn its_own_active_session_command_is_the_one_action_a_worker_may_run() {
-        on_test_thread(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = backend();
             let mut placements = crate::config::ExtensionPlacements {
                 id: EXTENSION.to_string(),

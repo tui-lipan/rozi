@@ -474,15 +474,6 @@ mod tests {
             .expect("dispatch new temporary session");
     }
 
-    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
-    }
-
     fn named_attached_backend() -> (
         TestBackend<AppRoot>,
         std::sync::mpsc::Receiver<ClientOutbound>,
@@ -513,7 +504,7 @@ mod tests {
 
     #[test]
     fn detach_flushes_layout_before_marking_session_detached() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound, events) = named_attached_backend();
             backend.render();
 
@@ -547,7 +538,7 @@ mod tests {
 
     #[test]
     fn named_session_quit_emits_session_detached() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, _outbound, events) = named_attached_backend();
             backend.render();
 
@@ -565,7 +556,7 @@ mod tests {
 
     #[test]
     fn server_hang_up_after_quit_does_not_reconnect() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, _outbound, _events) = named_attached_backend();
             backend.state_mut().current_mut().pending_session_attach = None;
             backend.render();
@@ -593,7 +584,7 @@ mod tests {
 
     #[test]
     fn detach_prompts_to_name_a_retained_ephemeral_before_exiting() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             {
                 let state = backend.state_mut();
@@ -640,7 +631,7 @@ mod tests {
 
     #[test]
     fn hangup_emits_session_detached() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, _outbound, events) = named_attached_backend();
             backend.render();
 
@@ -658,7 +649,7 @@ mod tests {
     /// parked in the background — those are just as unreachable once this client is gone.
     #[test]
     fn the_leave_prompt_counts_retained_live_temporary_sessions() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             {
                 let state = backend.state_mut();
@@ -676,7 +667,7 @@ mod tests {
     /// there is nothing about it that leaving could destroy.
     #[test]
     fn leaving_a_named_session_asks_nothing_and_detaches() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let (mut backend, outbound, _events) = named_attached_backend();
             backend.render();
 
@@ -707,7 +698,7 @@ mod tests {
     /// it asks — and an empty answer takes a second press, with the prompt saying what it closes.
     #[test]
     fn leaving_a_used_temporary_session_asks_then_closes_on_the_second_empty_submit() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             backend.render();
 
@@ -748,7 +739,7 @@ mod tests {
     /// the field again would close on a press that never warned.
     #[test]
     fn editing_the_name_disarms_a_pending_close() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             backend.render();
             backend
@@ -775,7 +766,7 @@ mod tests {
 
     #[test]
     fn matching_second_press_within_window_consumes_confirmation() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             press_new_temporary(&mut backend);
             assert_eq!(
@@ -797,7 +788,7 @@ mod tests {
 
     #[test]
     fn expired_confirmation_is_rearmed() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             press_new_temporary(&mut backend);
             backend
@@ -823,7 +814,7 @@ mod tests {
 
     #[test]
     fn killing_a_scrollable_workspace_resolves_focus_once_after_batch_teardown() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
@@ -905,7 +896,7 @@ mod tests {
 
     #[test]
     fn mismatched_confirmation_is_replaced() {
-        on_large_stack(|| {
+        crate::test_support::on_large_stack(|| {
             let mut backend = confirming_backend();
             press_new_temporary(&mut backend);
             backend

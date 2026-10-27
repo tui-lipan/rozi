@@ -8,12 +8,6 @@
 //! - Reusing pane id 1 collides with the pane `State::new` seeds, whose stale per-pane transition
 //!   entries keep the reused pane off its target rect.
 
-use rozi::AppRoot;
-use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneId};
-use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
-
 #[path = "../../../benches/support/mod.rs"]
 mod bench_support;
 
@@ -21,76 +15,56 @@ const PANES: usize = 4;
 
 #[test]
 fn bench_style_setup_renders_populated_tiled_panes() {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            let viewport = Rect {
-                x: 0,
-                y: 0,
-                w: 200,
-                h: 60,
-            };
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.set_viewport(viewport);
-            {
-                let state = backend.state_mut();
-                state.current_mut().workspaces[0].panes.clear();
-                state.current_mut().workspaces[0].tile_tree = None;
-                let rect = FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 200.0,
-                    h: 60.0,
-                };
-                let mut ids = Vec::new();
-                for index in 0..PANES {
-                    // Ids start past the seeded pane 1 (see module docs).
-                    let id = index as PaneId + 10;
-                    let mut pane = Pane::new(id, 5_000, rect);
-                    pane.opening = false;
-                    pane.terminal_active = true;
-                    // Every row filled, so content is visible regardless of how short the tile is.
-                    for line in 0..80 {
-                        pane.terminal
-                            .process_server_output(format!("row{line:03}-BENCH\r\n").as_bytes());
-                    }
-                    pane.terminal.title = Some("nvim src/main.rs".to_string());
-                    pane.terminal.original_user = Some("benchmark".to_string());
-                    pane.terminal.cwd = Some("/workspace/rozi/src".to_string());
-                    pane.terminal.display_path = Some("rozi/src".to_string());
-                    state.current_mut().workspaces[0].panes.push(pane);
-                    ids.push(id);
-                }
-                let start_axis = state.current().workspaces[0].start_axis;
-                let ratios = state.current().workspaces[0].split_ratios.clone();
-                state.current_mut().workspaces[0].tile_tree =
-                    build_dwindle_tree(&ids, start_axis, &ratios);
-                state.current_mut().next_pane_id = 20;
-                state.current_mut().focused_pane = Some(10);
-                state.current_mut().workspaces[0].focused_pane = Some(10);
-            }
-            backend.render();
-            let lines = backend.capture_frame().to_fixed_grid_lines();
-            eprintln!("{}", lines.join("\n"));
+    rozi::test_support::on_deeper_stack(|| {
+        let corpus: String = (0..80)
+            .map(|line| format!("row{line:03}-BENCH\r\n"))
+            .collect();
+        let mut backend = bench_support::backend_with_panes(PANES, corpus.as_bytes());
+        for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+            pane.set_custom_title("benchmark-pane");
+        }
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        let rendered = lines.join("\n");
 
-            // Every pane is tiled and titled.
-            let titles: usize = lines
+        // Every pane is tiled and titled.
+        let titles: usize = lines
+            .iter()
+            .map(|line| line.matches("benchmark-pane").count())
+            .sum();
+        assert_eq!(
+            titles, PANES,
+            "expected one title bar per tiled pane:\n{rendered}"
+        );
+
+        // Check every terminal's own rectangle so an empty tile cannot hide behind a busy one.
+        let snapshot =
+            backend.capture_ui_snapshot_with_options(&tui_lipan::UiSnapshotOptions::diagnostic());
+        let frame = backend.capture_frame();
+        for pane in &backend.state().current().workspaces[0].panes {
+            let key = format!("rozi-terminal-{}", pane.id);
+            let rect = snapshot
+                .widgets
                 .iter()
-                .map(|line| line.matches("󰖲  nvim src/main.rs · rozi/src").count())
-                .sum();
-            assert_eq!(titles, PANES, "expected one title bar per tiled pane");
-
-            // Every pane is drawing terminal content, not just chrome. Each tile is its own
-            // column band, so a content row appears once per pane sharing that band.
-            let content_rows = lines.iter().filter(|line| line.contains("-BENCH")).count();
+                .find(|widget| {
+                    widget
+                        .key
+                        .as_ref()
+                        .is_some_and(|value| value.as_ref() == key)
+                })
+                .expect("benchmark terminal is mounted")
+                .rect;
+            let content: String = (rect.y as u16..rect.y as u16 + rect.h)
+                .flat_map(|y| (rect.x as u16..rect.x as u16 + rect.w).map(move |x| (x, y)))
+                .map(|(x, y)| frame.cell(x, y).symbol.as_str())
+                .collect();
             assert!(
-                content_rows > 20,
-                "expected panes to be full of terminal content, got {content_rows} rows"
+                content.contains("-BENCH"),
+                "pane {} has no benchmark content:\n{rendered}",
+                pane.id
             );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+        }
+    });
 }
 
 // The two fixture checks below guard workload validity only: benchmark dimensions are free to

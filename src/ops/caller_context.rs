@@ -87,12 +87,7 @@ mod tests {
     use tui_lipan::TestBackend;
 
     fn on_stack(test: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(test)
-            .unwrap()
-            .join()
-            .unwrap();
+        crate::test_support::on_large_stack(test);
     }
 
     fn attached() -> (

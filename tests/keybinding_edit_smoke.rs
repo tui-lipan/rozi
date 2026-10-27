@@ -58,12 +58,7 @@ fn frame(backend: &mut TestBackend<AppRoot>) -> String {
 
 #[test]
 fn keybindings_overlay_edits_from_search_and_stops_on_conflicts() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(body)
-        .expect("spawn keybinding edit smoke thread")
-        .join()
-        .expect("keybinding edit smoke completes");
+    rozi::test_support::on_large_stack(body);
 }
 
 fn body() {
@@ -331,98 +326,83 @@ fn body() {
 
 #[test]
 fn reset_all_card_sits_one_row_below_keybindings() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend();
-            backend.state_mut().config.key_sources.insert(
-                "close".into(),
-                rozi::config::KeyOverrideSpec::replace(vec![]),
-            );
-            backend
-                .dispatch(rozi::Msg::KeybindingResetAll)
-                .expect("open reset all");
-            let shown = frame(&mut backend);
-            assert!(shown.contains("Reset all keybindings?"), "{shown}");
-            assert_eq!(
-                frame_y(&backend, "Reset all keybindings?"),
-                frame_y(&backend, "Keybindings") + 1,
-                "reset all sits one row below Keybindings, like Change keybinding"
-            );
-        })
-        .expect("spawn reset-all offset smoke thread")
-        .join()
-        .expect("reset-all offset smoke completes");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend();
+        backend.state_mut().config.key_sources.insert(
+            "close".into(),
+            rozi::config::KeyOverrideSpec::replace(vec![]),
+        );
+        backend
+            .dispatch(rozi::Msg::KeybindingResetAll)
+            .expect("open reset all");
+        let shown = frame(&mut backend);
+        assert!(shown.contains("Reset all keybindings?"), "{shown}");
+        assert_eq!(
+            frame_y(&backend, "Reset all keybindings?"),
+            frame_y(&backend, "Keybindings") + 1,
+            "reset all sits one row below Keybindings, like Change keybinding"
+        );
+    });
 }
 
 #[test]
 fn unbind_keeps_the_highlight_on_the_next_row() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend();
-            backend
-                .dispatch(rozi::Msg::KeybindingSelect("close".to_string()))
-                .expect("select close");
-            backend
-                .dispatch(rozi::Msg::KeybindingUnbind("close".to_string()))
-                .expect("unbind close");
-            assert!(backend.state().config.key_overrides["close"].is_empty());
-            assert_eq!(
-                selected(&backend).as_deref(),
-                Some("toggle-float"),
-                "unbind on Global must not fall back to Prefix"
-            );
-            send(&mut backend, KeyCode::Down);
-            assert_eq!(
-                selected(&backend).as_deref(),
-                Some("toggle-pin"),
-                "Down should step from the neighbor, not from Prefix"
-            );
-        })
-        .expect("spawn unbind-selection smoke thread")
-        .join()
-        .expect("unbind-selection smoke completes");
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend();
+        backend
+            .dispatch(rozi::Msg::KeybindingSelect("close".to_string()))
+            .expect("select close");
+        backend
+            .dispatch(rozi::Msg::KeybindingUnbind("close".to_string()))
+            .expect("unbind close");
+        assert!(backend.state().config.key_overrides["close"].is_empty());
+        assert_eq!(
+            selected(&backend).as_deref(),
+            Some("toggle-float"),
+            "unbind on Global must not fall back to Prefix"
+        );
+        send(&mut backend, KeyCode::Down);
+        assert_eq!(
+            selected(&backend).as_deref(),
+            Some("toggle-pin"),
+            "Down should step from the neighbor, not from Prefix"
+        );
+    });
 }
 
 #[test]
 fn recording_the_prefix_names_prefix_not_every_command() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            let mut backend = backend();
-            backend
-                .dispatch(rozi::Msg::KeybindingCapture("close".to_string()))
-                .expect("capture close");
-            frame(&mut backend);
-            send_ctrl(&mut backend, 'a');
-            let conflict = frame(&mut backend);
-            assert!(conflict.contains("Already bound to Prefix"), "{conflict}");
-            assert!(conflict.contains("Keybinding unavailable"), "{conflict}");
-            assert!(!conflict.contains("replace Enter"), "{conflict}");
-            assert!(!conflict.contains("config-only"), "{conflict}");
-            let stage = &backend
-                .state()
-                .keybindings
-                .as_ref()
-                .expect("overlay open")
-                .stage;
-            match stage {
-                rozi::state::KeybindingEditorStage::Conflict {
-                    conflicts,
-                    replaceable,
-                    ..
-                } => {
-                    assert_eq!(conflicts.len(), 1, "{conflicts:?}");
-                    assert_eq!(conflicts[0].label, "Prefix");
-                    assert!(!*replaceable);
-                }
-                other => panic!("expected prefix conflict, got {other:?}"),
+    rozi::test_support::on_large_stack(|| {
+        let mut backend = backend();
+        backend
+            .dispatch(rozi::Msg::KeybindingCapture("close".to_string()))
+            .expect("capture close");
+        frame(&mut backend);
+        send_ctrl(&mut backend, 'a');
+        let conflict = frame(&mut backend);
+        assert!(conflict.contains("Already bound to Prefix"), "{conflict}");
+        assert!(conflict.contains("Keybinding unavailable"), "{conflict}");
+        assert!(!conflict.contains("replace Enter"), "{conflict}");
+        assert!(!conflict.contains("config-only"), "{conflict}");
+        let stage = &backend
+            .state()
+            .keybindings
+            .as_ref()
+            .expect("overlay open")
+            .stage;
+        match stage {
+            rozi::state::KeybindingEditorStage::Conflict {
+                conflicts,
+                replaceable,
+                ..
+            } => {
+                assert_eq!(conflicts.len(), 1, "{conflicts:?}");
+                assert_eq!(conflicts[0].label, "Prefix");
+                assert!(!*replaceable);
             }
-        })
-        .expect("spawn prefix-conflict smoke thread")
-        .join()
-        .expect("prefix-conflict smoke completes");
+            other => panic!("expected prefix conflict, got {other:?}"),
+        }
+    });
 }
 
 fn send_ctrl(backend: &mut TestBackend<AppRoot>, ch: char) {
@@ -437,159 +417,147 @@ fn send_ctrl(backend: &mut TestBackend<AppRoot>, ch: char) {
 
 #[test]
 fn left_alt_navigates_picker_rows_and_tabs_without_filtering() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use tui_lipan::AltSide;
+    rozi::test_support::on_large_stack(|| {
+        use tui_lipan::AltSide;
+        let mut backend = backend();
+        frame(&mut backend);
+        assert!(backend.modifier_key_reporting_enabled());
+        let alt = |letter, side| KeyEvent {
+            code: KeyCode::Char(letter),
+            mods: KeyMods {
+                alt_side: side,
+                ..KeyMods::ALT
+            },
+        };
+        backend.send_key(alt('j', AltSide::Left)).expect("next row");
+        let second = selected(&backend).expect("selected row");
+        assert!(second.contains("Mod"));
+        backend
+            .send_key(alt('k', AltSide::Left))
+            .expect("previous row");
+        assert!(selected(&backend).unwrap().contains("Prefix"));
+        let tab = backend.state().keybindings.as_ref().unwrap().tab;
+        backend.send_key(alt('l', AltSide::Left)).expect("next tab");
+        assert_ne!(backend.state().keybindings.as_ref().unwrap().tab, tab);
+        backend
+            .send_key(alt('h', AltSide::Left))
+            .expect("previous tab");
+        assert_eq!(backend.state().keybindings.as_ref().unwrap().tab, tab);
+        assert!(
+            backend
+                .state()
+                .keybindings
+                .as_ref()
+                .unwrap()
+                .query
+                .text()
+                .is_empty()
+        );
+        send(&mut backend, KeyCode::Char('j'));
+        assert_eq!(
+            backend.state().keybindings.as_ref().unwrap().query.text(),
+            "j"
+        );
+        send(&mut backend, KeyCode::Esc);
+        assert!(!backend.modifier_key_reporting_enabled());
+        backend
+            .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenSettings))
+            .expect("open settings");
+        frame(&mut backend);
+        let tab = backend.state().settings_navigation.tab;
+        backend
+            .send_key(alt('l', AltSide::Left))
+            .expect("next settings category");
+        assert_ne!(backend.state().settings_navigation.tab, tab);
+        backend
+            .send_key(alt('h', AltSide::Left))
+            .expect("previous settings category");
+        assert_eq!(backend.state().settings_navigation.tab, tab);
+        let first = backend.state().settings_selected;
+        backend
+            .send_key(alt('j', AltSide::Left))
+            .expect("next setting");
+        assert_ne!(backend.state().settings_selected, first);
+        assert!(backend.state().settings_navigation.query.text().is_empty());
+        send(&mut backend, KeyCode::Esc);
+        assert!(!backend.modifier_key_reporting_enabled());
+        for side in [AltSide::Right, AltSide::Unknown, AltSide::Both] {
+            let mut other = self::backend();
+            frame(&mut other);
+            other.send_key(alt('j', side)).expect("non-left Alt");
+            assert_eq!(selected(&other), None);
+        }
+    });
+}
+
+#[test]
+fn left_alt_row_navigation_preserves_empty_custom_picker_queries() {
+    rozi::test_support::on_large_stack(|| {
+        use rozi::input::Action;
+        use tui_lipan::AltSide;
+
+        for action in [
+            Action::ToggleHelp,
+            Action::OpenSettings,
+            Action::OpenExtensions,
+        ] {
             let mut backend = backend();
-            frame(&mut backend);
-            assert!(backend.modifier_key_reporting_enabled());
-            let alt = |letter, side| KeyEvent {
-                code: KeyCode::Char(letter),
-                mods: KeyMods {
-                    alt_side: side,
-                    ..KeyMods::ALT
-                },
-            };
-            backend.send_key(alt('j', AltSide::Left)).expect("next row");
-            let second = selected(&backend).expect("selected row");
-            assert!(second.contains("Mod"));
-            backend
-                .send_key(alt('k', AltSide::Left))
-                .expect("previous row");
-            assert!(selected(&backend).unwrap().contains("Prefix"));
-            let tab = backend.state().keybindings.as_ref().unwrap().tab;
-            backend.send_key(alt('l', AltSide::Left)).expect("next tab");
-            assert_ne!(backend.state().keybindings.as_ref().unwrap().tab, tab);
-            backend
-                .send_key(alt('h', AltSide::Left))
-                .expect("previous tab");
-            assert_eq!(backend.state().keybindings.as_ref().unwrap().tab, tab);
-            assert!(
+            if action != Action::ToggleHelp {
+                send(&mut backend, KeyCode::Esc);
                 backend
+                    .dispatch(rozi::Msg::RunAction(action))
+                    .expect("open picker");
+            }
+            frame(&mut backend);
+            let query = "zzzznomatchingpickerrow";
+            for ch in query.chars() {
+                send(&mut backend, KeyCode::Char(ch));
+            }
+            assert!(frame(&mut backend).contains("No matches"), "{action:?}");
+            let query_text = |backend: &TestBackend<AppRoot>| match action {
+                Action::ToggleHelp => backend
                     .state()
                     .keybindings
                     .as_ref()
                     .unwrap()
                     .query
                     .text()
-                    .is_empty()
-            );
+                    .to_owned(),
+                Action::OpenSettings => backend.state().settings_navigation.query.text().to_owned(),
+                Action::OpenExtensions => backend
+                    .state()
+                    .extensions
+                    .as_ref()
+                    .unwrap()
+                    .query
+                    .text()
+                    .to_owned(),
+                _ => unreachable!(),
+            };
+            for ch in ['j', 'k'] {
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char(ch),
+                        mods: KeyMods {
+                            alt_side: AltSide::Left,
+                            ..KeyMods::ALT
+                        },
+                    })
+                    .expect("navigate empty picker");
+                assert_eq!(query_text(&backend), query, "{action:?}: left Alt+{ch}");
+            }
             send(&mut backend, KeyCode::Char('j'));
             assert_eq!(
-                backend.state().keybindings.as_ref().unwrap().query.text(),
-                "j"
+                query_text(&backend),
+                format!("{query}j"),
+                "{action:?}: plain j"
             );
-            send(&mut backend, KeyCode::Esc);
-            assert!(!backend.modifier_key_reporting_enabled());
-            backend
-                .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenSettings))
-                .expect("open settings");
-            frame(&mut backend);
-            let tab = backend.state().settings_navigation.tab;
-            backend
-                .send_key(alt('l', AltSide::Left))
-                .expect("next settings category");
-            assert_ne!(backend.state().settings_navigation.tab, tab);
-            backend
-                .send_key(alt('h', AltSide::Left))
-                .expect("previous settings category");
-            assert_eq!(backend.state().settings_navigation.tab, tab);
-            let first = backend.state().settings_selected;
-            backend
-                .send_key(alt('j', AltSide::Left))
-                .expect("next setting");
-            assert_ne!(backend.state().settings_selected, first);
-            assert!(backend.state().settings_navigation.query.text().is_empty());
-            send(&mut backend, KeyCode::Esc);
-            assert!(!backend.modifier_key_reporting_enabled());
-            for side in [AltSide::Right, AltSide::Unknown, AltSide::Both] {
-                let mut other = self::backend();
-                frame(&mut other);
-                other.send_key(alt('j', side)).expect("non-left Alt");
-                assert_eq!(selected(&other), None);
-            }
-        })
-        .expect("spawn picker navigation test")
-        .join()
-        .expect("picker navigation completes");
-}
-
-#[test]
-fn left_alt_row_navigation_preserves_empty_custom_picker_queries() {
-    std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            use rozi::input::Action;
-            use tui_lipan::AltSide;
-
-            for action in [
-                Action::ToggleHelp,
-                Action::OpenSettings,
-                Action::OpenExtensions,
-            ] {
-                let mut backend = backend();
-                if action != Action::ToggleHelp {
-                    send(&mut backend, KeyCode::Esc);
-                    backend
-                        .dispatch(rozi::Msg::RunAction(action))
-                        .expect("open picker");
-                }
-                frame(&mut backend);
-                let query = "zzzznomatchingpickerrow";
-                for ch in query.chars() {
-                    send(&mut backend, KeyCode::Char(ch));
-                }
-                assert!(frame(&mut backend).contains("No matches"), "{action:?}");
-                let query_text = |backend: &TestBackend<AppRoot>| match action {
-                    Action::ToggleHelp => backend
-                        .state()
-                        .keybindings
-                        .as_ref()
-                        .unwrap()
-                        .query
-                        .text()
-                        .to_owned(),
-                    Action::OpenSettings => {
-                        backend.state().settings_navigation.query.text().to_owned()
-                    }
-                    Action::OpenExtensions => backend
-                        .state()
-                        .extensions
-                        .as_ref()
-                        .unwrap()
-                        .query
-                        .text()
-                        .to_owned(),
-                    _ => unreachable!(),
-                };
-                for ch in ['j', 'k'] {
-                    backend
-                        .send_key(KeyEvent {
-                            code: KeyCode::Char(ch),
-                            mods: KeyMods {
-                                alt_side: AltSide::Left,
-                                ..KeyMods::ALT
-                            },
-                        })
-                        .expect("navigate empty picker");
-                    assert_eq!(query_text(&backend), query, "{action:?}: left Alt+{ch}");
-                }
-                send(&mut backend, KeyCode::Char('j'));
-                assert_eq!(
-                    query_text(&backend),
-                    format!("{query}j"),
-                    "{action:?}: plain j"
-                );
-                send(&mut backend, KeyCode::Char('k'));
-                assert_eq!(
-                    query_text(&backend),
-                    format!("{query}jk"),
-                    "{action:?}: plain k"
-                );
-            }
-        })
-        .expect("spawn empty picker navigation test")
-        .join()
-        .expect("empty picker navigation completes");
+            send(&mut backend, KeyCode::Char('k'));
+            assert_eq!(
+                query_text(&backend),
+                format!("{query}jk"),
+                "{action:?}: plain k"
+            );
+        }
+    });
 }

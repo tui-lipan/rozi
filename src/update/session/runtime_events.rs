@@ -2,9 +2,8 @@
 //! agents and the program it runs, told to subscribers and hooks.
 //!
 //! Both are read off what the rest of rozi answers from - an agent's state as `rozi agents list`
-//! reports it, and the running program by the rule profile capture shares, with the session
-//! server's own judgment of what is a shell - so an event never disagrees with what a subscriber
-//! reads back when it asks.
+//! reports it, and the running program as profile capture and resurrection read it - so an event
+//! never disagrees with what a subscriber reads back when it asks.
 
 use crate::events::{Event, EventKind};
 use crate::session::protocol::{AgentRuntime, AgentState};
@@ -28,12 +27,10 @@ struct Foreground {
 impl Foreground {
     fn of(pane: &Pane) -> Self {
         let terminal = &pane.terminal;
-        // The server judged the shell on the host running the pane; this client's own shell
-        // configuration says nothing about a remote one.
         let program = crate::pane::launch::running_program(
             terminal.command_phase,
             terminal.foreground_program.as_deref(),
-            |_| terminal.foreground_shell,
+            terminal.foreground_shell,
         );
         Self {
             program: program.map(str::to_string),

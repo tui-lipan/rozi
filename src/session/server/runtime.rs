@@ -1538,10 +1538,11 @@ fn compute_runtime_state(
     }
 }
 
-/// Whether `program`, a normalized basename, is a shell in `pane`: a common shell, or the one this
+/// Whether `program` is a shell in `pane`: a common shell, or the one this
 /// server launched the pane with, which only this host can name.
 fn is_pane_shell(pane: &ServerPane, program: &str) -> bool {
-    crate::pane::launch::is_common_shell(program)
+    let program = normalized_program_name(program);
+    crate::pane::launch::is_common_shell(&program)
         || pane
             .shell
             .first()
@@ -3977,6 +3978,10 @@ mod tests {
         assert_eq!(shell.foreground_program.as_deref(), Some("xonsh"));
         assert!(shell.foreground_shell, "the pane's own launch shell");
         assert!(foreground("zsh").foreground_shell, "a common shell");
+        assert!(
+            foreground("ZSH.EXE").foreground_shell,
+            "a Windows name for one"
+        );
         assert!(
             !foreground("cargo").foreground_shell,
             "a program the shell runs"

@@ -602,23 +602,6 @@ impl SessionServer {
         metrics.successes + metrics.failures == metrics.attempts
     }
 
-    /// Program names that mean "this pane is sitting at a prompt" rather than "this pane is
-    /// running something": the common set, plus every interactive shell this server actually
-    /// launches panes with. A pane whose foreground program is its own shell has nothing to replay.
-    fn shell_basenames(&self) -> std::collections::HashSet<String> {
-        let mut shells = crate::pane::launch::common_shell_basenames();
-        for program in self
-            .settings
-            .shell
-            .first()
-            .into_iter()
-            .chain(self.panes.values().filter_map(|pane| pane.shell.first()))
-        {
-            shells.insert(crate::platform::command::normalized_program_name(program));
-        }
-        shells
-    }
-
     /// Capture everything the durable write needs, so the write itself needs no access back to
     /// live server state. This is the only part the server loop is blocked for.
     fn capture_snapshot(&mut self, started: Instant) -> io::Result<SnapshotJob> {
@@ -633,7 +616,6 @@ impl SessionServer {
         // reference is exactly that - so it also keeps opaque agent session ids out of the state
         // directory, which is the privacy half of the setting.
         let record_agents = self.settings.resurrect_agents && record_foreground;
-        let shells = self.shell_basenames();
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
@@ -646,7 +628,7 @@ impl SessionServer {
             // started for it is in the same position, with no shell in it at all.
             let foreground =
                 (record_foreground && pane.launch.is_none() && pane.agent_resume.is_none())
-                    .then(|| observed_foreground_command(pane, &shells))
+                    .then(|| observed_foreground_command(pane))
                     .flatten();
             panes.push(SnapshotPane {
                 scrollback: Some(pane.scrollback),
@@ -1058,20 +1040,15 @@ fn write_secure(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// judgment with profile capture - see
 /// [`replayable_foreground_command`](crate::pane::launch::replayable_foreground_command), which
 /// explains why a pane at a prompt reports nothing here even though it still names a program.
-fn observed_foreground_command(
-    pane: &ServerPane,
-    shells: &std::collections::HashSet<String>,
-) -> Option<String> {
-    crate::pane::launch::replayable_foreground_command(
-        crate::pane::launch::ForegroundSnapshot {
-            command_phase: pane.runtime.command_phase,
-            program: pane.runtime.foreground_program.as_deref(),
-            executable: pane.runtime.foreground_executable.as_deref(),
-            arguments: &pane.runtime.foreground_arguments,
-            remote: pane.runtime.cwd_host.is_some(),
-        },
-        shells,
-    )
+fn observed_foreground_command(pane: &ServerPane) -> Option<String> {
+    crate::pane::launch::replayable_foreground_command(crate::pane::launch::ForegroundSnapshot {
+        command_phase: pane.runtime.command_phase,
+        program: pane.runtime.foreground_program.as_deref(),
+        executable: pane.runtime.foreground_executable.as_deref(),
+        arguments: &pane.runtime.foreground_arguments,
+        remote: pane.runtime.cwd_host.is_some(),
+        shell: pane.runtime.foreground_shell,
+    })
 }
 
 fn default_snapshot_dir() -> Option<PathBuf> {
@@ -1621,10 +1598,6 @@ mod tests {
         pane
     }
 
-    fn shells() -> std::collections::HashSet<String> {
-        crate::pane::launch::common_shell_basenames()
-    }
-
     /// The whole point of capturing a foreground command: a shell someone typed an agent into is
     /// not a shell, and restoring it as one loses the session's actual contents.
     #[test]
@@ -1636,7 +1609,7 @@ mod tests {
         );
 
         assert_eq!(
-            observed_foreground_command(&pane, &shells()).as_deref(),
+            observed_foreground_command(&pane).as_deref(),
             Some("cursor-agent --force 'keep going'"),
             "arguments distinguish one run of an agent from another, and must survive being \
              typed back at a prompt"
@@ -1654,7 +1627,7 @@ mod tests {
         ] {
             let pane = running("__zoxide_hook", &[], phase);
             assert_eq!(
-                observed_foreground_command(&pane, &shells()),
+                observed_foreground_command(&pane),
                 None,
                 "{phase:?} means nothing is running, whatever the pane last named"
             );
@@ -1665,9 +1638,10 @@ mod tests {
     /// replay, and typing the shell's name back would nest a second one inside the first.
     #[test]
     fn a_pane_running_only_its_shell_captures_nothing() {
-        let pane = running("zsh", &[], protocol::PaneCommandPhase::Executing);
+        let mut pane = running("zsh", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.foreground_shell = true;
 
-        assert_eq!(observed_foreground_command(&pane, &shells()), None);
+        assert_eq!(observed_foreground_command(&pane), None);
     }
 
     /// `launch` and `foreground` answer different questions, and only the second is new

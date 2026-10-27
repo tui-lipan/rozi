@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -132,7 +132,6 @@ fn write_session_snapshot(directory: &Path, path: &Path, profile: &Profile) -> R
 }
 
 pub fn profile_from_state(state: &State) -> Profile {
-    let shells = shell_basenames(&state.config);
     Profile {
         version: 1,
         active_workspace: state.current().active_workspace,
@@ -142,7 +141,7 @@ pub fn profile_from_state(state: &State) -> Profile {
             .iter()
             .enumerate()
             .filter(|(_, workspace)| workspace.panes.iter().any(|pane| !pane.closing))
-            .map(|(index, workspace)| workspace_profile_from_state(index, workspace, &shells))
+            .map(|(index, workspace)| workspace_profile_from_state(index, workspace))
             .collect(),
     }
 }
@@ -625,11 +624,7 @@ fn restore_dwindle_tree(
     to_dwindle(tree, &|pane| profile_pane_ids.get(pane).copied(), false)
 }
 
-fn workspace_profile_from_state(
-    index: usize,
-    workspace: &Workspace,
-    shells: &HashSet<String>,
-) -> WorkspaceProfile {
+fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> WorkspaceProfile {
     let pane_indices: HashMap<PaneId, usize> = workspace
         .panes
         .iter()
@@ -663,10 +658,10 @@ fn workspace_profile_from_state(
                         (None, Some(argv.clone()))
                     }
                     Some(crate::pane::launch::PaneLaunch::Shell { command }) => (
-                        live_running_command(pane, shells).or_else(|| Some(command.clone())),
+                        live_running_command(pane).or_else(|| Some(command.clone())),
                         None,
                     ),
-                    None => (live_running_command(pane, shells), None),
+                    None => (live_running_command(pane), None),
                 };
                 PaneProfile {
                     id: index as PaneId,
@@ -698,29 +693,15 @@ fn workspace_profile_from_state(
 
 /// The command a pane is running *right now*, if it is worth replaying on restore. See
 /// [`crate::pane::launch::replayable_foreground_command`], which resurrection snapshots share.
-fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String> {
-    crate::pane::launch::replayable_foreground_command(
-        crate::pane::launch::ForegroundSnapshot {
-            command_phase: pane.terminal.command_phase,
-            program: pane.terminal.foreground_program.as_deref(),
-            executable: pane.terminal.foreground_executable.as_deref(),
-            arguments: &pane.terminal.foreground_arguments,
-            remote: pane.terminal.cwd_host.is_some(),
-        },
-        shells,
-    )
-}
-
-fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
-    let mut shells = crate::pane::launch::common_shell_basenames();
-    let resolved = crate::platform::command::resolve_interactive_shell(
-        config.shell.as_deref(),
-        &crate::platform::command::ShellEnv::from_process(),
-    );
-    shells.insert(crate::platform::command::normalized_program_name(
-        &resolved.program,
-    ));
-    shells
+fn live_running_command(pane: &Pane) -> Option<String> {
+    crate::pane::launch::replayable_foreground_command(crate::pane::launch::ForegroundSnapshot {
+        command_phase: pane.terminal.command_phase,
+        program: pane.terminal.foreground_program.as_deref(),
+        executable: pane.terminal.foreground_executable.as_deref(),
+        arguments: &pane.terminal.foreground_arguments,
+        remote: pane.terminal.cwd_host.is_some(),
+        shell: pane.terminal.foreground_shell,
+    })
 }
 
 fn profile_tree_from_dwindle(
@@ -1643,7 +1624,8 @@ mod tests {
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.cwd = Some("/local/project".to_string());
         pane.terminal.cwd_host = None;
-        pane.terminal.foreground_program = Some("ZSH.EXE".to_string());
+        pane.terminal.foreground_program = Some("zsh".to_string());
+        pane.terminal.foreground_shell = true;
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.cwd.as_deref(), Some(Path::new("/local/project")));
         assert_eq!(saved.command, None);
@@ -1653,6 +1635,36 @@ mod tests {
         pane.terminal.foreground_program = Some("bash".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("cargo test"));
+    }
+
+    /// Which program is a shell is the session server's call, made on the host running the pane. A
+    /// remote session's custom shell at its prompt, which this client's configuration never names,
+    /// is still not a command to replay.
+    #[test]
+    fn save_trusts_the_server_on_which_program_is_a_shell() {
+        use crate::session::protocol::PaneCommandPhase;
+
+        let mut state = State::new(Config::default(), Theme::default());
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
+        pane.terminal.cwd_host = Some("server.example".to_string());
+        pane.terminal.command_phase = PaneCommandPhase::Unknown;
+        pane.terminal.foreground_program = Some("xonsh".to_string());
+        pane.terminal.foreground_shell = true;
+        assert_eq!(
+            profile_from_state(&state).workspaces[0].panes[0].command,
+            None
+        );
+
+        // The same name, when the server says it is a program the shell runs, is one.
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .foreground_shell = false;
+        assert_eq!(
+            profile_from_state(&state).workspaces[0].panes[0]
+                .command
+                .as_deref(),
+            Some("xonsh")
+        );
     }
 
     #[test]

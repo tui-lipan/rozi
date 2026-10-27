@@ -2431,6 +2431,18 @@ mod tests {
     }
 
     #[test]
+    fn gathering_a_pin_onto_a_focused_workspace_reports_no_focus_change() {
+        let mut state = state_with_pinned_float();
+        let pinned = state.current_mut().workspaces[0].panes.pop().unwrap();
+        state.current_mut().workspaces[1].panes.push(pinned);
+        focus_pane(&mut state, 2);
+
+        assert!(!keep_pinned_panes_on_active_workspace(&mut state));
+        assert!(workspace_holds(&state, 0, 5), "the pin still moves");
+        assert_eq!(state.current().focused_pane, Some(2));
+    }
+
+    #[test]
     fn relocating_a_workspace_holding_only_a_pin_just_switches() {
         let mut state = state_with_pinned_float();
         state.current_mut().workspaces[0]
@@ -2454,6 +2466,11 @@ mod tests {
             Some("scratch")
         );
         assert_eq!(state.current().workspaces[1].name.as_deref(), Some("code"));
+        assert_eq!(
+            state.current().focused_pane,
+            Some(3),
+            "the destination's own pane wins over the focused pin"
+        );
     }
 
     #[test]

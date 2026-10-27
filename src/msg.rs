@@ -675,6 +675,16 @@ pub enum Msg {
         sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
+    /// A `prompt` stream asks for one line of text. It shares the picker's state and reply
+    /// stream, opening straight onto the prompt.
+    PromptStreamOpen {
+        id: u64,
+        prompt: crate::state::PickPromptFields,
+        extension: Option<crate::config::ExtensionProvenance>,
+        worker: Option<crate::state::WorkerId>,
+        sender: crate::state::PickReply,
+        ack: std::sync::mpsc::Sender<control::ControlResponse>,
+    },
     /// The picker's filter text changed; mirrored so a rebuild can restore it.
     PickQueryChanged(String),
     /// An action chord fired in the picker; the index is into `PickState::actions`.

@@ -650,17 +650,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             sender,
             ack,
         } => {
-            // A picker from a process on another machine says so in its title: it is the one
-            // prompt a compromised host could otherwise dress up as this client's own.
-            let title = match worker
-                .map(|worker| crate::ops::extension_workers::live_worker(&ctx.state, worker))
-            {
-                None => title,
-                Some(Ok(worker)) => Some(crate::ops::extension_workers::attribute(
-                    worker,
-                    title.as_deref().unwrap_or("Pick"),
-                )),
-                Some(Err(response)) => {
+            let title = match crate::ops::pick::worker_title(ctx, worker, title, "Pick") {
+                Ok(title) => title,
+                Err(response) => {
                     let _ = ack.send(response);
                     return Update::none();
                 }
@@ -681,6 +673,23 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
                 sender,
                 ack,
             )
+        }
+        Msg::PromptStreamOpen {
+            id,
+            mut prompt,
+            extension,
+            worker,
+            sender,
+            ack,
+        } => {
+            match crate::ops::pick::worker_title(ctx, worker, Some(prompt.title), "Input") {
+                Ok(title) => prompt.title = title.unwrap_or_default(),
+                Err(response) => {
+                    let _ = ack.send(response);
+                    return Update::none();
+                }
+            }
+            crate::ops::pick::open_prompt_stream(ctx, id, prompt, extension, sender, ack)
         }
         Msg::PickQueryChanged(query) => crate::ops::pick::query_changed(ctx, query),
         Msg::PickActionKey(index) => crate::ops::pick::invoke_action(ctx, index),

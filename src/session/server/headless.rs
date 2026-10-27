@@ -148,6 +148,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::Pick { .. } => {
             Some("pick opens a modal in a UI; a session server cannot show one")
         }
+        ControlCommand::Prompt { .. } => {
+            Some("prompt opens a modal in a UI; a session server cannot show one")
+        }
         ControlCommand::Publish { .. } => Some(
             "publish belongs to the pane that publishes; run it inside the pane, which reaches its own session",
         ),
@@ -4212,6 +4215,12 @@ mod tests {
                 actions: Vec::new(),
                 tabs: Vec::new(),
                 tab: None,
+            },
+            ControlCommand::Prompt {
+                title: "Name".to_string(),
+                placeholder: None,
+                value: None,
+                masked: false,
             },
             ControlCommand::CommandVisibility {
                 command: "my-extension.choose".to_string(),

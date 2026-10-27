@@ -99,6 +99,11 @@ pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
 /// `description`, `choices`, `min`, `max`) and `settings` on `[[sidebar_tabs]]`, offered in the tab
 /// settings picker. An older binary rejects both.
 pub const SIDEBAR_TAB_SETTINGS_CAPABILITY: &str = "sidebar-tab-settings";
+/// A UI answers `prompt`, a modal text prompt with no picker behind it.
+pub const PROMPT_CAPABILITY: &str = "prompt";
+/// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
+/// older binary ignores the field and starts from `value`.
+pub const PICK_PROMPT_FROM_QUERY_CAPABILITY: &str = "pick-prompt-from-query";
 /// A UI answers `agents-overview`, every agent it knows about in every session and on every
 /// connected host, and `agent-go`, which goes to one of them.
 pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
@@ -138,6 +143,8 @@ impl ApiDescription {
                 LAYOUT_CONTROL_CAPABILITY,
                 PANE_CONTROL_CAPABILITY,
                 PANE_REVEAL_CAPABILITY,
+                PICK_PROMPT_FROM_QUERY_CAPABILITY,
+                PROMPT_CAPABILITY,
                 PUBLISH_KIND_CAPABILITY,
                 PUBLISHED_ACTIVITY_CAPABILITY,
                 RECORD_PANE_CAPABILITY,
@@ -831,6 +838,18 @@ pub enum ControlCommand {
         /// Id of the tab to open on. Omitted or unknown opens the first.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tab: Option<String>,
+    },
+    /// Ask for one line of text in a modal prompt, with no picker behind it.
+    Prompt {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        placeholder: Option<String>,
+        /// Initial contents.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+        /// Hide typed characters on screen. The submitted `input` is still plaintext on the stream.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        masked: bool,
     },
 }
 
@@ -2730,28 +2749,25 @@ fn run_sidebar_stream(
     let _ = writer.join();
 }
 
-/// Serve one `pick` stream until the user makes a choice, cancels, or the caller disconnects.
+fn next_pick_id() -> u64 {
+    static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT_PICK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Serve one `pick` or `prompt` stream until the user makes a choice, cancels, or the caller
+/// disconnects. `open` builds the message that raises the modal.
 ///
-/// After acknowledging the request on the UI thread, the caller may write row updates, each
-/// replacing the previous set. When the picker closes, rozi writes exactly one terminal JSON line
-/// (`{"selected":"…"}` or `{"cancelled":true}`).
+/// After acknowledging the request on the UI thread, a picker's caller may write row updates, each
+/// replacing the previous set. When the modal closes, rozi writes exactly one terminal JSON line
+/// (`{"selected":"…"}`, `{"input":"…"}`, or `{"cancelled":true}`).
 ///
 /// Note: `IpcConnection` exposes no `shutdown()`, so after writing the terminal line rozi cannot
 /// force the connection closed from this end; the reader thread reaps once the client closes.
-#[allow(clippy::too_many_arguments)]
 fn run_pick_stream(
     mut stream: IpcConnection,
     link: CommandLink<Msg>,
     id: u64,
-    title: Option<String>,
-    placeholder: Option<String>,
-    empty: Option<String>,
-    width: Option<u16>,
-    actions: Vec<crate::state::PickAction>,
-    tabs: Vec<crate::state::PickTab>,
-    tab: Option<String>,
-    extension: Option<crate::config::ExtensionProvenance>,
-    worker: Option<crate::state::WorkerId>,
+    open: impl FnOnce(crate::state::PickReply, mpsc::Sender<ControlResponse>) -> Msg,
 ) {
     let Ok(reader_stream) = control_stream_reader(&stream) else {
         return;
@@ -2763,20 +2779,7 @@ fn run_pick_stream(
     let (ack_tx, ack_rx) = mpsc::channel();
     let (reply_tx, reply_rx) = crate::state::PickReply::channel();
 
-    link.send(Msg::PickStreamOpen {
-        id,
-        title,
-        placeholder,
-        empty,
-        width,
-        actions,
-        tabs,
-        tab,
-        extension,
-        worker,
-        sender: reply_tx,
-        ack: ack_tx,
-    });
+    link.send(open(reply_tx, ack_tx));
 
     let ack_response = match ack_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(res) => res,
@@ -3162,22 +3165,47 @@ pub(crate) fn serve_connection(
         tab,
     } = &request.command
     {
-        static NEXT_PICK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let id = NEXT_PICK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        run_pick_stream(
-            stream,
-            link,
+        let id = next_pick_id();
+        let open = |sender, ack| Msg::PickStreamOpen {
             id,
-            title.clone(),
-            placeholder.clone(),
-            empty.clone(),
-            *width,
-            actions.clone(),
-            tabs.clone(),
-            tab.clone(),
-            request.extension.clone(),
+            title: title.clone(),
+            placeholder: placeholder.clone(),
+            empty: empty.clone(),
+            width: *width,
+            actions: actions.clone(),
+            tabs: tabs.clone(),
+            tab: tab.clone(),
+            extension: request.extension.clone(),
             worker,
-        );
+            sender,
+            ack,
+        };
+        run_pick_stream(stream, link, id, open);
+        return;
+    }
+    if let ControlCommand::Prompt {
+        title,
+        placeholder,
+        value,
+        masked,
+    } = &request.command
+    {
+        let id = next_pick_id();
+        let open = |sender, ack| Msg::PromptStreamOpen {
+            id,
+            prompt: crate::state::PickPromptFields {
+                title: title.clone(),
+                placeholder: placeholder.clone(),
+                value: value.clone(),
+                from_query: false,
+                masked: *masked,
+            },
+            extension: request.extension.clone(),
+            worker,
+            sender,
+            ack,
+        };
+        run_pick_stream(stream, link, id, open);
         return;
     }
     let reply_timeout = control_reply_timeout(&request.command);

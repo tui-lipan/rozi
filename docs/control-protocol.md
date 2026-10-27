@@ -67,7 +67,7 @@ The protocol is UTF-8 newline-delimited JSON. For a one-shot command:
 3. Read one response object followed by `\n`.
 4. The server closes the connection.
 
-rozi reads only the first request line. `subscribe`, `pick`, and `publish` keep the connection open
+rozi reads only the first request line. `subscribe`, `pick`, `prompt`, and `publish` keep the connection open
 after the initial response; see the stream sections below.
 
 Limits:
@@ -828,13 +828,18 @@ A `prompt` object has these fields; the string form is shorthand for `{ "title":
 | `title` | string | required | Prompt title. |
 | `placeholder` | string | none | Empty-field hint. |
 | `value` | string | none | Initial contents. |
+| `from_query` | bool | `false` | Starts with the text typed in the picker's search field. `value` applies while the field is empty. |
 | `masked` | bool | `false` | Hides typed characters on screen. The submitted `input` is still plain text on the stream. |
 
 ```json
 {"prompt":"Command"}
 {"prompt":{"title":"Edit command","placeholder":"git status","value":"git status --short"}}
 {"prompt":{"title":"Token","masked":true}}
+{"prompt":{"title":"New branch","from_query":true}}
 ```
+
+With `from_query`, someone can type a name into the search field and press the action's key to
+create it, the way `Ctrl+N` in the session picker starts a new session from the search text.
 
 ### Tabs
 
@@ -883,6 +888,29 @@ lines are row snapshots:
 printf '%s\n' '{"title":"Branches","rows":[{"id":"main","label":"main"}]}' |
   rozi pick --json
 ```
+
+## Prompt stream
+
+A prompt stream asks for one line of text in a modal prompt, with no picker behind it.
+
+```json
+{"cmd":"prompt","title":"Open URL","placeholder":"https://example.com"}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `title` | required | Prompt title. |
+| `placeholder` | none | Empty-field hint. |
+| `value` | none | Initial contents. |
+| `masked` | `false` | Hides typed characters on screen. The submitted `input` is still plain text on the stream. |
+
+rozi refuses a prompt while a picker or another modal overlay is open, as it does a `pick`.
+Otherwise it replies `{"ok":true}`, then writes one final line: `{"input":"…"}` when the user
+submits, or `{"cancelled":true}` when they cancel. A prompt from an extension that is disabled or
+reloaded while it is open is cancelled with a `reason`, as a picker is. The client writes nothing
+after the request.
+
+`rozi prompt` speaks this stream; see [Prompts](control.md#prompts).
 
 ## Published activity stream
 

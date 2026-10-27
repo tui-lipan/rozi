@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use tui_lipan::Result;
 
 use super::args::{
-    ControlCli, ControlEndpoint, ListFormat, PickCli, PublishCli, SubscribeCli, control_request,
+    ControlCli, ControlEndpoint, ListFormat, PickCli, PromptCli, PublishCli, SubscribeCli,
+    control_request,
 };
 use super::output::{OutputStyles, format_control_text};
 use crate::control;
@@ -312,6 +313,61 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
 
     let _ = reader_thread.join();
     Ok(())
+}
+
+/// Ask for one line of text. Submitting prints it and exits `0`, cancelling exits `1`, and a lost
+/// connection exits `2`, the same codes `pick` uses.
+pub(crate) fn run_prompt_cli(command: PromptCli) -> Result<()> {
+    let path = match discover_socket(command.socket) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let mut stream = match IpcEndpoint::at_path(&path).connect() {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("could not connect to {}: {err}", path.display());
+            std::process::exit(2);
+        }
+    };
+    let request = control_request(control::ControlCommand::Prompt {
+        title: command.title,
+        placeholder: command.placeholder,
+        value: command.value,
+        masked: command.masked,
+    });
+    writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
+
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let reply = read_socket_line(&mut reader)?;
+    let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
+    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+
+    while let Ok(Some(line)) = crate::control::read_control_reply_line(&mut reader) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if let Some(input) = value.get("input").and_then(|v| v.as_str()) {
+            println!("{}", if command.json { line.trim_end() } else { input });
+            let _ = std::io::stdout().flush();
+            std::process::exit(0);
+        }
+        if value.get("cancelled").is_some() {
+            if command.json {
+                println!("{}", line.trim_end());
+                let _ = std::io::stdout().flush();
+            }
+            std::process::exit(1);
+        }
+    }
+    std::process::exit(2);
 }
 
 /// The tab the picker opens on, mirroring the UI: the requested one when it names a usable tab,

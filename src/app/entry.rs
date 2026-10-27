@@ -195,6 +195,7 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::Publish(command) => return cli::run_publish_cli(command),
         cli::ParsedCli::Subscribe(command) => return cli::run_subscribe_cli(command),
         cli::ParsedCli::Pick(command) => return cli::run_pick_cli(command),
+        cli::ParsedCli::Prompt(command) => return cli::run_prompt_cli(command),
         cli::ParsedCli::Record(command) => return cli::run_record_cli(command),
         parsed => parsed,
     };
@@ -290,6 +291,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::Publish(_)
         | cli::ParsedCli::Subscribe(_)
         | cli::ParsedCli::Pick(_)
+        | cli::ParsedCli::Prompt(_)
         | cli::ParsedCli::Record(_)
         | cli::ParsedCli::RecordHelp
         | cli::ParsedCli::Help { .. }

@@ -202,6 +202,17 @@ pub(crate) struct PickCli {
 }
 
 #[derive(Debug)]
+pub(crate) struct PromptCli {
+    pub title: String,
+    pub placeholder: Option<String>,
+    pub value: Option<String>,
+    pub masked: bool,
+    pub socket: Option<PathBuf>,
+    /// Print the reply object instead of the bare text.
+    pub json: bool,
+}
+
+#[derive(Debug)]
 pub(crate) enum ParsedCli {
     Help {
         /// Also show the plumbing a normal run never touches (`--help --advanced`).
@@ -229,6 +240,7 @@ pub(crate) enum ParsedCli {
     Publish(PublishCli),
     Subscribe(SubscribeCli),
     Pick(PickCli),
+    Prompt(PromptCli),
     Record(RecordCli),
     RecordHelp,
     Server {
@@ -982,6 +994,42 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         },
                     )?,
                     events,
+                }));
+            }
+            "prompt" => {
+                let mut title = None;
+                let mut placeholder = None;
+                let mut value = None;
+                let mut masked = false;
+                let mut json = false;
+                while let Some(arg) = iter.next() {
+                    let mut text = |flag: &str| {
+                        iter.next()
+                            .ok_or_else(|| format!("{flag} requires a value"))
+                    };
+                    match arg.as_str() {
+                        "--title" | "-t" => title = Some(text("--title")?),
+                        "--placeholder" | "-p" => placeholder = Some(text("--placeholder")?),
+                        "--value" => value = Some(text("--value")?),
+                        "--masked" => masked = true,
+                        "--json" => json = true,
+                        _ => return Err(format!("unexpected argument `{arg}` after prompt")),
+                    }
+                }
+                let title = title.ok_or_else(|| "prompt requires --title".to_string())?;
+                let command = control::ControlCommand::Prompt {
+                    title: title.clone(),
+                    placeholder: placeholder.clone(),
+                    value: value.clone(),
+                    masked,
+                };
+                return Ok(ParsedCli::Prompt(PromptCli {
+                    socket: ui_stream_socket(&cli, socket, &command)?,
+                    title,
+                    placeholder,
+                    value,
+                    masked,
+                    json,
                 }));
             }
             "pick" => {
@@ -3464,6 +3512,49 @@ mod tests {
 
         assert!(
             parse_cli_args(vec!["pick".into(), "--jsn".into()]).is_err(),
+            "a mistyped flag must not be swallowed"
+        );
+    }
+
+    #[test]
+    fn prompt_requires_a_title_and_takes_its_fields_as_flags() {
+        let prompt = match parse_cli_args(
+            [
+                "prompt",
+                "--title",
+                "Open URL",
+                "--placeholder",
+                "https://",
+                "--value",
+                "example.com",
+                "--masked",
+                "--json",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .expect("prompt parses")
+        {
+            ParsedCli::Prompt(prompt) => prompt,
+            other => panic!("expected a prompt command, got {other:?}"),
+        };
+        assert_eq!(prompt.title, "Open URL");
+        assert_eq!(prompt.placeholder.as_deref(), Some("https://"));
+        assert_eq!(prompt.value.as_deref(), Some("example.com"));
+        assert!(prompt.masked && prompt.json);
+
+        assert!(
+            parse_cli_args(vec!["prompt".into()]).is_err(),
+            "a title is required"
+        );
+        assert!(
+            parse_cli_args(vec![
+                "prompt".into(),
+                "-t".into(),
+                "A".into(),
+                "--mask".into()
+            ])
+            .is_err(),
             "a mistyped flag must not be swallowed"
         );
     }

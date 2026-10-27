@@ -283,7 +283,7 @@ def picker_request(mode: str, rows: list[dict[str, object]]) -> dict[str, object
                 "id": "create",
                 "key": "ctrl-n",
                 "label": "new branch",
-                "prompt": "New branch",
+                "prompt": {"title": "New branch", "from_query": True},
             },
             {
                 "id": "delete",
@@ -300,7 +300,7 @@ def picker_request(mode: str, rows: list[dict[str, object]]) -> dict[str, object
                 "id": "create",
                 "key": "ctrl-n",
                 "label": "new worktree",
-                "prompt": "New worktree branch",
+                "prompt": {"title": "New worktree branch", "from_query": True},
             },
             {
                 "id": "remove",

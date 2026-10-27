@@ -36,8 +36,9 @@ is visible without closing and reopening it.
 Branch picker:
 
 - `Enter` switches to the selected branch.
-- `Ctrl-N` prompts for a branch name and creates it at `HEAD` without switching.
-- `Ctrl-D` twice deletes the highlighted branch with Git's non-forcing `-d`.
+- `Ctrl-N` prompts for a branch name, starting with the filter text, and creates it at `HEAD`
+  without switching.
+- `Ctrl-K` twice deletes the highlighted branch with Git's non-forcing `-d`.
 - The current branch and branches checked out in another worktree cannot be selected or deleted.
 - `main`, `master`, `trunk`, and a remote's symbolic default branch are protected from deletion.
 - When the current worktree is dirty, branch switching is disabled. Refresh after cleaning it.
@@ -45,9 +46,9 @@ Branch picker:
 Worktree picker:
 
 - `Enter` opens the selected worktree in a new focused pane.
-- `Ctrl-N` prompts for a new branch and creates a sibling worktree named
+- `Ctrl-N` prompts for a new branch, starting with the filter text, and creates a sibling worktree named
   `<primary-directory>-<branch>`. Slashes in the branch become dashes in the directory name.
-- `Ctrl-D` twice removes the highlighted worktree.
+- `Ctrl-K` twice removes the highlighted worktree.
 - The current, primary, locked, dirty, and missing worktrees cannot be removed. Removal never uses
   `--force`.
 

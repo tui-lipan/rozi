@@ -353,7 +353,7 @@ extension stops its placed processes on every host.
 ### What a placed process may do
 
 A placed process uses the normal `rozi` commands through `ROZI_BIN` and `ROZI_SOCKET`, including
-streams such as `rozi publish`, `rozi sidebar publish`, `rozi subscribe`, and `rozi pick`. Each process receives a
+streams such as `rozi publish`, `rozi sidebar publish`, `rozi subscribe`, `rozi pick`, and `rozi prompt`. Each process receives a
 credential in `ROZI_EXTENSION_CREDENTIAL` that tells the client which extension, generation, and
 host it was started for. The `rozi` CLI sends it automatically; never pass it on or log it. The
 client ignores any other identity a request claims, and refuses a credential that was revoked, that
@@ -361,8 +361,8 @@ belongs to a retired generation, or that arrives from a different host.
 
 What the client honors depends on the command:
 
-- `pick`, `notify`, and `show-command`/`hide-command` work anywhere. Pickers and notifications from
-  a remote host name that host.
+- `pick`, `prompt`, `notify`, and `show-command`/`hide-command` work anywhere. Pickers, prompts,
+  and notifications from a remote host name that host.
 - `sidebar publish` works anywhere, into the extension's own stream tabs. Its rows are headed with
   the process's host and, for a session-bound placement, its session.
 - Commands that act on panes, such as `list-panes`, `capture-pane`, `send-text`, `send-keys`,

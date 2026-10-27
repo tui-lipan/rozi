@@ -118,6 +118,7 @@ pub(crate) fn open_pick_stream(
         pending_action: None,
         pages,
         active,
+        standalone: false,
         reply: sender,
     });
     ctx.state.show_pick = true;
@@ -131,6 +132,61 @@ pub(crate) fn open_pick_stream(
     ctx.state.mode = Mode::Normal;
     request_pick_focus(ctx);
     Update::full()
+}
+
+/// Open a `prompt` stream: a picker with nothing to pick, raised straight onto its text prompt.
+pub(crate) fn open_prompt_stream(
+    ctx: &mut Context<AppRoot>,
+    id: u64,
+    prompt: crate::state::PickPromptFields,
+    extension: Option<crate::config::ExtensionProvenance>,
+    sender: PickReply,
+    ack: std::sync::mpsc::Sender<ControlResponse>,
+) -> Update {
+    let open = PickOpen {
+        id,
+        title: Some(prompt.title.clone()),
+        placeholder: None,
+        empty: None,
+        width: None,
+        actions: vec![crate::state::PickAction {
+            id: "submit".to_string(),
+            key: "enter".to_string(),
+            label: "submit".to_string(),
+            prompt: Some(crate::state::PickPromptSpec::Fields(prompt)),
+            close: true,
+            confirm: false,
+        }],
+        tabs: Vec::new(),
+        tab: None,
+        extension,
+    };
+    let update = open_pick_stream(ctx, open, sender, ack);
+    let Some(pick) = ctx.state.pick.as_mut().filter(|pick| pick.id == id) else {
+        // Refused; the ack already said why.
+        return update;
+    };
+    pick.standalone = true;
+    invoke_action(ctx, 0)
+}
+
+/// The title of a modal opened by `worker`, attributed to the host it runs on: a prompt from a
+/// process on another machine is the one a compromised host could otherwise dress up as this
+/// client's own.
+pub(crate) fn worker_title(
+    ctx: &Context<AppRoot>,
+    worker: Option<crate::state::WorkerId>,
+    title: Option<String>,
+    fallback: &str,
+) -> std::result::Result<Option<String>, ControlResponse> {
+    match worker.map(|worker| crate::ops::extension_workers::live_worker(&ctx.state, worker)) {
+        None => Ok(title),
+        Some(Ok(worker)) => Ok(Some(crate::ops::extension_workers::attribute(
+            worker,
+            title.as_deref().unwrap_or(fallback),
+        ))),
+        Some(Err(response)) => Err(response),
+    }
 }
 
 /// Replace one page's rows.
@@ -359,12 +415,19 @@ pub(crate) fn invoke_action(ctx: &mut Context<AppRoot>, index: usize) -> Update 
             // The picker unmounts while the prompt is up, so capture what to rebuild it with.
             let page = pick.page_mut();
             page.restore_query = page.query.clone();
+            let typed = page.query.trim();
+            let seed = if spec.from_query() && !typed.is_empty() {
+                typed
+            } else {
+                spec.value()
+            };
+            let input = tui_lipan::prelude::TextInput::new(seed);
             pick.prompt = Some(crate::state::PickPrompt {
                 action: index,
                 title: spec.title().to_string(),
                 placeholder: spec.placeholder().to_string(),
                 masked: spec.masked(),
-                input: tui_lipan::prelude::TextInput::new(spec.value()),
+                input,
             });
         }
         ctx.state.commands_dirty = true;
@@ -391,6 +454,17 @@ pub(crate) fn prompt_changed(
 }
 
 pub(crate) fn prompt_submit(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.pick.as_ref().is_some_and(|pick| pick.standalone) {
+        let text = ctx
+            .state
+            .pick
+            .as_ref()
+            .and_then(|pick| pick.prompt.as_ref())
+            .map(|prompt| prompt.input.text().to_string())
+            .unwrap_or_default();
+        close_with(ctx, &serde_json::json!({ "input": text }));
+        return Update::full();
+    }
     let Some((index, text)) = ctx
         .state
         .pick
@@ -404,8 +478,12 @@ pub(crate) fn prompt_submit(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 /// Dismiss the prompt and go back to the picker underneath, reporting nothing: an abandoned prompt
-/// is not a decision, and a caller that saw an action fire would have to undo it.
+/// is not a decision, and a caller that saw an action fire would have to undo it. A standalone
+/// prompt has no picker underneath, so cancelling it cancels the stream.
 pub(crate) fn prompt_cancel(ctx: &mut Context<AppRoot>) -> Update {
+    if ctx.state.pick.as_ref().is_some_and(|pick| pick.standalone) {
+        return cancel_pick(ctx, None);
+    }
     if let Some(pick) = ctx.state.pick.as_mut() {
         pick.prompt = None;
     }
@@ -1091,6 +1169,7 @@ mod tests {
                     title: title.into(),
                     placeholder: placeholder.map(str::to_string),
                     value: value.map(str::to_string),
+                    from_query: false,
                     masked,
                 },
             )),
@@ -1162,6 +1241,42 @@ mod tests {
             assert_eq!(prompt.placeholder, "git status");
             assert_eq!(prompt.input.text(), "git status --short");
             assert!(prompt.masked);
+        });
+    }
+
+    /// `from_query` carries what was typed into the prompt, and `value` stands in for an empty
+    /// filter.
+    #[test]
+    fn a_from_query_prompt_starts_from_the_filter_text() {
+        with_backend(|backend| {
+            let mut action = prompt_fields("Open URL", None, Some("https://"), false);
+            if let Some(crate::state::PickPromptSpec::Fields(fields)) = action.prompt.as_mut() {
+                fields.from_query = true;
+            }
+            open_with(backend, vec![action], None);
+            let seeded = |backend: &mut TestBackend<crate::AppRoot>| {
+                backend
+                    .dispatch(crate::Msg::PickActionKey(0))
+                    .expect("raise the prompt");
+                let text = backend
+                    .state()
+                    .pick
+                    .as_ref()
+                    .and_then(|pick| pick.prompt.as_ref())
+                    .expect("prompt open")
+                    .input
+                    .text()
+                    .to_string();
+                backend
+                    .dispatch(crate::Msg::PickPromptCancel)
+                    .expect("back to the picker");
+                text
+            };
+            assert_eq!(seeded(backend), "https://");
+            backend
+                .dispatch(crate::Msg::PickQueryChanged(" example.com ".into()))
+                .expect("type a filter");
+            assert_eq!(seeded(backend), "example.com");
         });
     }
 

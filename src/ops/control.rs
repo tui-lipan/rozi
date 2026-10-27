@@ -336,6 +336,9 @@ pub(crate) fn handle_control_request(
         ControlCommand::Pick { .. } => {
             ControlResponse::error("pick is handled by the control listener")
         }
+        ControlCommand::Prompt { .. } => {
+            ControlResponse::error("prompt is handled by the control listener")
+        }
         ControlCommand::PaneLogging { target, enabled } => {
             let id = target
                 .or(envelope.request.source_pane)

@@ -116,7 +116,8 @@ git switch -- "$branch"
 
 `pick` shows each input line in a picker and prints the chosen one. If the user presses `Esc`, it
 exits with status `1`, which this script treats as a normal stop. For richer rows, see
-[Pickers](control.md#pickers).
+[Pickers](control.md#pickers). To ask for text instead of a choice, use
+[`prompt`](control.md#prompts).
 
 ## Report progress
 
@@ -163,7 +164,7 @@ rozi --session dev capture-pane --target 3 --scrollback full --format text
 
 With `--session`, always name the pane with `--target`; the script's own `ROZI_PANE` belongs to a
 different session. A pane addressing its own session passes `--target "$ROZI_PANE"`. Commands that
-need a screen — `focus`, `run-action`, `notify`, `pick`, `subscribe`, and switching workspaces —
+need a screen — `focus`, `run-action`, `notify`, `pick`, `prompt`, `subscribe`, and switching workspaces —
 say so instead of running. Add `--remote <HOST>` to reach a session on another machine. See
 [Two endpoints](control.md#two-endpoints).
 

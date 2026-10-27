@@ -468,6 +468,21 @@
         opacity 0.3s ease,
         transform 0.3s ease;
 }
+/* Stacked under its picture, a swap is the last thing in its band: a change in
+   height only moves what lies below, off screen, never the tabs or the frame
+   the reader is looking at. Reserving the tallest there just leaves a hole
+   under every short one, so only the shown item takes space, and the one it
+   replaces leaves at once rather than fading over the text below. */
+@media (max-width: 1000px) {
+    .rz-swap {
+        position: relative;
+    }
+    .rz-swap > :not(.active) {
+        position: absolute;
+        inset: 0 0 auto 0;
+        transition: none;
+    }
+}
 
 /* Full size. The dialog is the page's top layer, so the image can use the
    whole viewport without fighting the sidebar or the nav for z-index. */

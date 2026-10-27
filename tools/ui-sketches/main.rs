@@ -1780,6 +1780,31 @@ fn sidebar_projects() {
     backend.state_mut().config.sidebar.layout.left.width = 32;
     backend.render();
     write_png(&mut backend, "sidebar-projects-status");
+    // Mixed work must remain visible even when an unread finish leads the row.
+    {
+        use rozi::session::protocol::AgentState;
+        let state = backend.state_mut();
+        let snapshot = state.local_agent_snapshot.as_mut().unwrap();
+        snapshot.agents[0].state = AgentState::Working;
+        let mut working = snapshot.agents[0].clone();
+        working.reference.pane.pane_id = 5;
+        let mut finished = snapshot.agents[0].clone();
+        finished.reference.pane.pane_id = 6;
+        finished.state = AgentState::Idle;
+        finished.completions = 1;
+        state
+            .agent_attention
+            .observe(&finished.reference, 0, rozi::state::FirstSighting::Baseline);
+        snapshot.agents.extend([working, finished]);
+        snapshot.projects[0].panes.extend([5, 6]);
+    }
+    for width in [24, 32, 44] {
+        backend.state_mut().config.sidebar.layout.left.width = width;
+        backend.render();
+        write_png(&mut backend, &format!("sidebar-projects-mixed-{width}"));
+    }
+    backend.state_mut().config.sidebar.layout.left.width = 32;
+
     backend.state_mut().config.nerd_icons = false;
     backend.render();
     write_png(&mut backend, "sidebar-projects-fallback");

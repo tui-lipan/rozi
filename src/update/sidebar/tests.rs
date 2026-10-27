@@ -2939,7 +2939,11 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
         };
         assert!(at("rozi") < at("master"));
         assert!(at("master") < at("api"));
-        assert!(at("fix/ssh") < at("Codex"));
+        assert!(at("fix/ssh") < at("▲1"));
+        assert!(
+            !sidebar[at("fix/ssh")].contains("▲1"),
+            "expanded parents omit counts"
+        );
         assert!(
             sidebar[at("api")].contains("└─ api"),
             "leaf guides continue through the unused arrow cell: {:?}",
@@ -2981,6 +2985,16 @@ fn the_projects_tab_is_a_tree_the_keyboard_opens_and_closes() {
                 .is_some_and(|line| line.row.content.label == "fix")),
             "Left collapses the checkout"
         );
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .any(|line| line.contains("fix/ssh") && line.contains("▲1")),
+            "collapsed checkouts show their hidden agents' counts"
+        );
+
         send_sidebar_key(&mut backend, KeyCode::Right, KeyMods::NONE);
         assert_eq!(
             backend

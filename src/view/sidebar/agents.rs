@@ -1195,26 +1195,42 @@ fn cluster_row(
     }
     // Folded, its runs are out of sight: count them by state, most urgent first, leaving idle ones
     // out as the remote session summaries do.
+    let mut parts = compact_status_parts(
+        members.iter().map(|row| {
+            (
+                row.status.as_deref().unwrap_or(pane_status::IDLE),
+                row.finished_unseen,
+            )
+        }),
+        theme,
+    );
+    parts.extend(workspace.map(|workspace| (workspace, muted)));
+    placed(content.badge_parts(parts))
+}
+
+/// Static glyph-and-count badges shared by Activity clusters and Projects rows.
+pub(super) fn compact_status_parts<'a>(
+    statuses: impl IntoIterator<Item = (&'a str, bool)>,
+    theme: &Theme,
+) -> Vec<(String, Style)> {
     let mut tally: Vec<(u8, String, Color, usize)> = Vec::new();
-    for row in members {
-        let value = status(row);
-        if normalized_status(&value) == pane_status::IDLE && !row.finished_unseen {
+    for (status, finished_unseen) in statuses {
+        if normalized_status(status) == pane_status::IDLE && !finished_unseen {
             continue;
         }
-        let rank = status_rank(Some(&value), row.finished_unseen);
-        let (glyph, color, _) = row_glyph(&value, row.finished_unseen, theme);
+        let rank = crate::session::protocol::ActivityState::from_status(status)
+            .attention_rank(finished_unseen);
+        let (glyph, color, _) = row_glyph(status, finished_unseen, theme);
         match tally.iter_mut().find(|(_, known, _, _)| *known == glyph) {
             Some((_, _, _, count)) => *count += 1,
             None => tally.push((rank, glyph, color, 1)),
         }
     }
     tally.sort_by_key(|(rank, ..)| *rank);
-    let mut parts: Vec<(String, Style)> = tally
+    tally
         .into_iter()
         .map(|(_, glyph, color, count)| (format!("{glyph}{count}"), Style::new().fg(color)))
-        .collect();
-    parts.extend(workspace.map(|workspace| (workspace, muted)));
-    placed(content.badge_parts(parts))
+        .collect()
 }
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
@@ -1324,6 +1340,36 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compact_counts_preserve_mixed_activity_and_omit_idle() {
+        let theme = tui_lipan::Theme::default();
+        let parts = super::compact_status_parts(
+            [
+                ("working", false),
+                ("idle", true),
+                ("blocked", false),
+                ("working", false),
+                ("idle", false),
+                ("error", false),
+            ],
+            &theme,
+        );
+        let expected = [
+            ("blocked", false, 1),
+            ("error", false, 1),
+            ("idle", true, 1),
+            ("working", false, 2),
+        ]
+        .map(|(status, unseen, count)| {
+            let (glyph, color, _) = super::row_glyph(status, unseen, &theme);
+            (
+                format!("{glyph}{count}"),
+                tui_lipan::prelude::Style::new().fg(color),
+            )
+        });
+        assert_eq!(parts, expected);
+    }
+
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;

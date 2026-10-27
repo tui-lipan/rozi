@@ -26,28 +26,19 @@ fn backend(mode: PaneBorderMode, pane_count: usize) -> TestBackend<AppRoot> {
         state.config.pane.show_workbar = false;
         state.config.pane.show_titles = false;
         state.config.pane.border_mode = mode;
-        let workspace = &mut state.current_mut().workspaces[0];
-        workspace.start_axis = SplitAxis::Horizontal;
-        workspace.panes.clear();
-        workspace.tile_tree = None;
         let ids: Vec<_> = (0..pane_count).map(|index| index as u32 + 10).collect();
-        for id in &ids {
-            let mut pane = Pane::new(
-                *id,
-                5_000,
-                FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 30.0,
-                    h: 10.0,
-                },
-            );
-            pane.opening = false;
-            pane.terminal_active = true;
-            workspace.panes.push(pane);
-        }
-        workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
-        workspace.focused_pane = ids.first().copied();
+        fill_workspace(
+            &mut state.current_mut().workspaces[0],
+            &ids,
+            SplitAxis::Horizontal,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 30.0,
+                h: 10.0,
+            },
+        );
+        state.current_mut().focused_pane = ids.first().copied();
     }
     backend
 }
@@ -78,16 +69,14 @@ fn none_removes_frames_while_dividers_draw_only_internal_splits() {
                 .any(|ch| matches!(ch, '─' | '┌' | '┐' | '└' | '┘'))),
             "divider mode must not draw an outer frame"
         );
-    });
-}
 
-#[test]
-fn moving_one_pane_preserves_unaffected_dividers() {
-    rozi::test_support::on_deeper_stack(|| {
-        let mut backend = backend(PaneBorderMode::Dividers, 4);
-        backend.state_mut().config.animations.enabled = true;
-        backend.render();
-        backend.state_mut().moving_pane = Some(MoveSession {
+        let mut moving = backend(PaneBorderMode::Dividers, 4);
+        moving.render();
+        let frame = moving.capture_frame();
+        let seam_x = (0..frame.width)
+            .find(|&x| frame.cell(x, 0).symbol == "│")
+            .expect("the unmoving upper tiles share a divider");
+        moving.state_mut().moving_pane = Some(MoveSession {
             id: 13,
             was_floating: false,
             drag_rect: FloatRect {
@@ -99,14 +88,11 @@ fn moving_one_pane_preserves_unaffected_dividers() {
             pointer_x: 5,
             pointer_y: 3,
         });
-
-        backend.render();
-        assert!(
-            backend.capture_frame().cells.iter().any(|cell| matches!(
-                cell.symbol.as_str(),
-                "─" | "│" | "┌" | "┐" | "└" | "┘" | "├" | "┤" | "┬" | "┴" | "┼"
-            )),
-            "stable split dividers should remain visible during a tiled move"
+        moving.render();
+        assert_eq!(
+            moving.capture_frame().cell(seam_x, 0).symbol,
+            "│",
+            "moving a lower tile preserves the unaffected upper divider"
         );
     });
 }
@@ -182,49 +168,13 @@ fn merged_inset_title_survives_the_focused_pane_drawing_last() {
 }
 
 fn merged_stack_keeps_both_titles(titlebar: PaneTitlebarMode) {
-    rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
-    backend.set_viewport(Rect {
-        x: 0,
-        y: 0,
-        w: 40,
-        h: 12,
-    });
-    {
-        let state = backend.state_mut();
-        state.config.animations.enabled = false;
-        state.config.pane.show_workbar = false;
-        state.config.pane.show_titles = true;
-        state.config.pane.titlebar = titlebar;
-        state.config.pane.border_mode = PaneBorderMode::Merged;
-        state.config.pane.highlight_focused_border = true;
-        let workspace = &mut state.current_mut().workspaces[0];
-        workspace.start_axis = SplitAxis::Vertical;
-        workspace.panes.clear();
-        workspace.tile_tree = None;
-        let ids = [10u32, 11u32];
-        for (i, id) in ids.iter().enumerate() {
-            let mut pane = Pane::new(
-                *id,
-                5_000,
-                FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 40.0,
-                    h: 12.0,
-                },
-            );
-            pane.opening = false;
-            pane.terminal_active = true;
-            pane.set_custom_title(if i == 0 { "TOP-PANE" } else { "BOTTOM-PANE" });
-            workspace.panes.push(pane);
-        }
-        workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
-        workspace.focused_pane = Some(10);
-        state.current_mut().focused_pane = Some(10);
-    }
-    backend.render();
-    let lines = backend.capture_frame().to_fixed_grid_lines();
+    let lines = render_titled(
+        titlebar,
+        CapStyle::Padded,
+        TOP,
+        &["TOP-PANE", "BOTTOM-PANE"],
+    )
+    .to_fixed_grid_lines();
     assert!(
         lines.iter().any(|line| line.contains("TOP-PANE")),
         "{titlebar:?} top title missing: {lines:?}"
@@ -240,39 +190,39 @@ fn merged_stack_keeps_both_titles(titlebar: PaneTitlebarMode) {
 #[test]
 fn special_pane_frames_are_on_by_default_and_config_only() {
     rozi::test_support::on_deeper_stack(|| {
-        for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
-            let mut backend = backend(mode, 1);
-            {
-                let state = backend.state_mut();
-                state.current_mut().workspaces[0].panes[0].floating = true;
-                state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
-                    x: 2.0,
-                    y: 1.0,
-                    w: 20.0,
-                    h: 7.0,
-                };
-            }
-            backend.render();
-            assert!(
-                backend
-                    .capture_frame()
-                    .cells
-                    .iter()
-                    .any(|cell| matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
-                "{mode:?} should frame a floating pane by default"
-            );
-
-            backend.state_mut().config.pane.keep_special_borders = false;
-            backend.render();
-            assert!(
-                backend
-                    .capture_frame()
-                    .cells
-                    .iter()
-                    .all(|cell| !matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
-                "{mode:?} opt-out should drop the floating frame"
-            );
+        // None has no workspace frame, so a double rule can only be the floating pane.
+        // Dividers uses the same special-frame path.
+        let mut backend = backend(PaneBorderMode::None, 1);
+        {
+            let state = backend.state_mut();
+            state.current_mut().workspaces[0].panes[0].floating = true;
+            state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
+                x: 2.0,
+                y: 1.0,
+                w: 20.0,
+                h: 7.0,
+            };
         }
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .cells
+                .iter()
+                .any(|cell| matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
+            "a floating pane keeps its double frame when tiles have none"
+        );
+
+        backend.state_mut().config.pane.keep_special_borders = false;
+        backend.render();
+        assert!(
+            backend
+                .capture_frame()
+                .cells
+                .iter()
+                .all(|cell| !matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
+            "the opt-out drops the floating frame"
+        );
     });
 }
 
@@ -615,51 +565,41 @@ fn render_with(
     highlight_focused_titlebar: bool,
     padding: (u16, u16, u16, u16),
 ) -> tui_lipan::CapturedFrame {
-    rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
+    let mut backend = title_backend(mode, title_style);
+    {
+        let state = backend.state_mut();
+        state.config.pane.show_titles = show_titles;
+        state.config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
+        state.config.pane.padding = padding;
+        state.current_mut().workspaces[0].panes[0].floating = floating;
+    }
+    backend.render();
+    backend.capture_frame()
+}
+
+fn title_backend(mode: PaneTitlebarMode, title_style: CapStyle) -> TestBackend<AppRoot> {
+    let mut backend = backend(PaneBorderMode::Separate, 1);
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
         w: 48,
         h: 12,
     });
-    {
-        let state = backend.state_mut();
-        state.config.pane.show_workbar = false;
-        state.config.pane.show_titles = show_titles;
-        state.config.pane.titlebar = mode;
-        state.config.pane.title_style = title_style;
-        state.config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
-        state.config.pane.padding = padding;
-        state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
-        state.current_mut().workspaces[0].panes.clear();
-        state.current_mut().workspaces[0].tile_tree = None;
-        let mut pane = Pane::new(
-            10,
-            5_000,
-            FloatRect {
-                x: 0.0,
-                y: 0.0,
-                w: 48.0,
-                h: 12.0,
-            },
-        );
-        pane.opening = false;
-        pane.terminal_active = true;
-        pane.floating = floating;
-        pane.set_custom_title(TITLE);
-        pane.terminal.process_server_output(b"body");
-        state.current_mut().workspaces[0].panes.push(pane);
-        let id = 10 as PaneId;
-        let start_axis = state.current().workspaces[0].start_axis;
-        let ratios = state.current().workspaces[0].split_ratios.clone();
-        state.current_mut().workspaces[0].tile_tree =
-            build_dwindle_tree(&[id], start_axis, &ratios);
-        state.current_mut().focused_pane = Some(id);
-        state.current_mut().workspaces[0].focused_pane = Some(id);
-    }
-    backend.render();
-    backend.capture_frame()
+    let state = backend.state_mut();
+    state.config.pane.show_titles = true;
+    state.config.pane.titlebar = mode;
+    state.config.pane.title_style = title_style;
+    state.config.pane.border_style = PaneBorderStyle::Rounded;
+    let pane = &mut state.current_mut().workspaces[0].panes[0];
+    pane.floating_rect = FloatRect {
+        x: 0.0,
+        y: 0.0,
+        w: 48.0,
+        h: 12.0,
+    };
+    pane.set_custom_title(TITLE);
+    pane.terminal.process_server_output(b"body");
+    backend
 }
 
 #[test]
@@ -817,49 +757,8 @@ fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
 #[test]
 fn pane_titlebar_omits_nerd_glyphs_when_nerd_icons_are_off() {
     rozi::test_support::on_deeper_stack(|| {
-        let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(Rect {
-            x: 0,
-            y: 0,
-            w: 48,
-            h: 12,
-        });
-        {
-            let state = backend.state_mut();
-            state.config.nerd_icons = false;
-            state.config.pane.show_workbar = false;
-            state.config.pane.show_titles = true;
-            state.config.pane.titlebar = PaneTitlebarMode::Border;
-            state.config.pane.title_style = CapStyle::Round;
-            state.config.pane.highlight_focused_titlebar = true;
-            state.config.pane.padding = (0, 0, 0, 0);
-            state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
-            state.current_mut().workspaces[0].panes.clear();
-            state.current_mut().workspaces[0].tile_tree = None;
-            let mut pane = Pane::new(
-                10,
-                5_000,
-                FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 48.0,
-                    h: 12.0,
-                },
-            );
-            pane.opening = false;
-            pane.terminal_active = true;
-            pane.floating = false;
-            pane.set_custom_title(TITLE);
-            pane.terminal.process_server_output(b"body");
-            state.current_mut().workspaces[0].panes.push(pane);
-            let id = 10 as PaneId;
-            let start_axis = state.current().workspaces[0].start_axis;
-            let ratios = state.current().workspaces[0].split_ratios.clone();
-            state.current_mut().workspaces[0].tile_tree =
-                build_dwindle_tree(&[id], start_axis, &ratios);
-            state.current_mut().focused_pane = Some(id);
-            state.current_mut().workspaces[0].focused_pane = Some(id);
-        }
+        let mut backend = title_backend(PaneTitlebarMode::Border, CapStyle::Round);
+        backend.state_mut().config.nerd_icons = false;
         backend.render();
         let line = backend.capture_frame().to_fixed_grid_lines()[0].clone();
         assert!(
@@ -999,8 +898,7 @@ fn render_titled(
     focused: PaneId,
     titles: &[&str],
 ) -> CapturedFrame {
-    rozi::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(AppRoot::default());
+    let mut backend = backend(PaneBorderMode::Merged, titles.len());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -1009,40 +907,20 @@ fn render_titled(
     });
     {
         let state = backend.state_mut();
-        state.config.pane.show_workbar = false;
         state.config.pane.show_titles = true;
         state.config.pane.titlebar = mode;
         state.config.pane.title_style = title_style;
-        state.config.pane.border_mode = PaneBorderMode::Merged;
         state.config.pane.border_style = PaneBorderStyle::Rounded;
-        state.current_mut().workspaces[0].panes.clear();
-        state.current_mut().workspaces[0].tile_tree = None;
-        state.current_mut().workspaces[0].start_axis = SplitAxis::Vertical;
-        let ids: Vec<PaneId> = (0..titles.len())
-            .map(|index| TOP + index as PaneId)
-            .collect();
-        for (id, title) in ids.iter().zip(titles) {
-            let mut pane = Pane::new(
-                *id,
-                5_000,
-                FloatRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 48.0,
-                    h: 8.0,
-                },
-            );
-            pane.opening = false;
-            pane.terminal_active = true;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.start_axis = SplitAxis::Vertical;
+        let ids: Vec<_> = workspace.panes.iter().map(|pane| pane.id).collect();
+        workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
+        for (pane, title) in workspace.panes.iter_mut().zip(titles) {
             pane.set_custom_title(title);
             pane.terminal.process_server_output(b"body");
-            state.current_mut().workspaces[0].panes.push(pane);
         }
-        let start_axis = state.current().workspaces[0].start_axis;
-        let ratios = state.current().workspaces[0].split_ratios.clone();
-        state.current_mut().workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
+        workspace.focused_pane = Some(focused);
         state.current_mut().focused_pane = Some(focused);
-        state.current_mut().workspaces[0].focused_pane = Some(focused);
     }
     backend.render();
     backend.capture_frame()

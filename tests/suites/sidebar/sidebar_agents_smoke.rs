@@ -565,9 +565,6 @@ fn published_sessions_render_under_one_cluster() {
             .iter()
             .map(|line| line.chars().take(32).collect())
             .collect();
-        for line in &sidebar {
-            println!("{line}");
-        }
 
         // One cluster row names the program, and its sessions are listed beneath it. Untitled
         // sessions fall back to the program's name, numbered so the two read apart.
@@ -655,9 +652,6 @@ fn a_run_kept_in_the_background_is_marked() {
             backend.render();
             let frame = backend.capture_frame();
             let lines = frame.to_fixed_grid_lines();
-            for line in &lines {
-                println!("{line}");
-            }
             let title = |task: &str| {
                 let row = lines.iter().position(|line| line.contains(task)).unwrap();
                 let column = lines[row]

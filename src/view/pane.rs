@@ -2520,7 +2520,7 @@ mod tests {
             false,
             false,
         );
-        pane.terminal.note_failures(&[]);
+        pane.note_failures(&[]);
         assert!(!edges.finished);
         for focused in [true, false] {
             assert_eq!(
@@ -2540,7 +2540,7 @@ mod tests {
             reason: None,
             set_at: 0,
         });
-        pane.terminal.note_failures(&[]);
+        pane.note_failures(&[]);
         assert_eq!(
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
@@ -2568,16 +2568,16 @@ mod tests {
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))
         );
-        let before = pane.terminal.failures();
+        let before = pane.failures();
         pane.terminal.reported_status = None;
-        pane.terminal.note_failures(&before);
+        pane.note_failures(&before);
         assert_eq!(pane_alert(&pane, false, &config, &Default::default()), None);
         let row = serde_json::from_value(serde_json::json!({
             "id": "build", "title": "Build", "status": "error", "kind": "activity"
         }))
         .unwrap();
         pane.terminal.published_rows.push(row);
-        pane.terminal.note_failures(&[]);
+        pane.note_failures(&[]);
         assert_eq!(
             pane_alert(&pane, false, &config, &Default::default()),
             Some((PaneAlert::Error, BadgeColor::Error))

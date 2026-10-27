@@ -1307,6 +1307,71 @@ fn a_failure_marks_its_pane_until_seen_and_again_only_when_new() {
     assert!(!apply(&mut pane, "done", "idle"), "nothing failed any more");
 }
 
+/// The hooks and the publisher speak for one conversation independently, and either can be first.
+/// A hook report confirming a failure the pane already showed and the user already saw is the same
+/// failure, not a new one.
+#[test]
+fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
+    use crate::session::protocol::{
+        AgentIdentity, AgentIntegrationReport, AgentRecord, AgentRef, AgentState, PublishedRow,
+        PublisherKind, RowKey,
+    };
+    let row = |status: &str| PublishedRow {
+        publisher: "threads".into(),
+        kind: PublisherKind::Agent,
+        live_session: None,
+        reported: false,
+        id: "conversation".into(),
+        title: "conversation".into(),
+        status: status.into(),
+        reason: None,
+        active: false,
+        work_started_at: None,
+        cwd: None,
+        project: None,
+        native_session: Some("native-conversation".into()),
+    };
+    let runtime = |status: &str, hooks: Option<AgentState>| PaneRuntimeState {
+        rows: vec![row(status)],
+        integration: hooks.map(|state| {
+            Box::new(AgentIntegrationReport {
+                integration: "hook".into(),
+                identity: AgentIdentity::new("codex", "Codex"),
+                reference: AgentRef::for_test(1, 1, None),
+                state,
+                reason: None,
+                native_session: Some("native-conversation".into()),
+                seq: 1,
+                reported_at_unix_ms: 1,
+            })
+        }),
+        ..PaneRuntimeState::default()
+    };
+    let records = || -> Vec<AgentRecord> {
+        vec![AgentRef::for_test(1, 1, Some(RowKey::new("threads", "conversation"))).into()]
+    };
+    let mut pane = crate::state::Pane::new(1, 100, tui_lipan::prelude::FloatRect::default());
+
+    apply_pane_runtime_state(&mut pane, records(), runtime("working", None));
+    apply_pane_runtime_state(&mut pane, records(), runtime("error", None));
+    assert!(pane.terminal.error_unseen);
+    // Looked at.
+    pane.terminal.error_unseen = false;
+    apply_pane_runtime_state(
+        &mut pane,
+        records(),
+        runtime("error", Some(AgentState::Error)),
+    );
+    assert_eq!(
+        pane.failures(),
+        [Some(RowKey::new("threads", "conversation"))]
+    );
+    assert!(
+        !pane.terminal.error_unseen,
+        "the same failure, reported twice"
+    );
+}
+
 #[test]
 fn hold_on_exit_excludes_disabled_and_closing_panes() {
     assert!(should_hold_on_exit(true, false));

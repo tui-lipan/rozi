@@ -239,6 +239,28 @@ impl Pane {
         }
     }
 
+    /// What in this pane has failed, one entry per occupant: the pane's own agent or status
+    /// (`None`), and each published row by key. Read from the occupant projection, so a hook report
+    /// speaking for one of an agent publisher's rows is that row's failure, not a second one.
+    pub fn failures(&self) -> Vec<Option<crate::session::protocol::RowKey>> {
+        crate::session::protocol::pane_occupants(&self.semantic_runtime())
+            .into_iter()
+            .filter(|occupant| occupant.state == crate::session::protocol::ActivityState::Error)
+            .map(|occupant| occupant.slot)
+            .collect()
+    }
+
+    /// Arm the pane's `error_unseen` when something fails that had not already failed before this
+    /// update, and drop it once nothing has.
+    pub(crate) fn note_failures(&mut self, before: &[Option<crate::session::protocol::RowKey>]) {
+        let failures = self.failures();
+        if failures.is_empty() {
+            self.terminal.error_unseen = false;
+        } else if failures.iter().any(|failure| !before.contains(failure)) {
+            self.terminal.error_unseen = true;
+        }
+    }
+
     /// The agent projection: this pane's agents, for the Agents view and `rozi agents`.
     pub fn agent_runtimes(&self) -> Vec<crate::session::protocol::AgentRuntime> {
         crate::session::protocol::effective_agent_runtimes(&self.semantic_runtime(), &self.agents)

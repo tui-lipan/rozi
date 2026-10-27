@@ -1113,37 +1113,6 @@ impl TerminalPane {
         finished
     }
 
-    /// What in this pane has failed: its own agent or status (`None`), and each published row by
-    /// key.
-    pub fn failures(&self) -> Vec<Option<crate::session::protocol::RowKey>> {
-        let failed = |status: &str| {
-            status
-                .trim()
-                .eq_ignore_ascii_case(crate::session::protocol::pane_status::ERROR)
-        };
-        let own = self.agent_status().as_deref().is_some_and(failed);
-        own.then_some(None)
-            .into_iter()
-            .chain(
-                self.effective_rows()
-                    .iter()
-                    .filter(|row| failed(&row.status))
-                    .map(|row| Some(row.key())),
-            )
-            .collect()
-    }
-
-    /// Arm [`Self::error_unseen`] when something fails that had not already failed before this
-    /// update, and drop it once nothing has.
-    pub(crate) fn note_failures(&mut self, before: &[Option<crate::session::protocol::RowKey>]) {
-        let failures = self.failures();
-        if failures.is_empty() {
-            self.error_unseen = false;
-        } else if failures.iter().any(|failure| !before.contains(failure)) {
-            self.error_unseen = true;
-        }
-    }
-
     /// The published rows as they are presented: each with the status and reason of the
     /// integration report that speaks for it. See [`crate::session::protocol::effective_row`].
     pub fn effective_rows(&self) -> Vec<crate::session::protocol::PublishedRow> {

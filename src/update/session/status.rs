@@ -129,7 +129,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.agents = agents;
     let previous_status = pane.terminal.reported_status.clone();
     let previous_agent_status = pane.terminal.agent_status();
-    let previous_failures = pane.terminal.failures();
+    let previous_failures = pane.failures();
     // Sampled before the incoming runtime state overwrites the status it dates.
     let previous_age = pane.terminal.status_age();
     // Replacing a detected agent establishes a new lifecycle baseline: its loading screen is
@@ -161,7 +161,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
     let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);
-    pane.terminal.note_failures(&previous_failures);
+    pane.note_failures(&previous_failures);
     finished_rows.extend(finished.iter().flatten().cloned());
     let mut edges = update_agent_status_edge(
         &mut pane.terminal,

@@ -146,6 +146,9 @@ Removal follows these rules:
 - It never deletes a branch.
 - It refuses the primary checkout and any checkout owned by a running or restorable rozi session.
   Stop or forget that session first.
+- It refuses while a running session cannot be checked, such as one served by a different rozi
+  version, because that session could own the checkout. The message names each such session; stop
+  them, or remove the checkout with `git worktree remove`.
 - It refuses a locked checkout unless the lock is stale. On a stale lock, the confirming press
   unlocks and removes the checkout. To remove a checkout with any other lock,
   [unlock it](#unlock-a-worktree) first.

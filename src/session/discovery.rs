@@ -304,6 +304,8 @@ struct QueryAnswer {
     projects: Vec<crate::session::protocol::ProjectSummary>,
     /// `None` from a server that predates reporting it, as well as from one we cannot speak to.
     instance: Option<crate::session::protocol::SessionInstanceId>,
+    /// The error code a server answered with instead, such as `protocol-mismatch`.
+    refusal: Option<String>,
 }
 
 impl QueryAnswer {
@@ -318,6 +320,7 @@ impl QueryAnswer {
             agents: Vec::new(),
             projects: Vec::new(),
             instance: None,
+            refusal: None,
         }
     }
 }
@@ -372,6 +375,11 @@ fn query_status_within(
             agents,
             projects,
             instance,
+            refusal: None,
+        }),
+        ServerMessage::Error { code, .. } => Ok(QueryAnswer {
+            refusal: Some(code),
+            ..QueryAnswer::unknown()
         }),
         _ => Ok(QueryAnswer::unknown()),
     }
@@ -454,9 +462,29 @@ pub(crate) struct WorktreeOrigins {
     /// `(session, canonical checkout path)` for every session that records one.
     pub known: Vec<(String, std::path::PathBuf)>,
     /// Live sessions whose origin could not be read, such as a server speaking another protocol.
-    pub unverified: Vec<String>,
+    pub unverified: Vec<UnverifiedSession>,
     /// Sessions in `known` whose server answered; the rest are restorable snapshots.
     pub live: BTreeSet<String>,
+}
+
+/// A live session whose origin could not be read, and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnverifiedSession {
+    pub name: String,
+    /// What went wrong, phrased to follow the session's name.
+    pub reason: String,
+}
+
+impl UnverifiedSession {
+    /// Why a server that answered the status query still gave no origin.
+    fn from_answer(name: String, answer: &QueryAnswer) -> Self {
+        let reason = match answer.refusal.as_deref() {
+            Some("protocol-mismatch") => "runs a different rozi version".to_string(),
+            Some(code) => format!("refused the query ({code})"),
+            None => "answered without its status".to_string(),
+        };
+        Self { name, reason }
+    }
 }
 
 impl WorktreeOrigins {
@@ -508,8 +536,11 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
             Err(err) if connect_error_proves_stale(err.kind()) => continue,
             // A busy Windows pipe, a timeout, or a permission error: something may be listening,
             // and its origin is unknown, which a removal guard must not read as "unused".
-            Err(_) => {
-                unverified.push(name);
+            Err(err) => {
+                unverified.push(UnverifiedSession {
+                    name,
+                    reason: format!("could not be reached ({err})"),
+                });
                 continue;
             }
         };
@@ -524,7 +555,11 @@ pub(crate) fn worktree_session_origins() -> Result<WorktreeOrigins, String> {
                     known.insert((name, canonical(&tree.path)));
                 }
             }
-            _ => unverified.push(name),
+            Ok(answer) => unverified.push(UnverifiedSession::from_answer(name, &answer)),
+            Err(err) => unverified.push(UnverifiedSession {
+                name,
+                reason: format!("did not answer ({err})"),
+            }),
         }
     }
     Ok(WorktreeOrigins {
@@ -549,10 +584,8 @@ fn connect_error_proves_stale(kind: std::io::ErrorKind) -> bool {
 /// read "unknown" as "unused".
 pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String> {
     let origins = worktree_session_origins()?;
-    if let Some(name) = origins.unverified.first() {
-        return Err(format!(
-            "cannot verify the origin of session `{name}` before removing a worktree"
-        ));
+    if !origins.unverified.is_empty() {
+        return Err(unverified_sessions_message(&origins.unverified));
     }
     let requested = std::path::Path::new(path);
     Ok(origins.sessions_at(
@@ -560,6 +593,24 @@ pub(crate) fn sessions_using_worktree(path: &str) -> Result<Vec<String>, String>
             .canonicalize()
             .unwrap_or_else(|_| requested.to_path_buf()),
     ))
+}
+
+/// Names every session the guard could not check, so stopping one does not just reveal the next,
+/// and says what the user can do about it.
+fn unverified_sessions_message(unverified: &[UnverifiedSession]) -> String {
+    let sessions = unverified
+        .iter()
+        .map(|session| format!("`{}` {}", session.name, session.reason))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let (subject, object) = match unverified {
+        [_] => ("this session uses", "it"),
+        _ => ("these sessions use", "them"),
+    };
+    format!(
+        "cannot tell whether {subject} the worktree: {sessions}. Stop {object}, or remove the \
+         checkout with `git worktree remove`"
+    )
 }
 
 /// Probes one session endpoint. Returns `None` whenever the server behind it is gone, so a killed
@@ -999,29 +1050,60 @@ mod tests {
     }
 
     /// A server that answers, but with something other than `SessionInfo`, is a live session we
-    /// cannot speak to. It stays listed so it can still be killed from the picker.
+    /// cannot speak to. It stays listed so it can still be killed from the picker, and the worktree
+    /// removal guard says it runs another version rather than only that it could not be checked.
     #[test]
     fn a_server_that_refuses_the_handshake_stays_listed_as_unknown() {
         let endpoint = test_endpoint("mismatch");
         let listener = endpoint.bind().expect("bind").into_listener();
         let server = std::thread::spawn(move || {
-            let mut stream = listener.accept().expect("accept");
-            let _: ClientMessage =
-                crate::session::protocol::read_frame(&mut stream).expect("query");
-            crate::session::protocol::write_frame(
-                &mut stream,
-                &ServerMessage::Error {
-                    code: "protocol-mismatch".to_string(),
-                    message: "speaks another version".to_string(),
-                },
-            )
-            .expect("error reply");
+            for _ in 0..2 {
+                let mut stream = listener.accept().expect("accept");
+                let _: ClientMessage =
+                    crate::session::protocol::read_frame(&mut stream).expect("query");
+                crate::session::protocol::write_frame(
+                    &mut stream,
+                    &ServerMessage::Error {
+                        code: "protocol-mismatch".to_string(),
+                        message: "speaks another version".to_string(),
+                    },
+                )
+                .expect("error reply");
+            }
         });
 
         let row = query_session_endpoint("mismatch", &endpoint).expect("listed");
         assert_eq!(row.status, DiscoveredSessionStatus::Unknown);
+        let mut stream = endpoint.connect().expect("connect");
+        let answer = query_status("mismatch", &mut stream, None).expect("answer");
+        assert_eq!(
+            UnverifiedSession::from_answer("mismatch".to_string(), &answer).reason,
+            "runs a different rozi version"
+        );
         server.join().expect("server thread");
         endpoint.remove_stale();
+    }
+
+    #[test]
+    fn removal_guard_names_every_unverified_session_and_the_way_out() {
+        let session = |name: &str, reason: &str| UnverifiedSession {
+            name: name.to_string(),
+            reason: reason.to_string(),
+        };
+        assert_eq!(
+            unverified_sessions_message(&[session("dev", "runs a different rozi version")]),
+            "cannot tell whether this session uses the worktree: `dev` runs a different rozi \
+             version. Stop it, or remove the checkout with `git worktree remove`"
+        );
+        assert_eq!(
+            unverified_sessions_message(&[
+                session("dev", "runs a different rozi version"),
+                session("eph-1", "did not answer (timed out)"),
+            ]),
+            "cannot tell whether these sessions use the worktree: `dev` runs a different rozi \
+             version; `eph-1` did not answer (timed out). Stop them, or remove the checkout with \
+             `git worktree remove`"
+        );
     }
 
     #[test]

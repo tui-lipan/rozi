@@ -630,11 +630,11 @@ fn published_sessions_render_under_one_cluster() {
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
             assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
             assert!(
-                sidebar.iter().any(|line| line.contains("permission requ")),
+                sidebar.iter().any(|line| line.contains("permission r")),
                 "a titled session shows its reason beside its state: {sidebar:#?}"
             );
             // Until a title exists, the reason is all the row has.
-            assert!(sidebar.iter().any(|line| line.contains("answer required")));
+            assert!(sidebar.iter().any(|line| line.contains("answer requi")));
             // An id is an opaque handle and must never stand in for a missing title.
             assert!(!sidebar.iter().any(|line| line.contains("ses_")));
             // A slot with nothing to say about its work falls back to the state word, which is

@@ -273,6 +273,41 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_pane_is_listed_under_the_workspace_it_has_followed_to() {
+        let mut state = State::new(crate::config::Config::default(), Default::default());
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 10.0,
+        };
+        let mut pinned = Pane::new(2, 100, rect);
+        pinned.floating = true;
+        pinned.pinned = true;
+        state.current_mut().workspaces[0].panes.push(pinned);
+        let heading_of = |state: &State, id: crate::state::PaneId| {
+            let keys: Vec<String> = panes_rows(state)
+                .into_iter()
+                .filter_map(|row| row.key)
+                .collect();
+            let at = keys
+                .iter()
+                .position(|key| *key == format!("pane:{id}"))
+                .expect("pane listed");
+            keys[..at]
+                .iter()
+                .rev()
+                .find(|key| key.starts_with("workspace:"))
+                .cloned()
+        };
+        assert_eq!(heading_of(&state, 2).as_deref(), Some("workspace:0"));
+
+        crate::ops::focus::switch_workspace(&mut state, 2);
+        assert_eq!(heading_of(&state, 2).as_deref(), Some("workspace:2"));
+        assert_eq!(heading_of(&state, 1).as_deref(), Some("workspace:0"));
+    }
+
+    #[test]
     fn the_heading_names_the_deepest_directory_every_pane_shares() {
         let at = |paths: &[&str]| -> Vec<Option<String>> {
             paths.iter().map(|path| Some(path.to_string())).collect()

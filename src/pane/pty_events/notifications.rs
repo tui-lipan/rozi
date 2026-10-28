@@ -114,6 +114,7 @@ fn notify(
     toast: Toast,
 ) -> Notified {
     prune_tracked_toasts(ctx);
+    let mut replacing = false;
     if let Some(tracked) = ctx.state.replaceable_toasts.get(&key).cloned() {
         // `renew` reports false once the toast has expired or begun fading, neither of which can be
         // extended - then this falls through and pushes a fresh one.
@@ -123,9 +124,22 @@ fn notify(
             }
             return Notified::Renewed;
         }
-        ctx.toast().dismiss_immediately(tracked.id);
+        // A changed message in a channel takes over its toast's place, but only the newest toast
+        // keeps its place across a push: anything older is above toasts that arrived after it,
+        // and its replacement lands beneath them. Those arrive like any other toast, as does a
+        // repeat of a message whose toast is already leaving.
+        let takes_its_place = matches!(key, ToastKey::Channel(_))
+            && tracked.content != content
+            && ctx.state.newest_toast == Some(tracked.id);
+        replacing = ctx.toast().dismiss_immediately(tracked.id) && takes_its_place;
     }
-    let id = ctx.toast().push(toast);
+    let motion = crate::view::animation::toast_motion(ctx.state.config.animations);
+    let motion = if replacing {
+        motion.replacing()
+    } else {
+        motion
+    };
+    let id = push_animated(ctx, motion.apply(toast));
     ctx.state.replaceable_toasts.insert(
         key,
         TrackedToast {
@@ -135,6 +149,18 @@ fn notify(
         },
     );
     Notified::Pushed
+}
+
+/// Show `toast` with the configured toast motion, for a toast that is never de-duplicated.
+pub(crate) fn push_toast(ctx: &mut Context<AppRoot>, toast: Toast) -> OverlayId {
+    let motion = crate::view::animation::toast_motion(ctx.state.config.animations);
+    push_animated(ctx, motion.apply(toast))
+}
+
+fn push_animated(ctx: &mut Context<AppRoot>, toast: Toast) -> OverlayId {
+    let id = ctx.toast().push(toast);
+    ctx.state.newest_toast = Some(id);
+    id
 }
 
 /// The text two toasts must share to count as the same message. The separator is a byte that

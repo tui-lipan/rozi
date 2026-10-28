@@ -31,6 +31,74 @@ pub(crate) fn picker_animation(
     })
 }
 
+/// How a toast arrives, leaves, and moves when the stack around it changes.
+///
+/// A slide enters from the right because toasts sit at the bottom-right (`app::entry`); the toast
+/// travels its own width, so it starts just past the screen edge. Arrival decelerates into place
+/// and departure accelerates away. With animations off a toast appears and leaves at once, and the
+/// stack jumps.
+pub(crate) fn toast_motion(animations: anim::WindowAnimationConfig) -> ToastMotion {
+    let style = if animations.enabled {
+        animations.toast
+    } else {
+        anim::ToastAnimationStyle::Off
+    };
+    let timing = |millis, easing| TransitionConfig {
+        duration: std::time::Duration::from_millis(millis),
+        easing,
+    };
+    let instant = timing(0, Easing::Linear);
+    match style {
+        anim::ToastAnimationStyle::Off => ToastMotion {
+            visibility: VisibilityAnimation::new().enter(instant).exit(instant),
+            restack: instant,
+        },
+        anim::ToastAnimationStyle::Fade => ToastMotion {
+            visibility: VisibilityAnimation::new(),
+            restack: timing(200, decelerate()),
+        },
+        anim::ToastAnimationStyle::Slide => ToastMotion {
+            visibility: VisibilityAnimation::new()
+                .enter(timing(280, decelerate()))
+                .exit(timing(180, accelerate()))
+                .slide(1.0, 0.0),
+            restack: timing(220, decelerate()),
+        },
+    }
+}
+
+/// The parts of a [`Toast`] that [`toast_motion`] decides.
+pub(crate) struct ToastMotion {
+    pub(crate) visibility: VisibilityAnimation,
+    pub(crate) restack: TransitionConfig,
+}
+
+impl ToastMotion {
+    pub(crate) fn apply(self, toast: Toast) -> Toast {
+        toast.animation(self.visibility).restack(self.restack)
+    }
+
+    /// A toast that takes over an on-screen one's slot appears in place rather than arriving
+    /// again, so a changed message reads as the same toast updating. It still leaves as usual.
+    pub(crate) fn replacing(mut self) -> Self {
+        self.visibility = self.visibility.enter(TransitionConfig {
+            duration: std::time::Duration::ZERO,
+            easing: Easing::Linear,
+        });
+        self
+    }
+}
+
+/// Fast off the mark, then a long settle: the toast lands rather than stops.
+fn decelerate() -> Easing {
+    Easing::CubicBezier(CubicBezier::new(0.16, 1.0, 0.3, 1.0).expect("valid control points"))
+}
+
+/// Slow to start, then gone: the mirror of [`decelerate`] for leaving.
+fn accelerate() -> Easing {
+    Easing::CubicBezier(CubicBezier::new(0.7, 0.0, 0.84, 0.0).expect("valid control points"))
+}
+
 pub(crate) fn transition_config_for(
     ctx: &Context<AppRoot>,
     pane: &Pane,

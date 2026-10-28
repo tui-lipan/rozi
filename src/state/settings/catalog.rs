@@ -12,7 +12,9 @@ use crate::config::{
     RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
 };
 use crate::input::Action;
-use crate::layout::anim::{PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle};
+use crate::layout::anim::{
+    PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle, ToastAnimationStyle,
+};
 use crate::state::{
     AlertMode, AlertPaint, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, badge_cap_styles,
     cap_style_id, cap_style_label,
@@ -493,6 +495,22 @@ pub static SETTINGS: &[SettingSpec] = {
                 ChoiceSave::Key(
                     ConfigKey::new("animations", "picker"),
                     PickerAnimationStyle::id,
+                ),
+            )),
+        ),
+        row(
+            CycleToastAnimation,
+            G::Animations,
+            "Toasts",
+            &["notification", "fade", "slide"],
+            Choice(&EnumChoice::new(
+                "Toast animation",
+                Choices::Fixed(ToastAnimationStyle::all),
+                config_field!(animations.toast),
+                ToastAnimationStyle::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations", "toast"),
+                    ToastAnimationStyle::id,
                 ),
             )),
         ),

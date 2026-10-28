@@ -110,6 +110,7 @@ settings_actions! {
     ToggleWorkspaceAnimation,
     CycleSessionAnimation,
     CyclePickerAnimation,
+    CycleToastAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCursorBlink,
@@ -303,6 +304,7 @@ impl SettingsAction {
             | Self::ToggleWorkspaceAnimation
             | Self::CycleSessionAnimation
             | Self::CyclePickerAnimation
+            | Self::CycleToastAnimation
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")
@@ -747,6 +749,7 @@ mod tests {
             SettingsAction::ToggleWorkspaceAnimation,
             SettingsAction::CycleSessionAnimation,
             SettingsAction::CyclePickerAnimation,
+            SettingsAction::CycleToastAnimation,
             SettingsAction::CyclePaneOpenAnimation,
             SettingsAction::CyclePaneCloseAnimation,
         ];

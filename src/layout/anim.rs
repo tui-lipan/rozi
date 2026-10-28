@@ -387,6 +387,49 @@ impl PickerAnimationStyle {
     }
 }
 
+/// How toasts arrive, leave, and make room for each other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToastAnimationStyle {
+    /// Toasts appear and leave at once, and the stack jumps.
+    Off,
+    /// Toasts fade in place, and the stack glides.
+    Fade,
+    /// Toasts slide in from the screen edge they sit on and back out of it, and the stack glides.
+    #[default]
+    Slide,
+}
+
+impl ToastAnimationStyle {
+    /// Cycle order for the Settings row.
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Fade, Self::Slide]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fade => "fade",
+            Self::Slide => "slide",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Fade => "Fade",
+            Self::Slide => "Slide",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|style| style.id().eq_ignore_ascii_case(value.trim()))
+    }
+}
+
 /// How a newly shown session takes over the screen from the previous one.
 ///
 /// Never a geometry animation: pane 2 in one session has no spatial relationship to pane 2 in
@@ -763,6 +806,7 @@ pub struct WindowAnimationConfig {
     pub workspace_duration: Duration,
     pub session: SessionAnimationStyle,
     pub picker: PickerAnimationStyle,
+    pub toast: ToastAnimationStyle,
     pub focus_chrome: bool,
     pub pane_open_style: PaneAnimationStyle,
     pub pane_close_style: PaneAnimationStyle,
@@ -788,6 +832,7 @@ impl Default for WindowAnimationConfig {
             workspace_duration: Duration::from_millis(GEOMETRY_MS),
             session: SessionAnimationStyle::default(),
             picker: PickerAnimationStyle::default(),
+            toast: ToastAnimationStyle::default(),
             focus_chrome: true,
             pane_open_style: PaneAnimationStyle::Scale,
             pane_close_style: PaneAnimationStyle::Scale,

@@ -1118,6 +1118,154 @@ mod tests {
         });
     }
 
+    /// Column and row where `needle` starts on the painted screen.
+    fn painted_at(
+        backend: &tui_lipan::TestBackend<AppRoot>,
+        needle: &str,
+    ) -> Option<(usize, usize)> {
+        backend
+            .capture_frame()
+            .to_fixed_grid_lines()
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find(needle)
+                    .map(|at| (line[..at].chars().count(), row))
+            })
+    }
+
+    fn painted_column(backend: &tui_lipan::TestBackend<AppRoot>, needle: &str) -> Option<usize> {
+        painted_at(backend, needle).map(|(column, _)| column)
+    }
+
+    /// The text of the toast tracked in `slot`, without its title.
+    fn tracked_text(
+        backend: &tui_lipan::TestBackend<AppRoot>,
+        slot: crate::pane::pty_events::ToastKey,
+    ) -> Option<String> {
+        let tracked = backend.state().replaceable_toasts.get(&slot)?;
+        tracked.content().split('\0').next_back().map(str::to_owned)
+    }
+
+    /// Whether `needle` is still moving: painted somewhere else once its motion has had time to end.
+    fn travels(backend: &mut tui_lipan::TestBackend<AppRoot>, needle: &str) -> bool {
+        backend.render();
+        let now = painted_at(backend, needle);
+        backend.advance(std::time::Duration::from_millis(500));
+        let later = painted_at(backend, needle);
+        assert!(later.is_some(), "{needle} settles on screen");
+        now != later
+    }
+
+    #[test]
+    fn toasts_slide_in_from_the_right_unless_animations_are_off() {
+        use crate::Msg;
+
+        // Short enough to stay readable while the rest of the toast is still past the screen edge.
+        let message = &NOT_ATTACHED[..7];
+        let rested = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let rest = rested.clone();
+        with_backend(move |mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            backend.advance(std::time::Duration::from_millis(30));
+            let entering = painted_column(&backend, message);
+            backend.advance(std::time::Duration::from_millis(500));
+            let settled = painted_column(&backend, message).expect("the toast settles on screen");
+            assert!(
+                entering.is_some_and(|column| column > settled),
+                "an arriving toast is painted right of where it settles: {entering:?} vs {settled}\n{}",
+                backend.capture_frame().plain_text()
+            );
+            *rest.lock().unwrap() = Some(settled);
+        });
+        let settled = rested.lock().unwrap().expect("the animated toast settled");
+        with_backend(move |mut backend| {
+            backend.state_mut().config.animations.enabled = false;
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            backend.render();
+            assert_eq!(
+                painted_column(&backend, message),
+                Some(settled),
+                "with animations off the toast is in place at once"
+            );
+        });
+    }
+
+    #[test]
+    fn a_replacement_toast_appears_in_its_place_instead_of_arriving_again() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch first layout cycle");
+            backend.advance(std::time::Duration::from_millis(500));
+            let first = tracked_text(&backend, layout_slot).expect("the layout toast is tracked");
+            let (_, row) = painted_at(&backend, &first).expect("the first toast settles");
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch second layout cycle");
+            let second = tracked_text(&backend, layout_slot).expect("the replacement is tracked");
+            assert_ne!(first, second);
+            assert!(
+                !travels(&mut backend, &second),
+                "the replacement does not travel"
+            );
+            assert_eq!(painted_at(&backend, &second).map(|(_, at)| at), Some(row));
+        });
+    }
+
+    #[test]
+    fn a_replacement_arrives_when_a_newer_toast_holds_the_bottom_of_the_stack() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch first layout cycle");
+            backend
+                .dispatch(Msg::UserCommandFailed {
+                    message: "toast test failure".to_string(),
+                })
+                .expect("dispatch command failure");
+            backend.advance(std::time::Duration::from_millis(500));
+
+            // The replacement is pushed beneath the failure, so it cannot keep the old place.
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch second layout cycle");
+            let second = tracked_text(&backend, layout_slot).expect("the replacement is tracked");
+            assert!(travels(&mut backend, &second), "the replacement arrives");
+        });
+    }
+
+    #[test]
+    fn a_repeat_of_a_leaving_toast_arrives_again() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            // Past the three-second lifetime and into the exit, which `renew` cannot reverse.
+            backend.advance(std::time::Duration::from_millis(3050));
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch repeat kill-session");
+            assert!(
+                travels(&mut backend, &NOT_ATTACHED[..7]),
+                "the repeat arrives"
+            );
+        });
+    }
+
     #[test]
     fn layout_cycle_stays_quiet_when_the_workbar_names_the_layout() {
         use crate::Msg;

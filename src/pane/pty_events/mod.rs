@@ -13,6 +13,7 @@ pub(crate) use notifications::{
     maybe_notify_pane_status, maybe_notify_program_status, maybe_notify_rows_done,
     maybe_notify_rows_failed, maybe_notify_session_agent, notify_error, notify_info, notify_on,
     notify_path_error, notify_path_info, notify_screenshot_saved, notify_update, notify_warning,
+    push_toast,
 };
 pub(crate) use resize::{flush_background_resizes, flush_pending_resizes, handle_pane_resize};
 

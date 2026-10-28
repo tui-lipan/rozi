@@ -65,6 +65,7 @@ const ANIMATION_KEYS: &[&str] = &[
     "focus_chrome",
     "pane_style",
     "picker",
+    "toast",
     "pane_open_style",
     "pane_close_style",
     "geometry_ms",

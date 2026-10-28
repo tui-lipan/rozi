@@ -698,6 +698,14 @@ mod tests {
         assert!(state.services.dormant.is_empty());
     }
 
+    /// Write `pid` so the waiting test never reads the file empty: `fs::write` creates the file
+    /// before it writes, and the test polls for the file's existence.
+    fn publish_pid(path: &std::path::Path, pid: u32) {
+        let staged = path.with_extension("tmp");
+        std::fs::write(&staged, pid.to_string()).unwrap();
+        std::fs::rename(staged, path).unwrap();
+    }
+
     #[test]
     // The helper process is itself terminated as part of the service job/process group. It cannot
     // wait for descendants whose survival is what the parent test is measuring.
@@ -732,7 +740,7 @@ mod tests {
                     .env("ROZI_TEST_SERVICE_ROLE", "child")
                     .spawn()
                     .unwrap();
-                std::fs::write(root.join("child.pid"), child.id().to_string()).unwrap();
+                publish_pid(&root.join("child.pid"), child.id());
                 loop {
                     std::thread::sleep(Duration::from_secs(60));
                 }
@@ -747,7 +755,7 @@ mod tests {
                     .env("ROZI_TEST_SERVICE_ROLE", "leaf")
                     .spawn()
                     .unwrap();
-                std::fs::write(root.join("leaf.pid"), child.id().to_string()).unwrap();
+                publish_pid(&root.join("leaf.pid"), child.id());
                 loop {
                     std::thread::sleep(Duration::from_secs(60));
                 }

@@ -75,7 +75,9 @@ repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-P
    npm run docs:build
    ```
 
-7. Push the release commit and wait for the normal CI matrix to pass on Linux, macOS, and Windows.
+7. Push the release commit straight to `master` and wait for the normal CI matrix to pass on Linux,
+   macOS, and Windows. A pull request for the version bump only adds runs: a squash merge makes a
+   new commit, and the release is gated on master CI for the exact tagged commit, not on PR CI.
 
 ## Tag and run the workflow
 
@@ -98,9 +100,8 @@ the tag, the commit, the completed package jobs, and the selected key ID.
 Other runs of the Release workflow never sign or publish:
 
 - A pull request that changes release infrastructure, `Cargo.toml`, or `Cargo.lock` packages every
-  target and checks the release scripts, but leaves the test matrix to CI, which runs it on the same
-  commit.
-- A manual run also runs the test matrix.
+  target and checks the release scripts, and leaves tests to CI, which runs them on the same commit.
+- A manual run does the same.
 - Ordinary pull requests skip the Release workflow and rely on CI.
 
 ### Tag from the GitHub website
@@ -117,7 +118,7 @@ stable release before the signing workflow completes.
    from `master` and that the exact tagged SHA already has a completed, successful master CI push
    run. Normal CI does not run again for release tags; this carries forward its formatting, Clippy,
    native test, integration, dependency-policy, and NetBSD cross-check results.
-2. **Release notes.** In parallel with testing, the release-note job finds the newest published,
+2. **Release notes.** In parallel with packaging, the release-note job finds the newest published,
    non-draft `v` tag other than the one being built, resolves both tags to exact commits, and proves
    the previous release is an ancestor. It passes every candidate commit's metadata and changed
    paths to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie writes notes
@@ -130,8 +131,9 @@ stable release before the signing workflow completes.
    range metadata, and structured agent input are uploaded once as the `release-notes` workflow
    artifact. A generation, permission, model, or validation failure stops the release; there is no
    fallback note style.
-4. **Tests.** `cargo test --locked --no-fail-fast` and `cargo check --locked --all-targets` run on
-   Linux, macOS, and Windows.
+4. **Tests.** None run on the tag. The source check already requires the master CI run for the exact
+   commit, which ran `cargo test --locked --no-fail-fast` and compiled every target on Linux, macOS,
+   and Windows.
 5. **Packaging.** Release archives build for Linux x86-64 and ARM64, macOS x86-64 and ARM64, and
    Windows x86-64. Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects
    binaries whose ELF version requirements exceed `GLIBC_2.28`.
@@ -139,9 +141,9 @@ stable release before the signing workflow completes.
 7. **Archive smoke test.** Each final archive is extracted and smoke-tested. On Windows this also
    covers launcher version selection, argument and environment forwarding, working-directory
    forwarding, and exit-code propagation.
-8. **Pre-signing checks.** The signing job starts only after tests, release-script checks,
-   packaging, and note generation succeed. Before reading the private key, it confirms the tag
-   version matches `Cargo.toml`, checks every expected archive is present, and runs
+8. **Pre-signing checks.** The signing job starts only after the source check, release-script
+   checks, packaging, and note generation succeed. Before reading the private key, it confirms the
+   tag version matches `Cargo.toml`, checks every expected archive is present, and runs
    `relswap trust-check` against the committed trust store.
 9. **Signing.** The workflow generates the manifest and checksums from the final archive bytes,
    signs the exact manifest bytes, and verifies every archive against `release-keys.json`.

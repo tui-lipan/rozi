@@ -4,9 +4,8 @@ on:
   push:
     # Feature-branch pushes are covered by `pull_request`. Running both doubled the OS matrix
     # on every PR update. Direct pushes to master still need their own run because nightly
-    # publication keys off a successful master CI. Release tags are covered by the stricter
-    # test-and-package matrix in `release.yml`; running this matrix too would prove the same commit
-    # twice before building every shipping target again.
+    # publication and every release key off a successful master CI: `release.yml` refuses a tag
+    # whose exact commit has not passed this run, and runs no test matrix of its own.
     branches: [master]
   pull_request:
   workflow_dispatch:

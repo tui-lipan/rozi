@@ -33,9 +33,10 @@ ROZI_BIN=/path/to/rozi \
 ```
 
 `ROZI_BIN` must accept every manifest key the extension uses, `screenshots` included, satisfy
-`min_rozi`, and support `sessions new --detach`. The script starts its session detached and attaches
-the only UI inside its own tmux server, because `capture-ui` needs one; never attach a UI from your
-own terminal for a capture. Inside the lab, `rozi` is that binary for the scene and the
+`min_rozi`, and support `sessions new --detach`. No other terminal or multiplexer is involved:
+`capture-ui` needs a UI, so the script attaches one from a pane of a second detached session, which
+`split --size` starts at exactly the requested size whatever window you run in. Never attach a UI
+from your own terminal for a capture. Inside the lab, `rozi` is that binary for the scene and the
 extension alike. `--keep` leaves the lab directory for inspection; `--config FILE` appends TOML to
 the lab's `config.toml`, for a theme or extension settings.
 
@@ -54,7 +55,7 @@ rozi extensions check .   # the Discover section names a missing, oversized, or 
 
 A scene is a Bash fragment sourced once the UI is attached, from `$DEMO` (`~/src/demo` in the lab).
 It drives rozi through public commands (`rozi split`, `rozi focus`, `rozi run-action`) and the
-helpers `keys` (tmux key names: `C-a`, `Enter`, `Escape`), `settle MS`, and `bin NAME BODY`, which
+helpers `keys` (keys as `rozi send-keys` reads them: `C-a`, `Enter`, `Escape`, or text), `settle MS`, and `bin NAME BODY`, which
 puts an executable stub on the lab `PATH`. `$EXTENSION` is the extension directory, `$LAB` the lab.
 
 - **Stage everything.** Never show real conversations, accounts, repositories, paths, or hosts.

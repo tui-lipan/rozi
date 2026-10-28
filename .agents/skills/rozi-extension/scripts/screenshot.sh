@@ -6,17 +6,17 @@
 #
 # The extension is linked into a throwaway lab: HOME, every XDG directory, and TMPDIR live in a
 # temporary directory that is removed afterwards, so your config, sessions, and history are never
-# read or written. rozi runs inside a private tmux server sized to --size cells; the shot is
-# `rozi capture-ui --render png --scale N` of that UI.
+# read or written. The UI runs in a pane of a second, detached rozi session that has no UI of its
+# own, started at exactly --size cells; the shot is `rozi capture-ui --render png --scale N` of it.
 #
 # SCENE.sh is sourced once the UI is attached, with the lab environment, `ROZI=1`, and the UI's
 # `ROZI_SOCKET` exported, so plain `rozi split`, `rozi run-action`, and `rozi send-keys` drive it.
 # It may also call:
-#   keys KEY...    send keys to the UI through tmux, in tmux notation (`C-a`, `Enter`, `Escape`)
+#   keys KEY...    type into the UI, as `rozi send-keys` reads keys (`C-a`, `Enter`, `Escape`, text)
 #   settle MS      wait for the UI to finish drawing
 #   bin NAME BODY  write an executable stub NAME on the lab PATH with BODY as its script
-# and read $LAB, $DEMO (a project directory to start panes in), $EXTENSION, and $ROZI_BIN. A scene that starts
-# a daemon defines a `teardown` function, which runs before the lab is removed.
+# and read $LAB, $DEMO (a project directory to start panes in), $EXTENSION, and $ROZI_BIN. A scene
+# that starts a daemon defines a `teardown` function, which runs before the lab is removed.
 #
 # ROZI_BIN selects the rozi binary (default: `rozi` on PATH). Inside the lab, `rozi` is that binary
 # for the scene and the extension alike. It must accept every manifest key the extension uses.
@@ -56,8 +56,6 @@ done
     echo "usage: screenshot.sh --extension DIR --scene SCENE.sh --output FILE" >&2
     exit 2
 }
-cols=${size%x*}
-rows=${size#*x}
 extension=$(cd "$extension" && pwd)
 export EXTENSION=$extension
 scene=$(cd "$(dirname "$scene")" && pwd)/$(basename "$scene")
@@ -66,12 +64,13 @@ export ROZI_BIN
 
 LAB=$(mktemp -d "${TMPDIR:-/tmp}/rozi-shot.XXXXXX")
 export LAB
-tmux_socket="$LAB/tmux.sock"
+# The session that holds the UI's terminal: a pane of exactly the requested size.
+terminal="$session-terminal"
 cleanup() {
     trap - EXIT HUP INT TERM
     if declare -F teardown >/dev/null; then teardown || true; fi
+    "$ROZI_BIN" sessions kill "$terminal" >/dev/null 2>&1 || true
     "$ROZI_BIN" sessions kill "$session" >/dev/null 2>&1 || true
-    tmux -S "$tmux_socket" kill-server >/dev/null 2>&1 || true
     if [ "$keep" = 1 ]; then echo "lab kept at $LAB" >&2; return; fi
     # A daemon the scene started may still be writing as it exits, and rozi keeps unpacked
     # extension bundles read-only.
@@ -120,23 +119,30 @@ bin() {
     printf '#!/usr/bin/env bash\n%s\n' "$2" > "$LAB/bin/$1"
     chmod +x "$LAB/bin/$1"
 }
-keys() { tmux -S "$tmux_socket" send-keys -t shot "$@"; }
+keys() { "$ROZI_BIN" --session "$terminal" send-keys --target "$terminal_pane" "$@" >/dev/null; }
 settle() { sleep "$(awk "BEGIN { print $1 / 1000 }")"; }
 
 "$ROZI_BIN" extensions check "$extension" >/dev/null || "$ROZI_BIN" extensions check "$extension"
 "$ROZI_BIN" extensions install --link "$extension" >/dev/null
 
-# The session starts detached; the UI that attaches inside tmux opens its first pane in $DEMO.
+# Both sessions start detached. The UI attaches from a pane of the terminal session, which rozi
+# sizes exactly, and opens the scene session's first pane in $DEMO. That pane's own ROZI variables
+# would make the UI a client of the terminal session, so they are cleared.
 "$ROZI_BIN" sessions new "$session" --detach
-(cd "$DEMO" && tmux -S "$tmux_socket" -f /dev/null new-session -d -s shot -x "$cols" -y "$rows" \
-    "$ROZI_BIN sessions attach $session")
-tmux -S "$tmux_socket" set-option -t shot status off >/dev/null
+"$ROZI_BIN" sessions new "$terminal" --detach
+terminal_pane=$("$ROZI_BIN" --session "$terminal" split --size "$size" --cwd "$DEMO" --argv \
+    bash -c 'unset "${!ROZI@}"; exec "$0" sessions attach "$1"' "$ROZI_BIN" "$session" |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["id"])')
 for _ in $(seq 100); do
     ROZI_SOCKET=$(find "$XDG_RUNTIME_DIR" -name 'control-*.sock' -print -quit 2>/dev/null)
     [ -n "$ROZI_SOCKET" ] && break
     sleep 0.1
 done
-[ -n "$ROZI_SOCKET" ] || { echo "rozi did not start; see: tmux -S $tmux_socket attach" >&2; exit 1; }
+if [ -z "$ROZI_SOCKET" ]; then
+    echo "the rozi UI did not start; its terminal shows:" >&2
+    "$ROZI_BIN" --session "$terminal" capture-pane --target "$terminal_pane" --format text >&2 || true
+    exit 1
+fi
 export ROZI=1 ROZI_SOCKET
 settle 800
 

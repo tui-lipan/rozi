@@ -126,8 +126,10 @@ settle() { sleep "$(awk "BEGIN { print $1 / 1000 }")"; }
 "$ROZI_BIN" extensions check "$extension" >/dev/null || "$ROZI_BIN" extensions check "$extension"
 "$ROZI_BIN" extensions install --link "$extension" >/dev/null
 
+# The session starts detached; the UI that attaches inside tmux opens its first pane in $DEMO.
+"$ROZI_BIN" sessions new "$session" --detach
 (cd "$DEMO" && tmux -S "$tmux_socket" -f /dev/null new-session -d -s shot -x "$cols" -y "$rows" \
-    "$ROZI_BIN sessions new $session")
+    "$ROZI_BIN sessions attach $session")
 tmux -S "$tmux_socket" set-option -t shot status off >/dev/null
 for _ in $(seq 100); do
     ROZI_SOCKET=$(find "$XDG_RUNTIME_DIR" -name 'control-*.sock' -print -quit 2>/dev/null)

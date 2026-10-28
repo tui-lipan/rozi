@@ -32,8 +32,10 @@ ROZI_BIN=/path/to/rozi \
     --extension . --scene docs/screenshot-scene.sh --output docs/screenshot.webp
 ```
 
-`ROZI_BIN` must accept every manifest key the extension uses, `screenshots` included, and its
-version must satisfy `min_rozi`. Inside the lab, `rozi` is that binary for the scene and the
+`ROZI_BIN` must accept every manifest key the extension uses, `screenshots` included, satisfy
+`min_rozi`, and support `sessions new --detach`. The script starts its session detached and attaches
+the only UI inside its own tmux server, because `capture-ui` needs one; never attach a UI from your
+own terminal for a capture. Inside the lab, `rozi` is that binary for the scene and the
 extension alike. `--keep` leaves the lab directory for inspection; `--config FILE` appends TOML to
 the lab's `config.toml`, for a theme or extension settings.
 

@@ -427,6 +427,13 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("data");
     let loaded = write_extension(&root, "renamed-checkout", "loaded", 1);
+    let manifest = loaded.join("extension.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap().replacen(
+        "api = 1",
+        "api = 1\nscreenshots = [\"docs/picker.png\"]",
+        1,
+    );
+    std::fs::write(&manifest, text).unwrap();
     write_extension(&root, "disabled-checkout", "disabled", 1);
     write_extension(&root, "future-checkout", "future", 2);
 
@@ -449,11 +456,15 @@ fn list_extensions_reports_loaded_disabled_and_incompatible_in_all_formats() {
     let loaded = std::fs::canonicalize(loaded).unwrap();
     assert!(stdout.lines().any(|line| {
         line.strip_prefix("  directory ")
-            .and_then(|path| std::fs::canonicalize(path).ok())
+            .and_then(|path| std::fs::canonicalize(path.trim_start()).ok())
             .is_some_and(|path| path == loaded)
     }));
     assert!(stdout.contains("loaded.open"));
     assert!(!stdout.contains("command.loaded.open"));
+    assert!(
+        stdout.contains("  screenshots docs/picker.png\n"),
+        "a label as long as the column still has a space before its value:\n{stdout}"
+    );
 
     let json = rozi(&temp, &["extensions", "list", "--json"]);
     assert!(json.status.success());

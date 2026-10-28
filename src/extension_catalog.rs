@@ -71,8 +71,10 @@ pub(crate) fn screenshot_path_problem(path: &str) -> Option<String> {
     None
 }
 
+/// Fields this Rozi does not know are ignored, here and in [`CatalogDocument`]: the index adds
+/// fields within a schema version, and rejecting them would drop every record for older clients.
+/// The generator, not the reader, is strict about what it publishes.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct CatalogEntry {
     pub(crate) repository: String,
     pub(crate) source: String,
@@ -260,7 +262,6 @@ impl CatalogEntry {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CatalogDocument {
     schema_version: u32,
     generated_at: String,
@@ -435,19 +436,34 @@ mod tests {
         let mut mistyped = good.clone();
         mistyped["repository"] = "someone/mistyped".into();
         mistyped["stars"] = "many".into();
-        let mut unknown = good.clone();
-        unknown["repository"] = "someone/unknown-field".into();
-        unknown["surprise"] = true.into();
         let text = serde_json::json!({
             "schema_version": 1,
             "generated_at": "2026-09-21T00:00:00Z",
-            "extensions": [empty_host, mistyped, good.clone(), unknown, good],
+            "extensions": [empty_host, mistyped, good.clone(), good],
         })
         .to_string();
 
         let entries = parse(&text).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].repository, "tui-lipan/vim-rozi-navigator");
+    }
+
+    /// The index adds fields within a schema version; a client that predates one keeps listing
+    /// every record.
+    #[test]
+    fn fields_a_later_index_adds_are_ignored() {
+        let mut document: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        document["published_by"] = "a later generator".into();
+        document["extensions"][0]["surprise"] = true.into();
+
+        let entries = parse(&document.to_string()).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(CatalogEntry::repository)
+                .collect::<Vec<_>>(),
+            ["tui-lipan/vim-rozi-navigator"]
+        );
     }
 
     #[test]

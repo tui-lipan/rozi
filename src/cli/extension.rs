@@ -435,7 +435,8 @@ pub(super) fn format_extensions_text(
         out.push('\n');
         let mut field = |label: &str, value: &str| {
             out.push_str("  ");
-            out.push_str(&format!("{label:<10}"));
+            // The space keeps a label as long as the column apart from its value.
+            out.push_str(&format!("{label:<11} "));
             out.push_str(value);
             out.push('\n');
         };

@@ -17,7 +17,7 @@ go to `/tmp/rzc-preview` for review; only the WebP and MP4 files belong in the r
 ## Requirements
 
 - Linux or macOS with `bash`, `git`, and ImageMagick 7 (`magick`)
-- `python3`, `tmux`, and `ffmpeg` with libx264, for clips
+- `python3` and `ffmpeg` with libx264, for clips
 - `nvim`, `lazygit`, `btop`, `yazi`, `eza`, and `bat`, which fill the panes
 
 The script builds a release rozi with `--features ui-snapshot`: clips need release speed to play
@@ -39,7 +39,7 @@ checkout are never read or written.
 | Path | Purpose |
 | --- | --- |
 | `scenes.sh` | The scene and clip list: name, viewport, settle time, script, and extra config |
-| `clip.py` | Plays a clip's script in real time against rozi running in a private tmux server |
+| `clip.py` | Plays a clip's script in real time against rozi running in a pane of a private, detached rozi session |
 | `frame.sh` | Encodes a clip as a terminal window: an MP4 with a title bar, or a GIF that adds a shadow and glow |
 | `sandbox/profiles/` | Workspaces the scenes launch: `demo` (the README and landing page demo), `dev` (the workspace shot), `agents` (coding agents), `api` (overlays), `web` (layouts), `workspaces` (workspace switching), `media` (images) |
 | `sandbox/nvim`, `btop`, `lazygit` | Program configs that use ANSI colors, so each rozi theme recolors them |
@@ -71,7 +71,7 @@ left-button drag at zero-based terminal cells, including several moves before re
 
 | Step | Effect |
 | --- | --- |
-| `key:C-a` | One key in tmux notation: `Enter`, `Escape`, `C-l`, `M-l`, `Up` |
+| `key:C-a` | One key as `rozi send-keys` names it: `Enter`, `Escape`, `C-l`, `M-l`, `Up` |
 | `type:TEXT` | Types `TEXT`, one character every 45 ms |
 | `sleep:MS` | Waits |
 | `run:COMMAND` | Runs a shell command in the sandbox, where `rozi` is this build |
@@ -89,8 +89,11 @@ itself. The `hero` clip uses both: its MP4 plays on the landing page and `assets
 repository README's demo. A blinking dot may be in its off phase at a given second, so check the poster in
 `/tmp/rzc-preview` after each run.
 
-rozi runs under tmux, which answers terminal queries as a terminal emulator does. Through a bare
-pseudo-terminal, typed keys reach the focused pane but never rozi's own bindings.
+rozi runs in a pane of a second rozi session, started detached with `sessions new --detach` and
+sized exactly with `split --size`. That pane answers terminal queries as a terminal emulator does;
+through a bare pseudo-terminal, typed keys reach the focused pane but never rozi's own bindings.
+The session keeps its config, state, and runtime files under the sandbox's `terminal/`, so the rozi
+being recorded never lists it.
 
 ## Embed a screenshot
 

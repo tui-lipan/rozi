@@ -19,7 +19,7 @@ sandbox=/tmp/rzc
 base=/tmp/rzc-base
 only=" $* "
 
-for tool in nvim lazygit btop yazi eza bat bash git magick ffmpeg python3 tmux; do
+for tool in nvim lazygit btop yazi eza bat bash git magick ffmpeg python3; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -124,7 +124,7 @@ clip() {
   prepare_scene "$extra"
 
   local rec=$sandbox/clip.rozirec frames=$sandbox/frames
-  sandbox_env timeout 300 python3 "$here/clip.py" "$sandbox/tmux.sock" \
+  sandbox_env timeout 300 python3 "$here/clip.py" "$sandbox/terminal" \
     "${viewport%x*}" "${viewport#*x}" "$settle" \
     "run:rozi record start ui --max-fps 60 --hide-indicator --output $rec >/dev/null
 $steps

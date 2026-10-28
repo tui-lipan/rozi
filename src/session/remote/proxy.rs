@@ -150,7 +150,7 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, Opt
     }))
 }
 
-fn fresh_server_nonce() -> String {
+pub(crate) fn fresh_server_nonce() -> String {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).expect("operating-system randomness unavailable");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

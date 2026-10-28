@@ -378,7 +378,7 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
         | "--remote-serve"
         | "--remote-control"
         | "--remote-serve-existing" => 1,
-        "--server-start" => 2,
+        "--server-start" | "--fresh-server-start" => 2,
         "--remote" => usize::from(next.is_some_and(|value| {
             !value.starts_with('-') && !matches!(value, "sessions" | "worktrees")
         })),
@@ -513,16 +513,16 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     startup_nonce: None,
                 });
             }
-            "--server-start" => {
-                let name = require_value(&mut iter, "--server-start requires a session name")?;
-                let nonce = require_value(&mut iter, "--server-start requires a nonce")?;
+            flag @ ("--server-start" | "--fresh-server-start") => {
+                let name = require_value(&mut iter, &format!("{flag} requires a session name"))?;
+                let nonce = require_value(&mut iter, &format!("{flag} requires a nonce"))?;
                 if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                    return Err("--server-start requires a 32-digit hexadecimal nonce".to_string());
+                    return Err(format!("{flag} requires a 32-digit hexadecimal nonce"));
                 }
-                reject_trailing_control_args(&mut iter, "--server-start")?;
+                reject_trailing_control_args(&mut iter, flag)?;
                 return Ok(ParsedCli::Server {
                     name,
-                    fresh: false,
+                    fresh: flag == "--fresh-server-start",
                     config_path: cli.config_path,
                     startup_nonce: Some(nonce),
                 });
@@ -3854,6 +3854,11 @@ mod tests {
         assert!(!fresh);
         assert!(config_path.is_none());
         assert_eq!(startup_nonce.as_deref(), Some(nonce));
+        assert!(matches!(
+            parse_cli_args(vec!["--fresh-server-start".into(), "dev".into(), nonce.into()]),
+            Ok(ParsedCli::Server { fresh: true, startup_nonce: Some(carried), .. })
+                if carried == nonce
+        ));
         assert!(
             parse_cli_args(vec![
                 "--server-start".into(),

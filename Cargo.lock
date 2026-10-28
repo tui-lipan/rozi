@@ -438,6 +438,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -761,6 +767,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.1",
+ "const-oid",
  "crypto-common 0.2.2",
 ]
 
@@ -2753,11 +2760,11 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relswap"
-version = "0.0.11"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28b713702d7acc33f0056d352b70899260eab3e172c0ea0e7cc03c71e016203"
+checksum = "6810b0d4ffc53317fa6563923353dec329ba2330f540a8b480be412ae33cdc88"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "ed25519-dalek",
  "flate2",
@@ -2768,11 +2775,11 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tar",
  "ureq",
  "url",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -2800,7 +2807,7 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 name = "rozi"
 version = "0.0.36"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "criterion",
  "getrandom 0.4.3",
@@ -2814,14 +2821,14 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tempfile",
  "toml",
  "tui-lipan",
  "unicode-segmentation",
  "unicode-width",
  "url",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2849,7 +2856,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

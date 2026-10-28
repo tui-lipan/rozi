@@ -59,7 +59,10 @@ pub struct RefreshReport {
 }
 
 fn hash(content: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(content))
+    Sha256::digest(content)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn registry_path(state_dir: &Path) -> PathBuf {

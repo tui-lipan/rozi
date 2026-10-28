@@ -2,9 +2,15 @@
 
 The extension gallery on rozi.tui-lipan.dev shows the images an extension lists in
 `[extension] screenshots`. Capture them in a real rozi UI with `scripts/screenshot.sh`, never with
-a desktop screenshot of your own terminal: the script runs a throwaway rozi at an exact size, with
-no access to your config, sessions, history, prompt, or hostname, and captures it with
-`rozi capture-ui --render png --scale 2`.
+a desktop screenshot of your own terminal: the script runs a throwaway rozi at an exact size and
+captures it with `rozi capture-ui --render png --scale 2`. It starts from an empty environment with
+its own home and XDG directories, so your config, sessions, history, and shell prompt never reach
+the shot, and pane titles carry only the directory name.
+
+It does not hide the machine itself. rozi, the extension, and anything a scene runs can still read
+the real hostname, username, and system details (`hostname`, `uname`, `id`), and a remote or
+host-aware view may show them. Keep scenes to the local lab, and check the image before publishing
+it.
 
 ## The target
 
@@ -76,7 +82,8 @@ stubbed agent CLIs, a fake WebSocket daemon, a live web page, and a Neovim layou
 
 Read the PNG at full size (`--output shot.png` while iterating) and check:
 
-- no hostname, username, real path, token, or personal content anywhere, including pane titles;
+- no hostname, username, real path, token, or personal content anywhere, including pane titles,
+  the workbar, and sidebar rows: the lab does not mask the machine's identity;
 - no error toast, half-loaded page, or empty pane where content was expected;
 - text that fits its pane without wrapping where the real program would not wrap;
 - the subject sits in the top-left 16:10 region.

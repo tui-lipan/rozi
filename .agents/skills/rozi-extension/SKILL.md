@@ -418,6 +418,14 @@ a whole cannot act on the client beyond what its placed processes together may d
 - Python launcher names differ (`python3`, `python`, `py -3`); document and test the chosen spelling.
 - Use machine-readable external-tool output rather than parsing presentation text.
 
+## Gallery screenshots
+
+Discover's website shows the images listed in `[extension] screenshots`. Capture them with
+`scripts/screenshot.sh`, which runs an isolated rozi at exactly 160x50 cells and saves
+`rozi capture-ui --scale 2` as a 16:10 WebP, from a scene script kept in the extension repository.
+Read [screenshots.md](screenshots.md) before writing a scene: it covers staging fake data, stubbing
+agent CLIs and daemons, and what to check before committing the image.
+
 ## Completion checklist
 
 - [ ] `rozi extensions check .` succeeds and shows intended IDs, argv, cwd, and injected environment.
@@ -428,3 +436,4 @@ a whole cannot act on the client beyond what its placed processes together may d
 - [ ] Runtime-affecting reload retires old streams; metadata-only reload preserves healthy services.
 - [ ] Disable/re-enable and invalid-manifest reload behavior were tested.
 - [ ] README lists dependencies, installation, invocation, and manual verification.
+- [ ] A public extension lists a current screenshot captured per [screenshots.md](screenshots.md).

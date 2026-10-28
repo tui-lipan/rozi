@@ -948,8 +948,11 @@ The index keeps each entry short, and leaves out a repository whose metadata exc
 | `homepage` | 256 characters |
 
 Screenshots must be PNG, JPEG, or WebP files committed to the repository, at most 2 MiB each. A
-path may use only ASCII letters, digits, `.`, `_`, `-`, and `/`. A wide capture of the extension in
-use reads best; cards crop it to 16:10 from the top left.
+path may use only ASCII letters, digits, `.`, `_`, `-`, and `/`. Cards show images at 16:10 and
+crop others from the top left. Run `rozi` in a terminal of 160×50 cells, set up the extension in
+use, and save `rozi capture-ui --render png --scale 2 --output shot.png`: the result is 2560×1600
+pixels, exactly 16:10. Convert it to WebP to stay well under the size limit. See
+[Capturing the whole UI](control.md#capturing-the-whole-ui).
 
 The generated index and its schema are public at
 [`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index).

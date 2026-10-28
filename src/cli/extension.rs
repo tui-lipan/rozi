@@ -628,7 +628,7 @@ fn discover_section(discover: crate::config::DiscoverReadiness) -> crate::config
     let rows = if discover.ready {
         vec![row(
             "Ready",
-            "add the `rozi-extension` topic to the public GitHub repository; the index updates daily"
+            "add the `rozi-extension` topic to the public GitHub repository; the index updates hourly"
                 .to_string(),
             crate::config::ReportTone::Success,
         )]

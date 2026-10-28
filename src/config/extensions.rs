@@ -130,6 +130,8 @@ pub struct ExtensionInfo {
     /// Operating systems this extension declares support for. Empty means all of them.
     pub platforms: Vec<String>,
     pub homepage: Option<String>,
+    /// Repository-relative screenshot paths, as declared. Checked only by `rozi extensions check`.
+    pub screenshots: Vec<String>,
     pub path: String,
     pub manifest_path: String,
     pub enabled: bool,
@@ -441,6 +443,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         min_rozi: None,
         platforms: Vec::new(),
         homepage: None,
+        screenshots: Vec::new(),
         path,
         manifest_path,
         enabled: false,
@@ -541,6 +544,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     info.api = manifest.extension.api;
     info.min_rozi = clean_optional(manifest.extension.min_rozi);
     info.homepage = clean_optional(manifest.extension.homepage);
+    info.screenshots = manifest.extension.screenshots;
     info.platforms = manifest
         .extension
         .platforms
@@ -1123,6 +1127,17 @@ fn read_partial_metadata(value: &toml::Value, info: &mut ExtensionInfo) {
         .get("homepage")
         .and_then(toml::Value::as_str)
         .map(str::to_string);
+    info.screenshots = extension
+        .get("screenshots")
+        .and_then(toml::Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     info.platforms = extension
         .get("platforms")
         .and_then(toml::Value::as_array)
@@ -2398,6 +2413,7 @@ mod tests {
                 "id",
                 "min_rozi",
                 "platforms",
+                "screenshots",
                 "title",
                 "version"
             ]

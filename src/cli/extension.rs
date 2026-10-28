@@ -435,7 +435,8 @@ pub(super) fn format_extensions_text(
         out.push('\n');
         let mut field = |label: &str, value: &str| {
             out.push_str("  ");
-            out.push_str(&format!("{label:<10}"));
+            // The space keeps a label as long as the column apart from its value.
+            out.push_str(&format!("{label:<11} "));
             out.push_str(value);
             out.push('\n');
         };
@@ -460,6 +461,9 @@ pub(super) fn format_extensions_text(
         }
         if let Some(homepage) = extension.homepage.as_deref() {
             field("homepage", homepage);
+        }
+        if !extension.screenshots.is_empty() {
+            field("screenshots", &extension.screenshots.join(", "));
         }
         if !extension.commands.is_empty() {
             out.push_str("  commands\n");
@@ -625,7 +629,7 @@ fn discover_section(discover: crate::config::DiscoverReadiness) -> crate::config
     let rows = if discover.ready {
         vec![row(
             "Ready",
-            "add the `rozi-extension` topic to the public GitHub repository; the index updates daily"
+            "add the `rozi-extension` topic to the public GitHub repository; the index updates hourly"
                 .to_string(),
             crate::config::ReportTone::Success,
         )]

@@ -5,9 +5,16 @@ use std::process::Command;
 fn extensions_check_matches_discover_eligibility_corpus() {
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/discover-eligibility.json")).unwrap();
-    let temp = tempfile::tempdir().unwrap();
-    std::fs::create_dir(temp.path().join(".git")).unwrap();
     for case in cases.as_array().unwrap() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        // Repository files the manifest refers to, as path to size in bytes.
+        for (path, size) in case["files"].as_object().into_iter().flatten() {
+            let path = temp.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(path).unwrap();
+            file.set_len(size.as_u64().unwrap()).unwrap();
+        }
         std::fs::write(
             temp.path().join("extension.toml"),
             case["manifest"].as_str().unwrap(),

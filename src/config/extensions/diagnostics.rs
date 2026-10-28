@@ -414,6 +414,7 @@ mod tests {
             min_rozi: None,
             platforms: Vec::new(),
             homepage: None,
+            screenshots: Vec::new(),
             path: "/data/extensions/tasks".to_string(),
             manifest_path: "/data/extensions/tasks/extension.toml".to_string(),
             enabled: true,

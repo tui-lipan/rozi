@@ -19,7 +19,9 @@ pub(crate) fn discover_readiness(info: &ExtensionInfo) -> DiscoverReadiness {
     let mut problems = Vec::new();
     match std::fs::read_to_string(&info.manifest_path) {
         Ok(text) => match toml::from_str::<toml::Value>(&text) {
-            Ok(manifest) => check_catalog_metadata(&manifest, &mut problems),
+            Ok(manifest) => {
+                check_catalog_metadata(&manifest, Path::new(&info.path), &mut problems);
+            }
             Err(error) => problems.push(format!("Invalid `extension.toml`: {error}")),
         },
         Err(error) => problems.push(format!("Could not read `extension.toml`: {error}")),
@@ -35,7 +37,7 @@ pub(crate) fn discover_readiness(info: &ExtensionInfo) -> DiscoverReadiness {
 
 // Read the original TOML, not ExtensionInfo's normalized install metadata. The index validates
 // catalog fields and contribution array types, but does not validate contribution contents.
-fn check_catalog_metadata(manifest: &toml::Value, problems: &mut Vec<String>) {
+fn check_catalog_metadata(manifest: &toml::Value, directory: &Path, problems: &mut Vec<String>) {
     let Some(extension) = manifest.get("extension").and_then(toml::Value::as_table) else {
         problems.push("Add `[extension]` to `extension.toml`.".to_string());
         return;
@@ -51,6 +53,7 @@ fn check_catalog_metadata(manifest: &toml::Value, problems: &mut Vec<String>) {
         check_catalog_string(extension, field, limit, problems);
     }
     check_platforms(extension.get("platforms"), problems);
+    check_screenshots(extension.get("screenshots"), directory, problems);
     for field in [
         "commands",
         "services",
@@ -127,6 +130,54 @@ fn check_platforms(value: Option<&toml::Value>, problems: &mut Vec<String>) {
         }
         if !seen.insert(platform) {
             problems.push(format!("`platforms` contains duplicate `{platform}`."));
+        }
+    }
+}
+
+/// Each screenshot must be an image file in the repository. The index reads it at the indexed
+/// commit, so a file that exists here but is not committed is still left out.
+fn check_screenshots(value: Option<&toml::Value>, directory: &Path, problems: &mut Vec<String>) {
+    use crate::extension_catalog::{
+        MAX_SCREENSHOT_BYTES, MAX_SCREENSHOTS, screenshot_path_problem,
+    };
+
+    let Some(value) = value else { return };
+    let Some(paths) = value.as_array().and_then(|paths| {
+        paths
+            .iter()
+            .map(toml::Value::as_str)
+            .collect::<Option<Vec<_>>>()
+    }) else {
+        problems.push("`screenshots` must be an array of strings.".to_string());
+        return;
+    };
+    if paths.len() > MAX_SCREENSHOTS {
+        problems.push(format!(
+            "`screenshots` lists {} images; the index takes at most {MAX_SCREENSHOTS}.",
+            paths.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for path in paths {
+        if !seen.insert(path) {
+            problems.push(format!("`screenshots` contains duplicate `{path}`."));
+            continue;
+        }
+        if let Some(problem) = screenshot_path_problem(path) {
+            problems.push(format!("Screenshot `{path}` {problem}."));
+            continue;
+        }
+        match std::fs::symlink_metadata(directory.join(path)) {
+            Ok(metadata) if metadata.is_file() && metadata.len() > MAX_SCREENSHOT_BYTES => {
+                problems.push(format!(
+                    "Screenshot `{path}` is {} bytes; the index takes at most {MAX_SCREENSHOT_BYTES}.",
+                    metadata.len()
+                ));
+            }
+            Ok(metadata) if metadata.is_file() => {}
+            _ => problems.push(format!(
+                "Screenshot `{path}` is not a file in the repository."
+            )),
         }
     }
 }
@@ -254,6 +305,47 @@ mod tests {
                 "{homepage}"
             );
         }
+    }
+
+    #[test]
+    fn screenshots_must_be_repository_images_within_the_limits() {
+        use crate::extension_catalog::MAX_SCREENSHOT_BYTES;
+
+        let with_screenshots =
+            |screenshots: &str| format!("{LISTABLE}screenshots = {screenshots}\n");
+        let with_files = |root: &Path| {
+            let root = repository(root);
+            std::fs::create_dir_all(root.join("docs")).unwrap();
+            std::fs::write(root.join("docs/picker.png"), b"png").unwrap();
+            let large = std::fs::File::create(root.join("docs/large.png")).unwrap();
+            large.set_len(MAX_SCREENSHOT_BYTES + 1).unwrap();
+            root
+        };
+
+        assert!(readiness(&with_screenshots(r#"["docs/picker.png"]"#), with_files).ready);
+        assert_eq!(
+            readiness(
+                &with_screenshots(
+                    r#"["docs/missing.png", "docs/large.png", "../picker.png", "docs/picker.png", "docs/picker.png"]"#
+                ),
+                with_files
+            )
+            .problems,
+            [
+                "`screenshots` lists 5 images; the index takes at most 4.".to_string(),
+                "Screenshot `docs/missing.png` is not a file in the repository.".to_string(),
+                format!(
+                    "Screenshot `docs/large.png` is {} bytes; the index takes at most {MAX_SCREENSHOT_BYTES}.",
+                    MAX_SCREENSHOT_BYTES + 1
+                ),
+                "Screenshot `../picker.png` must be relative to the repository root, without empty, `.`, or `..` segments.".to_string(),
+                "`screenshots` contains duplicate `docs/picker.png`.".to_string(),
+            ]
+        );
+        assert_eq!(
+            readiness(&with_screenshots(r#""docs/picker.png""#), with_files).problems,
+            ["`screenshots` must be an array of strings."]
+        );
     }
 
     #[test]

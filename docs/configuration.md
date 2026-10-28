@@ -151,8 +151,9 @@ into range rather than skipped; their rows below say so.
 rozi shows a toast for failures, rejected actions, destructive confirmations, and results that
 have no other visible feedback. Changes that already show up in the workbar, pane layout, a picker,
 or the sidebar do not add a toast. A repeated message renews the existing toast instead of stacking
-copies. A message that replaces one on screen, such as a new layout name, takes over its place
-without arriving again. [`animations.toast`](#animations) sets how toasts arrive and leave.
+copies. A new layout name or similar update replaces the toast before it; when that toast is the
+newest one, the update takes over its place without arriving again. Otherwise the update arrives
+at the bottom of the stack. [`animations.toast`](#animations) sets how toasts arrive and leave.
 
 Scripts can show their own result with [`rozi notify`](control.md#actions-status-and-notifications).
 Release notices are described in [Update notices](#update-notices).

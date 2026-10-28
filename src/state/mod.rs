@@ -377,6 +377,9 @@ pub struct State {
     /// Pruned on every notification, so it holds only what was raised in the last few seconds.
     pub(crate) replaceable_toasts:
         HashMap<crate::pane::pty_events::ToastKey, crate::pane::pty_events::TrackedToast>,
+    /// The toast Rozi pushed last. Toasts stack newest at the bottom, so only this one can be
+    /// replaced without the replacement landing somewhere else.
+    pub(crate) newest_toast: Option<tui_lipan::OverlayId>,
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
@@ -725,6 +728,7 @@ impl State {
             askpass_history: AskpassHistory::default(),
             overlay_return: None,
             replaceable_toasts: HashMap::new(),
+            newest_toast: None,
             session_picker_epoch: 0,
             profile_picker_epoch: 0,
             copy_mode: None,

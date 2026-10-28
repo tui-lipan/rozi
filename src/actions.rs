@@ -1118,13 +1118,43 @@ mod tests {
         });
     }
 
-    /// Column where `needle` starts on the painted screen.
-    fn painted_column(backend: &tui_lipan::TestBackend<AppRoot>, needle: &str) -> Option<usize> {
+    /// Column and row where `needle` starts on the painted screen.
+    fn painted_at(
+        backend: &tui_lipan::TestBackend<AppRoot>,
+        needle: &str,
+    ) -> Option<(usize, usize)> {
         backend
             .capture_frame()
             .to_fixed_grid_lines()
             .iter()
-            .find_map(|line| line.find(needle).map(|at| line[..at].chars().count()))
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find(needle)
+                    .map(|at| (line[..at].chars().count(), row))
+            })
+    }
+
+    fn painted_column(backend: &tui_lipan::TestBackend<AppRoot>, needle: &str) -> Option<usize> {
+        painted_at(backend, needle).map(|(column, _)| column)
+    }
+
+    /// The text of the toast tracked in `slot`, without its title.
+    fn tracked_text(
+        backend: &tui_lipan::TestBackend<AppRoot>,
+        slot: crate::pane::pty_events::ToastKey,
+    ) -> Option<String> {
+        let tracked = backend.state().replaceable_toasts.get(&slot)?;
+        tracked.content().split('\0').next_back().map(str::to_owned)
+    }
+
+    /// Whether `needle` is still moving: painted somewhere else once its motion has had time to end.
+    fn travels(backend: &mut tui_lipan::TestBackend<AppRoot>, needle: &str) -> bool {
+        backend.render();
+        let now = painted_at(backend, needle);
+        backend.advance(std::time::Duration::from_millis(500));
+        let later = painted_at(backend, needle);
+        assert!(later.is_some(), "{needle} settles on screen");
+        now != later
     }
 
     #[test]
@@ -1171,31 +1201,68 @@ mod tests {
 
         with_backend(|mut backend| {
             let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
-            let shown = |backend: &tui_lipan::TestBackend<AppRoot>| {
-                let tracked = backend.state().replaceable_toasts.get(&layout_slot)?;
-                tracked.content().split('\0').next_back().map(str::to_owned)
-            };
             backend
                 .dispatch(Msg::RunAction(Action::ToggleLayout))
                 .expect("dispatch first layout cycle");
             backend.advance(std::time::Duration::from_millis(500));
-            let first = shown(&backend).expect("the layout toast is tracked");
-            let settled = painted_column(&backend, &first).expect("the first toast settles");
+            let first = tracked_text(&backend, layout_slot).expect("the layout toast is tracked");
+            let (_, row) = painted_at(&backend, &first).expect("the first toast settles");
 
             backend
                 .dispatch(Msg::RunAction(Action::ToggleLayout))
                 .expect("dispatch second layout cycle");
-            let second = shown(&backend).expect("the replacement is tracked");
+            let second = tracked_text(&backend, layout_slot).expect("the replacement is tracked");
             assert_ne!(first, second);
-            backend.render();
-            let replaced = painted_column(&backend, &second);
-            backend.advance(std::time::Duration::from_millis(500));
-            assert_eq!(
-                replaced,
-                painted_column(&backend, &second),
+            assert!(
+                !travels(&mut backend, &second),
                 "the replacement does not travel"
             );
-            assert!(replaced.is_some_and(|column| column.abs_diff(settled) <= first.len()));
+            assert_eq!(painted_at(&backend, &second).map(|(_, at)| at), Some(row));
+        });
+    }
+
+    #[test]
+    fn a_replacement_arrives_when_a_newer_toast_holds_the_bottom_of_the_stack() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            let layout_slot = crate::pane::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch first layout cycle");
+            backend
+                .dispatch(Msg::UserCommandFailed {
+                    message: "toast test failure".to_string(),
+                })
+                .expect("dispatch command failure");
+            backend.advance(std::time::Duration::from_millis(500));
+
+            // The replacement is pushed beneath the failure, so it cannot keep the old place.
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch second layout cycle");
+            let second = tracked_text(&backend, layout_slot).expect("the replacement is tracked");
+            assert!(travels(&mut backend, &second), "the replacement arrives");
+        });
+    }
+
+    #[test]
+    fn a_repeat_of_a_leaving_toast_arrives_again() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            // Past the three-second lifetime and into the exit, which `renew` cannot reverse.
+            backend.advance(std::time::Duration::from_millis(3050));
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch repeat kill-session");
+            assert!(
+                travels(&mut backend, &NOT_ATTACHED[..7]),
+                "the repeat arrives"
+            );
         });
     }
 

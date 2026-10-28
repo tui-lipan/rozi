@@ -131,7 +131,7 @@ mod tests {
     fn the_contract_document_still_describes_every_surface_it_promises() {
         for section in [
             "---\nname: rozi",
-            "ROZI=1",
+            "rozi context --format json",
             "ROZI_SOCKET",
             "ROZI_PANE",
             "--socket PATH",

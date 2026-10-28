@@ -1,6 +1,6 @@
 ---
 name: rozi
-description: "Inspect and control Rozi terminal panes and sessions. Use when the user asks to use Rozi, or requests a live terminal preview in a verified Rozi pane. UI pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
+description: "Inspect and control Rozi terminal panes and sessions. Use when the user asks to use Rozi, or requests a live terminal preview in a verified Rozi pane. UI pane control requires a verified `rozi context`."
 ---
 
 # Rozi
@@ -19,11 +19,13 @@ live terminal preview while this agent has a verified Rozi pane context.
 Before using a UI endpoint, confirm this agent is inside one of its local panes:
 
 ```bash
-test "${ROZI:-}" = 1 && test -n "${ROZI_SOCKET:-}"
+rozi context --format json
 ```
 
-If that fails, UI pane control is unavailable. Never control an arbitrary focused UI from outside
-one of its panes. This check is not required when the user explicitly names a detached session.
+Continue only when `data.status` is `verified`. Otherwise UI pane control is unavailable. Never
+control an arbitrary focused UI from outside one of its panes. If `data.ui.displays_session` is not
+`true`, the UI a plain command reaches shows another session, so put `--here` before each command.
+This check is not required when the user explicitly names a detached session.
 
 The installed binary defines current syntax. Check it when unsure, and check a capability before
 relying on a newer feature:

@@ -88,6 +88,113 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// `sessions new --detach` starts a server that scripts can drive with no client attached,
+    /// refuses a name that is already running, and `sessions kill` removes it again.
+    #[test]
+    fn detached_session_starts_empty_and_takes_panes_without_a_client() {
+        let root = isolated_home("new-detach");
+        let rozi = |args: &[&str]| command(&root).args(args).output().unwrap();
+        let stderr =
+            |output: &std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
+
+        let created = rozi(&["sessions", "new", "scratch", "--detach"]);
+        assert!(created.status.success(), "create: {}", stderr(&created));
+        let again = rozi(&["sessions", "new", "scratch", "--detach"]);
+        assert!(!again.status.success());
+        assert!(
+            stderr(&again).contains("Session `scratch` is already running"),
+            "duplicate diagnostic: {}",
+            stderr(&again)
+        );
+
+        let panes = rozi(&["--session", "scratch", "list-panes", "--format", "json"]);
+        assert_eq!(
+            String::from_utf8_lossy(&panes.stdout).trim(),
+            r#"{"data":[],"ok":true}"#
+        );
+        let split = rozi(&[
+            "--session",
+            "scratch",
+            "split",
+            "--argv",
+            "sh",
+            "-c",
+            "echo detached-ready; sleep 30",
+        ]);
+        assert!(split.status.success(), "split: {}", stderr(&split));
+        let captured = rozi(&[
+            "--session",
+            "scratch",
+            "capture-pane",
+            "--target",
+            "1",
+            "--wait-for",
+            "detached-ready",
+            "--timeout",
+            "10s",
+        ]);
+        assert!(captured.status.success(), "capture: {}", stderr(&captured));
+
+        let killed = rozi(&["sessions", "kill", "scratch"]);
+        assert!(killed.status.success(), "kill: {}", stderr(&killed));
+        let listed = rozi(&["sessions", "list", "--format", "json"]);
+        assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "[]");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Racing creators of one name: exactly one is told it created the session, and every other one
+    /// is refused, whatever the platform can say about a socket peer.
+    #[test]
+    fn concurrent_detached_creates_of_one_name_have_exactly_one_winner() {
+        let root = isolated_home("new-detach-race");
+        let racers: Vec<_> = (0..6)
+            .map(|_| {
+                command(&root)
+                    .args(["sessions", "new", "race", "--detach"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        let outputs: Vec<_> = racers
+            .into_iter()
+            .map(|racer| racer.wait_with_output().unwrap())
+            .collect();
+        let winners = outputs
+            .iter()
+            .filter(|output| output.status.success())
+            .count();
+        for output in outputs.iter().filter(|output| !output.status.success()) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("Session `race` is already running"),
+                "loser diagnostic: {stderr}"
+            );
+        }
+        assert_eq!(winners, 1, "every racer's result: {outputs:?}");
+
+        let listed = command(&root)
+            .args(["sessions", "list", "--format", "json"])
+            .output()
+            .unwrap();
+        let listed = String::from_utf8_lossy(&listed.stdout);
+        assert_eq!(listed.matches(r#""name": "race""#).count(), 1, "{listed}");
+        let killed = command(&root)
+            .args(["sessions", "kill", "race"])
+            .output()
+            .unwrap();
+        assert!(killed.status.success());
+        // A refused racer stops the server it spawned, so none can take the name afterwards.
+        std::thread::sleep(Duration::from_millis(200));
+        let after = command(&root)
+            .args(["sessions", "list", "--format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&after.stdout).trim(), "[]");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Printing help must not create the runtime directory it names.
     ///
     /// `endpoint_help()` resolved the path by calling the constructor, which creates and validates

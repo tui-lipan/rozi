@@ -185,7 +185,7 @@ session=dev
 # Fail early if the session is not running.
 rozi --session "$session" list-panes >/dev/null
 
-pane=$(rozi --session "$session" split --workspace 9 --title nightly 'cargo test' |
+pane=$(rozi --session "$session" split --title nightly 'cargo test' |
     jq -r '.data.id')
 
 # The job is done when the pane's process exits; list-panes then reports `exited (<CODE>)`.

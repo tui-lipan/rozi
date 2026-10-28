@@ -246,12 +246,34 @@ includes activating the preview; never combine it with `--session`.
 | Focus, reveal, whole-UI capture/recording | Yes | No |
 | Export or play a local file | No endpoint needed | No endpoint needed |
 
+## Work the user does not need to see
+
+Choose where a pane goes by who needs to see it:
+
+- **A preview the user asked to see:** split in the user's session, as above. Leave `--workspace`
+  out so it opens in the workspace on screen, unless the user names one.
+- **Anything else** — test runs, captures, recordings, or apps you only inspect yourself: create
+  your own detached session and work there. Never borrow one of the user's workspaces for it.
+
+```bash
+rozi sessions new agent-<TASK> --detach
+rozi --session agent-<TASK> split --cwd /absolute/project --argv /absolute/project/target/debug/app
+rozi --session agent-<TASK> capture-pane --target <RETURNED_ID> --wait-for 'Ready' --timeout 30s
+rozi sessions kill agent-<TASK>
+```
+
+`sessions new --detach` starts the session with no panes and returns; the first `split` opens one.
+`rozi api describe` lists `detached-session-create` when the binary supports it. Pick a name that says what the session is for. If the name is already running, the command fails:
+choose another name rather than reusing a session you did not create. Without `--detach`,
+`sessions new` opens a UI in the calling terminal, so never run it from an agent. Kill the session
+when you are done, unless the user wants to keep it.
+
 ## Split and UI-only commands
 
 ```bash
 rozi split [COMMAND]
-rozi split --workspace 9 --argv cargo test -- --nocapture
-rozi --session dev split --workspace 9 --argv cargo test -- --nocapture
+rozi split --title Tests --argv cargo test -- --nocapture
+rozi --session agent-tests split --argv cargo test -- --nocapture
 ```
 
 By default, `split` does **not** move focus. Its JSON response contains the new pane id;
@@ -311,6 +333,7 @@ inherited the variable, not the extension itself.
 rozi sessions list --format json
 rozi sessions attach <NAME> [--read-only | --follow | --take-control]
 rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
+rozi sessions new <NAME> --detach
 rozi sessions kill <NAME>
 rozi sessions list --remote <HOST>
 rozi sessions kill <NAME> --remote <HOST>

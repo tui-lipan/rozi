@@ -277,6 +277,10 @@ pub fn run() -> Result<()> {
                 apply_config_path(config_path);
                 return cli::run_list_sessions_cli(format, remote.as_deref());
             }
+            cli::SessionsCommand::NewDetached { name, config_path } => {
+                apply_config_path(config_path);
+                return cli::run_new_detached_session_cli(&name);
+            }
             cli::SessionsCommand::Kill {
                 name,
                 remote,

@@ -36,6 +36,7 @@ rozi sessions attach dev --take-control # take or request layout control without
 rozi sessions new dev                 # create a fresh empty named session
 rozi sessions new review --profile dev
 rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
+rozi sessions new scratch --detach    # start in the background, without a UI
 rozi sessions list
 rozi sessions kill dev
 ```
@@ -57,8 +58,8 @@ has that name.
 names a directory on the remote host and is passed through unchanged, so use an absolute path.
 
 Write each option after the command it belongs to. `--follow` and `--take-control` work only with
-`sessions attach`, and `--profile` and `--cwd` only with `sessions new`; anywhere else they are
-reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
+`sessions attach`, and `--profile`, `--cwd`, and `--detach` only with `sessions new`; anywhere else
+they are reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
 session command.
 
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
@@ -391,11 +392,23 @@ A named session can be driven while no client is attached. Put a control command
 rozi --session dev list-panes
 rozi --session dev capture-pane --target 3
 rozi --session dev send-keys --target 3 'cargo test' Enter
-rozi --session dev split --workspace 9 --argv cargo watch -x test
+rozi --session dev split --argv cargo watch -x test
 ```
 
 This does not attach a client, so the session's client count and layout control are unchanged. A
 pane opened this way is already in place when a client attaches.
+
+To give a script or a coding agent a session of its own, so its panes stay out of the sessions you
+work in, start one with `rozi sessions new <NAME> --detach`. The command returns once the session
+is running. The session starts with no panes, and its first `split` opens one. It cannot be
+combined with `--profile`, `--cwd`, or `--remote`; pass `--cwd` to `split` instead. Stop the session
+with `rozi sessions kill <NAME>` when the work is done.
+
+```bash
+rozi sessions new tests --detach
+rozi --session tests split --cwd ~/src/api --argv cargo test
+rozi sessions kill tests
+```
 
 A script has no more authority than an attached client. `split` is refused while any client holds
 layout control, and typing respects the session's input lock. Commands that need a screen — focus,

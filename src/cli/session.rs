@@ -166,6 +166,11 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
+pub(crate) fn run_new_detached_session_cli(name: &str) -> Result<()> {
+    session::server::create_detached_session(name)?;
+    Ok(())
+}
+
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     if !session::discovery::valid_attach_target(name) {
         return Err(

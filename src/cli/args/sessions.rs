@@ -38,6 +38,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session whose first pane starts in DIR",
             ),
             row(
+                "new <NAME> --detach",
+                "Start a session without opening a UI",
+            ),
+            row(
                 "kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
@@ -164,8 +168,10 @@ fn parse_new(
     }
     let name = take_target(iter, &cli, "sessions new")?;
     let mut new = NewSession::default();
+    let mut detach = false;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "--detach" => detach = true,
             "--profile" => {
                 let profile = require_value(iter, "--profile requires a profile name")?;
                 if new.profile.replace(profile).is_some() {
@@ -187,9 +193,40 @@ fn parse_new(
             return Err("--cwd cannot be combined with --profile".to_string());
         }
     }
+    if detach {
+        return parse_new_detached(name, &new, cli);
+    }
     cli.attach_session = Some(name);
     cli.session_command = SessionCommand::New(new);
     Ok(ParsedCli::Run(cli))
+}
+
+/// `sessions new <NAME> --detach`: start the server and return, with no UI and no first pane, so
+/// the options that shape a UI or its first pane are refused.
+fn parse_new_detached(
+    name: String,
+    new: &NewSession,
+    cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let refused = if new.profile.is_some() {
+        Some("--profile")
+    } else if new.cwd.is_some() {
+        Some("--cwd")
+    } else if cli.remote.is_some() {
+        Some("--remote")
+    } else {
+        cli.launch_only_option()
+    };
+    if let Some(option) = refused {
+        return Err(format!("{option} cannot be combined with --detach"));
+    }
+    if !session::discovery::valid_session_name(&name) {
+        return Err("invalid session name".to_string());
+    }
+    Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
+        name,
+        config_path: cli.config_path,
+    }))
 }
 
 const READ_ONLY_NEW: &str = "--read-only cannot be used with sessions new";
@@ -524,9 +561,38 @@ mod tests {
                 &["--pick", "sessions", "list"][..],
                 "--pick does not apply to sessions list",
             ),
+            (
+                &["sessions", "new", "dev", "--detach", "--cwd", "/a"][..],
+                "--cwd cannot be combined with --detach",
+            ),
+            (
+                &["sessions", "new", "dev", "--profile", "p", "--detach"][..],
+                "--profile cannot be combined with --detach",
+            ),
+            (
+                &["--remote", "box", "sessions", "new", "dev", "--detach"][..],
+                "--remote cannot be combined with --detach",
+            ),
+            (
+                &["sessions", "new", "dev", "--detach", "--pick"][..],
+                "--pick cannot be combined with --detach",
+            ),
+            (
+                &["sessions", "new", "eph-1", "--detach"][..],
+                "invalid session name",
+            ),
         ] {
             assert_eq!(parse(args).expect_err("must reject"), message, "{args:?}");
         }
+    }
+
+    #[test]
+    fn detach_creates_without_launching() {
+        assert!(matches!(
+            parse(&["--config", "c.toml", "sessions", "new", "dev", "--detach"]),
+            Ok(ParsedCli::Sessions(SessionsCommand::NewDetached { name, config_path }))
+                if name == "dev" && config_path.as_deref() == Some("c.toml")
+        ));
     }
 
     #[test]

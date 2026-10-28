@@ -229,11 +229,14 @@ fn base_server_command(
 ) -> std::process::Command {
     let mut command = std::process::Command::new(exe);
     if let Some(nonce) = startup_nonce {
-        debug_assert!(
-            !fresh,
-            "a fresh server never carries a remote startup nonce"
-        );
-        command.arg("--server-start").arg(name).arg(nonce);
+        command
+            .arg(if fresh {
+                "--fresh-server-start"
+            } else {
+                "--server-start"
+            })
+            .arg(name)
+            .arg(nonce);
     } else {
         command
             .arg("--session")

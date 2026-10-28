@@ -32,7 +32,7 @@ A control command talks to one of two places, called its _endpoint_:
 rozi --session dev list-panes
 rozi --session dev capture-pane --target 3
 rozi --session dev send-keys --target 3 'cargo test' Enter
-rozi --session dev split --workspace 9 --argv cargo watch -x test
+rozi --session dev split --argv cargo watch -x test
 ```
 
 Both endpoints return the same `{ok, code, data, error}` document and the same tables, so a script
@@ -188,7 +188,7 @@ Target a pane explicitly when a script drives a pane it created:
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
-pane=$("$ROZI_CMD" split --workspace 9 --argv bash | jq -r '.data.id')
+pane=$("$ROZI_CMD" split --argv bash | jq -r '.data.id')
 "$ROZI_CMD" send-text --target "$pane" 'printf "ready\n"'
 "$ROZI_CMD" send-keys --target "$pane" Enter
 ```
@@ -295,6 +295,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "capture-ui",
     "capture-wait",
     "command-visibility",
+    "detached-session-create",
     "extension-link-handlers",
     "extension-state-dir",
     "global-agents",
@@ -320,6 +321,9 @@ protocol version, and capabilities of the installed binary. It does not connect 
 
 `schema` is the version of the JSON schema and changes independently of `session_protocol`, which
 only concerns how two rozi binaries talk to each other.
+
+`detached-session-create` means `rozi sessions new <NAME> --detach` starts a session in the
+background without opening a UI. An older binary refuses `--detach`.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](writing-extensions.md#link-handlers) through their manifest.
@@ -432,7 +436,7 @@ program directly and consumes all remaining arguments, so every pane option must
 
 ```sh
 rozi split --cwd "/repo with spaces" --title Tests --keep-open 'cargo test'
-rozi split --workspace 9 --focus --argv cargo test -- --nocapture
+rozi split --workspace 3 --focus --argv cargo test -- --nocapture
 ```
 
 The reply waits up to five seconds for the pane's process to be ready. `pty_ready: false` means the
@@ -449,8 +453,10 @@ in a detached session.
 a program's whole screen at once:
 
 ```sh
-pane=$(rozi split --workspace 9 --size 100x220 --argv my-tui | jq -r '.data.id')
-rozi capture-pane --target "$pane" --settle 500ms --timeout 10s
+rozi sessions new capture --detach
+pane=$(rozi --session capture split --size 100x220 --argv my-tui | jq -r '.data.id')
+rozi --session capture capture-pane --target "$pane" --settle 500ms --timeout 10s
+rozi sessions kill capture
 ```
 
 The size holds until a UI draws the pane. Opening it in the workspace on screen, or switching to
@@ -1049,8 +1055,8 @@ done
 rozi --session dev capture-pane --target "$pane" --scrollback full --format text
 ```
 
-The session must already exist. Start one with `rozi sessions new dev`, or leave a detached
-`rozi dev` running.
+The session must already exist. Start one in the background with
+`rozi sessions new dev --detach`, or leave a detached `rozi dev` running.
 
 There is no general event stream from a session endpoint: `subscribe` reports UI events, which a
 server does not raise. Agent state is the exception: `agents wait` waits inside the server, without
@@ -1091,6 +1097,7 @@ rozi sessions attach dev --read-only
 rozi sessions new dev
 rozi sessions new review --profile dev
 rozi sessions new api --cwd ~/src/api
+rozi sessions new scratch --detach
 rozi sessions list
 rozi sessions kill dev
 ```

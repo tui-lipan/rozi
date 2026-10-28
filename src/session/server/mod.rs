@@ -28,6 +28,7 @@ mod attachments;
 mod browse;
 mod capture_waits;
 mod connection;
+mod create;
 mod graphics;
 mod graphics_pacer;
 mod headless;
@@ -50,6 +51,7 @@ mod runtime;
 mod shutdown;
 mod waits;
 mod worktree;
+pub(crate) use create::create_detached_session;
 pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
 use worktree::{WorktreeJob, WorktreeWorker};
 

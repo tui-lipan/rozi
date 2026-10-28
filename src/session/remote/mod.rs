@@ -13,6 +13,7 @@ pub(crate) mod json_transport;
 pub(crate) mod monitor;
 mod preamble;
 mod proxy;
+pub(crate) use proxy::fresh_server_nonce;
 mod target;
 pub mod worktrees;
 

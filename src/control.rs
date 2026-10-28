@@ -50,6 +50,8 @@ pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
+/// `sessions new <NAME> --detach` starts a session server and returns without opening a UI.
+pub const DETACHED_SESSION_CREATE_CAPABILITY: &str = "detached-session-create";
 pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
 /// This binary can both forward a control command to a session on another host and serve one
 /// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
@@ -140,6 +142,7 @@ impl ApiDescription {
                 CAPTURE_UI_CAPABILITY,
                 CAPTURE_WAIT_CAPABILITY,
                 COMMAND_VISIBILITY_CAPABILITY,
+                DETACHED_SESSION_CREATE_CAPABILITY,
                 "extension-link-handlers",
                 crate::extension_runtime::protocol::STATE_CAPABILITY,
                 GLOBAL_AGENTS_CAPABILITY,

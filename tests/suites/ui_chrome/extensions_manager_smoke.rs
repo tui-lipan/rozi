@@ -1114,6 +1114,7 @@ fn installed_info(id: &str) -> rozi::config::ExtensionInfo {
         min_rozi: None,
         platforms: Vec::new(),
         homepage: None,
+        screenshots: Vec::new(),
         path: format!("/nonexistent/{id}"),
         manifest_path: format!("/nonexistent/{id}/extension.toml"),
         enabled: true,

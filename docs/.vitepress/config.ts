@@ -108,6 +108,25 @@ const ROZI_FACTS = (() => {
 })();
 
 /**
+ * Where the extension gallery fetches the index, and which repositories it
+ * marks trusted, read from the Rust that Discover runs. Same reason as the
+ * facts above: the gallery must agree with what `rozi` shows.
+ */
+const EXTENSION_INDEX = (() => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../../src/extension_catalog.rs", import.meta.url)),
+    "utf8",
+  );
+  const url = /const INDEX_URL: &str = "([^"]+)";/.exec(source)?.[1];
+  const trusted = /fn is_trusted\(&self\) -> bool \{[\s\S]*?\)\s*\}/.exec(source)?.[0];
+  const repositories = [...(trusted ?? "").matchAll(/"([^"/]+\/[^"/]+)"/g)].map((hit) => hit[1]);
+  if (!url || repositories.length === 0) {
+    throw new Error("could not read the extension index URL or trusted list - the pattern moved");
+  }
+  return { url, trusted: repositories };
+})();
+
+/**
  * The one-liner installers advertised on the landing page are served from this
  * site, so `curl -fsSL https://rozi.tui-lipan.dev/install | bash` fetches the
  * very script that lives at the repository root. Copying rather than
@@ -263,6 +282,7 @@ export default defineConfig({
     logo: "/logo.svg",
     roziVersion: ROZI_VERSION,
     roziFacts: ROZI_FACTS,
+    extensionIndex: EXTENSION_INDEX,
     outline: [2, 3],
     nav: [
       { text: "tui-lipan", link: "https://tui-lipan.dev" },
@@ -328,6 +348,7 @@ export default defineConfig({
           { text: "Hooks", link: "/hooks" },
           { text: "Agent skill", link: "/agent-skill" },
           { text: "Extensions", link: "/extensions" },
+          { text: "Extension gallery", link: "/extension-gallery" },
           { text: "Write an extension", link: "/writing-extensions" },
           { text: "Extension testing", link: "/extension-testing" },
           { text: "Automation recipes", link: "/recipes" },

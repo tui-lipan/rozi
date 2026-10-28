@@ -96,6 +96,7 @@ homepage = "https://github.com/you/rozi-my-extension"
 | `min_rozi` | no | Oldest `rozi` version the extension works with. |
 | `platforms` | no | Operating systems it runs on: `linux`, `macos`, `windows`, `freebsd`, `netbsd`. Omit for all. |
 | `homepage` | no | An `http` or `https` URL where users can read more. `rozi` displays it but never fetches it. |
+| `screenshots` | no | Up to four images for the [Extension gallery](extension-gallery.md) card, as paths from the repository root, such as `"docs/picker.png"`. `rozi` itself never shows them. |
 
 The IDs `app`, `command`, `rozi`, `user`, and `workspace` are reserved. Keep `id` stable: every
 command, service, tab, and agent the extension contributes is named after it, and users' bindings
@@ -113,11 +114,12 @@ silently excluding the extension. When several problems apply, `rozi` reports th
 2. any other manifest error, including those in the fields above;
 3. `min_rozi` or `platforms` excluding this machine.
 
-`rozi extensions list --verbose` prints `min_rozi`, `platforms`, and `homepage` when declared,
-`rozi extensions check` shows `homepage`, and the `--json` output of both includes all three.
+`rozi extensions list --verbose` prints `min_rozi`, `platforms`, `homepage`, and `screenshots` when
+declared, `rozi extensions check` shows `homepage`, and the `--json` output of both includes all
+four.
 
-Versions of `rozi` released before these three fields existed reject a manifest that uses them as
-an unknown field. To stay loadable by those versions, leave all three out.
+Versions of `rozi` released before these fields existed reject a manifest that uses them as an
+unknown field. To stay loadable by those versions, leave them out.
 
 The manifest schema is [`schemas/extension.schema.json`](../schemas/extension.schema.json). One
 invalid command, service, agent, sidebar tab, navigation target, suggested keybinding, or setting
@@ -915,8 +917,10 @@ Listing a public GitHub repository in **Discover** needs no submission or review
 2. Include `id`, `title`, `description`, `version`, and `api`.
 3. Add `min_rozi`, `platforms`, and `homepage` when they clarify compatibility. Use distinct, exact
    lowercase platform names: `linux`, `macos`, `windows`, `freebsd`, or `netbsd`.
-4. Run `rozi extensions check .` and fix everything its **Discover** section lists.
-5. Push to the default branch, and add the `rozi-extension` topic to the repository.
+4. Optionally commit screenshots and list them in `screenshots`; the
+   [Extension gallery](extension-gallery.md) shows them on the extension's card.
+5. Run `rozi extensions check .` and fix everything its **Discover** section lists.
+6. Push to the default branch, and add the `rozi-extension` topic to the repository.
 
 The index is rebuilt hourly. Each build reads the root `extension.toml` from the default branch,
 records the exact commit, and never runs the repository's code. **Install** in Discover installs
@@ -942,6 +946,10 @@ The index keeps each entry short, and leaves out a repository whose metadata exc
 | `title` | 80 characters |
 | `description` | 280 characters |
 | `homepage` | 256 characters |
+
+Screenshots must be PNG, JPEG, or WebP files committed to the repository, at most 2 MiB each. A
+path may use only ASCII letters, digits, `.`, `_`, `-`, and `/`. A wide capture of the extension in
+use reads best; cards crop it to 16:10 from the top left.
 
 The generated index and its schema are public at
 [`tui-lipan/rozi-extension-index`](https://github.com/tui-lipan/rozi-extension-index).

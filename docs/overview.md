@@ -107,7 +107,8 @@ See [Configuration](configuration.md), [Keybindings](keybindings.md), and [Theme
   they run on a remote machine from a verified copy of the extension and reach your client only
   through rozi. See [Run on the session host](writing-extensions.md#run-on-the-session-host).
 - Discover public `rozi-extension` repositories in-app and install their exact indexed commits after
-  reviewing source, compatibility, and contribution counts.
+  reviewing source, compatibility, and contribution counts, or browse them with screenshots in the
+  [Extension gallery](extension-gallery.md).
 
 See [Scripting](scripting.md), [Control CLI](control.md), [Hooks](hooks.md), and
 [Automation recipes](recipes.md).

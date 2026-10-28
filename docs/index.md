@@ -63,6 +63,7 @@ Start with [Getting started](getting-started.md).
 | [Record a pane or the UI](recording.md) | Record a pane or the whole UI over time, then replay it or export frames, a GIF, or a cast |
 | [Hooks](hooks.md) | Running commands when rozi events happen |
 | [Extensions](extensions.md) | Finding, installing, and managing extensions |
+| [Extension gallery](extension-gallery.md) | Public extensions, with screenshots and install commands |
 | [Write an extension](writing-extensions.md) | Manifests, commands, services, sidebar tabs, and the runtime environment |
 | [Extension testing](extension-testing.md) | Testing an extension in isolation |
 | [Automation recipes](recipes.md) | Complete scripting and extension examples |

@@ -251,5 +251,89 @@
     "name": "minimum version non-ASCII prerelease digit",
     "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nmin_rozi = \"1.0.0-1٢\"\n",
     "eligible": false
+  },
+  {
+    "name": "screenshots in the repository",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"docs/picker.png\", \"sidebar.webp\"]\n",
+    "eligible": true,
+    "files": {
+      "docs/picker.png": 16,
+      "sidebar.webp": 16
+    }
+  },
+  {
+    "name": "screenshot at the size limit",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"shot.jpg\"]\n",
+    "eligible": true,
+    "files": {
+      "shot.jpg": 2097152
+    }
+  },
+  {
+    "name": "screenshot over the size limit",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"shot.jpg\"]\n",
+    "eligible": false,
+    "files": {
+      "shot.jpg": 2097153
+    }
+  },
+  {
+    "name": "screenshot missing from the repository",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"docs/picker.png\"]\n",
+    "eligible": false
+  },
+  {
+    "name": "screenshot outside the repository",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"../picker.png\"]\n",
+    "eligible": false
+  },
+  {
+    "name": "absolute screenshot path",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"/picker.png\"]\n",
+    "eligible": false
+  },
+  {
+    "name": "screenshot path with a space",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"docs/my picker.png\"]\n",
+    "eligible": false,
+    "files": {
+      "docs/my picker.png": 16
+    }
+  },
+  {
+    "name": "screenshot that is not an image",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"docs/picker.svg\"]\n",
+    "eligible": false,
+    "files": {
+      "docs/picker.svg": 16
+    }
+  },
+  {
+    "name": "duplicate screenshot",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"a.png\", \"a.png\"]\n",
+    "eligible": false,
+    "files": {
+      "a.png": 16
+    }
+  },
+  {
+    "name": "five screenshots",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = [\"1.png\", \"2.png\", \"3.png\", \"4.png\", \"5.png\"]\n",
+    "eligible": false,
+    "files": {
+      "1.png": 16,
+      "2.png": 16,
+      "3.png": 16,
+      "4.png": 16,
+      "5.png": 16
+    }
+  },
+  {
+    "name": "screenshots not an array",
+    "manifest": "[extension]\nid = \"x\"\ntitle = \"X\"\ndescription = \"Does x\"\nversion = \"1.0.0\"\napi = 1\nscreenshots = \"a.png\"\n",
+    "eligible": false,
+    "files": {
+      "a.png": 16
+    }
   }
 ]

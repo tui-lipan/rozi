@@ -461,6 +461,9 @@ pub(super) fn format_extensions_text(
         if let Some(homepage) = extension.homepage.as_deref() {
             field("homepage", homepage);
         }
+        if !extension.screenshots.is_empty() {
+            field("screenshots", &extension.screenshots.join(", "));
+        }
         if !extension.commands.is_empty() {
             out.push_str("  commands\n");
             for id in &extension.commands {

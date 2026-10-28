@@ -29,6 +29,47 @@ pub(crate) const FIELD_LIMITS: [(&str, usize); 6] = [
     ("min_rozi", 64),
     ("homepage", 256),
 ];
+/// Most screenshots one extension lists, and the largest file each may be. Keep equal to
+/// `MAX_SCREENSHOTS` and `MAX_SCREENSHOT_BYTES` in the index generator.
+pub(crate) const MAX_SCREENSHOTS: usize = 4;
+pub(crate) const MAX_SCREENSHOT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_SCREENSHOT_PATH_CHARS: usize = 256;
+const SCREENSHOT_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+/// Why a manifest's screenshot path is not one the index lists, or `None` when it is.
+///
+/// The path names a file in the extension's repository and becomes part of a URL a web page
+/// loads, so it is held to a plain repository-relative spelling with no escapes or traversal.
+pub(crate) fn screenshot_path_problem(path: &str) -> Option<String> {
+    if path.is_empty() || path.chars().count() > MAX_SCREENSHOT_PATH_CHARS {
+        return Some(format!(
+            "must be 1 to {MAX_SCREENSHOT_PATH_CHARS} characters"
+        ));
+    }
+    if !path
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+    {
+        return Some("may use only ASCII letters, digits, `.`, `_`, `-`, and `/`".to_string());
+    }
+    if path
+        .split('/')
+        .any(|segment| matches!(segment, "" | "." | ".."))
+    {
+        return Some(
+            "must be relative to the repository root, without empty, `.`, or `..` segments"
+                .to_string(),
+        );
+    }
+    let extension = path.rsplit_once('.').map(|(_, extension)| extension);
+    if !extension.is_some_and(|extension| SCREENSHOT_EXTENSIONS.contains(&extension)) {
+        return Some(format!(
+            "must end in .{}",
+            SCREENSHOT_EXTENSIONS.join(", .")
+        ));
+    }
+    None
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +87,9 @@ pub struct CatalogEntry {
     #[serde(default)]
     pub(crate) platforms: Vec<String>,
     pub(crate) homepage: Option<String>,
+    /// Repository-relative image paths at `commit`, for the index website. Rozi does not show them.
+    #[serde(default)]
+    pub(crate) screenshots: Vec<String>,
     pub(crate) stars: u64,
     pub(crate) updated_at: String,
     pub(crate) commands: usize,
@@ -198,6 +242,18 @@ impl CatalogEntry {
                     self.repository
                 ));
             }
+        }
+        let mut seen = HashSet::new();
+        if self.screenshots.len() > MAX_SCREENSHOTS
+            || self
+                .screenshots
+                .iter()
+                .any(|path| screenshot_path_problem(path).is_some() || !seen.insert(path.as_str()))
+        {
+            return Err(format!(
+                "catalog entry `{}` has invalid screenshots",
+                self.repository
+            ));
         }
         Ok(())
     }
@@ -414,6 +470,44 @@ mod tests {
         let entries = parse(&text).unwrap();
         assert_eq!(entries.len(), 1, "limits count characters, not bytes");
         assert_eq!(entries[0].repository, "someone/at-limit");
+    }
+
+    #[test]
+    fn screenshots_are_optional_but_must_be_plain_repository_paths() {
+        let document: serde_json::Value = serde_json::from_str(VALID).unwrap();
+        let entry = |name: &str, screenshots: serde_json::Value| {
+            let mut entry = document["extensions"][0].clone();
+            entry["repository"] = format!("someone/{name}").into();
+            entry["source"] = format!("https://github.com/someone/{name}.git").into();
+            entry["screenshots"] = screenshots;
+            entry
+        };
+        let text = serde_json::json!({
+            "schema_version": 1,
+            "generated_at": "2026-09-21T00:00:00Z",
+            "extensions": [
+                entry("listed", serde_json::json!(["docs/picker.png", "docs/sidebar.webp"])),
+                entry("traversal", serde_json::json!(["../secret.png"])),
+                entry("not-an-image", serde_json::json!(["docs/run.sh"])),
+                entry("repeated", serde_json::json!(["a.png", "a.png"])),
+                entry("too-many", serde_json::json!(["1.png", "2.png", "3.png", "4.png", "5.png"])),
+            ],
+        })
+        .to_string();
+
+        let entries = parse(&text).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(CatalogEntry::repository)
+                .collect::<Vec<_>>(),
+            ["someone/listed"]
+        );
+        assert_eq!(
+            entries[0].screenshots,
+            ["docs/picker.png", "docs/sidebar.webp"]
+        );
+        assert_eq!(parse(VALID).unwrap()[0].screenshots, Vec::<String>::new());
     }
 
     #[test]

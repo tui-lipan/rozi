@@ -28,7 +28,10 @@ def main():
     failures = []
     for case in cases:
         try:
-            module.catalog_entry(repo, "a" * 40, case["manifest"].encode("utf-8"))
+            files = case.get("files", {})
+            module.catalog_entry(
+                repo, "a" * 40, case["manifest"].encode("utf-8"), files.get
+            )
             eligible = True
         except ValueError:
             eligible = False

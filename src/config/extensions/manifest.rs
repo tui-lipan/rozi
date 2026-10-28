@@ -112,6 +112,9 @@ pub(super) struct ExtensionMetadataFile {
     pub(super) platforms: Vec<String>,
     /// Where to read more. Discovery metadata only: Rozi never fetches it.
     pub(super) homepage: Option<String>,
+    /// Repository-relative images the index website shows. Discovery metadata only.
+    #[serde(default)]
+    pub(super) screenshots: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

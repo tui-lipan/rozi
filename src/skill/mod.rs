@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn embedded_skill_is_a_well_formed_skill_document() {
         assert!(SKILL_MD.starts_with("---\nname: rozi"));
-        assert!(SKILL_MD.contains("ROZI=1"));
+        assert!(SKILL_MD.contains("rozi context --format json"));
         assert!(SKILL_MD.contains("rozi list-panes"));
     }
 

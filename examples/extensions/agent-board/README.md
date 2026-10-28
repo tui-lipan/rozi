@@ -46,9 +46,13 @@ Open **Sidebar tabs…** and show **Agents**.
   host: locally, or over SSH for a session attached with `--remote`. Switching sessions stops the
   old board and starts one for the session on screen. It runs from
   a verified copy of this directory, so nothing has to be installed on that host except `rozi`.
-- The service polls `rozi list-panes --format json`, writes rows to `rozi sidebar publish --tab
+- The service reads `rozi list-panes --format json`, writes rows to `rozi sidebar publish --tab
   agents`, and answers `{"activate": …}` with `rozi focus`. It also writes one row to
   `rozi publish` for Activity.
+- It reads the panes again as soon as `rozi subscribe agent-state-changed pane-exited` reports a
+  change, and every 10 seconds for pane titles, which change without an event. A rozi without
+  those events, one whose `rozi api describe` lacks `runtime-events`, refuses the subscription, and
+  the board falls back to reading the panes every 2 seconds.
 - The board shows only the session on screen. It does not collect or retain background-session
   rows. `list-panes.agent_state` supplies Rozi's effective agent state, including integration
   reports. The Activity summary uses the same urgency order as Rozi: blocked, error, working,

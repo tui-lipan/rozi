@@ -11,7 +11,9 @@ With the skill installed, an agent that you ask to use `rozi` can:
 - list panes, read the layout, and capture pane output;
 - split panes and run commands in them;
 - watch and read coding agents running in other panes through `rozi agents`;
-- control a detached named session with `--session`.
+- control a detached named session with `--session`;
+- start a session of its own with `rozi sessions new <NAME> --detach` for test runs and captures
+  you did not ask to see, so its panes stay out of your workspaces.
 
 The skill lets the agent act when you ask it to use `rozi` or request a live terminal preview
 from a verified `rozi` pane, to read live pane

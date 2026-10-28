@@ -49,7 +49,7 @@ can mix them with text: `send-keys --target "$pane" 'cargo test' Enter`.
 
 ```sh
 ROZI_CMD=${ROZI_BIN:-rozi}
-"$ROZI_CMD" split --workspace 9 --title Tests --focus --argv cargo test -- --nocapture
+"$ROZI_CMD" split --workspace 3 --title Tests --focus --argv cargo test -- --nocapture
 ```
 
 Put pane options such as `--title` and `--workspace` before `--argv`. Everything after `--argv` is

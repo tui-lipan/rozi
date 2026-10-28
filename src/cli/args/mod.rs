@@ -272,6 +272,11 @@ pub(crate) enum SessionsCommand {
         remote: Option<String>,
         config_path: Option<String>,
     },
+    /// `sessions new <NAME> --detach`.
+    NewDetached {
+        name: String,
+        config_path: Option<String>,
+    },
     Kill {
         name: String,
         remote: Option<String>,

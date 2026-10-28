@@ -59,6 +59,11 @@ rozi capture-pane --target <ID> --wait-for 'Ready' --timeout 30s --format json
 rozi capture-pane --target <ID> --render png --output /absolute/scratch/preview.png
 ```
 
+When the user does not need to watch the preview, run it in a detached session of your own
+instead of the user's workspaces: `rozi sessions new <NAME> --detach`, then add `--session <NAME>`
+to `split`, `capture-pane`, and `record`, and `rozi sessions kill <NAME>` when done. Whole-UI
+captures (`capture-ui`, `record start ui`) still need a UI.
+
 Inspect the saved PNG with the image viewer. Text is useful for readiness and output, but does
 not prove colors, borders, clipping, or layering. `capture-ui --render png --output ...` includes
 rozi's chrome and visible overlays; a pane capture shows just that terminal application.

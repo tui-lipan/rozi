@@ -13,10 +13,10 @@
 //! - An install is counted at most once a week. A report that got no answer is kept and resent
 //!   with the same token, and the counter counts each token once, so a lost answer neither loses
 //!   nor doubles the count. The token is dropped only once everything its answer settles is on
-//!   disk. The answer names the week the counter counted it in; that week and the local week the
-//!   report was made in together decide when the next one is due, so neither a report sent just
-//!   before midnight on Sunday nor a client clock running ahead counts the install twice in one of
-//!   the counter's weeks. A report the counter refuses is not retried.
+//!   disk. Weeks are the counter's alone: before making a new report the client asks the counter
+//!   which week it is, and makes one only once that week is past the week the last report was
+//!   counted in. A wrong local clock therefore cannot count an install twice in a week or change
+//!   its age. A report the counter refuses is not retried.
 //! - Nothing is sent before the user has been told. A check that finds no record of the notice
 //!   claims it and asks the client to show it; only the client, once it has raised the notice,
 //!   records it as shown. A claim nobody confirmed lapses, so a client that exits first does not
@@ -34,7 +34,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::CommandLink;
 use ureq::tls::{RootCerts, TlsConfig};
@@ -44,6 +44,8 @@ use crate::platform::install_source::InstallSource;
 
 /// Where reports go. Owned by the tui-lipan project, so other tui-lipan apps can share it.
 pub(crate) const ENDPOINT: &str = "https://usage.tui-lipan.dev/v1/count";
+/// The counter's current week, asked before each new report.
+const WEEK_ENDPOINT: &str = "https://usage.tui-lipan.dev/v1/week";
 /// The user docs page that says what is sent and how to opt out.
 pub(crate) const DOCS_URL: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/usage-count");
 
@@ -54,10 +56,11 @@ const DIR_NAME: &str = "usage-count";
 const NOTICE_FILE: &str = "notice";
 /// A check's claim to show the notice, until a client confirms it was shown.
 const NOTICE_CLAIM_FILE: &str = "notice-claim";
-/// The token of a report sent without an answer yet, with the local week it was made in.
+/// The token of a report sent without an answer yet.
 const PENDING_FILE: &str = "pending";
+/// The counter's week of this install's first count.
 const FIRST_COUNTED_FILE: &str = "first-counted";
-/// The last settled report's weeks; see [`Counted`].
+/// The counter's week of the last settled report.
 const COUNTED_FILE: &str = "counted";
 const DATE_FORMAT: &str = "%Y-%m-%d";
 /// How long a claim holds off other clients: an unconfirmed notice claim, or a report claim with no
@@ -114,6 +117,8 @@ pub(crate) enum Delivery {
 
 /// The network edge, replaced in tests.
 pub(crate) trait Transport {
+    /// The counter's current week, or `None` when it cannot be reached.
+    fn current_week(&self) -> Option<String>;
     fn post(&self, url: &str, body: &[u8]) -> Delivery;
 }
 
@@ -182,7 +187,9 @@ pub(crate) fn notice_shown() {
 
 #[cfg(test)]
 pub(crate) fn notice_recorded_for_test() -> bool {
-    state_dir().is_some_and(|dir| read_date(&dir.join(NOTICE_FILE)).is_some())
+    state_dir()
+        .and_then(|dir| fs::read_to_string(dir.join(NOTICE_FILE)).ok())
+        .is_some_and(|text| NaiveDate::parse_from_str(text.trim(), DATE_FORMAT).is_ok())
 }
 
 impl Report {
@@ -221,21 +228,37 @@ fn install_name(source: InstallSource) -> &'static str {
     }
 }
 
-/// Install-age bucket from the date this install was first counted. Coarse on purpose: it tells
-/// new installs from returning ones without dating any of them.
+/// Install-age bucket from the counter's week of this install's first count and its week now.
+/// Coarse on purpose: it tells new installs from returning ones without dating any of them. Both
+/// weeks come from the counter's clock, so a wrong local clock cannot make an install look new.
 ///
 /// 1: first week, 2: within four weeks, 3: within 24 weeks, 4: older.
-fn age_bucket(first_counted: NaiveDate, today: NaiveDate) -> u8 {
-    match (today - first_counted).num_days() {
-        ..7 => 1,
-        7..28 => 2,
-        28..168 => 3,
+fn age_bucket(first_counted: &str, current: &str) -> u8 {
+    let (Some(first), Some(current)) = (week_start(first_counted), week_start(current)) else {
+        return 1;
+    };
+    match (current - first).num_weeks() {
+        ..1 => 1,
+        1..4 => 2,
+        4..24 => 3,
         _ => 4,
     }
 }
 
+/// The Monday that starts the ISO week `2026-W44`.
+fn week_start(week: &str) -> Option<NaiveDate> {
+    if !is_iso_week(week) {
+        return None;
+    }
+    let year = week[..4].parse().ok()?;
+    let number = week[6..].parse().ok()?;
+    NaiveDate::from_isoywd_opt(year, number, chrono::Weekday::Mon)
+}
+
 /// `2026-W44` for any day of that ISO week. Sorts in week order.
+#[cfg(test)]
 fn iso_week(day: NaiveDate) -> String {
+    use chrono::Datelike;
     let week = day.iso_week();
     format!("{}-W{:02}", week.year(), week.week())
 }
@@ -257,6 +280,8 @@ fn new_token() -> String {
 
 /// One check against the state in `dir`, as of `now`. `template` is this build's report; the age
 /// and token are filled in here.
+///
+/// `now` decides only when the notice's day has passed. Which week it is comes from the counter.
 pub(crate) fn run(
     dir: &Path,
     now: DateTime<Utc>,
@@ -266,29 +291,37 @@ pub(crate) fn run(
     if crate::platform::fs_security::ensure_private_dir(dir).is_err() {
         return Outcome::Failed;
     }
-    let today = now.date_naive();
     match notice_state(dir, now) {
         Notice::Claimed => return Outcome::NoticeDue,
         Notice::Showing => return Outcome::WaitingAfterNotice,
-        Notice::Shown(shown) if shown >= today => return Outcome::WaitingAfterNotice,
+        Notice::Shown(shown) if shown >= now.date_naive() => return Outcome::WaitingAfterNotice,
         Notice::Shown(_) => {}
         Notice::Unavailable => return Outcome::Failed,
     }
 
+    // Another client is sending a report right now.
+    let pending = match read_pending(dir, now) {
+        PendingState::Filling => return Outcome::AlreadyCounted,
+        PendingState::Report(token) => Some(token),
+        PendingState::Absent => None,
+    };
+    let Some(week) = transport.current_week().filter(|week| is_iso_week(week)) else {
+        return Outcome::Failed;
+    };
+
     // A report whose answer never came goes first, under its own token: the counter either counts
     // it now or says it already did, and which week.
-    match read_pending(dir, now) {
-        PendingState::Report(pending) => match send(dir, today, template, &pending, transport) {
+    if let Some(token) = pending {
+        match send(dir, &week, template, &token, transport) {
             Outcome::Counted | Outcome::AlreadyCounted | Outcome::Rejected => {}
             other => return other,
-        },
-        // Another client is sending this week's report right now.
-        PendingState::Filling => return Outcome::AlreadyCounted,
-        PendingState::Absent => {}
+        }
     }
 
-    let week = iso_week(today);
-    if read_counted(dir).is_some_and(|counted| counted.covers(&week)) {
+    // A new report only once the counter's week has moved past the last one counted. The counter
+    // counts a report no earlier than the week it just named, so two reports can never land in
+    // the same week of its clock, whatever this one says.
+    if read_counted(dir).is_some_and(|counted| counted.as_str() >= week.as_str()) {
         return Outcome::AlreadyCounted;
     }
     // Claim the report before making it, so of several clients exactly one does. The claim is
@@ -298,43 +331,24 @@ pub(crate) fn run(
         Err(error) if error.kind() == ErrorKind::AlreadyExists => return Outcome::AlreadyCounted,
         Err(_) => return Outcome::Failed,
     }
-    let pending = Pending {
-        token: new_token(),
-        week,
-    };
-    if crate::platform::persist::replace_file(&dir.join(PENDING_FILE), pending.to_line()).is_err() {
+    let token = new_token();
+    if crate::platform::persist::replace_file(&dir.join(PENDING_FILE), &token).is_err() {
         let _ = fs::remove_file(dir.join(PENDING_FILE));
         return Outcome::Failed;
     }
-    send(dir, today, template, &pending, transport)
+    send(dir, &week, template, &token, transport)
 }
 
-/// A report sent without an answer yet: its token, and the local week it was made in.
-struct Pending {
-    token: String,
-    week: String,
-}
-
-impl Pending {
-    fn to_line(&self) -> String {
-        format!("{} {}", self.token, self.week)
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        let (token, week) = text.trim().split_once(' ')?;
-        let token_ok = token.len() == 32
-            && token
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
-        (token_ok && is_iso_week(week)).then(|| Self {
-            token: token.to_string(),
-            week: week.to_string(),
-        })
-    }
+fn is_token(text: &str) -> bool {
+    text.len() == 32
+        && text
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 enum PendingState {
-    Report(Pending),
+    /// The token of a report sent without an answer yet.
+    Report(String),
     /// A fresh claim another client has not written its token into yet.
     Filling,
     Absent,
@@ -348,10 +362,11 @@ fn read_pending(dir: &Path, now: DateTime<Utc>) -> PendingState {
         // Present but unreadable: leave it, rather than make a second report beside it.
         Err(_) => return PendingState::Filling,
     };
-    if let Some(pending) = Pending::parse(&text) {
-        return PendingState::Report(pending);
+    let token = text.trim();
+    if is_token(token) {
+        return PendingState::Report(token.to_string());
     }
-    if text.trim().is_empty() && claim_is_live(&path, now) {
+    if token.is_empty() && claim_is_live(&path, now) {
         return PendingState::Filling;
     }
     // A claim whose client died before writing it, or damage. Either way no token survives in it.
@@ -359,102 +374,79 @@ fn read_pending(dir: &Path, now: DateTime<Utc>) -> PendingState {
     PendingState::Absent
 }
 
-/// Post `pending`'s report and settle the local state from the answer. The pending file is removed
-/// only after everything the answer settles is on disk, so a failed write leaves the token to be
-/// resent, which the counter answers without counting it again.
+/// Post `token`'s report and settle the local state from the answer. `week` is the counter's
+/// current week. The pending file is removed only after everything the answer settles is on
+/// disk, so a failed write leaves the token to be resent, which the counter answers without
+/// counting it again.
 fn send(
     dir: &Path,
-    today: NaiveDate,
+    week: &str,
     template: &Report,
-    pending: &Pending,
+    token: &str,
     transport: &impl Transport,
 ) -> Outcome {
-    let first_counted = read_date(&dir.join(FIRST_COUNTED_FILE));
+    let first_counted = read_week(&dir.join(FIRST_COUNTED_FILE));
     let report = Report {
-        age: age_bucket(first_counted.unwrap_or(today), today),
-        token: pending.token.clone(),
+        age: first_counted
+            .as_deref()
+            .map_or(1, |first| age_bucket(first, week)),
+        token: token.to_string(),
         ..template.clone()
     };
     let Ok(body) = serde_json::to_vec(&report) else {
         return Outcome::Failed;
     };
-    let (outcome, counted) = match transport.post(ENDPOINT, &body) {
-        Delivery::Accepted { week, counted } => {
+    let (outcome, counted_in) = match transport.post(ENDPOINT, &body) {
+        Delivery::Accepted {
+            week: counted_in,
+            counted,
+        } => {
+            let counted_in = if is_iso_week(&counted_in) {
+                counted_in
+            } else {
+                week.to_string()
+            };
             // Any acceptance of a token this install made means the install has been counted,
             // including an answer that it was counted before: that earlier count was this one,
             // with its answer lost.
-            if first_counted.is_none() && write_date(&dir.join(FIRST_COUNTED_FILE), today).is_err()
+            if first_counted.is_none()
+                && write_week(&dir.join(FIRST_COUNTED_FILE), &counted_in).is_err()
             {
                 return Outcome::Failed;
             }
-            let server = if is_iso_week(&week) {
-                week
-            } else {
-                pending.week.clone()
-            };
             let outcome = if counted {
                 Outcome::Counted
             } else {
                 Outcome::AlreadyCounted
             };
-            (
-                outcome,
-                Counted {
-                    server,
-                    local: pending.week.clone(),
-                },
-            )
+            (outcome, counted_in)
         }
-        Delivery::Rejected => (
-            Outcome::Rejected,
-            Counted {
-                server: pending.week.clone(),
-                local: pending.week.clone(),
-            },
-        ),
+        Delivery::Rejected => (Outcome::Rejected, week.to_string()),
         Delivery::Failed => return Outcome::Failed,
     };
-    if counted.write(dir).is_err() {
+    // Never move the record back: a resent report from an earlier week settles that report, not
+    // the weeks counted since.
+    let latest = read_counted(dir).filter(|counted| *counted > counted_in);
+    if latest.is_none() && write_week(&dir.join(COUNTED_FILE), &counted_in).is_err() {
         return Outcome::Failed;
     }
     let _ = fs::remove_file(dir.join(PENDING_FILE));
     outcome
 }
 
-/// The last report settled: the week the counter counted it in, and the local week it was made in.
-struct Counted {
-    server: String,
-    local: String,
+/// The counter's week of the last settled report.
+fn read_counted(dir: &Path) -> Option<String> {
+    read_week(&dir.join(COUNTED_FILE))
 }
 
-impl Counted {
-    /// Whether this install is already counted for the local week `week`.
-    ///
-    /// The counter's week covers a client clock that runs behind it: a report made late on Sunday
-    /// and counted on Monday covers Monday. The local week covers a clock that runs ahead: until
-    /// that clock reaches another week, every check would otherwise see the counter's earlier
-    /// week as stale and make a new report the counter counts in the same week again. Matching
-    /// the local week exactly, rather than treating a later one as covering, means a clock that
-    /// was far ahead and is then corrected counts again within a week.
-    fn covers(&self, week: &str) -> bool {
-        self.server.as_str() >= week || self.local == week
-    }
-
-    fn write(&self, dir: &Path) -> std::io::Result<()> {
-        crate::platform::persist::replace_file(
-            &dir.join(COUNTED_FILE),
-            format!("{} {}", self.server, self.local),
-        )
-    }
+fn read_week(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    let week = text.trim();
+    is_iso_week(week).then(|| week.to_string())
 }
 
-fn read_counted(dir: &Path) -> Option<Counted> {
-    let text = fs::read_to_string(dir.join(COUNTED_FILE)).ok()?;
-    let (server, local) = text.trim().split_once(' ')?;
-    (is_iso_week(server) && is_iso_week(local)).then(|| Counted {
-        server: server.to_string(),
-        local: local.to_string(),
-    })
+fn write_week(path: &Path, week: &str) -> std::io::Result<()> {
+    crate::platform::persist::replace_file(path, week)
 }
 
 enum Notice {
@@ -525,11 +517,6 @@ fn record_notice_shown(dir: &Path, today: NaiveDate) {
     }
 }
 
-fn read_date(path: &Path) -> Option<NaiveDate> {
-    let text = fs::read_to_string(path).ok()?;
-    NaiveDate::parse_from_str(text.trim(), DATE_FORMAT).ok()
-}
-
 fn write_date(path: &Path, date: NaiveDate) -> std::io::Result<()> {
     crate::platform::persist::replace_file(path, date.format(DATE_FORMAT).to_string())
 }
@@ -566,7 +553,28 @@ struct Answer {
     counted: bool,
 }
 
+#[derive(Deserialize)]
+struct WeekAnswer {
+    week: String,
+}
+
 impl Transport for HttpsTransport {
+    fn current_week(&self) -> Option<String> {
+        let mut response = self.agent.get(WEEK_ENDPOINT).call().ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_ANSWER_BYTES)
+            .read_to_vec()
+            .ok()?;
+        serde_json::from_slice::<WeekAnswer>(&bytes)
+            .ok()
+            .map(|answer| answer.week)
+    }
+
     fn post(&self, url: &str, body: &[u8]) -> Delivery {
         let Ok(mut response) = self
             .agent
@@ -604,10 +612,14 @@ mod tests {
     use std::collections::HashMap;
 
     /// The counter's behavior at the edge rozi sees it: each token counted once, in the week it
-    /// first arrived. `lose_answers` drops the answer after the counter took the report, which is
-    /// the case a retry must not double.
+    /// first arrived. `week` is its clock; `arrives_in` makes the next reports land in a later
+    /// week than the one it just named, as when the week turns over mid-request. `lose_answers`
+    /// drops the answer after the counter took the report, which is the case a retry must not
+    /// double.
     struct FakeCounter {
         week: RefCell<String>,
+        arrives_in: RefCell<Option<String>>,
+        offline: RefCell<bool>,
         answer: RefCell<Option<Delivery>>,
         lose_answers: RefCell<bool>,
         tokens: RefCell<HashMap<String, String>>,
@@ -617,7 +629,9 @@ mod tests {
     impl FakeCounter {
         fn new() -> Self {
             Self {
-                week: RefCell::new(String::new()),
+                week: RefCell::new("2026-W44".to_string()),
+                arrives_in: RefCell::new(None),
+                offline: RefCell::new(false),
                 answer: RefCell::new(None),
                 lose_answers: RefCell::new(false),
                 tokens: RefCell::new(HashMap::new()),
@@ -634,6 +648,7 @@ mod tests {
 
         fn at(&self, week: &str) -> &Self {
             *self.week.borrow_mut() = week.to_string();
+            *self.arrives_in.borrow_mut() = None;
             self
         }
 
@@ -648,6 +663,10 @@ mod tests {
     }
 
     impl Transport for FakeCounter {
+        fn current_week(&self) -> Option<String> {
+            (!*self.offline.borrow()).then(|| self.week.borrow().clone())
+        }
+
         fn post(&self, url: &str, body: &[u8]) -> Delivery {
             assert_eq!(url, ENDPOINT);
             let report: serde_json::Value = serde_json::from_slice(body).expect("JSON report");
@@ -658,10 +677,12 @@ mod tests {
             let token = report["token"].as_str().unwrap().to_string();
             let mut tokens = self.tokens.borrow_mut();
             let counted = !tokens.contains_key(&token);
-            let week = tokens
-                .entry(token)
-                .or_insert_with(|| self.week.borrow().clone())
-                .clone();
+            let arrival = self
+                .arrives_in
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| self.week.borrow().clone());
+            let week = tokens.entry(token).or_insert(arrival).clone();
             if *self.lose_answers.borrow() {
                 return Delivery::Failed;
             }
@@ -799,51 +820,75 @@ mod tests {
         assert_eq!(sent.last().unwrap()["age"], 3, "{sent:?}");
     }
 
-    /// The mirror of the Sunday-to-Monday case: a client whose clock is a week ahead reports
-    /// once, and its later checks in what it thinks is the same week do not make new reports the
-    /// counter would count in its own week again.
+    /// A client clock two hours fast crosses Sunday midnight while the counter is still on
+    /// Sunday. Its check six hours later must not make a second report the counter would count
+    /// in the same week; only the counter's week turning over allows one.
     #[test]
-    fn a_client_clock_ahead_of_the_counter_still_counts_once_a_week() {
+    fn a_slightly_fast_client_clock_counts_once_across_sunday_midnight() {
         let (_root, dir) = told_on("2026-10-20");
         let counter = FakeCounter::new();
         counter.at("2026-W44");
-        for time in [
-            "2026-11-02T09:00:00Z",
-            "2026-11-02T15:00:00Z",
-            "2026-11-04T09:00:00Z",
-            "2026-11-08T23:00:00Z",
-        ] {
-            run(&dir, at(time), &template(), &counter);
-        }
+        // Counter: Sunday 17:30 and 23:30. Client: 19:30, then Monday 01:30.
+        assert_eq!(
+            run(&dir, at("2026-11-01T19:30:00Z"), &template(), &counter),
+            Outcome::Counted
+        );
+        assert_eq!(
+            run(&dir, at("2026-11-02T01:30:00Z"), &template(), &counter),
+            Outcome::AlreadyCounted
+        );
         assert_eq!(counter.counted_in("2026-W44"), 1);
         assert_eq!(counter.sent().len(), 1);
 
-        // Its next week is the counter's next week too.
         counter.at("2026-W45");
         assert_eq!(
-            run(&dir, at("2026-11-09T09:00:00Z"), &template(), &counter),
+            run(&dir, at("2026-11-02T07:30:00Z"), &template(), &counter),
             Outcome::Counted
         );
         assert_eq!(counter.counted_in("2026-W45"), 1);
     }
 
-    /// A clock far ahead and then corrected does not stop counting until it catches up again.
+    /// A client clock a year ahead, later corrected, changes neither how often the install is
+    /// counted nor its age: both follow the counter's weeks.
     #[test]
-    fn a_corrected_clock_counts_again_within_a_week() {
+    fn a_wrong_client_clock_changes_neither_the_count_nor_the_age() {
         let (_root, dir) = told_on("2026-10-20");
         let counter = FakeCounter::new();
         counter.at("2026-W44");
-        run(&dir, at("2027-10-28T09:00:00Z"), &template(), &counter);
+        for time in ["2027-10-28T09:00:00Z", "2027-11-05T09:00:00Z"] {
+            run(&dir, at(time), &template(), &counter);
+        }
+        assert_eq!(counter.counted_in("2026-W44"), 1);
 
-        assert_eq!(
-            run(&dir, at("2026-10-29T09:00:00Z"), &template(), &counter),
-            Outcome::AlreadyCounted
-        );
+        // Corrected, a week later by the counter's clock, then five weeks on.
         counter.at("2026-W45");
         assert_eq!(
-            run(&dir, at("2026-11-02T09:00:00Z"), &template(), &counter),
+            run(&dir, at("2026-11-03T09:00:00Z"), &template(), &counter),
             Outcome::Counted
         );
+        counter.at("2026-W49");
+        run(&dir, at("2026-12-01T09:00:00Z"), &template(), &counter);
+        let ages: Vec<u64> = counter
+            .sent()
+            .iter()
+            .map(|report| report["age"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ages, vec![1, 2, 3]);
+    }
+
+    /// Without the counter's week there is no telling whether a new week began, so nothing is
+    /// sent.
+    #[test]
+    fn nothing_is_sent_while_the_counters_week_is_unknown() {
+        let (_root, dir) = told_on("2026-10-20");
+        let counter = FakeCounter::new();
+        *counter.offline.borrow_mut() = true;
+        assert_eq!(
+            run(&dir, at("2026-10-26T09:00:00Z"), &template(), &counter),
+            Outcome::Failed
+        );
+        assert!(counter.sent().is_empty());
+        assert!(!dir.join(PENDING_FILE).exists());
     }
 
     fn age_file(path: &Path, time: DateTime<Utc>) {
@@ -932,17 +977,19 @@ mod tests {
         assert!(!dir.join(PENDING_FILE).exists());
     }
 
-    /// Sent late on Sunday by the client's clock, the report lands in Monday's week at the counter.
-    /// The client marks the counter's week, so Monday does not count it again.
+    /// Asked just before midnight on Sunday, the counter names its old week, but the report lands
+    /// in Monday's. The client records the week that counted it, so Monday does not count again.
     #[test]
     fn the_week_the_counter_names_is_the_week_marked() {
         let (_root, dir) = told_on("2026-10-20");
         let counter = FakeCounter::new();
-        counter.at("2026-W45");
+        counter.at("2026-W44");
+        *counter.arrives_in.borrow_mut() = Some("2026-W45".to_string());
         assert_eq!(
             run(&dir, at("2026-11-01T23:59:59Z"), &template(), &counter),
             Outcome::Counted
         );
+        counter.at("2026-W45");
         assert_eq!(
             run(&dir, at("2026-11-02T09:00:00Z"), &template(), &counter),
             Outcome::AlreadyCounted
@@ -1121,8 +1168,8 @@ mod tests {
         assert!(!is_iso_week("../../etc"));
     }
 
-    /// rozi's real HTTPS client against the live counter. The report is invalid on purpose, so the
-    /// counter refuses it and stores nothing. Run by hand: `cargo test --lib live_counter -- --ignored`.
+    /// rozi's real HTTPS client against the live counter: it asks the week, and posts a report
+    /// that is invalid on purpose, so the counter refuses it and stores nothing. Run by hand: `cargo test --lib live_counter -- --ignored`.
     #[test]
     #[ignore = "reaches the live counter"]
     fn live_counter_refuses_an_invalid_report_over_https() {
@@ -1131,10 +1178,12 @@ mod tests {
             ..template()
         })
         .unwrap();
-        assert_eq!(
-            HttpsTransport::new().post(ENDPOINT, &body),
-            Delivery::Rejected
-        );
+        let transport = HttpsTransport::new();
+        let week = transport
+            .current_week()
+            .expect("the counter names its week");
+        assert!(is_iso_week(&week), "{week}");
+        assert_eq!(transport.post(ENDPOINT, &body), Delivery::Rejected);
     }
 
     #[test]

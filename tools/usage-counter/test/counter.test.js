@@ -213,6 +213,24 @@ describe("POST /v1/count", () => {
   });
 });
 
+describe("GET /v1/week", () => {
+  test("names the current week by the counter's clock and stores nothing", async () => {
+    const sunday = new Date("2026-11-01T23:59:59Z");
+    const monday = new Date("2026-11-02T00:00:00Z");
+    for (const [now, week] of [
+      [sunday, "2026-W44"],
+      [monday, "2026-W45"],
+    ]) {
+      const response = await handle(new Request("https://usage.tui-lipan.dev/v1/week"), env, now);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { week });
+    }
+    assert.deepEqual(await rows(), []);
+    assert.deepEqual(await tokens(), []);
+  });
+});
+
 describe("GET /v1/stats", () => {
   test("totals each week with its new installs and breakdowns", async () => {
     const lastWeek = new Date("2026-10-22T12:00:00Z");

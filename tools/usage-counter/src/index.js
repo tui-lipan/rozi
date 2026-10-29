@@ -4,6 +4,8 @@
 //                 report is taken: `counted` is false when its token was already counted, which is
 //                 what makes a resent report safe. 400 for a report that does not match the
 //                 contract, 429 when one address sends too fast.
+// GET  /v1/week   the current week by this server's clock, `{ "week" }`. Clients ask before making
+//                 a new report, so their own clocks never decide when a week has turned over.
 // GET  /v1/stats  the weekly totals, public. `?app=rozi&weeks=26`.
 //
 // The request's address is used only as the rate-limit key and is never stored or logged. The
@@ -30,6 +32,11 @@ export async function handle(request, env, now) {
   const { pathname } = new URL(request.url);
   if (pathname === "/v1/count") {
     return request.method === "POST" ? count(request, env, now) : notAllowed("POST");
+  }
+  if (pathname === "/v1/week") {
+    return request.method === "GET"
+      ? json({ week: isoWeek(now) }, { "cache-control": "no-store" })
+      : notAllowed("GET");
   }
   if (pathname === "/v1/stats") {
     return request.method === "GET" ? stats(request, env, now) : notAllowed("GET");

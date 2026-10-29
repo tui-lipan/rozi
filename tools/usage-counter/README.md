@@ -23,6 +23,14 @@ Each value is checked against the vocabulary in `src/report.js`. A well-formed v
 does not list yet, such as a new OS, is stored as `other`, so it is counted rather than refused.
 A report outside the contract gets a 400 and is not retried by the client.
 
+## Weeks
+
+Every week is the counter's, by its UTC clock: clients never decide one. Before making a new
+report, a client asks `GET /v1/week` and makes one only if that week is past the week its last
+report was counted in. A report is counted in the week it arrives, which is never earlier than the
+week the client was just told, so one install cannot be counted twice in a week even with a wrong
+clock. The install-age bucket is also the distance between counter weeks.
+
 ## The answer
 
 A taken report gets `200 {"week": "2026-W44", "counted": true}`. `week` is the week that counted

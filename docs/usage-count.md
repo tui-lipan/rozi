@@ -42,8 +42,9 @@ The totals are public: <https://usage.tui-lipan.dev/v1/stats?app=rozi>. The coun
 
 The count rides on the [update check](installation.md#update-notifications) rozi already makes:
 shortly after a client starts, and every `interval_hours` while it stays open. An install is
-counted at most once per week (Monday to Sunday, UTC), however many clients it runs. A report that
-gets no answer is sent again at a later check.
+counted at most once per week (Monday to Sunday, UTC, by the counter's clock), however many
+clients it runs. Before each report, rozi asks the counter which week it is; that request sends
+nothing. A report that gets no answer is sent again at a later check.
 
 The first time rozi runs for an install, it sends nothing and shows a notice titled
 **Anonymous usage count** instead. If rozi exits before the notice appears, it shows the notice

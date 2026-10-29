@@ -176,7 +176,7 @@ fn write_png(backend: &mut TestBackend<AppRoot>, name: &str) {
 }
 
 fn welcome() {
-    for (width, height) in [(140, 42), (96, 38), (100, 30), (80, 24)] {
+    for (width, height) in [(140, 42), (96, 39), (100, 30), (80, 24)] {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(viewport(width, height));
         let state = backend.state_mut();

@@ -231,7 +231,7 @@ mod app_tests {
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
 
             // The full card with its logo, and the compact one a small terminal gets.
-            for (width, height) in [(140, 42), (100, 30)] {
+            for (width, height) in [(140, 42), (90, 40)] {
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -245,13 +245,16 @@ mod app_tests {
                         .any(|line| line.contains(&format!(" {key} ")) && line.contains(does))
                 };
                 assert!(shown.contains("Welcome to rozi"), "{shown}");
-                for word in ["session", "pane", "workspace"] {
+                for word in ["session", "ephemeral", "pane", "workspace"] {
                     assert!(shown.contains(&format!(" {word} ")), "{word}:\n{shown}");
                 }
                 assert!(shown.contains("prefix, Ctrl+A: press it"), "{shown}");
+                assert!(shown.contains("Or hold Alt and press the key."), "{shown}");
+                assert!(shown.contains("Pause after Ctrl+A to see"), "{shown}");
                 assert!(row("Enter", "open a new pane"), "{shown}");
                 assert!(row("h j k l", "move between panes"), "{shown}");
                 assert!(row("1-9", "switch workspace"), "{shown}");
+                assert!(row("s", "pick a session"), "{shown}");
                 assert!(row("Alt+O", "find any command"), "{shown}");
                 assert!(row("i", "see every key"), "{shown}");
                 assert!(!shown.contains("close the pane"), "{shown}");
@@ -269,6 +272,26 @@ mod app_tests {
                 wide.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
                 "{wide}"
             );
+        });
+    }
+
+    /// The held modifier and the which-key strip are mentioned only while the config has them on.
+    #[test]
+    fn the_welcome_leaves_out_shortcuts_that_are_turned_off() {
+        crate::test_support::on_large_stack(|| {
+            let _pending = pending_welcome();
+            let mut backend = backend();
+            let input = &mut backend.state_mut().config.input;
+            input.modifier_shortcuts = false;
+            input.which_key = crate::config::WhichKey::Off;
+            backend.state_mut().commands_dirty = true;
+            backend.state_mut().current_mut().session_attached = true;
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+
+            let shown = frame(&mut backend);
+            assert!(shown.contains("prefix, Ctrl+A: press it"), "{shown}");
+            assert!(!shown.contains("Or hold"), "{shown}");
+            assert!(!shown.contains("Pause after"), "{shown}");
         });
     }
 }

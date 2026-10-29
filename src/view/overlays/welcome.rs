@@ -39,10 +39,10 @@ const WIDE_WIDTH: u16 = 92;
 const NARROW_WIDTH: u16 = 72;
 /// The smallest screen the full card fits on: the logo beside the words, the keys below. On a
 /// smaller one the card becomes a single document that scrolls, without the logo.
-const WIDE_MIN_VIEWPORT: (u16, u16) = (WIDE_WIDTH + 4, 38);
+const WIDE_MIN_VIEWPORT: (u16, u16) = (WIDE_WIDTH + 4, 39);
 /// Rows the compact card takes at its natural height, and the rows around its document: modal
 /// border, top padding, and the hint row.
-const COMPACT_ROWS: u16 = 28;
+const COMPACT_ROWS: u16 = 31;
 const COMPACT_CHROME: u16 = 6;
 
 /// A first install's welcome: the mark, the words rozi uses, and the keys to start with, as the user
@@ -140,6 +140,7 @@ fn intro_markdown() -> String {
      | in rozi | means |\n\
      | --- | --- |\n\
      | **session** | your terminals; named ones keep running |\n\
+     | **ephemeral** | unnamed; it closes once you leave |\n\
      | **pane** | one terminal; more tile side by side |\n\
      | **workspace** | a screen of panes; nine per session |"
         .to_string()
@@ -156,6 +157,7 @@ fn keys_markdown(ctx: &Context<AppRoot>) -> String {
         (None, "move between panes"),
         (Some("close"), "close the pane"),
         (None, "switch workspace"),
+        (Some("sessions"), "pick a session"),
         (Some("command-palette"), "find any command"),
         (Some("help"), "see every key"),
         (Some("quit"), "leave rozi"),
@@ -183,10 +185,26 @@ fn keys_markdown(ctx: &Context<AppRoot>) -> String {
     };
     let half = keys.len().div_ceil(2);
     let mut markdown = format!(
-        "These come after the **prefix**, `{prefix}`: press it, let go, then press the key.\n\n\
-         | key | does | key | does |\n\
-         | --- | --- | --- | --- |\n"
+        "These come after the **prefix**, `{prefix}`: press it, let go, then press the key."
     );
+    // The quicker way in, and the strip that answers "what next?", each named only while the config
+    // has it on.
+    let input = &ctx.state.config.input;
+    let mut more = Vec::new();
+    if input.modifier_shortcuts {
+        more.push(format!(
+            "Or hold `{}` and press the key.",
+            input.modifier.label()
+        ));
+    }
+    if input.which_key != crate::config::WhichKey::Off {
+        more.push(format!("Pause after `{prefix}` to see what can follow."));
+    }
+    if !more.is_empty() {
+        markdown.push_str("  \n");
+        markdown.push_str(&more.join(" "));
+    }
+    markdown.push_str("\n\n| key | does | key | does |\n| --- | --- | --- | --- |\n");
     for row in 0..half {
         let left = cell(&keys[row]);
         let right = keys.get(row + half).map_or(" | ".to_string(), cell);

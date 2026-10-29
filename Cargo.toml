@@ -10,6 +10,8 @@ repository = "https://github.com/tui-lipan/rozi"
 # The crate is mostly a binary, so docs.rs has little to show; point readers at
 # the handwritten documentation instead.
 documentation = "https://rozi.tui-lipan.dev"
+# Also the base of the documentation links rozi prints, through `CARGO_PKG_HOMEPAGE`.
+homepage = "https://rozi.tui-lipan.dev"
 readme = "README.md"
 authors = ["Adam Mikołajczyk <adam@tui-lipan.dev>"]
 keywords = ["terminal", "multiplexer", "tui", "tiling", "pty"]

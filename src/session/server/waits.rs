@@ -176,9 +176,7 @@ impl SessionServer {
                             subject,
                             WaitEvaluation::Error(
                                 ControlErrorCode::TargetRequired,
-                                format!(
-                                    "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
-                                ),
+                                protocol::none_on_screen_message(pane_id),
                             ),
                         );
                     }
@@ -402,9 +400,7 @@ impl SessionServer {
                     )),
                     protocol::PaneAgent::NoneOnScreen => Err(ControlResponse::error_with(
                         ControlErrorCode::TargetRequired,
-                        format!(
-                            "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
-                        ),
+                        protocol::none_on_screen_message(pane_id),
                     )),
                 }
             }

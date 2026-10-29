@@ -13,6 +13,7 @@ These commands show what rozi knows:
 | `rozi update --check` | How rozi was installed and whether a newer release exists |
 | `rozi sessions list` | The sessions rozi can reach, including restorable ones |
 | `rozi --help --advanced` | Advanced options and where control sockets live on this machine |
+| `rozi --release-notes` | The release notes built into this binary, empty for a build from source |
 | `rozi api describe` | The control API version and capabilities of the installed binary |
 | `rozi extensions list --verbose` | Each extension's status, paths, and validation errors |
 

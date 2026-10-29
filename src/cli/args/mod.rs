@@ -219,6 +219,8 @@ pub(crate) enum ParsedCli {
         advanced: bool,
     },
     Version,
+    /// Print the release notes this binary embeds, byte for byte (`--release-notes`).
+    ReleaseNotes,
     ApiDescribe,
     Skill(SkillCommand),
     SkillHelp,
@@ -405,6 +407,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             Ok(ParsedCli::Skill(SkillCommand::Print))
         } else {
             Err("--skill must be used without other arguments".to_string())
+        };
+    }
+    if args.first().is_some_and(|arg| arg == "--release-notes") {
+        return if args.len() == 1 {
+            Ok(ParsedCli::ReleaseNotes)
+        } else {
+            Err("--release-notes must be used without other arguments".to_string())
         };
     }
     if args.first().is_some_and(|arg| arg == "skill") {
@@ -1925,6 +1934,12 @@ mod tests {
         ));
         assert!(parse_cli_args(vec!["api".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
+        assert!(matches!(
+            parse_cli_args(vec!["--release-notes".into()]).expect("parses"),
+            ParsedCli::ReleaseNotes
+        ));
+        assert!(parse_cli_args(vec!["--release-notes".into(), "extra".into()]).is_err());
+        assert!(parse_cli_args(vec!["target".into(), "--release-notes".into()]).is_err());
     }
 
     #[test]

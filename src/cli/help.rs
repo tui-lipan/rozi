@@ -419,6 +419,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Send the control command to this endpoint",
             ),
             advanced_row("    --skill", "Print agent control instructions"),
+            advanced_row(
+                "    --release-notes",
+                "Print the release notes built into rozi",
+            ),
         ],
     },
     HelpSection {
@@ -773,6 +777,8 @@ mod tests {
         assert!(advanced.contains("--server"));
         assert!(advanced.contains("--socket"));
         assert!(advanced.contains("--skill"));
+        assert!(!normal.contains("--release-notes"));
+        assert!(advanced.contains("--release-notes"));
         // Normal help still has to say where the rest went.
         assert!(normal.contains("--advanced"));
 

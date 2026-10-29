@@ -101,6 +101,8 @@ Other runs of the Release workflow never sign or publish:
 
 - A pull request that changes release infrastructure, `Cargo.toml`, or `Cargo.lock` packages every
   target and checks the release scripts, and leaves tests to CI, which runs them on the same commit.
+  It generates no notes, so every payload embeds `tests/fixtures/release-notes.md` instead and runs
+  the same smoke test a tag does.
 - A manual run does the same.
 - Ordinary pull requests skip the Release workflow and rely on CI.
 
@@ -139,8 +141,9 @@ stable release before the signing workflow completes.
    binaries whose ELF version requirements exceed `GLIBC_2.28`. Each payload embeds the accepted
    notes through `ROZI_RELEASE_NOTES` and `build.rs` for its What's new dialog, unless they are the
    no-user-facing-changes placeholder. Builds made anywhere else embed nothing.
-6. **Payload smoke test.** Each payload reports the tag version, prints help, and contains the
-   first entry of the notes it embedded.
+6. **Payload smoke test.** Each payload reports the tag version and prints help, and
+   `rozi --release-notes` prints exactly the bytes of the notes it was given, or nothing when it
+   was given none.
 7. **Archive smoke test.** Each final archive is extracted and smoke-tested. On Windows this also
    covers launcher version selection, argument and environment forwarding, working-directory
    forwarding, and exit-code propagation.

@@ -14,6 +14,8 @@ on:
       - "Cargo.lock"
       - "build.rs"
       - "src/bin/rozi-launcher.rs"
+      - "src/ops/release_notes.rs"
+      - "tests/fixtures/release-notes.md"
       - ".opencode/agents/rosie.md"
       - ".opencode/commands/changelog.md"
       - ".opencode/release-notes.json"
@@ -186,8 +188,8 @@ jobs:
         run: python3 -m unittest scripts.tests.test_release_notes
 
   # Packaging waits for the source check and, on a tag, for the release notes, which every payload
-  # embeds for its What's new dialog. A pull request generates no notes and packages every target
-  # without them or a test matrix.
+  # embeds for its What's new dialog. A pull request or manual run generates no notes, so it embeds
+  # `tests/fixtures/release-notes.md` instead and packages every target without a test matrix.
   package:
     name: package ${{ matrix.target }}
     needs: [release_source, release_notes]
@@ -254,12 +256,15 @@ jobs:
       # `build.rs` embeds the file `ROZI_RELEASE_NOTES` names, resolved against the package root so
       # the same relative path works in the Linux build container. Only notes with a section are
       # worth a dialog: a release with nothing user-facing publishes a one-line placeholder instead.
+      # A tag always embeds its generated notes. Any other run embeds the fixture, so the embedding
+      # and its smoke test run on every target before a tag first depends on them.
       - name: Select embedded release notes
-        if: needs.release_notes.result == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          if grep -q '^## ' release-notes/release-notes.md; then
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "ROZI_RELEASE_NOTES=tests/fixtures/release-notes.md" >> "$GITHUB_ENV"
+          elif grep -q '^## ' release-notes/release-notes.md; then
             echo "ROZI_RELEASE_NOTES=release-notes/release-notes.md" >> "$GITHUB_ENV"
           fi
 
@@ -302,13 +307,17 @@ jobs:
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
           "$binary" --help >/dev/null
+          # The binary prints what it embeds, so the check reads the real constant rather than
+          # searching the executable with whatever grep this runner has.
+          "$binary" --release-notes > embedded-release-notes.md
           if [[ -n "${ROZI_RELEASE_NOTES:-}" ]]; then
-            first_entry="$(grep -m 1 '^- ' "$ROZI_RELEASE_NOTES")"
-            # Compare bytes: BSD grep on macOS misses a multibyte entry inside a binary otherwise.
-            LC_ALL=C grep -qaF -- "$first_entry" "$binary" || {
-              echo "payload does not embed $ROZI_RELEASE_NOTES" >&2
+            cmp -- "$ROZI_RELEASE_NOTES" embedded-release-notes.md || {
+              echo "payload does not embed $ROZI_RELEASE_NOTES byte for byte" >&2
               exit 1
             }
+          elif [[ -s embedded-release-notes.md ]]; then
+            echo "payload embeds release notes it was not given" >&2
+            exit 1
           fi
 
       - name: Enforce Linux glibc compatibility ceiling

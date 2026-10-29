@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from scripts.release_notes import (
     ReleaseNotesError,
@@ -213,6 +214,13 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertEqual(release_body("## Fixed\n\n- One.\n", "v0.0.30"), "## Fixed\n\n- One.\n")
         with self.assertRaises(ReleaseNotesError):
             release_body("Release notes\n", "v0.0.30")
+
+    def test_the_packaging_fixture_is_a_publishable_body(self):
+        # Pull request Release runs embed this file in place of generated notes; it has to stay a
+        # body a real release could publish, unchanged by validation.
+        fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "release-notes.md"
+        raw = fixture.read_text(encoding="utf-8")
+        self.assertEqual(validate_notes(raw), raw)
 
 
 if __name__ == "__main__":

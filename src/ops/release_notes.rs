@@ -6,6 +6,7 @@
 //! none, and then nothing here appears.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use semver::Version;
@@ -57,6 +58,14 @@ impl ReleaseNotes {
 /// This build's notes, if it carries any.
 pub(crate) fn embedded() -> Option<ReleaseNotes> {
     ReleaseNotes::new(env!("CARGO_PKG_VERSION"), EMBEDDED)
+}
+
+/// `rozi --release-notes`: write what this build embeds, byte for byte and without a trailing
+/// newline, because the release workflow compares it with the file it handed `build.rs`.
+pub(crate) fn print_embedded() {
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(EMBEDDED.as_bytes());
+    let _ = stdout.flush();
 }
 
 /// What [`record_startup`] found about this launch.
@@ -239,6 +248,18 @@ mod tests {
         assert_eq!(ReleaseNotes::new("1.2.3", " \n"), None);
         assert_eq!(ReleaseNotes::new("1.2.3-rc.1", "## Added\n- x\n"), None);
         assert_eq!(ReleaseNotes::new("local", "## Added\n- x\n"), None);
+    }
+
+    /// A build the release workflow did not hand notes to - every CI, nightly, and local build -
+    /// embeds nothing, so it never shows the dialog. The workflow checks the opposite case on the
+    /// packaged binary through `rozi --release-notes`.
+    #[test]
+    fn a_build_without_release_notes_embeds_none() {
+        if option_env!("ROZI_RELEASE_NOTES").is_some_and(|path| !path.is_empty()) {
+            return;
+        }
+        assert_eq!(EMBEDDED, "");
+        assert_eq!(embedded(), None);
     }
 
     /// Start `running` against `state_dir`, as a client whose build has notes and shows them.

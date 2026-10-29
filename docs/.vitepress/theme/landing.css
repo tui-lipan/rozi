@@ -1461,8 +1461,8 @@
     .lp {
         --lp-edge: 20px;
     }
-    /* Four links and a brand stop fitting on one 48px line here. Tighten them
-       until they do: nothing on this bar is worth a button to open, and four
+    /* Five links and a brand stop fitting on one 48px line here. Tighten them
+       until they do: nothing on this bar is worth a button to open, and five
        links is not a menu. Same treatment as tui-lipan.dev's own topbar. */
     .lp-brand {
         gap: 7px;
@@ -1604,14 +1604,22 @@
     }
 }
 
-/* The last thing the bar gives up. Four links and a brand reach the full
-   width of a 390px phone with the chip still on, which leaves nothing for a
-   two-digit minor version to grow into - and an item that overflows this bar
-   is clipped by `.lp`, not wrapped. Every doc page carries the same chip in
-   its own navbar, one tap away; the four links have nowhere else to be. */
+/* What the bar gives up last. Five links and a brand reach the full width of
+   a 390px phone, and an item that overflows this bar is clipped by `.lp`, not
+   wrapped. Every doc page carries the chip and the name in its own navbar, one
+   tap away, and the logo alone still links home; the links have nowhere else
+   to be. The name stays for screen readers, as the link's only text. */
 @media (max-width: 480px) {
     .lp-chip {
         display: none;
+    }
+    .lp-brand-name {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
 }
 
@@ -1630,15 +1638,19 @@
     }
 }
 
-/* One more turn of the same screw for a 320px screen, which the four links
-   fill exactly at the 720px sizes. */
+/* One more turn of the same screw for a 320px screen, which the five links
+   fill at the 720px sizes. */
 @media (max-width: 360px) {
+    .lp-top {
+        gap: 0;
+        padding: 0 10px;
+    }
     .lp-brand-name {
         font-size: 13px;
     }
     .lp-top-link,
     .lp-top-github {
-        padding: 4px 5px;
+        padding: 4px 4px;
         font-size: 10px;
     }
     .lp-top-link {

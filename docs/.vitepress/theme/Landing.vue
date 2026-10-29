@@ -541,6 +541,7 @@ restart = "on-failure"`);
       </a>
       <span class="lp-top-spacer" />
       <a class="lp-top-link" :href="withBase('/getting-started')">Docs</a>
+      <a class="lp-top-link" :href="withBase('/extension-gallery')">Extensions</a>
       <a
         class="lp-top-link"
         href="https://tui-lipan.dev"

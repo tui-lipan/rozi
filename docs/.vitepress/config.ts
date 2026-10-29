@@ -285,6 +285,7 @@ export default defineConfig({
     extensionIndex: EXTENSION_INDEX,
     outline: [2, 3],
     nav: [
+      { text: "Extensions", link: "/extension-gallery" },
       { text: "tui-lipan", link: "https://tui-lipan.dev" },
       { text: "Framework docs", link: "https://docs.tui-lipan.dev" },
     ],

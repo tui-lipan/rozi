@@ -265,7 +265,7 @@ mod unix {
     fn printing_help_does_not_create_the_runtime_directory() {
         let root = isolated_home("help-no-side-effects");
         let runtime = root.join("runtime/rozi");
-        for argument in ["--help", "--version"] {
+        for argument in ["--help", "--version", "--release-notes"] {
             let output = command(&root).arg(argument).output().unwrap();
             assert!(output.status.success(), "{argument} failed");
             assert!(
@@ -273,6 +273,12 @@ mod unix {
                 "{argument} created the runtime directory: {}",
                 runtime.display()
             );
+        }
+        // A build the release workflow handed no notes embeds none, and prints exactly that. The
+        // workflow checks a build with notes against the file it embedded.
+        if option_env!("ROZI_RELEASE_NOTES").is_none_or(str::is_empty) {
+            let output = command(&root).arg("--release-notes").output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&output.stdout), "");
         }
         // The path is still named in the advanced help; resolving it must be all that happens.
         let output = command(&root)

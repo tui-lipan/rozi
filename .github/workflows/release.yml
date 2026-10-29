@@ -256,13 +256,16 @@ jobs:
       # `build.rs` embeds the file `ROZI_RELEASE_NOTES` names, resolved against the package root so
       # the same relative path works in the Linux build container. Only notes with a section are
       # worth a dialog: a release with nothing user-facing publishes a one-line placeholder instead.
-      # A tag always embeds its generated notes. Any other run embeds the fixture, so the embedding
-      # and its smoke test run on every target before a tag first depends on them.
+      # A tag push always has generated notes: packaging does not start when they fail. Any other
+      # run, including a manual one on a tag, embeds the fixture, so the embedding and its smoke
+      # test run on every target before a tag first depends on them.
       - name: Select embedded release notes
         shell: bash
+        env:
+          NOTES_RESULT: ${{ needs.release_notes.result }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+          if [[ "$NOTES_RESULT" != success ]]; then
             echo "ROZI_RELEASE_NOTES=tests/fixtures/release-notes.md" >> "$GITHUB_ENV"
           elif grep -q '^## ' release-notes/release-notes.md; then
             echo "ROZI_RELEASE_NOTES=release-notes/release-notes.md" >> "$GITHUB_ENV"

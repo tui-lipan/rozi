@@ -18,6 +18,9 @@ not match the version you run.
 
 Every client attached to a session sees the same agent label and state.
 
+**Focus next blocked pane** jumps to the next pane waiting for input, across workspaces. The command
+palette lists it only while a pane other than the focused one is blocked.
+
 ## Integrate Claude Code hooks
 
 The [Claude Code plugin](../plugins/claude-code/README.md) reports activity directly from Claude's

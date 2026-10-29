@@ -368,6 +368,7 @@ pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
         && match action {
             Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
             Action::PromoteToMaster => crate::ops::focus::can_promote_focused_to_master(state),
+            Action::FocusNextBlockedPane => crate::ops::focus::next_blocked_pane(state).is_some(),
             _ => true,
         }
 }
@@ -1624,6 +1625,38 @@ mod tests {
             .unwrap()
             .floating = true;
         assert!(!palette_visible(Action::PromoteToMaster, &state));
+    }
+
+    #[test]
+    fn focus_next_blocked_pane_is_listed_only_when_another_pane_is_blocked() {
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(!palette_visible(Action::FocusNextBlockedPane, &state));
+
+        let blocked = || {
+            Some(crate::session::protocol::PaneStatus {
+                value: "BLOCKED".to_string(),
+                reason: None,
+                set_at: 1,
+            })
+        };
+        // A blocked focused pane is nowhere to go.
+        let focused = state.focused_pane().unwrap();
+        crate::pane::lifecycle::find_pane_mut(&mut state, focused)
+            .unwrap()
+            .terminal
+            .reported_status = blocked();
+        assert!(!palette_visible(Action::FocusNextBlockedPane, &state));
+
+        let rect = tui_lipan::prelude::FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        let mut other = crate::state::Pane::new(2, 100, rect);
+        other.terminal.reported_status = blocked();
+        state.current_mut().workspaces[1].panes.push(other);
+        assert!(palette_visible(Action::FocusNextBlockedPane, &state));
     }
 
     #[test]

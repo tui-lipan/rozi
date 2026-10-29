@@ -49,6 +49,8 @@ pub enum Msg {
         epoch: u64,
     },
     CommandPaletteQueryChanged(String),
+    CloseWelcome,
+    OpenWelcomeGuide,
     CloseReleaseNotes,
     OpenReleaseNotesPage,
     CloseHelp,

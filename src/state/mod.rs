@@ -433,6 +433,10 @@ pub struct State {
     /// screen. Cleared when it fires.
     pub(crate) release_notes_due: bool,
     pub(crate) show_release_notes: bool,
+    /// The startup decision to welcome a first install once a session is on screen. Cleared when
+    /// it fires.
+    pub(crate) welcome_due: bool,
+    pub show_welcome: bool,
     pub event_hub: crate::events::EventHub,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
@@ -766,6 +770,8 @@ impl State {
             release_notes: None,
             release_notes_due: false,
             show_release_notes: false,
+            welcome_due: false,
+            show_welcome: false,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
             terminal_presentation_subscription: None,
@@ -1275,6 +1281,7 @@ impl State {
             (self.show_pick, "pick"),
             (self.show_layout_picker, "layout-picker"),
             (self.show_release_notes, "release-notes"),
+            (self.show_welcome, "welcome"),
             (self.show_theme_picker, "theme-picker"),
             (self.keybindings.is_some(), "help"),
             (self.extensions.is_some(), "extensions"),

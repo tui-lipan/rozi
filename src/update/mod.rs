@@ -226,6 +226,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)
         }
         Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
+        Msg::CloseWelcome => crate::ops::welcome::close(ctx),
+        Msg::OpenWelcomeGuide => crate::ops::welcome::open_guide(ctx),
         Msg::CloseReleaseNotes => crate::ops::release_notes::close(ctx),
         Msg::OpenReleaseNotesPage => crate::ops::release_notes::open_page(ctx),
         Msg::CloseSettingsNumberEditor => overlays::close_settings_number_editor(ctx),
@@ -1190,7 +1192,7 @@ fn post_update_sync(
         update = Update::with_command(command);
     }
 
-    if crate::ops::release_notes::show_if_due(ctx) {
+    if crate::ops::welcome::show_if_due(ctx) || crate::ops::release_notes::show_if_due(ctx) {
         let command = update.command.take();
         update = Update::with_command(command);
     }

@@ -127,6 +127,10 @@ pub fn settings_choice_key() -> &'static str {
     "rozi-settings-choice"
 }
 
+pub fn welcome_key() -> &'static str {
+    "rozi-welcome"
+}
+
 pub fn release_notes_key() -> &'static str {
     "rozi-release-notes"
 }

@@ -59,6 +59,15 @@ pub(crate) fn embedded() -> Option<ReleaseNotes> {
     ReleaseNotes::new(env!("CARGO_PKG_VERSION"), EMBEDDED)
 }
 
+/// What [`record_startup`] found about this launch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Startup {
+    /// No rozi has run here before: the state directory did not exist yet.
+    pub(crate) first_install: bool,
+    /// Show this build's notes once the client is idle.
+    pub(crate) notes_due: bool,
+}
+
 /// Record that this version started a client, and decide whether this launch should show its notes
 /// once the client is idle. Runs on every launch, with or without notes, because a version that
 /// carries none must still count as having run here.
@@ -66,18 +75,18 @@ pub(crate) fn embedded() -> Option<ReleaseNotes> {
 /// Call it before the client writes any state of its own, because a state directory that does not
 /// exist yet is how a first install is told from an update: a first install has nothing to catch
 /// up on, so it only records its version as shown.
-pub(crate) fn record_startup(show_notes: bool) -> bool {
+pub(crate) fn record_startup(show_notes: bool) -> Startup {
     let env = crate::platform::paths::PlatformEnv::from_process();
     let (Some(state_dir), Ok(running)) = (
         crate::platform::paths::state_dir_if_available(&env),
         Version::parse(env!("CARGO_PKG_VERSION")),
     ) else {
-        return false;
+        return Startup::default();
     };
     record_startup_in(&state_dir, &running, show_notes)
 }
 
-fn record_startup_in(state_dir: &Path, running: &Version, show_notes: bool) -> bool {
+fn record_startup_in(state_dir: &Path, running: &Version, show_notes: bool) -> Startup {
     let first_install = !state_dir.exists();
     let dir = state_dir.join(NOTES_DIR);
     // A downgrade does not replay older notes: everything up to the newest version run is old news.
@@ -85,9 +94,15 @@ fn record_startup_in(state_dir: &Path, running: &Version, show_notes: bool) -> b
     record(&dir.join(RAN_DIR), running);
     if first_install {
         record(&dir.join(SHOWN_DIR), running);
-        return false;
+        return Startup {
+            first_install,
+            notes_due: false,
+        };
     }
-    show_notes && !downgrade && !marker(&dir.join(SHOWN_DIR), running).exists()
+    Startup {
+        first_install,
+        notes_due: show_notes && !downgrade && !marker(&dir.join(SHOWN_DIR), running).exists(),
+    }
 }
 
 /// Versions with a marker in `dir`. An unreadable directory reads as none.
@@ -228,7 +243,7 @@ mod tests {
 
     /// Start `running` against `state_dir`, as a client whose build has notes and shows them.
     fn start(state_dir: &Path, running: &str) -> bool {
-        record_startup_in(state_dir, &version(running), true)
+        record_startup_in(state_dir, &version(running), true).notes_due
     }
 
     fn shown(state_dir: &Path) -> PathBuf {
@@ -281,7 +296,7 @@ mod tests {
         assert!(start(&state_dir, "1.0.0"));
         record(&shown(&state_dir), &version("1.0.0"));
         // 2.0.0 carries no notes, or has the automatic dialog turned off.
-        assert!(!record_startup_in(&state_dir, &version("2.0.0"), false));
+        assert!(!record_startup_in(&state_dir, &version("2.0.0"), false).notes_due);
         assert!(!start(&state_dir, "1.5.0"));
         assert!(start(&state_dir, "2.1.0"));
     }

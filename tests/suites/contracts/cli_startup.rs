@@ -166,13 +166,20 @@ mod unix {
             let split = rozi(&["--session", name, "split", "--argv", "sh", "-c", "sleep 30"]);
             assert!(split.status.success(), "{name}: split: {}", stderr(&split));
 
-            // What a machine shutdown does to the server: a stop signal, not `sessions kill`.
-            let pattern = format!("--fresh-server-start {name} ");
-            let signalled = Command::new("pkill")
-                .args(["-TERM", "-f", "--", &pattern])
+            // What a machine shutdown does to the server: a stop signal, not `sessions kill`. The
+            // PID comes from this test's own session socket, so no other rozi on the machine is
+            // ever signalled.
+            let socket = root.join(format!("runtime/rozi/session-{name}.sock"));
+            let server_pid = rozi::platform::ipc::IpcEndpoint::at_path(&socket)
+                .connect()
+                .unwrap_or_else(|err| panic!("{name}: connect {}: {err}", socket.display()))
+                .peer_pid()
+                .expect("Linux and macOS report a socket peer's PID");
+            let signalled = Command::new("kill")
+                .args(["-TERM", &server_pid.to_string()])
                 .status()
                 .unwrap();
-            assert!(signalled.success(), "{name}: no server matched {pattern:?}");
+            assert!(signalled.success(), "{name}: kill -TERM {server_pid}");
             let deadline = Instant::now() + Duration::from_secs(5);
             let listed = loop {
                 let listed = rozi(&["sessions", "list", "--format", "json"]);

@@ -23,27 +23,12 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// the JSON third-party software reads and writes.
 ///
 /// The schema file's name follows the control API version (`rozi-control-v1`); this number counts
-/// the revisions within it. It moves whenever a closed vocabulary - commands, error codes, event
-/// names - gains a value, which is what version 2 did with the layout commands and
-/// `layout-changed`, version 3 with `capture-pane`'s `render`, version 4 with `capture-ui`,
-/// version 5 with the captures' `scale`, version 6 with the pane waits: `wait` on
-/// `capture-pane`, `send-text`, and `send-keys`, and the sends' `capture` and `scale`, and version
-/// 7 with the `spans` render and its `image_pixels`, version 8 with the `record-*` commands and
-/// the `rozi-recording` file format, version 9 with a request's `source_session`, version 10
-/// with `record-start`'s optional `output`, the `target` of `record-stop` and `record-mark`, and
-/// `record-stop`'s list reply, and version 11 with `record-ui-start`, `record-ui-stop`, and
-/// `record-ui-mark`, the recording format's `ui` target, its `focus`, `workspace`, and `overlay`
-/// meta events, and the `ui-exited` end reason, version 12 with `pane-reveal`, version 13 with
-/// `record-ui-start`'s `hide_indicator`, version 14 with `new-pane`'s `size`, version 15 with
-/// published rows' `cwd` and `project` and `list-panes`' `foreground_pid`, version 16 with
-/// `command-visibility`, and version 17 with a request's `credential`, the `not-permitted` and
-/// `out-of-scope` error codes, and `extension-runtime-status`, and version 18 with image capture
-/// `fill_cell_box`, `z_index`, and `underlying_cells`, and version 19 with `publish`'s `kind` and
-/// `name`, published rows' `publisher`, `kind`, `live_session`, and `reported`, and an agent
-/// reference's structured `slot`, and version 20 with `sidebar-publish` and the sidebar snapshot,
-/// row, action, and stream event shapes, `agents-overview`, and `agent-go`, and version 21
-/// with `context`, caller routing fences, post-prompt `turn` waits, and terminal prompt results.
-pub const API_SCHEMA_VERSION: u32 = 21;
+/// the published revisions within it. A release whose schema differs from the previous release's
+/// moves it by exactly one, however many changes went into that release: it identifies a contract
+/// third-party software validates against, and no two development builds negotiate with it, so
+/// intermediate commits need no revisions of their own. Any change counts; the common one is a
+/// closed vocabulary such as commands, error codes, or event names gaining a value.
+pub const API_SCHEMA_VERSION: u32 = 1;
 
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
 pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";

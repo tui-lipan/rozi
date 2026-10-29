@@ -985,7 +985,7 @@ mod tests {
             // The regression this guards: the compatibility toast used to open with
             // "Compatibility change in v9.9.9" and never say an update existed.
             assert!(toast.starts_with("rozi v9.9.10 available"), "{toast}");
-            assert!(toast.contains("session protocol"), "{toast}");
+            assert!(toast.contains("restart sessions after updating"), "{toast}");
             assert!(toast.contains("run `rozi update`"), "{toast}");
         });
     }

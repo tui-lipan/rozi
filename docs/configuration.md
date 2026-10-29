@@ -503,8 +503,9 @@ schedules the next check one interval later, not immediately.
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available` with the version
 change and how to update. It stays up for 15 seconds; click it to dismiss it sooner. If the release
-raises the extension API or session protocol version, the toast uses warning colors and names the
-change. Each release is announced only once across clients, and a failed check shows nothing.
+raises the extension API, the toast uses warning colors and names the new version. If running
+sessions must be restarted after the update, the toast uses warning colors and says so. Each
+release is announced only once across clients, and a failed check shows nothing.
 
 Every client that finds the release also lists **Update rozi to vX.Y.Z** (`update-rozi`) in the
 command palette for as long as it runs:

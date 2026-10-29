@@ -2,7 +2,9 @@
 ///
 /// Every peer is built from this same tree, so there is one version and no skew to straddle. Bump
 /// this for any wire change, additive or not; a mismatched peer is rejected at the handshake rather
-/// than shimmed.
+/// than shimmed. Development builds are peers too, so commits between releases bump it as well,
+/// and it is never reset to look smaller: the number is internal, and user-facing text says only
+/// whether it changed.
 ///
 /// This is the only question about *shape*. Whether a connection may ask for a particular piece of
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are

@@ -67,6 +67,10 @@ pub(crate) fn request_layout_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::layout_picker_key());
 }
 
+pub(crate) fn request_release_notes_focus(ctx: &mut Context<AppRoot>) {
+    focus_key(ctx, view::release_notes_key());
+}
+
 pub(crate) fn request_extensions_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::extensions_key());
 }

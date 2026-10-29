@@ -290,6 +290,9 @@
 # Once a week, the check also adds this install to an anonymous count of active installs: the
 # rozi version, OS, architecture, and install channel, with no ID. See docs/usage-count.md.
 #count_usage = true
+# Show what's new in a release once, the first time rozi starts after updating to it. Works
+# offline and whether or not check is on.
+#release_notes = true
 
 [notifications]
 # Desktop notifications via notify-send, off until you opt in. Status notifications run

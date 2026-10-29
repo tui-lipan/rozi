@@ -15,9 +15,9 @@ pub(in crate::view::overlays) use super::widget_keys::{
     askpass_input_key, collaboration_key, extension_detail_key, extension_install_error_key,
     extension_install_input_key, extensions_key, help_filter_key, keybinding_capture_key,
     layout_picker_key, palette_key, pick_key, pick_prompt_input_key, profile_picker_key,
-    recording_mark_input_key, remote_picker_key, rename_input_key, rename_session_input_key,
-    save_profile_key, search_input_key, session_picker_key, settings_choice_key,
-    settings_number_field_key, settings_palette_key, theme_picker_key,
+    recording_mark_input_key, release_notes_key, remote_picker_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    settings_choice_key, settings_number_field_key, settings_palette_key, theme_picker_key,
 };
 pub(in crate::view::overlays) use super::{
     ACTION_PALETTE_MAX_HEIGHT_PERCENT, action_palette_modal, action_palette_modal_with_width,
@@ -36,6 +36,7 @@ mod palette;
 mod pick;
 mod profiles;
 mod prompts;
+mod release_notes;
 mod remotes;
 mod search;
 mod sessions;
@@ -56,6 +57,7 @@ pub(crate) use prompts::{
     askpass_overlay, extension_install_prompt_overlay, recording_mark_overlay, rename_overlay,
     rename_session_overlay, save_profile_overlay,
 };
+pub(crate) use release_notes::release_notes_overlay;
 pub(crate) use remotes::remote_picker_overlay;
 pub(crate) use search::search_overlay;
 pub(crate) use sessions::{

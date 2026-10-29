@@ -349,6 +349,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
+        Action::ShowReleaseNotes => state.release_notes.is_some(),
         Action::ScreenshotPane => state.focused_pane().is_some(),
         Action::TogglePaneRecording => {
             crate::ops::recording::recording_command_target(state).is_some()
@@ -606,6 +607,11 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         && let Some(update) = state.available_update.as_ref()
     {
         return format!("Update rozi to v{}", update.latest);
+    }
+    if action == Action::ShowReleaseNotes
+        && let Some(notes) = state.release_notes.as_ref()
+    {
+        return format!("What's new in rozi v{}", notes.version);
     }
     if action == Action::RenameSession {
         // An ephemeral (or not-yet-attached) session carries no user-facing name, so this command

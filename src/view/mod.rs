@@ -26,10 +26,11 @@ pub use widget_keys::{
     extension_detail_key, extension_install_input_key, extensions_key, follow_prompt_key,
     help_filter_key, host_form_input_key, keybinding_capture_key, layout_picker_key, palette_key,
     pane_body_key, pane_id_from_window_key, pane_terminal_key, pick_key, pick_prompt_input_key,
-    profile_picker_key, recording_mark_input_key, remote_picker_key, rename_input_key,
-    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
-    settings_choice_key, settings_number_field_key, settings_palette_key, sidebar_body_key,
-    sidebar_region_key, theme_picker_key, worktree_form_input_key, worktree_picker_key,
+    profile_picker_key, recording_mark_input_key, release_notes_key, remote_picker_key,
+    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
+    session_picker_key, settings_choice_key, settings_number_field_key, settings_palette_key,
+    sidebar_body_key, sidebar_region_key, theme_picker_key, worktree_form_input_key,
+    worktree_picker_key,
 };
 pub(crate) use workbar::{
     UiRecordingChip, ui_recording_chip, ui_recording_label, workspace_tab_shows_recording,
@@ -525,6 +526,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_layout_picker {
         root = root.child(layout_picker_overlay(ctx));
+    }
+    if ctx.state.show_release_notes {
+        root = root.child(overlays::release_notes_overlay(ctx));
     }
     // The pick list is not drawn while a stacked prompt is up; cancelling restores it from
     // `restore_query`.

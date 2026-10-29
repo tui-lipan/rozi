@@ -12,6 +12,7 @@ on:
       - "release-keys.json"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "build.rs"
       - "src/bin/rozi-launcher.rs"
       - ".opencode/agents/rosie.md"
       - ".opencode/commands/changelog.md"
@@ -184,11 +185,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest scripts.tests.test_release_notes
 
-  # Packaging waits only for the source check, so a tag's archives build alongside its release
-  # notes, and a pull request packages every target without a test matrix.
+  # Packaging waits for the source check and, on a tag, for the release notes, which every payload
+  # embeds for its What's new dialog. A pull request generates no notes and packages every target
+  # without them or a test matrix.
   package:
     name: package ${{ matrix.target }}
-    needs: release_source
+    needs: [release_source, release_notes]
+    if: >-
+      ${{ !cancelled() && needs.release_source.result == 'success' &&
+      (needs.release_notes.result == 'success' || needs.release_notes.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -239,6 +244,25 @@ jobs:
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
+      - name: Download release notes
+        if: needs.release_notes.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: release-notes
+
+      # `build.rs` embeds the file `ROZI_RELEASE_NOTES` names, resolved against the package root so
+      # the same relative path works in the Linux build container. Only notes with a section are
+      # worth a dialog: a release with nothing user-facing publishes a one-line placeholder instead.
+      - name: Select embedded release notes
+        if: needs.release_notes.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q '^## ' release-notes/release-notes.md; then
+            echo "ROZI_RELEASE_NOTES=release-notes/release-notes.md" >> "$GITHUB_ENV"
+          fi
+
       - name: Build payload
         shell: bash
         run: |
@@ -246,6 +270,7 @@ jobs:
           if [[ -n "${{ matrix.glibc }}" ]]; then
             docker run --rm \
               --env CARGO_TERM_COLOR=always \
+              --env ROZI_RELEASE_NOTES \
               --env BUILD_UID="$(id -u)" \
               --env BUILD_GID="$(id -g)" \
               --volume "$GITHUB_WORKSPACE:/work" \
@@ -277,6 +302,13 @@ jobs:
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
           "$binary" --help >/dev/null
+          if [[ -n "${ROZI_RELEASE_NOTES:-}" ]]; then
+            first_entry="$(grep -m 1 '^- ' "$ROZI_RELEASE_NOTES")"
+            grep -qaF -- "$first_entry" "$binary" || {
+              echo "payload does not embed $ROZI_RELEASE_NOTES" >&2
+              exit 1
+            }
+          fi
 
       - name: Enforce Linux glibc compatibility ceiling
         if: matrix.glibc

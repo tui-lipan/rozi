@@ -118,7 +118,7 @@ stable release before the signing workflow completes.
    from `master` and that the exact tagged SHA already has a completed, successful master CI push
    run. Normal CI does not run again for release tags; this carries forward its formatting, Clippy,
    native test, integration, dependency-policy, and NetBSD cross-check results.
-2. **Release notes.** In parallel with packaging, the release-note job finds the newest published,
+2. **Release notes.** Before packaging, the release-note job finds the newest published,
    non-draft `v` tag other than the one being built, resolves both tags to exact commits, and proves
    the previous release is an ancestor. It passes every candidate commit's metadata and changed
    paths to the reviewed OpenCode command in `.opencode/commands/changelog.md`. Rosie writes notes
@@ -136,8 +136,11 @@ stable release before the signing workflow completes.
    and Windows.
 5. **Packaging.** Release archives build for Linux x86-64 and ARM64, macOS x86-64 and ARM64, and
    Windows x86-64. Linux payloads build in pinned manylinux 2.28 containers, and the workflow rejects
-   binaries whose ELF version requirements exceed `GLIBC_2.28`.
-6. **Payload smoke test.** Each payload reports the tag version and prints help.
+   binaries whose ELF version requirements exceed `GLIBC_2.28`. Each payload embeds the accepted
+   notes through `ROZI_RELEASE_NOTES` and `build.rs` for its What's new dialog, unless they are the
+   no-user-facing-changes placeholder. Builds made anywhere else embed nothing.
+6. **Payload smoke test.** Each payload reports the tag version, prints help, and contains the
+   first entry of the notes it embedded.
 7. **Archive smoke test.** Each final archive is extracted and smoke-tested. On Windows this also
    covers launcher version selection, argument and environment forwarding, working-directory
    forwarding, and exit-code propagation.

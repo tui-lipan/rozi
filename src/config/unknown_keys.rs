@@ -292,7 +292,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         table,
         "",
         "updates",
-        &["check", "interval_hours", "count_usage"],
+        &["check", "interval_hours", "count_usage", "release_notes"],
         unknown,
     );
     collect_named_table(table, "", "notifications", NOTIFICATION_KEYS, unknown);

@@ -445,6 +445,7 @@ fn execute_action_inner(
             crate::ops::extensions_manager::open(ctx)
         }
         Action::UpdateRozi => crate::ops::update_check::run_update(ctx),
+        Action::ShowReleaseNotes => crate::ops::release_notes::open(ctx),
         Action::OpenAlerts => open_settings(ctx, crate::state::SettingsAction::ToggleBellUrgency),
         Action::ToggleDoNotDisturb => {
             // A persistent in-session mode earns a workbar chip, not a redundant toast.

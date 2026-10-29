@@ -54,6 +54,8 @@ pub struct AppRoot {
     /// startup and for the periodic ones after it. Integration apps keep their session/control
     /// workers but must never reach GitHub, whatever `[updates]` says.
     update_checks: bool,
+    /// This build's release notes, and whether this launch shows them once the client is idle.
+    release_notes: Option<(ops::release_notes::ReleaseNotes, bool)>,
     event_hub: events::EventHub,
     render_host_terminal_color_generation: Cell<u64>,
 }
@@ -81,6 +83,7 @@ impl Default for AppRoot {
             watch_hangup: false,
             startup_tasks: false,
             update_checks: false,
+            release_notes: None,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
@@ -99,6 +102,11 @@ impl AppRoot {
         control_guard: Option<control::ControlSocketGuard>,
         startup_session: StartupSession,
     ) -> Self {
+        // First, while the state directory still shows whether rozi ran here before.
+        let notes = ops::release_notes::embedded();
+        let due =
+            ops::release_notes::record_startup(notes.is_some() && config.updates.release_notes);
+        let release_notes = notes.map(|notes| (notes, due));
         let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
             startup_messages.push(format!("Could not read remembered sidebars: {error}"));
             None
@@ -117,6 +125,7 @@ impl AppRoot {
             watch_hangup: true,
             startup_tasks: true,
             update_checks: true,
+            release_notes,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
@@ -285,6 +294,10 @@ impl Component for AppRoot {
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
         state.update_checks_allowed = self.update_checks;
+        if let Some((notes, due)) = self.release_notes.clone() {
+            state.release_notes = Some(notes);
+            state.release_notes_due = due;
+        }
         state.event_hub = self.event_hub.clone();
         state.current_mut().deferred_profile_seed =
             self.startup_profile.as_ref().and_then(|profile| {

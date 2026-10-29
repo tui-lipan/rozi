@@ -302,6 +302,28 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     emit_workspace_switched(state, target_index);
 }
 
+/// Trade workspace slots `a` and `b`: each takes the other's panes, layout, and name. The view
+/// follows its content, so when one of the two is active, whatever was on screen stays there under
+/// its new number. Dropping one workspace tab on another does this.
+pub(crate) fn swap_workspaces(state: &mut State, a: usize, b: usize) {
+    let len = state.current().workspaces.len();
+    if a == b || a >= len || b >= len {
+        return;
+    }
+    swap_workspace_content(state, a, b);
+    let active = state.current().active_workspace;
+    let followed = if active == a {
+        b
+    } else if active == b {
+        a
+    } else {
+        return;
+    };
+    state.current_mut().active_workspace = followed;
+    state.animation = GeometryAnimation::None;
+    emit_workspace_switched(state, followed);
+}
+
 /// Whether `workspace` holds nothing of its own. A pinned pane only rides along on it.
 fn workspace_is_empty(workspace: &Workspace) -> bool {
     !workspace

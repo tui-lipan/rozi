@@ -2573,6 +2573,27 @@ mod tests {
     }
 
     #[test]
+    fn swapping_two_background_workspaces_leaves_the_view_alone() {
+        let mut state = state_with_tiled(&[1, 2]);
+        state.current_mut().workspaces[1].name = Some("logs".to_string());
+        state.current_mut().workspaces[1].layout_kind = LayoutKind::Master;
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
+
+        swap_workspaces(&mut state, 1, 3);
+
+        assert_eq!(state.current().active_workspace, 0);
+        assert_eq!(state.current().focused_pane, Some(2));
+        assert!(workspace_holds(&state, 0, 1));
+        assert_eq!(state.current().workspaces[3].name.as_deref(), Some("logs"));
+        assert_eq!(
+            state.current().workspaces[3].layout_kind,
+            LayoutKind::Master
+        );
+        assert_eq!(state.current().workspaces[1].name, None);
+    }
+
+    #[test]
     fn relocate_active_workspace_preserves_layout_on_empty_target() {
         let mut state = state_with_tiled(&[1, 2]);
         state.current_mut().workspaces[0].layout_kind = LayoutKind::Master;

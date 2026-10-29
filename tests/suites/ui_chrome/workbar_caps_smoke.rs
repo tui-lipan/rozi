@@ -1,5 +1,6 @@
-//! Production workbar caps: edge glyphs, powerline chaining, and pointer hit-testing through the
-//! decorative overlay. The cases render `AppRoot`, not a hand-built stand-in for `view::workbar`.
+//! Production workbar caps and workspace tabs: edge glyphs, powerline chaining, pointer hit-testing
+//! through the decorative overlay, and dragging one tab onto another. The cases render `AppRoot`,
+//! not a hand-built stand-in for `view::workbar`.
 
 use rozi::AppRoot;
 use rozi::config::{WorkbarItem, WorkbarSegment};
@@ -196,5 +197,49 @@ fn cap_overlay_lets_workspace_tabs_and_the_title_receive_pointer_events() {
             backend.state().show_palette,
             "the left cap must pass the click through to the title badge"
         );
+    });
+}
+
+#[test]
+fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        {
+            let workspaces = &mut backend.state_mut().current_mut().workspaces;
+            workspaces[0].name = Some("code".to_string());
+            workspaces[2].name = Some("docs".to_string());
+        }
+        let cells = row(&mut backend);
+        let source = find_run(&cells, "1:code").expect("first workspace tab") as u16;
+        let target = find_run(&cells, "3:docs").expect("third workspace tab") as u16;
+
+        for (x, kind) in [
+            (source, MouseKind::Down(MouseButton::Left)),
+            (source + 2, MouseKind::Drag(MouseButton::Left)),
+            (target, MouseKind::Drag(MouseButton::Left)),
+            (target, MouseKind::Up(MouseButton::Left)),
+        ] {
+            backend
+                .send_mouse(MouseEvent {
+                    x,
+                    y: 0,
+                    kind,
+                    mods: KeyMods::NONE,
+                })
+                .expect("workbar drag");
+        }
+
+        let workspaces = &backend.state().current().workspaces;
+        assert_eq!(workspaces[2].name.as_deref(), Some("code"));
+        assert_eq!(workspaces[0].name.as_deref(), Some("docs"));
+        assert_eq!(
+            backend.state().current().active_workspace,
+            2,
+            "the view follows the dragged workspace to its new number"
+        );
+        let cells = row(&mut backend);
+        let docs = find_run(&cells, "1:docs").expect("docs now holds the first slot");
+        let code = find_run(&cells, "3:code").expect("code now holds the third slot");
+        assert!(docs < code, "tabs keep their numeric order");
     });
 }

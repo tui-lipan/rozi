@@ -334,12 +334,8 @@ fn trailing_cluster(
                     (CapSides::Both, false)
                 };
                 let badge = workbar_badge(
-                    &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color,
+                    ctx, &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color, on_click,
                 );
-                let badge = match on_click {
-                    Some(action) => pointer_badge(ctx, badge, action),
-                    None => badge,
-                };
                 cluster = cluster.child(badge);
                 prev_bg = if powerline { bg } else { panel_bg };
                 prev_was_badge = true;
@@ -482,8 +478,11 @@ fn workbar_with_caps(
 
 /// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with optional caps owned by the
 /// framework's `Badge` primitive. The cap replaces the label's side padding, preserving the chip's
-/// footprint while allowing powerline seams to paint over the preceding background.
+/// footprint while allowing powerline seams to paint over the preceding background. A chip with an
+/// `action` answers to the pointer (see [`pointer_badge`]).
+#[allow(clippy::too_many_arguments)]
 fn workbar_badge(
+    ctx: &Context<AppRoot>,
     label: &str,
     text_fg: Color,
     badge_bg: Color,
@@ -491,6 +490,7 @@ fn workbar_badge(
     cap_style: CapStyle,
     cap_sides: CapSides,
     same_color: bool,
+    action: Option<Action>,
 ) -> Element {
     let footprint = RichText::from(label.to_string()).width() as u16;
     let badge = Badge::new(label.to_string())
@@ -508,13 +508,31 @@ fn workbar_badge(
         .cap_sides(cap_sides)
         .cap_behind(cap_behind)
         .cap_same_color(same_color);
-    Frame::new()
+    let chip = Frame::new()
         .border(false)
         .padding(0)
         .width(Length::Px(footprint))
         .height(Length::Px(1))
         .child(badge)
-        .into()
+        .into();
+    let Some(action) = action else {
+        return chip;
+    };
+    // A cap glyph is drawn in the badge color over the color behind it, so the fill it shows is the
+    // glyph's foreground. Same-color seams are a contrast glyph over the neighbor's fill and stay put.
+    let glyphs = cap_style.glyphs().is_some();
+    let left_cap = glyphs && !same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
+    let right_cap = glyphs && matches!(cap_sides, CapSides::Both | CapSides::Right);
+    let left_seam = same_color && matches!(cap_sides, CapSides::Both | CapSides::Left);
+    pointer_badge(
+        ctx,
+        chip,
+        action,
+        footprint,
+        left_cap || left_seam,
+        left_cap,
+        right_cap,
+    )
 }
 
 /// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
@@ -657,7 +675,8 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
     }
     let label = segment_label(ctx, &item.segment)?;
     let (bg, fg) = item_colors(ctx, item);
-    let badge = workbar_badge(
+    Some(workbar_badge(
+        ctx,
         &label,
         fg,
         bg,
@@ -667,11 +686,8 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
             .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
         CapSides::Right,
         false,
-    );
-    Some(match badge_action(&item.segment) {
-        Some(action) => pointer_badge(ctx, badge, action),
-        None => badge,
-    })
+        badge_action(&item.segment),
+    ))
 }
 
 /// What a workbar badge does when clicked, if it answers to the pointer at all.
@@ -683,16 +699,56 @@ fn badge_action(segment: &WorkbarSegment) -> Option<Action> {
     }
 }
 
-/// A badge that opens `action` on click and lifts under the pointer.
+/// A `width`-cell badge that opens `action` on click and lifts under the pointer.
 ///
-/// The lift is a background transform, the same one workspace tabs use. The badge paints its own
-/// fill, so an underlay hover style would sit behind that fill and never show.
-fn pointer_badge(ctx: &Context<AppRoot>, badge: Element, action: Action) -> Element {
-    MouseRegion::new()
+/// The lift is the same transform workspace tabs use. The badge paints its own fill, so an underlay
+/// hover style would sit behind that fill and never show. Like a hovered tab, the body lifts its
+/// background while each cap lifts its glyph: lifting a cap cell's background would brighten the
+/// panel behind the pill instead of the pill's rounded end. `left_inset` skips the leading cell for
+/// the body lift when a cap or seam occupies it; `left_cap`/`right_cap` lift those glyphs.
+fn pointer_badge(
+    ctx: &Context<AppRoot>,
+    badge: Element,
+    action: Action,
+    width: u16,
+    left_inset: bool,
+    left_cap: bool,
+    right_cap: bool,
+) -> Element {
+    let cell = |x: u16, w: u16, effect: VisualEffect| VisualEffect::Clipped {
+        bounds: Some(Rect {
+            x: x as i16,
+            y: 0,
+            w,
+            h: 1,
+        }),
+        mask: None,
+        inner: Box::new(effect),
+    };
+    let body_x = u16::from(left_inset);
+    let body_w = width.saturating_sub(body_x + u16::from(right_cap));
+    let mut region = MouseRegion::new()
         .on_click(ctx.link().callback(move |_| Msg::RunAction(action)))
-        .hover_effect(VisualEffect::transform_bg(crate::view::hover_lift()))
-        .child(badge)
-        .pointer_shape(PointerShape::Pointer)
+        .hover_effect(cell(
+            body_x,
+            body_w,
+            VisualEffect::transform_bg(crate::view::hover_lift()),
+        ));
+    if left_cap {
+        region = region.hover_effect(cell(
+            0,
+            1,
+            VisualEffect::transform_fg(crate::view::hover_lift()),
+        ));
+    }
+    if right_cap && width > 0 {
+        region = region.hover_effect(cell(
+            width - 1,
+            1,
+            VisualEffect::transform_fg(crate::view::hover_lift()),
+        ));
+    }
+    region.child(badge).pointer_shape(PointerShape::Pointer)
 }
 
 fn substitute_placeholders(ctx: &Context<AppRoot>, literal: &str) -> String {
@@ -1525,6 +1581,44 @@ mod tests {
                 clock,
                 "a plain badge must not lift just because the pointer is on the bar"
             );
+        });
+    }
+
+    #[test]
+    fn hovering_a_capped_badge_lifts_its_cap_glyph_not_the_bar_behind_it() {
+        crate::test_support::on_deeper_stack(|| {
+            let mut backend = attached_backend();
+            let config = &mut backend.state_mut().config;
+            config.nerd_icons = true;
+            config.pane.workbar_badge_style = tui_lipan::prelude::CapStyle::Round;
+            config.pane.workbar_powerline = false;
+            let (_, right_cap) = tui_lipan::prelude::CapStyle::Round
+                .glyphs()
+                .expect("round caps");
+            let (width, resting) = frame_cells(&mut backend);
+            let lift = crate::view::HOVER_LIFT;
+
+            for needle in ["rozi", "dev"] {
+                let (x, y) = find_run(&resting, width, needle).expect("badge label");
+                let cap_x = x + needle.len() as u16;
+                let cap = &resting[y as usize * width as usize + cap_x as usize];
+                assert_eq!(cap.symbol, right_cap, "{needle} badge should end in a cap");
+                let body = cell_bg(&resting, width, x, y);
+
+                hover(&mut backend, x, y);
+                let hovered = frame_cells(&mut backend).1;
+                let hovered_cap = &hovered[y as usize * width as usize + cap_x as usize];
+                assert_eq!(cell_bg(&hovered, width, x, y), body.elevate_by(lift));
+                assert_eq!(
+                    hovered_cap.fg,
+                    cap.fg.elevate_by(lift),
+                    "{needle} cap glyph should lift with the badge fill"
+                );
+                assert_eq!(
+                    hovered_cap.bg, cap.bg,
+                    "{needle} cap should leave the bar behind it alone"
+                );
+            }
         });
     }
 

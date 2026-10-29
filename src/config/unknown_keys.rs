@@ -288,7 +288,13 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         ],
         unknown,
     );
-    collect_named_table(table, "", "updates", &["check", "interval_hours"], unknown);
+    collect_named_table(
+        table,
+        "",
+        "updates",
+        &["check", "interval_hours", "count_usage"],
+        unknown,
+    );
     collect_named_table(table, "", "notifications", NOTIFICATION_KEYS, unknown);
     collect_named_table(table, "", "sounds", SOUND_KEYS, unknown);
     collect_named_table(table, "", "navigation", &["editors"], unknown);

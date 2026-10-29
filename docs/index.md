@@ -16,6 +16,7 @@ Start with [Getting started](getting-started.md).
 | [Core concepts](core-concepts.md) | Sessions, panes, workspaces, layouts, and profiles |
 | [Platform support](platform-support.md) | Supported operating systems and their differences |
 | [Troubleshooting](troubleshooting.md) | Common problems by symptom, with causes and fixes |
+| [Usage count](usage-count.md) | What the anonymous weekly usage count sends and keeps, and how to opt out |
 
 ## Daily use
 

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "app": "rozi",
+  "version": "0.0.37",
+  "channel": "release",
+  "os": "linux",
+  "arch": "x86_64",
+  "install": "managed",
+  "age": 1
+}

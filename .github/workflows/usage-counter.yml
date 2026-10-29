@@ -1,0 +1,42 @@
+name: Usage counter
+
+# tools/usage-counter is the Worker behind usage.tui-lipan.dev. Its tests run the real handler
+# against a local D1 database, and share the report fixture with rozi's own usage-count tests, so
+# a change to either side of the contract fails here or in `cargo test`.
+
+on:
+  push:
+    paths:
+      - "tools/usage-counter/**"
+      - ".github/workflows/usage-counter.yml"
+  pull_request:
+    paths:
+      - "tools/usage-counter/**"
+      - ".github/workflows/usage-counter.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usage-counter-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/usage-counter
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/usage-counter/package-lock.json
+
+      - run: npm ci
+      - run: npm test

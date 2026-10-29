@@ -38,5 +38,6 @@ pub(crate) mod tab_settings;
 pub(crate) mod theme;
 pub(crate) mod ui_recording;
 pub(crate) mod update_check;
+pub(crate) mod usage_count;
 pub(crate) mod user_command;
 pub(crate) mod worktrees;

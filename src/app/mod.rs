@@ -314,6 +314,7 @@ impl Component for AppRoot {
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
             update_check_interval: ctx.state.update_check_interval(),
+            count_usage: ctx.state.usage_count_enabled(),
             watch_hangup: self.watch_hangup,
             control_listener: self.control_listener.take(),
             event_hub: self.event_hub.clone(),
@@ -476,8 +477,10 @@ fn delay_to_next_second(subsec_nanos: u32) -> Duration {
         + SECOND_TICK_MARGIN
 }
 
-pub(crate) fn check_for_update_and_reschedule(interval: Duration) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| startup::check_for_update(link, interval))
+pub(crate) fn check_for_update_and_reschedule(interval: Duration, count_usage: bool) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        startup::check_for_update(link, interval, count_usage)
+    })
 }
 
 pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {

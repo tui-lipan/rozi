@@ -46,8 +46,14 @@ impl ScratchRuntime {
                 "running rozi executable was replaced; restart rozi",
             ));
         }
-        let mut child =
-            crate::platform::server_lifecycle::spawn_detached_server(&exe, &name, true, None)?;
+        let mut child = crate::platform::server_lifecycle::spawn_detached_server(
+            &exe,
+            &name,
+            crate::platform::server_lifecycle::ServerStart {
+                fresh: true,
+                ..Default::default()
+            },
+        )?;
         let mailbox = InboundMailbox::new(SCRATCH_RUNTIME_EPOCH, name.clone(), link);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {

@@ -7,8 +7,13 @@ use super::args::ListFormat;
 use super::output::{OutputStyles, OutputTone, TableCell, format_table};
 use crate::session;
 
-pub(crate) fn run_server_cli(name: &str, fresh: bool, startup_nonce: Option<String>) -> Result<()> {
-    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce)?;
+pub(crate) fn run_server_cli(
+    name: &str,
+    fresh: bool,
+    startup_nonce: Option<String>,
+    resurrect: bool,
+) -> Result<()> {
+    session::server::run_named_session_mode_with_nonce(name, fresh, startup_nonce, resurrect)?;
     Ok(())
 }
 
@@ -166,8 +171,8 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
-pub(crate) fn run_new_detached_session_cli(name: &str) -> Result<()> {
-    session::server::create_detached_session(name)?;
+pub(crate) fn run_new_detached_session_cli(name: &str, resurrect: bool) -> Result<()> {
+    session::server::create_detached_session(name, resurrect)?;
     Ok(())
 }
 

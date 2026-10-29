@@ -263,8 +263,10 @@ fn attach_local(
                     match crate::platform::server_lifecycle::spawn_detached_server(
                         &exe,
                         &name,
-                        create_only,
-                        None,
+                        crate::platform::server_lifecycle::ServerStart {
+                            fresh: create_only,
+                            ..Default::default()
+                        },
                     ) {
                         Ok(child) => server_child = Some(child),
                         Err(spawn_err) => {

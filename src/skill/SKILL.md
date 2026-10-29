@@ -256,14 +256,17 @@ Choose where a pane goes by who needs to see it:
   your own detached session and work there. Never borrow one of the user's workspaces for it.
 
 ```bash
-rozi sessions new agent-<TASK> --detach
+rozi sessions new agent-<TASK> --detach --no-resurrect
 rozi --session agent-<TASK> split --cwd /absolute/project --argv /absolute/project/target/debug/app
 rozi --session agent-<TASK> capture-pane --target <RETURNED_ID> --wait-for 'Ready' --timeout 30s
 rozi sessions kill agent-<TASK>
 ```
 
 `sessions new --detach` starts the session with no panes and returns; the first `split` opens one.
-`rozi api describe` lists `detached-session-create` when the binary supports it. Pick a name that says what the session is for. If the name is already running, the command fails:
+Always add `--no-resurrect`: if the machine shuts down or you stop before `sessions kill`, the
+session then leaves no `Restorable` entry behind in the user's session picker. `rozi api describe`
+lists `session-no-resurrect` when the binary supports it. Pick a name that says what the session
+is for. If the name is already running, the command fails:
 choose another name rather than reusing a session you did not create. Without `--detach`,
 `sessions new` opens a UI in the calling terminal, so never run it from an agent. Kill the session
 when you are done, unless the user wants to keep it.
@@ -333,7 +336,7 @@ inherited the variable, not the extension itself.
 rozi sessions list --format json
 rozi sessions attach <NAME> [--read-only | --follow | --take-control]
 rozi sessions new <NAME> [--profile <PROFILE> | --cwd <DIR>]
-rozi sessions new <NAME> --detach
+rozi sessions new <NAME> --detach [--no-resurrect]
 rozi sessions kill <NAME>
 rozi sessions list --remote <HOST>
 rozi sessions kill <NAME> --remote <HOST>

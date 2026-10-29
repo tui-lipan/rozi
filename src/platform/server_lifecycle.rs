@@ -64,17 +64,27 @@ pub fn shutdown_requested() -> bool {
 pub fn spawn_detached_server(
     exe: &Path,
     name: &str,
-    fresh: bool,
-    startup_nonce: Option<&str>,
+    start: ServerStart<'_>,
 ) -> io::Result<DetachedServer> {
-    spawn_server_child(exe, name, fresh, startup_nonce).map(|child| DetachedServer(Some(child)))
+    spawn_server_child(exe, name, start).map(|child| DetachedServer(Some(child)))
+}
+
+/// How a spawned session server starts.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ServerStart<'a> {
+    /// Discard any saved snapshot instead of restoring it.
+    pub fresh: bool,
+    /// Identity the server proves to the process that spawned it in its attach handshake.
+    pub startup_nonce: Option<&'a str>,
+    /// Never write a resurrection snapshot, whatever `[session] resurrect` says. Requires a
+    /// `startup_nonce`: only the nonce form of the server command carries it.
+    pub no_resurrect: bool,
 }
 
 fn spawn_server_child(
     exe: &Path,
     name: &str,
-    fresh: bool,
-    startup_nonce: Option<&str>,
+    start: ServerStart<'_>,
 ) -> io::Result<std::process::Child> {
     #[cfg(windows)]
     {
@@ -82,25 +92,19 @@ fn spawn_server_child(
             CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, DETACHED_PROCESS,
         };
         let base = DETACHED_PROCESS | CREATE_NO_WINDOW;
-        match spawn_server_with_flags(
-            exe,
-            name,
-            fresh,
-            startup_nonce,
-            base | CREATE_BREAKAWAY_FROM_JOB,
-        ) {
+        match spawn_server_with_flags(exe, name, start, base | CREATE_BREAKAWAY_FROM_JOB) {
             Ok(child) => Ok(child),
             // A job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` refuses the flag with ACCESS_DENIED;
             // fall back to a plain detached spawn so at least the local path keeps working.
             Err(err) if err.raw_os_error() == Some(5) => {
-                spawn_server_with_flags(exe, name, fresh, startup_nonce, base)
+                spawn_server_with_flags(exe, name, start, base)
             }
             Err(err) => Err(err),
         }
     }
     #[cfg(not(windows))]
     {
-        let mut command = base_server_command(exe, name, fresh, startup_nonce);
+        let mut command = base_server_command(exe, name, start);
         configure_detached_server(&mut command);
         command.spawn()
     }
@@ -221,27 +225,30 @@ mod reaper {
     }
 }
 
-fn base_server_command(
-    exe: &Path,
-    name: &str,
-    fresh: bool,
-    startup_nonce: Option<&str>,
-) -> std::process::Command {
+fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::process::Command {
     let mut command = std::process::Command::new(exe);
-    if let Some(nonce) = startup_nonce {
+    if let Some(nonce) = start.startup_nonce {
         command
-            .arg(if fresh {
+            .arg(if start.fresh {
                 "--fresh-server-start"
             } else {
                 "--server-start"
             })
             .arg(name)
             .arg(nonce);
+        if start.no_resurrect {
+            command.arg("--no-resurrect");
+        }
     } else {
-        command
-            .arg("--session")
-            .arg(name)
-            .arg(if fresh { "--fresh-server" } else { "--server" });
+        debug_assert!(
+            !start.no_resurrect,
+            "--no-resurrect rides only on the nonce form of the server command"
+        );
+        command.arg("--session").arg(name).arg(if start.fresh {
+            "--fresh-server"
+        } else {
+            "--server"
+        });
     }
     command
         .stdin(std::process::Stdio::null())
@@ -269,12 +276,11 @@ fn configure_detached_server(command: &mut std::process::Command) {
 fn spawn_server_with_flags(
     exe: &Path,
     name: &str,
-    fresh: bool,
-    startup_nonce: Option<&str>,
+    start: ServerStart<'_>,
     flags: u32,
 ) -> io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
-    let mut command = base_server_command(exe, name, fresh, startup_nonce);
+    let mut command = base_server_command(exe, name, start);
     command.creation_flags(flags);
     command.spawn()
 }

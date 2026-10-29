@@ -142,6 +142,50 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A detached session stopped without `sessions kill` — a shutdown or crash — stays restorable
+    /// like any named session, unless it was created with `--no-resurrect`.
+    #[test]
+    fn no_resurrect_detached_session_leaves_nothing_restorable_after_a_stop() {
+        let root = isolated_home("new-detach-no-resurrect");
+        let rozi = |args: &[&str]| command(&root).args(args).output().unwrap();
+        for (name, extra, restorable) in [
+            ("kept", None, true),
+            ("dropped", Some("--no-resurrect"), false),
+        ] {
+            let mut create = vec!["sessions", "new", name, "--detach"];
+            create.extend(extra);
+            assert!(rozi(&create).status.success(), "{name}: create");
+            let split = rozi(&["--session", name, "split", "--argv", "sh", "-c", "sleep 30"]);
+            assert!(split.status.success(), "{name}: split");
+
+            // What a machine shutdown does to the server: a stop signal, not `sessions kill`.
+            let pattern = format!("--fresh-server-start {name} ");
+            let signalled = Command::new("pkill")
+                .args(["-TERM", "-f", "--", &pattern])
+                .status()
+                .unwrap();
+            assert!(signalled.success(), "{name}: no server matched {pattern:?}");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let listed = loop {
+                let listed = rozi(&["sessions", "list", "--format", "json"]);
+                let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+                let stopped = !listed.contains(&format!(r#""name": "{name}""#))
+                    || listed.contains(r#""status": "restorable""#);
+                if stopped || Instant::now() >= deadline {
+                    break listed;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            assert_eq!(
+                listed.contains(&format!(r#""name": "{name}""#)),
+                restorable,
+                "{name}: {listed}"
+            );
+            let _ = rozi(&["sessions", "kill", name]);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Racing creators of one name: exactly one is told it created the session, and every other one
     /// is refused, whatever the platform can say about a socket peer.
     #[test]

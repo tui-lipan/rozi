@@ -312,6 +312,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "remote-extension-runtime",
     "runtime-events",
     "session-control",
+    "session-no-resurrect",
     "sidebar-streams",
     "sidebar-tab-settings",
     "split-size"
@@ -324,6 +325,9 @@ only concerns how two rozi binaries talk to each other.
 
 `detached-session-create` means `rozi sessions new <NAME> --detach` starts a session in the
 background without opening a UI. An older binary refuses `--detach`.
+
+`session-no-resurrect` means `sessions new <NAME> --detach` accepts `--no-resurrect`. An older
+binary refuses it.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](writing-extensions.md#link-handlers) through their manifest.
@@ -453,7 +457,7 @@ in a detached session.
 a program's whole screen at once:
 
 ```sh
-rozi sessions new capture --detach
+rozi sessions new capture --detach --no-resurrect
 pane=$(rozi --session capture split --size 100x220 --argv my-tui | jq -r '.data.id')
 rozi --session capture capture-pane --target "$pane" --settle 500ms --timeout 10s
 rozi sessions kill capture
@@ -1098,6 +1102,7 @@ rozi sessions new dev
 rozi sessions new review --profile dev
 rozi sessions new api --cwd ~/src/api
 rozi sessions new scratch --detach
+rozi sessions new tests --detach --no-resurrect
 rozi sessions list
 rozi sessions kill dev
 ```

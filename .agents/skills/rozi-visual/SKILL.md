@@ -60,7 +60,7 @@ rozi capture-pane --target <ID> --render png --output /absolute/scratch/preview.
 ```
 
 When the user does not need to watch the preview, run it in a detached session of your own
-instead of the user's workspaces: `rozi sessions new <NAME> --detach`, then add `--session <NAME>`
+instead of the user's workspaces: `rozi sessions new <NAME> --detach --no-resurrect`, then add `--session <NAME>`
 to `split`, `capture-pane`, and `record`, and `rozi sessions kill <NAME>` when done. Whole-UI
 captures (`capture-ui`, `record start ui`) still need a UI.
 

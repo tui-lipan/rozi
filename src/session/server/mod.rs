@@ -2280,13 +2280,16 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
 }
 
 pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
-    run_named_session_mode_with_nonce(name, fresh, None)
+    run_named_session_mode_with_nonce(name, fresh, None, true)
 }
 
+/// `resurrect: false` keeps this server from ever writing a snapshot, overriding
+/// `[session] resurrect`.
 pub fn run_named_session_mode_with_nonce(
     name: &str,
     fresh: bool,
     startup_nonce: Option<String>,
+    resurrect: bool,
 ) -> io::Result<()> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
@@ -2320,7 +2323,7 @@ pub fn run_named_session_mode_with_nonce(
             startup_nonce,
             log_dir: loaded.config.logging.dir,
             log_max_bytes: loaded.config.logging.max_bytes,
-            resurrect: !client_scratch && loaded.config.session.resurrect,
+            resurrect: resurrect && !client_scratch && loaded.config.session.resurrect,
             resurrect_foreground: loaded.config.session.resurrect_foreground,
             resurrect_agents: loaded.config.session.resurrect_agents,
             keep_awake_while_agents_work: loaded.config.session.keep_awake_while_agents_work,

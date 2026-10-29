@@ -37,6 +37,7 @@ rozi sessions new dev                 # create a fresh empty named session
 rozi sessions new review --profile dev
 rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions new scratch --detach    # start in the background, without a UI
+rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions list
 rozi sessions kill dev
 ```
@@ -58,8 +59,8 @@ has that name.
 names a directory on the remote host and is passed through unchanged, so use an absolute path.
 
 Write each option after the command it belongs to. `--follow` and `--take-control` work only with
-`sessions attach`, and `--profile`, `--cwd`, and `--detach` only with `sessions new`; anywhere else
-they are reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
+`sessions attach`, `--profile`, `--cwd`, and `--detach` only with `sessions new`, and
+`--no-resurrect` only with `sessions new --detach`; anywhere else they are reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
 session command.
 
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
@@ -299,7 +300,8 @@ Named sessions have no such timer. They persist until you kill them.
 ## Resurrection
 
 With `[session] resurrect = true`, the default, rozi saves a snapshot of each named session
-periodically and when the last client detaches after a change.
+periodically and when the last client detaches after a change. A session started with
+`rozi sessions new <NAME> --detach --no-resurrect` is never saved.
 
 When the session server is no longer running, the picker lists a usable snapshot as `Restorable`.
 Restoring recreates:
@@ -404,8 +406,13 @@ is running. The session starts with no panes, and its first `split` opens one. I
 combined with `--profile`, `--cwd`, or `--remote`; pass `--cwd` to `split` instead. Stop the session
 with `rozi sessions kill <NAME>` when the work is done.
 
+Like any named session, a detached session is saved for [resurrection](#resurrection), so if the
+machine shuts down or the server stops before `sessions kill`, it appears in the picker as
+`Restorable`. Add `--no-resurrect` for throwaway work: the session is never saved, and once its
+server stops there is nothing left to restore.
+
 ```bash
-rozi sessions new tests --detach
+rozi sessions new tests --detach --no-resurrect
 rozi --session tests split --cwd ~/src/api --argv cargo test
 rozi sessions kill tests
 ```

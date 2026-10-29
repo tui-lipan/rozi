@@ -248,6 +248,8 @@ pub(crate) enum ParsedCli {
         fresh: bool,
         config_path: Option<String>,
         startup_nonce: Option<String>,
+        /// `false` keeps the server from writing snapshots (`--no-resurrect`).
+        resurrect: bool,
     },
     /// Hidden remote-side stdio proxy.
     RemoteServe {
@@ -272,9 +274,11 @@ pub(crate) enum SessionsCommand {
         remote: Option<String>,
         config_path: Option<String>,
     },
-    /// `sessions new <NAME> --detach`.
+    /// `sessions new <NAME> --detach [--no-resurrect]`.
     NewDetached {
         name: String,
+        /// `false` for `--no-resurrect`: the server never writes a snapshot.
+        resurrect: bool,
         config_path: Option<String>,
     },
     Kill {
@@ -490,6 +494,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     fresh: false,
                     config_path: cli.config_path,
                     startup_nonce: None,
+                    resurrect: true,
                 });
             }
             "--fresh-server" => {
@@ -511,6 +516,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     fresh: true,
                     config_path: cli.config_path,
                     startup_nonce: None,
+                    resurrect: true,
                 });
             }
             flag @ ("--server-start" | "--fresh-server-start") => {
@@ -519,12 +525,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                     return Err(format!("{flag} requires a 32-digit hexadecimal nonce"));
                 }
+                let no_resurrect = iter.next_if(|arg| arg == "--no-resurrect").is_some();
                 reject_trailing_control_args(&mut iter, flag)?;
                 return Ok(ParsedCli::Server {
                     name,
                     fresh: flag == "--fresh-server-start",
                     config_path: cli.config_path,
                     startup_nonce: Some(nonce),
+                    resurrect: !no_resurrect,
                 });
             }
             "--remote-serve" => {
@@ -3846,18 +3854,32 @@ mod tests {
             fresh,
             config_path,
             startup_nonce,
+            resurrect,
         } = parsed
         else {
             panic!("expected server");
         };
         assert_eq!(name, "dev");
         assert!(!fresh);
+        assert!(resurrect);
         assert!(config_path.is_none());
         assert_eq!(startup_nonce.as_deref(), Some(nonce));
         assert!(matches!(
             parse_cli_args(vec!["--fresh-server-start".into(), "dev".into(), nonce.into()]),
-            Ok(ParsedCli::Server { fresh: true, startup_nonce: Some(carried), .. })
+            Ok(ParsedCli::Server { fresh: true, startup_nonce: Some(carried), resurrect: true, .. })
                 if carried == nonce
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "--fresh-server-start".into(),
+                "dev".into(),
+                nonce.into(),
+                "--no-resurrect".into(),
+            ]),
+            Ok(ParsedCli::Server {
+                resurrect: false,
+                ..
+            })
         ));
         assert!(
             parse_cli_args(vec![

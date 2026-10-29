@@ -16,7 +16,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 /// means a server proved it holds that nonce in a completed attach handshake, so a server another
 /// process started under the same name is never claimed, on any platform. Every failure after the
 /// spawn stops the spawned server, so a reported failure never leaves a session behind.
-pub(crate) fn create_detached_session(name: &str) -> io::Result<()> {
+pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result<()> {
     if !crate::session::discovery::valid_session_name(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -34,14 +34,21 @@ pub(crate) fn create_detached_session(name: &str) -> io::Result<()> {
         ));
     }
     let nonce = crate::session::remote::fresh_server_nonce();
-    let child =
-        crate::platform::server_lifecycle::spawn_detached_server(&exe, name, true, Some(&nonce))
-            .map_err(|err| {
-                io::Error::other(format!(
-                    "Could not start server for `{name}` ({}): {err}",
-                    exe.display()
-                ))
-            })?;
+    let child = crate::platform::server_lifecycle::spawn_detached_server(
+        &exe,
+        name,
+        crate::platform::server_lifecycle::ServerStart {
+            fresh: true,
+            startup_nonce: Some(&nonce),
+            no_resurrect: !resurrect,
+        },
+    )
+    .map_err(|err| {
+        io::Error::other(format!(
+            "Could not start server for `{name}` ({}): {err}",
+            exe.display()
+        ))
+    })?;
     let mut spawned = SpawnedServer(Some(child));
     let endpoint = super::session_endpoint(name)?;
     let deadline = Instant::now() + READY_TIMEOUT;

@@ -53,7 +53,7 @@ pub(super) struct StartupTasks {
     /// How long after the startup check the first re-check fires, or `None` when this client does
     /// no release checks at all.
     pub(super) update_check_interval: Option<Duration>,
-    /// Whether those checks also report this machine to the weekly usage count.
+    /// Whether those checks also report this install to the weekly usage count.
     pub(super) count_usage: bool,
     pub(super) watch_hangup: bool,
     pub(super) control_listener: Option<crate::platform::ipc::IpcListener>,

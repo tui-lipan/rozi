@@ -754,14 +754,15 @@ pub(super) fn update_available(
     Update::full()
 }
 
-/// Tell the user, once per machine, that rozi counts it in the weekly usage count and how to opt
-/// out. The first report waits at least a day after this.
+/// Tell the user, once per install, that rozi counts it in the weekly usage count and how to opt
+/// out, then record that it was shown. Only this records it: a client that exits before getting
+/// here leaves the notice for the next launch. The first report waits at least a day after this.
 pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
     crate::pane::pty_events::notify_update(
         ctx,
         "Anonymous usage count",
         format!(
-            "once a week rozi adds this machine to a public count of active installs\n\
+            "once a week rozi adds itself to a public count of active installs\n\
              no ID or personal data; starts tomorrow\n\
              opt out with `[updates] count_usage = false`\n\
              {}",
@@ -769,6 +770,7 @@ pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
         ),
         false,
     );
+    crate::ops::usage_count::notice_shown();
     Update::full()
 }
 
@@ -1116,8 +1118,13 @@ mod tests {
     #[test]
     fn the_usage_count_notice_says_how_to_opt_out() {
         crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
             let mut backend = TestBackend::new(AppRoot::default());
             backend.dispatch(Msg::UsageCountNotice).unwrap();
+            assert!(
+                crate::ops::usage_count::notice_recorded_for_test(),
+                "showing the notice records it as shown"
+            );
             let toast = last_toast(&backend);
             assert!(toast.starts_with("Anonymous usage count"), "{toast}");
             assert!(toast.contains("`[updates] count_usage = false`"), "{toast}");

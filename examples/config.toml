@@ -287,7 +287,7 @@
 # still looks when you ask it to. Minimum interval is 1 hour.
 #check = true
 #interval_hours = 6
-# Once a week, the check also adds this machine to an anonymous count of active installs: the
+# Once a week, the check also adds this install to an anonymous count of active installs: the
 # rozi version, OS, architecture, and install channel, with no ID. See docs/usage-count.md.
 #count_usage = true
 

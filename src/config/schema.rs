@@ -988,7 +988,7 @@ pub struct UpdatesConfig {
     /// Hours between re-checks while a client stays open. A client that runs for days would
     /// otherwise report whatever was current the morning it started.
     pub interval_hours: u32,
-    /// Whether the client includes this machine in the anonymous weekly usage count. It rides on
+    /// Whether the client includes this install in the anonymous weekly usage count. It rides on
     /// the release check, so `check = false` turns it off too.
     pub count_usage: bool,
 }

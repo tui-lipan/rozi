@@ -45,12 +45,17 @@ export const ARCHES = new Set([
 ]);
 export const AGES = new Set([1, 2, 3, 4]);
 
-const TOKEN = /^[a-z0-9_]{1,24}$/;
+const WORD = /^[a-z0-9_]{1,24}$/;
+// 128 random bits, lowercase hex.
+const REPORT_TOKEN = /^[0-9a-f]{32}$/;
 const VERSION = /^(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})(-[0-9A-Za-z.]{1,32})?$/;
 
 export const MAX_BODY_BYTES = 1024;
 
-/** A validated report, or `{ error }` naming the first field that is wrong. */
+/**
+ * A validated `{ token, report }`, or `{ error }` naming the first field that is wrong. The token is
+ * returned apart from the report because it is stored apart from it.
+ */
 export function parseReport(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { error: "body is not an object" };
@@ -61,19 +66,23 @@ export function parseReport(value) {
     return { error: "invalid version" };
   }
   if (!AGES.has(value.age)) return { error: "invalid age" };
+  if (typeof value.token !== "string" || !REPORT_TOKEN.test(value.token)) {
+    return { error: "invalid token" };
+  }
   const channel = known(CHANNELS, value.channel);
   const os = known(OSES, value.os);
   const arch = known(ARCHES, value.arch);
   const install = known(INSTALLS, value.install);
   if (!channel || !os || !arch || !install) return { error: "invalid field" };
   return {
+    token: value.token,
     report: { app: value.app, version: value.version, channel, os, arch, install, age: value.age },
   };
 }
 
 /** The value itself when listed, `other` when it is shaped like one, else nothing. */
 function known(allowed, value) {
-  if (typeof value !== "string" || !TOKEN.test(value)) return null;
+  if (typeof value !== "string" || !WORD.test(value)) return null;
   return allowed.has(value) ? value : "other";
 }
 

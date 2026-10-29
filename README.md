@@ -57,8 +57,8 @@ There are also [nightly builds](docs/installation.md#nightly-builds): a disposab
 newest `master` commit that passed CI, for trying a fix before it is released. They are unsigned,
 replaced every night, and no install or update path selects them.
 
-rozi adds each machine to an anonymous weekly count of active installs, with no ID or personal
-data. [Usage count](docs/usage-count.md) lists exactly what is sent and how to opt out.
+rozi adds itself to an anonymous weekly count of active installs, with no ID or personal data.
+[Usage count](docs/usage-count.md) lists exactly what is sent and how to opt out.
 
 ## First five minutes
 

@@ -1,7 +1,9 @@
 // The tui-lipan usage counter: counts weekly reports from apps and publishes the totals.
 //
-// POST /v1/count  adds one machine to this week's count. 204 when counted, 400 for a report that
-//                 does not match the contract, 429 when one address sends too fast.
+// POST /v1/count  adds one install to this week's count. 200 with `{ "week", "counted" }` when the
+//                 report is taken: `counted` is false when its token was already counted, which is
+//                 what makes a resent report safe. 400 for a report that does not match the
+//                 contract, 429 when one address sends too fast.
 // GET  /v1/stats  the weekly totals, public. `?app=rozi&weeks=26`.
 //
 // The request's address is used only as the rate-limit key and is never stored or logged. The
@@ -14,6 +16,9 @@ const DEFAULT_WEEKS = 26;
 const MAX_WEEKS = 520;
 const STATS_MAX_AGE = 3600;
 const DIMENSIONS = ["version", "channel", "os", "arch", "install", "age"];
+// How long a token is remembered. A client resends an unanswered report at its next check, hours
+// later, so two weeks covers an install that goes offline mid-send and stays off for a while.
+const TOKEN_WEEKS = 2;
 
 export default {
   async fetch(request, env) {
@@ -32,7 +37,7 @@ export async function handle(request, env, now) {
   if (pathname === "/") {
     return text(
       200,
-      `tui-lipan usage counter. It counts each machine running a tui-lipan app at most once a week, ` +
+      `tui-lipan usage counter. It counts each install of a tui-lipan app at most once a week, ` +
         `with no ID, address, or personal data. What is sent and how to opt out: ${DOCS}\n` +
         `Totals: /v1/stats?app=rozi\n`,
     );
@@ -58,16 +63,21 @@ async function count(request, env, now) {
   } catch {
     return text(400, "body is not JSON\n");
   }
-  const { report, error } = parseReport(value);
+  const { token, report, error } = parseReport(value);
   if (error) return text(400, `${error}\n`);
 
-  await env.DB.prepare(
-    `INSERT INTO weekly_installs (week, app, version, channel, os, arch, install, age, installs)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)
-     ON CONFLICT DO UPDATE SET installs = installs + 1`,
-  )
-    .bind(
-      isoWeek(now),
+  const week = isoWeek(now);
+  const expired = isoWeek(new Date(now.getTime() - TOKEN_WEEKS * 7 * 86400000));
+  // One transaction, so the count is raised and the token recorded together or not at all. The
+  // increment runs only while the token is unknown, so a resent report changes nothing.
+  const [, claimed, stored] = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO weekly_installs (week, app, version, channel, os, arch, install, age, installs)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1
+        WHERE NOT EXISTS (SELECT 1 FROM report_tokens WHERE token = ?9)
+       ON CONFLICT DO UPDATE SET installs = installs + 1`,
+    ).bind(
+      week,
       report.app,
       report.version,
       report.channel,
@@ -75,9 +85,18 @@ async function count(request, env, now) {
       report.arch,
       report.install,
       report.age,
-    )
-    .run();
-  return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+      token,
+    ),
+    env.DB.prepare(
+      "INSERT INTO report_tokens (token, week) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
+    ).bind(token, week),
+    env.DB.prepare("SELECT week FROM report_tokens WHERE token = ?1").bind(token),
+    env.DB.prepare("DELETE FROM report_tokens WHERE week <= ?1").bind(expired),
+  ]);
+  return json(
+    { week: stored.results[0]?.week ?? week, counted: claimed.meta.changes === 1 },
+    { "cache-control": "no-store" },
+  );
 }
 
 async function stats(request, env, now) {

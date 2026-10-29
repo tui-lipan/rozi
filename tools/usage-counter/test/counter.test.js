@@ -3,19 +3,33 @@
 
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { getPlatformProxy } from "wrangler";
 
 import { handle } from "../src/index.js";
 import { isoWeek, parseReport } from "../src/report.js";
 
-const migration = readFileSync(
-  new URL("../migrations/0001_weekly_installs.sql", import.meta.url),
-  "utf8",
-);
+const migrationsDir = new URL("../migrations/", import.meta.url);
+// Every migration in order, one statement per string, the way `wrangler d1 migrations` applies them.
+const statements = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith(".sql"))
+  .sort()
+  .flatMap((name) =>
+    readFileSync(new URL(name, migrationsDir), "utf8")
+      .replace(/--.*$/gm, "")
+      .split(";")
+      .map((statement) => statement.replace(/\s+/g, " ").trim())
+      .filter(Boolean),
+  );
 
 // What `src/ops/usage_count.rs` sends; its tests check the same file.
-const report = JSON.parse(readFileSync(new URL("./client-report.json", import.meta.url), "utf8"));
+const fixture = JSON.parse(readFileSync(new URL("./client-report.json", import.meta.url), "utf8"));
+
+/** One install's report: the fixture with a token of its own, as each client makes. */
+function report(fields = {}) {
+  return { ...fixture, token: randomBytes(16).toString("hex"), ...fields };
+}
 
 const thursday = new Date("2026-10-29T12:00:00Z");
 
@@ -32,8 +46,8 @@ after(async () => {
 
 beforeEach(async () => {
   await proxy.env.DB.exec("DROP TABLE IF EXISTS weekly_installs");
-  // `exec` takes one statement per line.
-  await proxy.env.DB.exec(migration.replace(/--.*$/gm, "").replace(/\s+/g, " ").trim());
+  await proxy.env.DB.exec("DROP TABLE IF EXISTS report_tokens");
+  for (const statement of statements) await proxy.env.DB.exec(statement);
   env = { DB: proxy.env.DB };
 });
 
@@ -45,18 +59,28 @@ function post(body, headers = {}) {
   });
 }
 
+async function send(body, now = thursday, headers = {}) {
+  const response = await handle(post(body, headers), env, now);
+  assert.equal(response.status, 200, await response.clone().text());
+  return response.json();
+}
+
 async function rows() {
   const { results } = await env.DB.prepare("SELECT * FROM weekly_installs ORDER BY week").all();
   return results;
 }
 
+async function tokens() {
+  const { results } = await env.DB.prepare("SELECT * FROM report_tokens ORDER BY week").all();
+  return results;
+}
+
 describe("POST /v1/count", () => {
-  test("adds the machine to this week's row for its values", async () => {
+  test("adds each install to this week's row for its values", async () => {
     for (let i = 0; i < 3; i++) {
-      const response = await handle(post(report), env, thursday);
-      assert.equal(response.status, 204);
+      assert.deepEqual(await send(report()), { week: "2026-W44", counted: true });
     }
-    await handle(post({ ...report, os: "macos", arch: "aarch64" }), env, thursday);
+    await send(report({ os: "macos", arch: "aarch64" }));
 
     const stored = await rows();
     assert.equal(stored.length, 2);
@@ -74,12 +98,32 @@ describe("POST /v1/count", () => {
     });
   });
 
-  test("stores nothing but the week and the reported values", async () => {
-    await handle(
-      post({ ...report, hostname: "laptop", user: "someone" }, { "cf-connecting-ip": "192.0.2.7" }),
-      env,
-      thursday,
-    );
+  // The client resends a report whose answer it never saw. Counting it again would count the
+  // install twice.
+  test("a resent report is answered with its week and not counted again", async () => {
+    const once = report();
+    assert.deepEqual(await send(once), { week: "2026-W44", counted: true });
+    const later = new Date("2026-10-29T18:00:00Z");
+    assert.deepEqual(await send(once, later), { week: "2026-W44", counted: false });
+
+    // Resent after the week turned over, it still names the week that counted it, so the client
+    // marks that week and makes a fresh report for the new one.
+    const monday = new Date("2026-11-02T08:00:00Z");
+    assert.deepEqual(await send(once, monday), { week: "2026-W44", counted: false });
+
+    const [row] = await rows();
+    assert.equal(row.installs, 1);
+  });
+
+  test("the reply names the counter's week, not the client's", async () => {
+    // Sent on Sunday by the client's clock, it arrives on Monday.
+    const arrival = new Date("2026-11-02T00:00:01Z");
+    assert.deepEqual(await send(report(), arrival), { week: "2026-W45", counted: true });
+  });
+
+  test("stores nothing but the week and the reported values, and the token apart", async () => {
+    const sent = report({ hostname: "laptop", user: "someone" });
+    await send(sent, thursday, { "cf-connecting-ip": "192.0.2.7" });
     const [row] = await rows();
     assert.deepEqual(Object.keys(row).sort(), [
       "age",
@@ -92,32 +136,50 @@ describe("POST /v1/count", () => {
       "version",
       "week",
     ]);
-    assert.ok(!JSON.stringify(row).includes("192.0.2.7"));
+    assert.deepEqual(await tokens(), [{ token: sent.token, week: "2026-W44" }]);
+    const everything = JSON.stringify([await rows(), await tokens()]);
+    assert.ok(!everything.includes("192.0.2.7"));
+    assert.ok(!everything.includes("laptop"));
+  });
+
+  test("tokens are forgotten once their week is two weeks old", async () => {
+    const old = report();
+    await send(old, new Date("2026-10-15T12:00:00Z"));
+    await send(report(), new Date("2026-10-22T12:00:00Z"));
+    await send(report(), thursday);
+    assert.deepEqual(
+      (await tokens()).map((row) => row.week),
+      ["2026-W43", "2026-W44"],
+    );
   });
 
   test("refuses a report outside the contract and stores nothing", async () => {
     const refused = [
       "not json",
       "[]",
-      { ...report, schema: 2 },
-      { ...report, app: "other" },
-      { ...report, version: "latest" },
-      { ...report, version: "1.2.3; DROP TABLE weekly_installs" },
-      { ...report, age: 0 },
-      { ...report, os: "Linux With Spaces" },
-      { ...report, install: "x".repeat(40) },
+      report({ schema: 2 }),
+      report({ app: "other" }),
+      report({ version: "latest" }),
+      report({ version: "1.2.3; DROP TABLE weekly_installs" }),
+      report({ age: 0 }),
+      report({ os: "Linux With Spaces" }),
+      report({ install: "x".repeat(40) }),
+      report({ token: undefined }),
+      report({ token: "not-hex-and-too-short" }),
+      report({ token: "0123456789ABCDEF0123456789ABCDEF" }),
     ];
     for (const body of refused) {
       const response = await handle(post(body), env, thursday);
       assert.equal(response.status, 400, JSON.stringify(body));
     }
-    const large = await handle(post({ ...report, pad: "x".repeat(2000) }), env, thursday);
+    const large = await handle(post(report({ pad: "x".repeat(2000) })), env, thursday);
     assert.equal(large.status, 413);
     assert.deepEqual(await rows(), []);
+    assert.deepEqual(await tokens(), []);
   });
 
   test("counts an unlisted but well-formed platform as other", async () => {
-    await handle(post({ ...report, os: "haiku", arch: "sparc64" }), env, thursday);
+    await send(report({ os: "haiku", arch: "sparc64" }));
     const [row] = await rows();
     assert.equal(row.os, "other");
     assert.equal(row.arch, "other");
@@ -131,7 +193,11 @@ describe("POST /v1/count", () => {
         return { success: false };
       },
     };
-    const response = await handle(post(report, { "cf-connecting-ip": "192.0.2.7" }), env, thursday);
+    const response = await handle(
+      post(report(), { "cf-connecting-ip": "192.0.2.7" }),
+      env,
+      thursday,
+    );
     assert.equal(response.status, 429);
     assert.deepEqual(keys, ["192.0.2.7"]);
     assert.deepEqual(await rows(), []);
@@ -150,10 +216,10 @@ describe("POST /v1/count", () => {
 describe("GET /v1/stats", () => {
   test("totals each week with its new installs and breakdowns", async () => {
     const lastWeek = new Date("2026-10-22T12:00:00Z");
-    await handle(post(report), env, lastWeek);
-    await handle(post({ ...report, age: 2 }), env, thursday);
-    await handle(post({ ...report, age: 1, install: "cargo" }), env, thursday);
-    await handle(post({ ...report, age: 1, app: "rozi", os: "windows" }), env, thursday);
+    await send(report(), lastWeek);
+    await send(report({ age: 2 }));
+    await send(report({ age: 1, install: "cargo" }));
+    await send(report({ age: 1, os: "windows" }));
 
     const response = await handle(
       new Request("https://usage.tui-lipan.dev/v1/stats?app=rozi&weeks=4"),
@@ -182,8 +248,8 @@ describe("GET /v1/stats", () => {
   });
 
   test("leaves out weeks older than asked for", async () => {
-    await handle(post(report), env, new Date("2026-01-08T12:00:00Z"));
-    await handle(post(report), env, thursday);
+    await send(report(), new Date("2026-01-08T12:00:00Z"));
+    await send(report());
     const response = await handle(
       new Request("https://usage.tui-lipan.dev/v1/stats?weeks=2"),
       env,
@@ -206,12 +272,16 @@ describe("contract", () => {
   });
 
   test("a newer client's extra fields are ignored rather than refused", () => {
-    const { report: parsed, error } = parseReport({ ...report, terminal: "ghostty" });
+    const { report: parsed, error } = parseReport(report({ terminal: "ghostty" }));
     assert.equal(error, undefined);
     assert.equal(parsed.terminal, undefined);
   });
 
+  test("the fixture the client is checked against is a valid report", () => {
+    assert.equal(parseReport(fixture).error, undefined);
+  });
+
   test("nightly prerelease versions are accepted", () => {
-    assert.ok(parseReport({ ...report, version: "0.0.38-nightly.20261029", channel: "nightly" }).report);
+    assert.ok(parseReport(report({ version: "0.0.38-nightly.20261029", channel: "nightly" })).report);
   });
 });

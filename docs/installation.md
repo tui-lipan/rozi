@@ -193,7 +193,7 @@ is announced once, not again in every window. Until you update, **Update rozi to
 Commands, which runs the update in a popup (see
 [Update notices](configuration.md#update-notices)).
 
-The same check also adds the machine to the anonymous weekly [usage count](usage-count.md).
+The same check also adds the install to the anonymous weekly [usage count](usage-count.md).
 
 Use [`[updates]`](configuration.md#updates) to turn these checks or the usage count off, or to
 change the interval.

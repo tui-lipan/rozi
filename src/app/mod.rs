@@ -56,6 +56,9 @@ pub struct AppRoot {
     update_checks: bool,
     /// This build's release notes, and whether this launch shows them once the client is idle.
     release_notes: Option<(ops::release_notes::ReleaseNotes, bool)>,
+    /// Whether this launch welcomes a first install once a session is on screen. Integration apps
+    /// turn it off: their scripted keys would land on the card instead of the panes.
+    welcome: bool,
     event_hub: events::EventHub,
     render_host_terminal_color_generation: Cell<u64>,
 }
@@ -84,6 +87,7 @@ impl Default for AppRoot {
             startup_tasks: false,
             update_checks: false,
             release_notes: None,
+            welcome: false,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
@@ -104,9 +108,10 @@ impl AppRoot {
     ) -> Self {
         // First, while the state directory still shows whether rozi ran here before.
         let notes = ops::release_notes::embedded();
-        let due =
+        let startup =
             ops::release_notes::record_startup(notes.is_some() && config.updates.release_notes);
-        let release_notes = notes.map(|notes| (notes, due));
+        let release_notes = notes.map(|notes| (notes, startup.notes_due));
+        let welcome = ops::welcome::due_at_startup(startup.first_install);
         let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
             startup_messages.push(format!("Could not read remembered sidebars: {error}"));
             None
@@ -126,6 +131,7 @@ impl AppRoot {
             startup_tasks: true,
             update_checks: true,
             release_notes,
+            welcome,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
         }
@@ -158,6 +164,7 @@ impl AppRoot {
             },
         );
         app.update_checks = false;
+        app.welcome = false;
         app
     }
 
@@ -179,6 +186,7 @@ impl AppRoot {
             },
         );
         app.update_checks = false;
+        app.welcome = false;
         app.watch_hangup = false;
         app
     }
@@ -298,6 +306,7 @@ impl Component for AppRoot {
             state.release_notes = Some(notes);
             state.release_notes_due = due;
         }
+        state.welcome_due = self.welcome;
         state.event_hub = self.event_hub.clone();
         state.current_mut().deferred_profile_seed =
             self.startup_profile.as_ref().and_then(|profile| {

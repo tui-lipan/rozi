@@ -41,6 +41,11 @@ The picker offers two kinds of session:
 
 Type `dev` in the picker and press `Ctrl+N`. A new session named `dev` opens with a shell.
 
+The first time a session opens after you install rozi, a **Welcome to rozi** card shows the words
+rozi uses and the keys to start with, as they are bound in your config. Press `Enter` to close it,
+or `Ctrl+L` to open this guide. It shows only once, and not at all if a config file was already in
+place when rozi first started.
+
 ## 4. Work with panes
 
 Most rozi commands start with the **prefix**, `Ctrl+A` by default. Press `Ctrl+A`, release it,

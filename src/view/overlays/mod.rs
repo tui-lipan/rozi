@@ -18,6 +18,7 @@ pub(in crate::view::overlays) use super::widget_keys::{
     recording_mark_input_key, release_notes_key, remote_picker_key, rename_input_key,
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
     settings_choice_key, settings_number_field_key, settings_palette_key, theme_picker_key,
+    welcome_key,
 };
 pub(in crate::view::overlays) use super::{
     ACTION_PALETTE_MAX_HEIGHT_PERCENT, action_palette_modal, action_palette_modal_with_width,
@@ -41,6 +42,7 @@ mod remotes;
 mod search;
 mod sessions;
 mod settings;
+mod welcome;
 mod worktrees;
 
 pub(crate) use agents::agent_picker_overlay;
@@ -67,6 +69,7 @@ pub(crate) use settings::{
     settings_choice_overlay, settings_number_overlay, settings_overlay, settings_query_selection,
     theme_picker_overlay,
 };
+pub(crate) use welcome::welcome_overlay;
 pub(crate) use worktrees::worktree_overlay;
 
 pub(in crate::view::overlays) use common::{ctrl_letter, hint_button, hint_pill, hint_row};

@@ -213,6 +213,9 @@ rozi has nine workspaces.
 
 Bare `n` renames the workspace; `N` renames the focused pane.
 
+To swap two workspaces with the mouse, drag one workspace tab onto another. The two trade numbers,
+and you stay on the workspace you dragged.
+
 Each workspace keeps its own layout, name, focused pane, and pane order. An empty workspace stays
 available and offers to start a shell. Profiles save workspace names and layouts. In a named
 session, panes keep running until you kill the session. See [Sessions](sessions.md).

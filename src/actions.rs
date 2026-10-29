@@ -6,7 +6,8 @@ use crate::input::Action;
 use crate::ops::focus::{
     cycle_focus_in_tiled_order, focus_in_direction, focus_in_direction_no_wrap,
     move_focused_to_workspace, promote_focused_to_master, relocate_active_workspace,
-    request_current_pane_focus, request_palette_focus, request_pane_focus, switch_workspace,
+    request_current_pane_focus, request_palette_focus, request_pane_focus, swap_workspaces,
+    switch_workspace,
 };
 use crate::ops::identity::open_rename_pane;
 use crate::ops::profile::{open_profile_picker, open_save_profile_prompt};
@@ -175,6 +176,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::ToggleLayout
         | Action::MoveToWorkspace(_)
         | Action::RelocateWorkspace(_)
+        | Action::SwapWorkspaces(..)
         | Action::TogglePaneSynchronization
         | Action::RenamePane
         | Action::RenameWorkspace
@@ -205,6 +207,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
             Action::SwitchWorkspace(_)
                 | Action::MoveToWorkspace(_)
                 | Action::RelocateWorkspace(_)
+                | Action::SwapWorkspaces(..)
                 | Action::TogglePin
                 | Action::RenameWorkspace
                 | Action::KillWorkspace
@@ -338,6 +341,11 @@ fn execute_action_inner(
         }
         Action::RelocateWorkspace(index) => {
             relocate_active_workspace(&mut ctx.state, index);
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Action::SwapWorkspaces(a, b) => {
+            swap_workspaces(&mut ctx.state, a, b);
             request_current_pane_focus(ctx);
             Update::full()
         }
@@ -642,6 +650,7 @@ mod tests {
             Action::ToggleFloat,
             Action::EnterResizeMode,
             Action::MoveToWorkspace(1),
+            Action::SwapWorkspaces(0, 1),
             Action::KillWorkspace,
         ] {
             assert!(
@@ -704,6 +713,7 @@ mod tests {
         for action in [
             Action::SwitchWorkspace(1),
             Action::MoveToWorkspace(1),
+            Action::SwapWorkspaces(0, 1),
             Action::RenameWorkspace,
             Action::KillWorkspace,
             Action::SaveProfile,

@@ -29,6 +29,8 @@ pub enum Action {
     /// Move every pane (and the workspace name) from the active workspace into the target slot,
     /// then switch there. Triggered by `Ctrl+Shift+1`–`9` in prefix/modifier mode.
     RelocateWorkspace(usize),
+    /// Trade two workspace slots, content and name. Dropping a workspace tab on another one.
+    SwapWorkspaces(usize, usize),
     ToggleFloat,
     TogglePin,
     ToggleFullscreen,
@@ -408,6 +410,7 @@ impl Action {
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)
+            | Action::SwapWorkspaces(..)
             | Action::RunNamedCommand(_)
             | Action::RunUserCommand(_) => {
                 return None;

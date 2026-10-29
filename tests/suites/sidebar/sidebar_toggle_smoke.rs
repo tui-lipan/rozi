@@ -14,6 +14,12 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
     }
 }
 
+/// Tab bars inside the left sidebar. The workbar's workspace tabs are a draggable tab bar too, so a
+/// plain count of the snapshot would include them; the left sidebar's bars start at column 0.
+fn left_sidebar_tab_bars(snapshot: &str) -> usize {
+    snapshot.matches("**DraggableTabBar** @ (0,").count()
+}
+
 /// Every backend in this binary is built here: committing a splitter drag or toggling the split
 /// persists `[sidebar]`, so the config has to resolve out of a scratch root rather than the
 /// developer's own (`rozi::test_support`).
@@ -181,7 +187,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
         backend.render();
 
         let snapshot = backend.capture_ui_snapshot().to_markdown();
-        assert_eq!(snapshot.matches("DraggableTabBar").count(), 2, "{snapshot}");
+        assert_eq!(left_sidebar_tab_bars(&snapshot), 2, "{snapshot}");
         let grid = backend.capture_frame().to_fixed_grid();
         assert!(grid.contains("Activity"), "{grid}");
         assert!(grid.contains("Panes"), "{grid}");
@@ -271,7 +277,7 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
         }
         backend.render();
         let snapshot = backend.capture_ui_snapshot().to_markdown();
-        assert_eq!(snapshot.matches("DraggableTabBar").count(), 1, "{snapshot}");
+        assert_eq!(left_sidebar_tab_bars(&snapshot), 1, "{snapshot}");
         assert_eq!(
             backend.state().config.sidebar.layout.left.panels,
             configured_panels
@@ -284,7 +290,7 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
         }
         backend.render();
         let snapshot = backend.capture_ui_snapshot().to_markdown();
-        assert_eq!(snapshot.matches("DraggableTabBar").count(), 2, "{snapshot}");
+        assert_eq!(left_sidebar_tab_bars(&snapshot), 2, "{snapshot}");
         assert_eq!(
             backend.state().config.sidebar.layout.left.panels,
             configured_panels

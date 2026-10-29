@@ -733,7 +733,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
 
-    let tabs: Vec<Tab> = (0..shown)
+    let tabs: Vec<DraggableTab> = (0..shown)
         .map(|idx| {
             let count = state.current().workspaces[idx].visible_count();
             let workspace = &state.current().workspaces[idx];
@@ -757,7 +757,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
             } else {
                 label
             };
-            let mut tab = Tab::new(label).pointer_shape(PointerShape::Pointer);
+            let mut tab = DraggableTab::new(label);
             // `static` colors the marked tab without moving it; only `pulse` breathes. The active
             // tab is never restyled - its solid `active_style` pill already reads as current, and
             // the pane border carries the alert on the workspace you are looking at.
@@ -832,7 +832,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     let fill = workbar_fill(ctx);
 
-    Tabs::new()
+    DraggableTabBar::new()
         .tabs(tabs)
         .active(
             state
@@ -840,11 +840,15 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
                 .active_workspace
                 .min(shown.saturating_sub(1)),
         )
-        .focusable(false)
         .width(Length::Flex(1))
         .height(Length::Px(1))
         .divider(' ')
         .caps(tab_caps)
+        .show_close_buttons(false)
+        .show_overflow_controls(false)
+        // Dropping a tab on another swaps the two workspaces, so the drop lands on the tab under
+        // the pointer and nothing moves until the button is released.
+        .reorder_mode(DragReorderMode::OnDrop)
         .style(
             Style::new()
                 .fg(crate::ops::theme::chrome_label_fg(theme, fill))
@@ -872,6 +876,9 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
             ctx.link()
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
         )
+        .on_reorder(ctx.link().callback(|event: DraggableTabReorderEvent| {
+            Msg::RunAction(Action::SwapWorkspaces(event.from, event.to))
+        }))
         .into()
 }
 

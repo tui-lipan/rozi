@@ -304,7 +304,8 @@ jobs:
           "$binary" --help >/dev/null
           if [[ -n "${ROZI_RELEASE_NOTES:-}" ]]; then
             first_entry="$(grep -m 1 '^- ' "$ROZI_RELEASE_NOTES")"
-            grep -qaF -- "$first_entry" "$binary" || {
+            # Compare bytes: BSD grep on macOS misses a multibyte entry inside a binary otherwise.
+            LC_ALL=C grep -qaF -- "$first_entry" "$binary" || {
               echo "payload does not embed $ROZI_RELEASE_NOTES" >&2
               exit 1
             }

@@ -103,10 +103,10 @@ impl AppRoot {
         startup_session: StartupSession,
     ) -> Self {
         // First, while the state directory still shows whether rozi ran here before.
-        let release_notes = ops::release_notes::embedded().map(|notes| {
-            let due = ops::release_notes::due_at_startup(&notes, config.updates.release_notes);
-            (notes, due)
-        });
+        let notes = ops::release_notes::embedded();
+        let due =
+            ops::release_notes::record_startup(notes.is_some() && config.updates.release_notes);
+        let release_notes = notes.map(|notes| (notes, due));
         let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
             startup_messages.push(format!("Could not read remembered sidebars: {error}"));
             None

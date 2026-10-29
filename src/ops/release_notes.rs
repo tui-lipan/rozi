@@ -20,9 +20,14 @@ use crate::state::Mode;
 /// What the release workflow handed `build.rs`; empty for every other build.
 const EMBEDDED: &str = include_str!(concat!(env!("OUT_DIR"), "/release-notes.md"));
 
-/// One empty marker file per version whose notes were shown or deliberately skipped, under the
-/// state directory.
-const SEEN_DIR: &str = "release-notes";
+/// Under the state directory: the versions that ran here, and the releases whose notes were shown.
+const NOTES_DIR: &str = "release-notes";
+/// One empty file per rozi version that started a client here, notes or not. The newest of them is
+/// what tells an update from a downgrade.
+const RAN_DIR: &str = "ran";
+/// One empty file per release whose notes a client showed, or that a first install skipped. Created
+/// with `create_new`, so it is also the claim that lets one client of several show them.
+const SHOWN_DIR: &str = "shown";
 
 /// The notes one release carries, as Markdown.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,64 +59,70 @@ pub(crate) fn embedded() -> Option<ReleaseNotes> {
     ReleaseNotes::new(env!("CARGO_PKG_VERSION"), EMBEDDED)
 }
 
-/// Decide at startup whether this launch should show `notes` once the client is idle.
+/// Record that this version started a client, and decide whether this launch should show its notes
+/// once the client is idle. Runs on every launch, with or without notes, because a version that
+/// carries none must still count as having run here.
 ///
 /// Call it before the client writes any state of its own, because a state directory that does not
 /// exist yet is how a first install is told from an update: a first install has nothing to catch
-/// up on, so it only records the version as seen.
-pub(crate) fn due_at_startup(notes: &ReleaseNotes, show_after_update: bool) -> bool {
+/// up on, so it only records its version as shown.
+pub(crate) fn record_startup(show_notes: bool) -> bool {
     let env = crate::platform::paths::PlatformEnv::from_process();
-    let Some(state_dir) = crate::platform::paths::state_dir_if_available(&env) else {
+    let (Some(state_dir), Ok(running)) = (
+        crate::platform::paths::state_dir_if_available(&env),
+        Version::parse(env!("CARGO_PKG_VERSION")),
+    ) else {
         return false;
     };
-    show_after_update && due_in(&state_dir, &notes.version)
+    record_startup_in(&state_dir, &running, show_notes)
 }
 
-fn due_in(state_dir: &Path, version: &Version) -> bool {
-    let seen = state_dir.join(SEEN_DIR);
-    if !state_dir.exists() {
-        claim_in(&seen, version);
+fn record_startup_in(state_dir: &Path, running: &Version, show_notes: bool) -> bool {
+    let first_install = !state_dir.exists();
+    let dir = state_dir.join(NOTES_DIR);
+    // A downgrade does not replay older notes: everything up to the newest version run is old news.
+    let downgrade = recorded_versions(&dir.join(RAN_DIR)).any(|ran| ran > *running);
+    record(&dir.join(RAN_DIR), running);
+    if first_install {
+        record(&dir.join(SHOWN_DIR), running);
         return false;
     }
-    // A downgrade does not replay older notes: every version up to the newest one seen is old news.
-    seen_versions(&seen).all(|shown| shown < *version)
+    show_notes && !downgrade && !marker(&dir.join(SHOWN_DIR), running).exists()
 }
 
-/// Versions with a marker in `seen`. An unreadable directory reads as none seen.
-fn seen_versions(seen: &Path) -> impl Iterator<Item = Version> {
-    fs::read_dir(seen)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.ok()?.file_name();
-            Version::parse(name.to_str()?.strip_prefix('v')?).ok()
-        })
+/// Versions with a marker in `dir`. An unreadable directory reads as none.
+fn recorded_versions(dir: &Path) -> impl Iterator<Item = Version> {
+    fs::read_dir(dir).into_iter().flatten().filter_map(|entry| {
+        let name = entry.ok()?.file_name();
+        Version::parse(name.to_str()?.strip_prefix('v')?).ok()
+    })
 }
 
-/// Atomically let one client show each release's notes.
+/// Create `version`'s marker in `dir`, and say whether this call created it.
 ///
-/// Unlike the update notice, a failure to record keeps the dialog closed: a dialog that opens on
-/// every launch because its marker cannot be written is worse than one that never opens, and the
-/// command still shows the notes.
-fn claim_in(seen: &Path, version: &Version) -> bool {
-    if crate::platform::fs_security::ensure_private_dir(seen).is_err() {
+/// As the claim to show notes, a failure keeps the dialog closed: a dialog that opens on every
+/// launch because its marker cannot be written is worse than one that never opens, and the command
+/// still shows the notes.
+fn record(dir: &Path, version: &Version) -> bool {
+    if crate::platform::fs_security::ensure_private_dir(dir).is_err() {
         return false;
     }
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(seen_marker(seen, version))
+        .open(marker(dir, version))
         .is_ok()
 }
 
-fn seen_marker(seen: &Path, version: &Version) -> PathBuf {
-    seen.join(format!("v{version}"))
+fn marker(dir: &Path, version: &Version) -> PathBuf {
+    dir.join(format!("v{version}"))
 }
 
+/// Claim `version`'s notes as shown, for this client alone.
 fn claim(version: &Version) -> bool {
     let env = crate::platform::paths::PlatformEnv::from_process();
     crate::platform::paths::state_dir_if_available(&env)
-        .is_some_and(|state_dir| claim_in(&state_dir.join(SEEN_DIR), version))
+        .is_some_and(|state_dir| record(&state_dir.join(NOTES_DIR).join(SHOWN_DIR), version))
 }
 
 /// Open the notes the startup decision held back, once the client has a session on screen and no
@@ -143,8 +154,18 @@ pub(crate) fn show_if_due(ctx: &mut Context<AppRoot>) -> bool {
 }
 
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
-    if ctx.state.release_notes.is_none() {
+    let Some(version) = ctx
+        .state
+        .release_notes
+        .as_ref()
+        .map(|notes| notes.version.clone())
+    else {
         return Update::none();
+    };
+    // Opened by hand before the automatic showing came round: this is that showing, so neither this
+    // client nor another one opens the same notes again.
+    if std::mem::take(&mut ctx.state.release_notes_due) {
+        claim(&version);
     }
     ctx.state.show_release_notes = true;
     ctx.state.keybindings = None;
@@ -205,39 +226,64 @@ mod tests {
         assert_eq!(ReleaseNotes::new("local", "## Added\n- x\n"), None);
     }
 
+    /// Start `running` against `state_dir`, as a client whose build has notes and shows them.
+    fn start(state_dir: &Path, running: &str) -> bool {
+        record_startup_in(state_dir, &version(running), true)
+    }
+
+    fn shown(state_dir: &Path) -> PathBuf {
+        state_dir.join(NOTES_DIR).join(SHOWN_DIR)
+    }
+
     #[test]
     fn a_first_install_records_its_version_without_showing_it() {
         let root = tempfile::tempdir().unwrap();
         let state_dir = root.path().join("rozi");
 
-        assert!(!due_in(&state_dir, &version("1.0.0")));
-        assert!(seen_marker(&state_dir.join(SEEN_DIR), &version("1.0.0")).exists());
+        assert!(!start(&state_dir, "1.0.0"));
+        assert!(marker(&shown(&state_dir), &version("1.0.0")).exists());
         // The next start of the same version has nothing new; the next release does.
-        assert!(!due_in(&state_dir, &version("1.0.0")));
-        assert!(due_in(&state_dir, &version("1.1.0")));
+        assert!(!start(&state_dir, "1.0.0"));
+        assert!(start(&state_dir, "1.1.0"));
     }
 
     #[test]
-    fn an_update_from_a_build_that_never_recorded_notes_shows_them() {
+    fn an_update_from_a_build_that_never_recorded_anything_shows_them() {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir_all(root.path().join("rozi")).unwrap();
 
-        assert!(due_in(&root.path().join("rozi"), &version("1.0.0")));
+        assert!(start(&root.path().join("rozi"), "1.0.0"));
     }
 
+    /// Notes due but not yet shown stay due: a client that quit before an idle moment leaves them
+    /// for the next launch. Once one client claims them, no other start shows them.
     #[test]
-    fn notes_show_once_across_clients_and_never_after_a_downgrade() {
+    fn notes_stay_due_until_one_client_claims_them() {
         let root = tempfile::tempdir().unwrap();
         let state_dir = root.path().join("rozi");
         fs::create_dir_all(&state_dir).unwrap();
-        let seen = state_dir.join(SEEN_DIR);
 
-        assert!(due_in(&state_dir, &version("1.1.0")));
-        assert!(claim_in(&seen, &version("1.1.0")));
-        assert!(!claim_in(&seen, &version("1.1.0")));
-        assert!(!due_in(&state_dir, &version("1.1.0")));
-        assert!(!due_in(&state_dir, &version("1.0.0")));
-        assert!(due_in(&state_dir, &version("1.2.0")));
+        assert!(start(&state_dir, "1.1.0"));
+        assert!(start(&state_dir, "1.1.0"));
+        assert!(record(&shown(&state_dir), &version("1.1.0")));
+        assert!(!record(&shown(&state_dir), &version("1.1.0")));
+        assert!(!start(&state_dir, "1.1.0"));
+    }
+
+    /// The newest version that ran decides what a downgrade is, whether or not that version had notes
+    /// to show or showed them.
+    #[test]
+    fn a_downgrade_below_any_version_that_ran_shows_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let state_dir = root.path().join("rozi");
+        fs::create_dir_all(&state_dir).unwrap();
+
+        assert!(start(&state_dir, "1.0.0"));
+        record(&shown(&state_dir), &version("1.0.0"));
+        // 2.0.0 carries no notes, or has the automatic dialog turned off.
+        assert!(!record_startup_in(&state_dir, &version("2.0.0"), false));
+        assert!(!start(&state_dir, "1.5.0"));
+        assert!(start(&state_dir, "2.1.0"));
     }
 }
 
@@ -349,6 +395,33 @@ mod app_tests {
             let bottom = frame(&mut backend);
             assert!(bottom.contains("Change number 60 "), "{bottom}");
             assert!(bottom.contains("close Enter"), "{bottom}");
+        });
+    }
+
+    /// Opening the notes by hand while their automatic showing is still waiting counts as that
+    /// showing, here and for any other client starting on the same version.
+    #[test]
+    fn notes_opened_by_hand_are_not_shown_again_automatically() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = backend_with("9.9.4");
+            backend.state_mut().release_notes_due = true;
+            backend
+                .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
+                .unwrap();
+            assert!(backend.state().show_release_notes);
+            backend.render();
+            press(&mut backend, KeyCode::Enter);
+            assert!(!backend.state().show_release_notes);
+
+            backend.state_mut().current_mut().session_attached = true;
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            assert!(!backend.state().show_release_notes);
+
+            let mut other = backend_with("9.9.4");
+            other.state_mut().release_notes_due = true;
+            other.state_mut().current_mut().session_attached = true;
+            other.dispatch(Msg::RefreshPaintLayers).unwrap();
+            assert!(!other.state().show_release_notes);
         });
     }
 

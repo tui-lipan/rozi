@@ -16,7 +16,9 @@
 //!   disk. Weeks are the counter's alone: before making a new report the client asks the counter
 //!   which week it is, and makes one only once that week is past the week the last report was
 //!   counted in. A wrong local clock therefore cannot count an install twice in a week or change
-//!   its age. A report the counter refuses is not retried.
+//!   its age. A report names the week it was prepared for, and one that arrives after that week
+//!   ended is refused unstored and prepared again, so its age is the age in the week that counts
+//!   it. A report the counter refuses is not retried.
 //! - Nothing is sent before the user has been told. A check that finds no record of the notice
 //!   claims it and asks the client to show it; only the client, once it has raised the notice,
 //!   records it as shown. A claim nobody confirmed lapses, so a client that exits first does not
@@ -84,6 +86,9 @@ pub(crate) struct Report {
     install: &'static str,
     age: u8,
     token: String,
+    /// The counter's week this report was prepared for, so its age is checked against the week
+    /// that counts it.
+    week: String,
 }
 
 /// What a check did, for the caller and for tests.
@@ -108,6 +113,9 @@ pub(crate) enum Outcome {
 pub(crate) enum Delivery {
     /// The counter has the report. `counted` is false when it had counted this token before.
     Accepted { week: String, counted: bool },
+    /// The counter's week ended between asking it and posting, so the report's age may be stale.
+    /// Nothing was stored; the report is prepared again for `week`.
+    WeekChanged { week: String },
     /// A 4xx answer: the counter understood the request and will not take it.
     Rejected,
     /// No answer, an unreadable answer, or a server error. The report may or may not have been
@@ -209,6 +217,7 @@ impl Report {
             install: install_name(install),
             age: 1,
             token: String::new(),
+            week: String::new(),
         }
     }
 }
@@ -386,17 +395,32 @@ fn send(
     transport: &impl Transport,
 ) -> Outcome {
     let first_counted = read_week(&dir.join(FIRST_COUNTED_FILE));
-    let report = Report {
-        age: first_counted
-            .as_deref()
-            .map_or(1, |first| age_bucket(first, week)),
-        token: token.to_string(),
-        ..template.clone()
+    let mut week = week.to_string();
+    let mut attempts = 0;
+    let delivery = loop {
+        let report = Report {
+            age: first_counted
+                .as_deref()
+                .map_or(1, |first| age_bucket(first, &week)),
+            token: token.to_string(),
+            week: week.clone(),
+            ..template.clone()
+        };
+        let Ok(body) = serde_json::to_vec(&report) else {
+            return Outcome::Failed;
+        };
+        attempts += 1;
+        match transport.post(ENDPOINT, &body) {
+            // The week turned over mid-request. Once more for the new one; a week cannot end twice
+            // within a few requests, so a third answer like it is a fault, settled at a later check.
+            Delivery::WeekChanged { week: next } if attempts < 2 && is_iso_week(&next) => {
+                week = next;
+            }
+            other => break other,
+        }
     };
-    let Ok(body) = serde_json::to_vec(&report) else {
-        return Outcome::Failed;
-    };
-    let (outcome, counted_in) = match transport.post(ENDPOINT, &body) {
+    let week = week.as_str();
+    let (outcome, counted_in) = match delivery {
         Delivery::Accepted {
             week: counted_in,
             counted,
@@ -422,7 +446,7 @@ fn send(
             (outcome, counted_in)
         }
         Delivery::Rejected => (Outcome::Rejected, week.to_string()),
-        Delivery::Failed => return Outcome::Failed,
+        Delivery::WeekChanged { .. } | Delivery::Failed => return Outcome::Failed,
     };
     // Never move the record back: a resent report from an earlier week settles that report, not
     // the weeks counted since.
@@ -584,24 +608,34 @@ impl Transport for HttpsTransport {
         else {
             return Delivery::Failed;
         };
-        match response.status().as_u16() {
-            200..=299 => {}
+        let status = response.status().as_u16();
+        match status {
+            200..=299 | 409 => {}
             // A timeout or a rate limit says nothing about the report itself.
             408 | 429 => return Delivery::Failed,
             400..=499 => return Delivery::Rejected,
             _ => return Delivery::Failed,
         }
-        response
+        let Ok(bytes) = response
             .body_mut()
             .with_config()
             .limit(MAX_ANSWER_BYTES)
             .read_to_vec()
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Answer>(&bytes).ok())
-            .map_or(Delivery::Failed, |answer| Delivery::Accepted {
+        else {
+            return Delivery::Failed;
+        };
+        if status == 409 {
+            return serde_json::from_slice::<WeekAnswer>(&bytes)
+                .map_or(Delivery::Failed, |answer| Delivery::WeekChanged {
+                    week: answer.week,
+                });
+        }
+        serde_json::from_slice::<Answer>(&bytes).map_or(Delivery::Failed, |answer| {
+            Delivery::Accepted {
                 week: answer.week,
                 counted: answer.counted,
-            })
+            }
+        })
     }
 }
 
@@ -682,6 +716,9 @@ mod tests {
                 .borrow()
                 .clone()
                 .unwrap_or_else(|| self.week.borrow().clone());
+            if counted && report["week"] != arrival.as_str() {
+                return Delivery::WeekChanged { week: arrival };
+            }
             let week = tokens.entry(token).or_insert(arrival).clone();
             if *self.lose_answers.borrow() {
                 return Delivery::Failed;
@@ -995,7 +1032,34 @@ mod tests {
             Outcome::AlreadyCounted
         );
         assert_eq!(counter.counted_in("2026-W45"), 1);
-        assert_eq!(counter.sent().len(), 1);
+        // Refused once as prepared for the old week, then prepared again for the new one.
+        let sent = counter.sent();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0]["token"], sent[1]["token"]);
+        assert_eq!(sent[1]["week"], "2026-W45");
+    }
+
+    /// The week turns over between asking it and posting, on an age-bucket boundary: first
+    /// counted in W40, asked in W43 (three weeks, bucket 2), counted in W44 (four weeks, bucket 3).
+    /// The report is filed with the age of the week that counts it.
+    #[test]
+    fn a_report_counted_after_the_week_turned_over_carries_that_weeks_age() {
+        let (_root, dir) = told_on("2026-09-30");
+        let counter = FakeCounter::new();
+        counter.at("2026-W40");
+        run(&dir, at("2026-10-01T09:00:00Z"), &template(), &counter);
+
+        counter.at("2026-W43");
+        *counter.arrives_in.borrow_mut() = Some("2026-W44".to_string());
+        assert_eq!(
+            run(&dir, at("2026-10-25T23:59:59Z"), &template(), &counter),
+            Outcome::Counted
+        );
+        let sent = counter.sent();
+        let last = sent.last().unwrap();
+        assert_eq!(last["week"], "2026-W44");
+        assert_eq!(last["age"], 3, "{sent:?}");
+        assert_eq!(counter.counted_in("2026-W44"), 1);
     }
 
     /// A report still unanswered when the week turns over is settled first. Once the counter says
@@ -1085,7 +1149,8 @@ mod tests {
         assert_eq!(
             keys,
             [
-                "age", "app", "arch", "channel", "install", "os", "schema", "token", "version"
+                "age", "app", "arch", "channel", "install", "os", "schema", "token", "version",
+                "week"
             ]
         );
         assert_eq!(object["schema"], 1);
@@ -1168,8 +1233,9 @@ mod tests {
         assert!(!is_iso_week("../../etc"));
     }
 
-    /// rozi's real HTTPS client against the live counter: it asks the week, and posts a report
-    /// that is invalid on purpose, so the counter refuses it and stores nothing. Run by hand: `cargo test --lib live_counter -- --ignored`.
+    /// rozi's real HTTPS client against the live counter: it asks the week, posts a report that is
+    /// invalid on purpose, and posts a valid one prepared for a long-past week. The counter refuses
+    /// both and stores nothing. Run by hand: `cargo test --lib live_counter -- --ignored`.
     #[test]
     #[ignore = "reaches the live counter"]
     fn live_counter_refuses_an_invalid_report_over_https() {
@@ -1184,6 +1250,17 @@ mod tests {
             .expect("the counter names its week");
         assert!(is_iso_week(&week), "{week}");
         assert_eq!(transport.post(ENDPOINT, &body), Delivery::Rejected);
+
+        let stale = serde_json::to_vec(&Report {
+            token: new_token(),
+            week: "2000-W01".to_string(),
+            ..template()
+        })
+        .unwrap();
+        assert_eq!(
+            transport.post(ENDPOINT, &stale),
+            Delivery::WeekChanged { week }
+        );
     }
 
     #[test]

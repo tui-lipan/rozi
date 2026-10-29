@@ -2,10 +2,12 @@
 //
 // POST /v1/count  adds one install to this week's count. 200 with `{ "week", "counted" }` when the
 //                 report is taken: `counted` is false when its token was already counted, which is
-//                 what makes a resent report safe. 400 for a report that does not match the
+//                 what makes a resent report safe. 409 when the report was prepared for a week
+//                 that has since ended, so its age may be stale; nothing is stored, and the client
+//                 asks the week again and resends. 400 for a report that does not match the
 //                 contract, 429 when one address sends too fast.
-// GET  /v1/week   the current week by this server's clock, `{ "week" }`. Clients ask before making
-//                 a new report, so their own clocks never decide when a week has turned over.
+// GET  /v1/week   the current week by this server's clock, `{ "week" }`. Clients ask on every
+//                 check, so their own clocks never decide when a week has turned over.
 // GET  /v1/stats  the weekly totals, public. `?app=rozi&weeks=26`.
 //
 // The request's address is used only as the rate-limit key and is never stored or logged. The
@@ -26,7 +28,21 @@ export default {
   async fetch(request, env) {
     return handle(request, env, new Date());
   },
+  // Daily, so tokens expire on time even in a week no report arrives to expire them.
+  async scheduled(controller, env) {
+    await expireTokens(env, new Date(controller.scheduledTime));
+  },
 };
+
+/** Delete tokens whose week is two weeks old or more. */
+export async function expireTokens(env, now) {
+  await expiry(env, now).run();
+}
+
+function expiry(env, now) {
+  const expired = isoWeek(new Date(now.getTime() - TOKEN_WEEKS * 7 * 86400000));
+  return env.DB.prepare("DELETE FROM report_tokens WHERE week <= ?1").bind(expired);
+}
 
 export async function handle(request, env, now) {
   const { pathname } = new URL(request.url);
@@ -70,11 +86,19 @@ async function count(request, env, now) {
   } catch {
     return text(400, "body is not JSON\n");
   }
-  const { token, report, error } = parseReport(value);
+  const { token, preparedFor, report, error } = parseReport(value);
   if (error) return text(400, `${error}\n`);
 
   const week = isoWeek(now);
-  const expired = isoWeek(new Date(now.getTime() - TOKEN_WEEKS * 7 * 86400000));
+  if (preparedFor !== week) {
+    // A token already counted is settled whatever week it was prepared for.
+    const known = await env.DB.prepare("SELECT week FROM report_tokens WHERE token = ?1")
+      .bind(token)
+      .first();
+    if (known) return json({ week: known.week, counted: false }, { "cache-control": "no-store" });
+    // Its age was worked out for another week, so counting it here could file it a bucket young.
+    return json({ week }, { "cache-control": "no-store" }, 409);
+  }
   // One transaction, so the count is raised and the token recorded together or not at all. The
   // increment runs only while the token is unknown, so a resent report changes nothing.
   const [, claimed, stored] = await env.DB.batch([
@@ -98,7 +122,7 @@ async function count(request, env, now) {
       "INSERT INTO report_tokens (token, week) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
     ).bind(token, week),
     env.DB.prepare("SELECT week FROM report_tokens WHERE token = ?1").bind(token),
-    env.DB.prepare("DELETE FROM report_tokens WHERE week <= ?1").bind(expired),
+    expiry(env, now),
   ]);
   return json(
     { week: stored.results[0]?.week ?? week, counted: claimed.meta.changes === 1 },
@@ -177,9 +201,9 @@ function text(status, body) {
   });
 }
 
-function json(value, headers) {
+function json(value, headers, status = 200) {
   return new Response(`${JSON.stringify(value)}\n`, {
-    status: 200,
+    status,
     headers: { "content-type": "application/json; charset=utf-8", ...headers },
   });
 }

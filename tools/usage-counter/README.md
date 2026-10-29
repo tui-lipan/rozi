@@ -14,7 +14,9 @@ Two D1 tables, and nothing else:
   channel, OS, architecture, install channel, install-age bucket).
 - `report_tokens`: the token of each report counted, with its week and nothing else, so a report
   the client resends after a lost answer is not counted twice. Tokens are random and new for each
-  week's report, so they link nothing across weeks. Each is deleted once its week is two weeks old.
+  week's report, so they link nothing across weeks. Each is deleted once its week is two weeks
+  old, by a daily scheduled run as well as on each report, so tokens expire even when no report
+  arrives.
 
 No request, address, user agent, or time finer than the week is kept. The address is used only as
 the rate-limit key, and Worker observability is off so no request log exists either.
@@ -30,6 +32,11 @@ report, a client asks `GET /v1/week` and makes one only if that week is past the
 report was counted in. A report is counted in the week it arrives, which is never earlier than the
 week the client was just told, so one install cannot be counted twice in a week even with a wrong
 clock. The install-age bucket is also the distance between counter weeks.
+
+A report names the week it was prepared for. If that week ended before the report arrived, and
+its token is not one already counted, the counter answers 409 with the new week and stores
+nothing; the client works the age out again for that week and resends the same token. So a report
+that crosses Sunday midnight is filed with the age of the week that counts it.
 
 ## The answer
 
@@ -76,8 +83,11 @@ the Cloudflare account that owns `tui-lipan.dev`. From this directory, logged in
 npm run deploy
 ```
 
-It applies pending migrations to the remote database, then deploys the Worker. Check it with
-`curl -s https://usage.tui-lipan.dev/v1/stats`. Schema changes are new numbered files in
+It applies pending migrations to the remote database, then deploys the Worker and its daily
+cleanup schedule. Check it with
+`curl -s https://usage.tui-lipan.dev/v1/stats`. A new version takes a minute to reach every
+location; until then some requests still reach the previous one, so wait before checking a
+behavior the deploy changed. Schema changes are new numbered files in
 `migrations/`; never edit an applied one.
 
 The database is bound as `DB`. If a `wrangler d1` command offers to add a binding to

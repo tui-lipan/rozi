@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { getPlatformProxy } from "wrangler";
 
-import { handle } from "../src/index.js";
+import { expireTokens, handle } from "../src/index.js";
 import { isoWeek, parseReport } from "../src/report.js";
 
 const migrationsDir = new URL("../migrations/", import.meta.url);
@@ -26,9 +26,13 @@ const statements = readdirSync(migrationsDir)
 // What `src/ops/usage_count.rs` sends; its tests check the same file.
 const fixture = JSON.parse(readFileSync(new URL("./client-report.json", import.meta.url), "utf8"));
 
-/** One install's report: the fixture with a token of its own, as each client makes. */
+/**
+ * One install's report: the fixture with a token of its own, as each client makes. The week it was
+ * prepared for is left to `send`, unless a test sets one.
+ */
 function report(fields = {}) {
-  return { ...fixture, token: randomBytes(16).toString("hex"), ...fields };
+  const { week: _, ...rest } = fixture;
+  return { ...rest, token: randomBytes(16).toString("hex"), ...fields };
 }
 
 const thursday = new Date("2026-10-29T12:00:00Z");
@@ -59,8 +63,9 @@ function post(body, headers = {}) {
   });
 }
 
+/** Post `body` prepared for the week it arrives in, as a client that just asked the week does. */
 async function send(body, now = thursday, headers = {}) {
-  const response = await handle(post(body, headers), env, now);
+  const response = await handle(post({ week: isoWeek(now), ...body }, headers), env, now);
   assert.equal(response.status, 200, await response.clone().text());
   return response.json();
 }
@@ -121,6 +126,28 @@ describe("POST /v1/count", () => {
     assert.deepEqual(await send(report(), arrival), { week: "2026-W45", counted: true });
   });
 
+  // The report's age was worked out for the week it was prepared in. Counting it after the week
+  // turned over could file it a bucket too young, so it is refused for a fresh try.
+  test("a report prepared for a week that has ended is refused and stores nothing", async () => {
+    const monday = new Date("2026-11-02T00:00:01Z");
+    const response = await handle(post(report({ week: "2026-W44" })), env, monday);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { week: "2026-W45" });
+    assert.deepEqual(await rows(), []);
+    assert.deepEqual(await tokens(), []);
+  });
+
+  test("a counted token is settled even when resent for a week that has ended", async () => {
+    const once = report();
+    await send(once);
+    const monday = new Date("2026-11-02T00:00:01Z");
+    const response = await handle(post({ ...once, week: "2026-W44" }), env, monday);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { week: "2026-W44", counted: false });
+    const [row] = await rows();
+    assert.equal(row.installs, 1);
+  });
+
   test("stores nothing but the week and the reported values, and the token apart", async () => {
     const sent = report({ hostname: "laptop", user: "someone" });
     await send(sent, thursday, { "cf-connecting-ip": "192.0.2.7" });
@@ -140,6 +167,16 @@ describe("POST /v1/count", () => {
     const everything = JSON.stringify([await rows(), await tokens()]);
     assert.ok(!everything.includes("192.0.2.7"));
     assert.ok(!everything.includes("laptop"));
+  });
+
+  test("the daily cleanup forgets tokens even when no report arrives", async () => {
+    await send(report(), new Date("2026-10-15T12:00:00Z"));
+    await send(report(), new Date("2026-10-22T12:00:00Z"));
+    await expireTokens(env, new Date("2026-10-29T03:17:00Z"));
+    assert.deepEqual(
+      (await tokens()).map((row) => row.week),
+      ["2026-W43"],
+    );
   });
 
   test("tokens are forgotten once their week is two weeks old", async () => {
@@ -167,6 +204,8 @@ describe("POST /v1/count", () => {
       report({ token: undefined }),
       report({ token: "not-hex-and-too-short" }),
       report({ token: "0123456789ABCDEF0123456789ABCDEF" }),
+      report({ week: undefined }),
+      report({ week: "44" }),
     ];
     for (const body of refused) {
       const response = await handle(post(body), env, thursday);
@@ -290,7 +329,7 @@ describe("contract", () => {
   });
 
   test("a newer client's extra fields are ignored rather than refused", () => {
-    const { report: parsed, error } = parseReport(report({ terminal: "ghostty" }));
+    const { report: parsed, error } = parseReport(report({ week: "2026-W44", terminal: "ghostty" }));
     assert.equal(error, undefined);
     assert.equal(parsed.terminal, undefined);
   });
@@ -300,6 +339,6 @@ describe("contract", () => {
   });
 
   test("nightly prerelease versions are accepted", () => {
-    assert.ok(parseReport(report({ version: "0.0.38-nightly.20261029", channel: "nightly" })).report);
+    assert.ok(parseReport(report({ week: "2026-W44", version: "0.0.38-nightly.20261029", channel: "nightly" })).report);
   });
 });

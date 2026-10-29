@@ -9,6 +9,8 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "usage.tui-lipan.dev", "custom_domain": true }],
+  // Expires report tokens daily, so they go on time even when no report arrives.
+  "triggers": { "crons": ["17 3 * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

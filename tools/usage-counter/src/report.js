@@ -48,13 +48,15 @@ export const AGES = new Set([1, 2, 3, 4]);
 const WORD = /^[a-z0-9_]{1,24}$/;
 // 128 random bits, lowercase hex.
 const REPORT_TOKEN = /^[0-9a-f]{32}$/;
+const ISO_WEEK = /^\d{4}-W\d{2}$/;
 const VERSION = /^(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})\.(0|[1-9]\d{0,4})(-[0-9A-Za-z.]{1,32})?$/;
 
 export const MAX_BODY_BYTES = 1024;
 
 /**
- * A validated `{ token, report }`, or `{ error }` naming the first field that is wrong. The token is
- * returned apart from the report because it is stored apart from it.
+ * A validated `{ token, preparedFor, report }`, or `{ error }` naming the first field that is
+ * wrong. The token and the week the report was prepared for are returned apart from the report,
+ * because neither is stored with it.
  */
 export function parseReport(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -69,6 +71,9 @@ export function parseReport(value) {
   if (typeof value.token !== "string" || !REPORT_TOKEN.test(value.token)) {
     return { error: "invalid token" };
   }
+  if (typeof value.week !== "string" || !ISO_WEEK.test(value.week)) {
+    return { error: "invalid week" };
+  }
   const channel = known(CHANNELS, value.channel);
   const os = known(OSES, value.os);
   const arch = known(ARCHES, value.arch);
@@ -76,6 +81,7 @@ export function parseReport(value) {
   if (!channel || !os || !arch || !install) return { error: "invalid field" };
   return {
     token: value.token,
+    preparedFor: value.week,
     report: { app: value.app, version: value.version, channel, os, arch, install, age: value.age },
   };
 }

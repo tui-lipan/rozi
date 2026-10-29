@@ -146,17 +146,25 @@ mod unix {
     /// like any named session, unless it was created with `--no-resurrect`.
     #[test]
     fn no_resurrect_detached_session_leaves_nothing_restorable_after_a_stop() {
-        let root = isolated_home("new-detach-no-resurrect");
+        // Short label and names: the session socket must stay under macOS's 104-byte `sun_path`.
+        let root = isolated_home("nores");
         let rozi = |args: &[&str]| command(&root).args(args).output().unwrap();
+        let stderr =
+            |output: &std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
         for (name, extra, restorable) in [
-            ("kept", None, true),
-            ("dropped", Some("--no-resurrect"), false),
+            ("keep", None, true),
+            ("drop", Some("--no-resurrect"), false),
         ] {
             let mut create = vec!["sessions", "new", name, "--detach"];
             create.extend(extra);
-            assert!(rozi(&create).status.success(), "{name}: create");
+            let created = rozi(&create);
+            assert!(
+                created.status.success(),
+                "{name}: create: {}",
+                stderr(&created)
+            );
             let split = rozi(&["--session", name, "split", "--argv", "sh", "-c", "sleep 30"]);
-            assert!(split.status.success(), "{name}: split");
+            assert!(split.status.success(), "{name}: split: {}", stderr(&split));
 
             // What a machine shutdown does to the server: a stop signal, not `sessions kill`.
             let pattern = format!("--fresh-server-start {name} ");

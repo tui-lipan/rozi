@@ -25,7 +25,12 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 19] = [
+const SCENARIOS: [(&str, &str, fn()); 20] = [
+    (
+        "welcome",
+        "the first-install welcome card, with and without its logo",
+        welcome,
+    ),
     (
         "profile-picker",
         "attached, background, running, inactive, and default profiles",
@@ -168,6 +173,18 @@ fn write_png(backend: &mut TestBackend<AppRoot>, name: &str) {
     )
     .expect("write rendered grid");
     println!("wrote {}", path.display());
+}
+
+fn welcome() {
+    for (width, height) in [(140, 42), (96, 38), (100, 30), (80, 24)] {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(viewport(width, height));
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.show_welcome = true;
+        backend.render();
+        write_png(&mut backend, &format!("welcome-{width}x{height}"));
+    }
 }
 
 fn viewport(width: u16, height: u16) -> Rect {

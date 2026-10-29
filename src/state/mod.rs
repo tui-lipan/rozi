@@ -436,7 +436,7 @@ pub struct State {
     /// The startup decision to welcome a first install once a session is on screen. Cleared when
     /// it fires.
     pub(crate) welcome_due: bool,
-    pub(crate) show_welcome: bool,
+    pub show_welcome: bool,
     pub event_hub: crate::events::EventHub,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///

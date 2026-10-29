@@ -217,31 +217,58 @@ mod app_tests {
                 .config
                 .key_overrides
                 .insert("close".to_string(), Vec::new());
+            // A key moved off the prefix keeps its whole chord; one moved within it shows its key.
             backend.state_mut().config.key_overrides.insert(
                 "command-palette".to_string(),
-                vec![tui_lipan::prelude::KeyBinding::from_str("ctrl-a o").unwrap()],
+                vec![tui_lipan::prelude::KeyBinding::from_str("alt-o").unwrap()],
+            );
+            backend.state_mut().config.key_overrides.insert(
+                "help".to_string(),
+                vec![tui_lipan::prelude::KeyBinding::from_str("ctrl-a i").unwrap()],
             );
             backend.state_mut().commands_dirty = true;
             backend.state_mut().current_mut().session_attached = true;
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
 
-            let shown = frame(&mut backend);
-            assert!(shown.contains("Welcome to rozi"), "{shown}");
-            for word in ["session", "pane", "workspace", "prefix"] {
-                assert!(shown.contains(&format!(" {word} ")), "{word}:\n{shown}");
+            // The full card with its logo, and the compact one a small terminal gets.
+            for (width, height) in [(140, 42), (100, 30)] {
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: width,
+                    h: height,
+                });
+                let shown = frame(&mut backend);
+                let row = |key: &str, does: &str| {
+                    shown
+                        .lines()
+                        .any(|line| line.contains(&format!(" {key} ")) && line.contains(does))
+                };
+                assert!(shown.contains("Welcome to rozi"), "{shown}");
+                for word in ["session", "pane", "workspace"] {
+                    assert!(shown.contains(&format!(" {word} ")), "{word}:\n{shown}");
+                }
+                assert!(shown.contains("prefix, Ctrl+A: press it"), "{shown}");
+                assert!(row("Enter", "open a new pane"), "{shown}");
+                assert!(row("h j k l", "move between panes"), "{shown}");
+                assert!(row("1-9", "switch workspace"), "{shown}");
+                assert!(row("Alt+O", "find any command"), "{shown}");
+                assert!(row("i", "see every key"), "{shown}");
+                assert!(!shown.contains("close the pane"), "{shown}");
+                assert!(shown.contains("open guide"), "{shown}");
             }
-            assert!(shown.contains("Ctrl+A, then a command key"), "{shown}");
-            assert!(shown.contains("Ctrl+A Enter"), "{shown}");
-            assert!(shown.contains("Ctrl+A h j k l"), "{shown}");
-            assert!(shown.contains("Ctrl+A 1-9"), "{shown}");
+            // Only the full card has room for the mark and the version under it.
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 140,
+                h: 42,
+            });
+            let wide = frame(&mut backend);
             assert!(
-                shown
-                    .lines()
-                    .any(|line| line.contains("Ctrl+A o ") && line.contains("command palette")),
-                "{shown}"
+                wide.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
+                "{wide}"
             );
-            assert!(!shown.contains("close pane"), "{shown}");
-            assert!(shown.contains("open guide"), "{shown}");
         });
     }
 }

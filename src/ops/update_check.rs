@@ -86,7 +86,7 @@ impl AvailableUpdate {
             .then_some(compatibility.extension_api);
         let protocol_changes = compatibility.session_protocol != PROTOCOL_VERSION;
         let Some(extension_api) = extension_bump else {
-            return protocol_changes.then(|| "restart sessions after updating".to_string());
+            return protocol_changes.then(|| "restart running sessions".to_string());
         };
         let action = if protocol_changes {
             "review extensions, restart sessions after"
@@ -353,7 +353,7 @@ mod tests {
 
         let protocol = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION + 1).toast_body(false);
         assert!(
-            protocol.ends_with("\nrestart sessions after updating"),
+            protocol.ends_with("\nrestart running sessions"),
             "{protocol}"
         );
 
@@ -368,11 +368,7 @@ mod tests {
     fn any_session_protocol_change_needs_a_restart() {
         let lower = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION - 1);
         assert!(lower.needs_caution());
-        assert!(
-            lower
-                .installed_body()
-                .ends_with("restart sessions after updating")
-        );
+        assert!(lower.installed_body().ends_with("restart running sessions"));
     }
 
     /// The body is rows a glance can take in, not a sentence: the step, then what to do.

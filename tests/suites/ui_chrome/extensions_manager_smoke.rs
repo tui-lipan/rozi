@@ -2016,3 +2016,151 @@ fn failed_revision_bump_during_removal_completes_local_mutation_and_surfaces_war
         );
     });
 }
+
+/// The installed report removes its own extension with the picker's two-press `Ctrl+K`, then hands
+/// back the list it was opened from.
+#[test]
+fn installed_report_removes_its_extension_and_returns_to_the_list() {
+    rozi::test_support::on_large_stack(|| {
+        let root = rozi::test_support::isolate_user_dirs();
+        let _config = rozi::test_support::lock_config_file();
+        let extensions = extensions_root(root);
+        let id = "report-remove";
+        install_git_extension(&extensions, id);
+        let _cleanup = RemoveInstalledExtensions {
+            extensions: extensions.clone(),
+            ids: &["report-remove"],
+        };
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 110,
+            h: 45,
+        });
+        backend
+            .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+            .expect("open extensions");
+        let row = backend
+            .state()
+            .extensions
+            .as_ref()
+            .expect("extensions state")
+            .entries
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some(id))
+            .expect("installed row");
+        backend
+            .dispatch(rozi::Msg::ExtensionsSelect(
+                rozi::state::ExtensionPickerRow::Installed(row),
+            ))
+            .expect("select installed row");
+        backend
+            .dispatch(rozi::Msg::ExtensionsOpenDetail)
+            .expect("open report");
+        let report = frame(&mut backend);
+        assert!(report.contains("remove Ctrl+K"), "{report}");
+
+        let ctrl_k = KeyEvent {
+            code: KeyCode::Char('k'),
+            mods: KeyMods::CTRL,
+        };
+        backend.send_key(ctrl_k).expect("arm removal");
+        let armed = frame(&mut backend);
+        assert!(armed.contains("again to remove"), "{armed}");
+        assert!(extensions.join(id).exists(), "first press only arms");
+
+        backend.send_key(ctrl_k).expect("confirm removal");
+        let list = frame(&mut backend);
+        assert!(!extensions.join(id).exists(), "second press removes");
+        let state = backend
+            .state()
+            .extensions
+            .as_ref()
+            .expect("extensions state");
+        assert!(state.detail.is_none(), "{list}");
+        assert!(state.pending_remove.is_none());
+        assert!(
+            !state
+                .entries
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some(id)),
+            "{list}"
+        );
+        assert!(list.contains("Search extensions"), "{list}");
+        assert_ne!(
+            backend.focused_key().map(|key| key.as_ref()),
+            Some("rozi-extension-detail")
+        );
+    });
+}
+
+/// An installed extension's discovery report offers `manage` in place of a greyed-out install, and
+/// `Enter` lands on its row on the Installed tab, where it can be enabled, updated, or removed.
+#[test]
+fn discover_report_of_an_installed_extension_opens_its_installed_row() {
+    rozi::test_support::on_large_stack(|| {
+        rozi::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 110,
+            h: 45,
+        });
+        backend
+            .dispatch(rozi::Msg::RunAction(rozi::input::Action::OpenExtensions))
+            .expect("open extensions");
+        backend.state_mut().extensions.as_mut().unwrap().entries =
+            vec![installed_info("other"), installed_info("managed")];
+        load_catalog(
+            &mut backend,
+            serde_json::json!([
+                catalog_entry("someone/fresh", "fresh", "Fresh fixture"),
+                catalog_entry("someone/managed", "managed", "Managed fixture"),
+            ]),
+        );
+        // A query left on Discover must not hide the row Enter lands on.
+        for character in "Managed".chars() {
+            press(&mut backend, KeyCode::Char(character));
+        }
+        let row = backend
+            .state()
+            .extensions
+            .as_ref()
+            .unwrap()
+            .catalog_entries
+            .iter()
+            .position(|entry| entry.repository() == "someone/managed")
+            .expect("managed catalog row");
+        backend
+            .dispatch(rozi::Msg::ExtensionsSelect(
+                rozi::state::ExtensionPickerRow::Catalog(row),
+            ))
+            .expect("select catalog row");
+        backend
+            .dispatch(rozi::Msg::ExtensionsToggleSelected)
+            .expect("open discovery report");
+        let report = frame(&mut backend);
+        assert!(report.contains("Extensions · Managed fixture"), "{report}");
+        assert!(report.contains("manage Enter"), "{report}");
+        assert!(!report.contains("install Enter"), "{report}");
+
+        press(&mut backend, KeyCode::Enter);
+        let list = frame(&mut backend);
+        let state = backend.state().extensions.as_ref().unwrap();
+        assert!(state.catalog_detail.is_none(), "{list}");
+        assert_eq!(state.tab, rozi::state::ExtensionsTab::Installed);
+        assert_eq!(state.query.text(), "", "{list}");
+        assert_eq!(
+            state.entries[state.selected].id.as_deref(),
+            Some("managed"),
+            "{list}"
+        );
+        assert_ne!(
+            backend.focused_key().map(|key| key.as_ref()),
+            Some("rozi-extension-detail")
+        );
+    });
+}

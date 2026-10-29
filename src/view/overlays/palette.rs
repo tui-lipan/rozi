@@ -149,6 +149,15 @@ impl OverlayAction {
         self
     }
 
+    /// Let the footer hint carry the armed cue, for a surface such as a report that has no selected
+    /// row to show it.
+    pub(crate) fn cue_in_hint(mut self) -> Self {
+        if let Some(confirm) = self.confirm.as_ref() {
+            self.label = confirm.cue.clone();
+        }
+        self
+    }
+
     /// Show the action in the footer but let SearchPalette activate the visible row.
     pub(crate) fn hint_only(mut self) -> Self {
         self.intercept = false;

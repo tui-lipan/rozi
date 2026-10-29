@@ -104,6 +104,7 @@ pub enum Msg {
         result: std::result::Result<Vec<crate::extension_catalog::CatalogEntry>, String>,
     },
     ExtensionsSubmitCatalogInstall,
+    ExtensionsManageCatalogEntry,
     ExtensionsCatalogInstallFinished {
         repository: String,
         result: std::result::Result<ExtensionInstallOutcome, String>,

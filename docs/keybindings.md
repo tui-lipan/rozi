@@ -350,14 +350,14 @@ In **Extensions**:
 | `Enter` on an installed row | Enable or disable it |
 | `Ctrl+D` on an installed row | Open its report |
 | `Enter` on a **Discover** row | Open its installation report |
-| `Enter` again in a discovery report | Install the exact indexed commit |
+| `Enter` again in a discovery report | Install the exact indexed commit, or open an installed extension on **Installed** |
 | `Ctrl+I` | Open the manual install prompt |
 | `Ctrl+U` | Update a Git-managed installation, or check every one again when no update is known; also in its report |
 | `Ctrl+Y` in the picker | Update every installation with a known update, when there is more than one |
 | `Ctrl+R` | Rescan installed manifests on **Installed**; refetch the index on **Discover** |
 | `Ctrl+O` | Open an installed manifest |
 | `Ctrl+Y` in a report | Copy the report |
-| `Ctrl+K` twice | Remove an installation |
+| `Ctrl+K` twice | Remove an installation; also in its report |
 | `Ctrl+L` | Open the report's link: a discovery entry's source at its indexed commit, or an installed extension's homepage |
 | Arrow and paging keys | Scroll details |
 

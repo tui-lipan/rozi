@@ -521,6 +521,11 @@ pub(crate) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -
         .session_name
         .replace(session.clone())
         .unwrap_or_default();
+    // The picker a rename was raised from reopened before the server confirmed it, so its row still
+    // carries the old name; relabel it now rather than on the next discovery sweep.
+    if let Some(row) = crate::ops::session::discovery::attachment_session_row(ctx.state.current()) {
+        crate::ops::session::discovery::relabel_listed_session(ctx, &previous, row);
+    }
     crate::session::record_last_session(ctx.state.current().remote_target.as_ref(), &session);
     crate::events::emit(
         &ctx.state,

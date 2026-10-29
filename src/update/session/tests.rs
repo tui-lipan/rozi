@@ -969,6 +969,56 @@ fn parked_rename_updates_retained_identity() {
     });
 }
 
+/// Naming the current temporary session from the picker reopens the picker before the server
+/// confirms the rename. The confirmation relabels its row right away, highlight included, rather
+/// than leaving the temporary name up until the next discovery sweep.
+#[test]
+fn current_rename_relabels_open_session_picker_row() {
+    crate::test_support::on_large_stack(|| {
+        let _persisted = crate::test_support::lock_persisted_state();
+        let ephemeral = crate::state::ephemeral_session_name();
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 3;
+            state.current_mut().session_name = Some(ephemeral.clone());
+            let current = crate::ops::session::discovery::attachment_session_row(state.current())
+                .expect("current session row");
+            let other = crate::session::discovery::DiscoveredSession {
+                name: "alpha".to_string(),
+                ephemeral: false,
+                ..current.clone()
+            };
+            state.sidebar.sessions = vec![other.clone(), current.clone()];
+            let mut picker = crate::state::SessionPickerState::new(vec![other, current]);
+            picker.selected = 1;
+            state.session_picker = Some(picker);
+            state.show_session_picker = true;
+        }
+
+        backend
+            .dispatch(Msg::SessionRenamed {
+                epoch: 3,
+                session: "work".to_string(),
+            })
+            .expect("dispatch current rename");
+
+        let state = backend.state();
+        let picker = state.session_picker.as_ref().expect("picker stays open");
+        let names: Vec<_> = picker.entries.iter().map(|row| row.name.as_str()).collect();
+        assert_eq!(names, ["alpha", "work"]);
+        assert!(!picker.entries[1].ephemeral);
+        assert_eq!(picker.selected, 1);
+        let sidebar: Vec<_> = state
+            .sidebar
+            .sessions
+            .iter()
+            .map(|row| row.name.as_str())
+            .collect();
+        assert_eq!(sidebar, ["alpha", "work"]);
+    });
+}
+
 /// The rule a host monitor's summaries are graded against, where there is no pane to consult.
 /// The two edges it must never invent are the ones that would fire on every poll of a machine
 /// that has simply been sitting there: a standing prompt, and an agent that was already idle.

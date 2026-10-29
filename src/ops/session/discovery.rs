@@ -433,6 +433,47 @@ pub(crate) fn merge_current_session_row(
     }
 }
 
+/// Swap the row listed under `previous` for `renamed` in the open session picker and the sidebar's
+/// Sessions list, so a confirmed rename shows at once instead of on the next discovery sweep. The
+/// picker keeps its highlight on the renamed row.
+pub(crate) fn relabel_listed_session(
+    ctx: &mut Context<AppRoot>,
+    previous: &str,
+    renamed: DiscoveredSession,
+) {
+    let is_previous = |row: &DiscoveredSession| {
+        row.name == previous && row.remote_target == renamed.remote_target
+    };
+    let relabel = |rows: &mut Vec<DiscoveredSession>| {
+        if !rows.iter().any(is_previous) {
+            return false;
+        }
+        rows.retain(|row| !is_previous(row));
+        merge_current_session_row(rows, renamed.clone());
+        sort_session_rows(rows);
+        true
+    };
+    relabel(&mut ctx.state.sidebar.sessions);
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return;
+    };
+    let was_selected = picker.entries.get(picker.selected).is_some_and(is_previous);
+    let mut rows = picker.entries.clone();
+    if !relabel(&mut rows) {
+        return;
+    }
+    replace_picker_rows(ctx, rows);
+    if was_selected
+        && let Some(picker) = ctx.state.session_picker.as_mut()
+        && let Some(index) = picker
+            .entries
+            .iter()
+            .position(|row| row.name == renamed.name && row.remote_target == renamed.remote_target)
+    {
+        picker.selected = index;
+    }
+}
+
 pub(crate) fn sort_session_rows(rows: &mut [DiscoveredSession]) {
     rows.sort_by(|a, b| match (a.host.as_deref(), b.host.as_deref()) {
         (None, Some(_)) => std::cmp::Ordering::Less,

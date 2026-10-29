@@ -463,6 +463,16 @@ pub enum PaneAgent {
     NoneOnScreen,
 }
 
+/// Why a bare pane id names no agent when the pane answers [`PaneAgent::NoneOnScreen`]: its client
+/// lists conversations without marking the one it shows, which is a client that cannot tell as
+/// often as one showing something else.
+pub fn none_on_screen_message(pane_id: impl std::fmt::Display) -> String {
+    format!(
+        "pane {pane_id} lists agents but does not say which one is on screen; \
+         `agents list` gives each one's --ref"
+    )
+}
+
 /// The agent a pane id names among `runtimes`, the pane's [`effective_agent_runtimes`]: the pane's
 /// own, or of its published rows the one on screen. A row that is not on screen - a background
 /// conversation a client lists beside the one it shows - is reached by its exact reference, even

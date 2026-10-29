@@ -318,7 +318,9 @@ id, as in `agents get 3`, is refused. When a pane publishes agent rows, such as 
 conversation while others run in the background, `--target` names the row on screen, and
 `list-panes` reports that one. When several windows each show a row, `--target` names the first
 active one, the same row session restore resumes. A row that is not on screen, even the only one,
-is reached with `--ref`. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
+is reached with `--ref`. When the client marks none of its rows as on screen, `--target` is refused, and
+`read` and `prompt` refuse every row's `--ref` too, since rozi cannot tell which conversation typed
+text would reach. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
 JSON output also gives each agent's `reason` for its state, the `task` its published row names, and

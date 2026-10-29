@@ -215,6 +215,11 @@ asks. `list` and `get` return an opaque `ref`; pass it back with `--ref '<json>'
 instead of receiving it. Failures distinguish a gone agent, a replacement, a stale reference, and a
 timeout; do not blindly retry them.
 
+When `agents prompt` refuses because the pane does not say which conversation is on screen, check
+the screen before typing anything. An agent's prompt can read text and Enter that arrive together
+as a paste and leave the text unsent, so send the text first, then `Enter` in a separate
+`send-keys`, and confirm the agent started.
+
 ## Target rules
 
 On a UI endpoint, omitted targets use this pane's numeric `ROZI_PANE`, then the focused pane. Use

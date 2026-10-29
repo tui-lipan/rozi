@@ -1161,9 +1161,7 @@ fn resolve_agent(
                 crate::session::protocol::PaneAgent::NoneOnScreen => {
                     return Err(ControlResponse::error_with(
                         ControlErrorCode::TargetRequired,
-                        format!(
-                            "pane {pane_id} shows none of the agents it lists; pass one's --ref from `agents list`"
-                        ),
+                        crate::session::protocol::none_on_screen_message(pane_id),
                     ));
                 }
             };

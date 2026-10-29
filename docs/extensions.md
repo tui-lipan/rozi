@@ -86,7 +86,8 @@ if the manager was closed. Reopening that entry's report shows the progress agai
 installation runs at a time, whether it started from a report or from the install prompt.
 
 Extensions you already have stay listed, marked `installed`, and their report says so instead of
-offering to install them again.
+offering to install them again. `Enter` in that report opens the **Installed** tab on the
+extension, where you can enable, update, or remove it.
 
 `rozi` fetches the index in the background when **Extensions…** opens, so the manager stays
 responsive while the request runs or when you are offline. It keeps the last fetched index in its
@@ -157,8 +158,9 @@ On the **Installed** tab:
 | `Ctrl+K` | Remove the installation (press twice) |
 
 In the report, `Ctrl+Y` copies it, `Ctrl+O` opens `extension.toml`, `Ctrl+U` updates a Git-managed
-installation, and `Ctrl+L` opens the manifest's `homepage` when it declares one. The report is
-read-only and wraps long command, path, and diagnostic lines.
+installation, `Ctrl+L` opens the manifest's `homepage` when it declares one, and `Ctrl+K` twice
+removes the installation and returns to the list. The report is read-only and wraps long command,
+path, and diagnostic lines.
 
 Rows show where an extension came from: a linked checkout shows `linked`, and a Git installation
 with an update shows both versions, such as `0.2.1 → 0.2.2 · git`.

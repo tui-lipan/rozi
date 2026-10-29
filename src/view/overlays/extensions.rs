@@ -568,6 +568,8 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(entry) = state.entries.iter().find(|entry| entry.path == detail.path) else {
         return Text::new("").into();
     };
+    let removable = !update_busy(ctx) && state.removable_entries.contains(entry.path.as_str());
+    let armed = state.pending_remove.as_deref() == Some(entry.path.as_str());
     let actions = vec![
         update_action(ctx, state, entry.id.as_deref()),
         OverlayAction::new("ctrl-y", "copy report", Msg::ExtensionsCopyReport, true),
@@ -583,6 +585,14 @@ pub(crate) fn extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
             Msg::ExtensionsOpenLink,
             entry.homepage.is_some(),
         ),
+        OverlayAction::destructive(
+            ctx,
+            "remove",
+            Msg::ExtensionsRemoveSelected,
+            removable,
+            armed,
+        )
+        .cue_in_hint(),
     ];
     let formatter = ExtensionReportFormatter::new(detail.sections.clone(), &ctx.state.theme);
     let document = DocumentView::new(crate::config::report_text(&detail.sections))
@@ -631,13 +641,19 @@ fn catalog_extension_detail_overlay(ctx: &Context<AppRoot>) -> Element {
     // This entry's own installation shows its progress on top of the report; either way a running
     // installation blocks starting a second.
     let busy = ctx.state.extension_install.is_some();
-    let actions = vec![
+    // An installed entry is managed from its Installed row, so Enter goes there instead.
+    let primary = if installed {
+        OverlayAction::new("enter", "manage", Msg::ExtensionsManageCatalogEntry, true)
+    } else {
         OverlayAction::new(
             "enter",
             "install",
             Msg::ExtensionsSubmitCatalogInstall,
-            compatible && !installed && !busy,
-        ),
+            compatible && !busy,
+        )
+    };
+    let actions = vec![
+        primary,
         OverlayAction::new("ctrl-l", "open source", Msg::ExtensionsOpenLink, true),
     ];
     let sections = crate::ops::extensions_manager::catalog_report_sections(

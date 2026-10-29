@@ -905,7 +905,7 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.extension_update.is_some() {
         return Update::none();
     }
-    let Some(entry) = selected_entry(&ctx.state).cloned() else {
+    let Some(entry) = removal_target(&ctx.state).cloned() else {
         return Update::none();
     };
     let path = match installation_path(&entry) {
@@ -986,10 +986,37 @@ pub(crate) fn remove_selected(ctx: &mut Context<AppRoot>) -> Update {
             .copied()
             .unwrap_or(0);
     }
+    // A report removing its own extension has nothing left to show, so it hands back the list.
+    if let Some(state) = ctx.state.extensions.as_mut()
+        && state.detail.take().is_some()
+    {
+        crate::ops::focus::request_extensions_focus(ctx);
+    }
     if let Some(warning) = announce_warning {
         notify_warning(ctx, "Extension removed", warning);
     }
     update
+}
+
+/// Leaves a discovery entry's report for its installed row, where it is enabled, updated, or
+/// removed. A duplicate id lands on its first installation; the others sit beside it.
+pub(crate) fn manage_catalog_entry(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(state) = ctx.state.extensions.as_mut() else {
+        return Update::none();
+    };
+    let Some(id) = state
+        .catalog_detail
+        .as_ref()
+        .filter(|detail| catalog_entry_installed(state, &detail.entry))
+        .map(|detail| detail.entry.id.clone())
+    else {
+        return Update::none();
+    };
+    state.catalog_detail = None;
+    state.pending_remove = None;
+    show_installed(ctx, &id);
+    crate::ops::focus::request_extensions_focus(ctx);
+    Update::full()
 }
 
 pub(crate) fn open_detail(ctx: &mut Context<AppRoot>) -> Update {
@@ -1029,6 +1056,7 @@ pub(crate) fn close_detail(ctx: &mut Context<AppRoot>) -> Update {
     };
     state.detail = None;
     state.catalog_detail = None;
+    state.pending_remove = None;
     crate::ops::focus::request_extensions_focus(ctx);
     Update::full()
 }
@@ -1922,6 +1950,18 @@ fn selected_entry(state: &crate::state::State) -> Option<&ExtensionInfo> {
         .iter()
         .any(|(_, rows)| rows.contains(&extensions.selected))
         .then(|| extensions.entries.get(extensions.selected))?
+}
+
+/// The installation a remove acts on: the open report's, otherwise the selected row's.
+fn removal_target(state: &crate::state::State) -> Option<&ExtensionInfo> {
+    let extensions = state.extensions.as_ref()?;
+    match extensions.detail.as_ref() {
+        Some(detail) => extensions
+            .entries
+            .iter()
+            .find(|entry| identity(entry) == detail.path),
+        None => selected_entry(state),
+    }
 }
 
 /// The selected discovery entry, when the Discover tab shows it.

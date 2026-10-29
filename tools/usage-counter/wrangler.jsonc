@@ -13,8 +13,7 @@
     {
       "binding": "DB",
       "database_name": "tui-lipan-usage",
-      // Printed by `wrangler d1 create tui-lipan-usage`; see README.md.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "4aa6a529-309e-42cc-92ce-efe866d946f9",
       "migrations_dir": "migrations"
     }
   ],

@@ -45,16 +45,20 @@ together with `src/ops/usage_count.rs`.
 
 ## Deploy
 
-First deploy, from this directory, logged in to the account that owns `tui-lipan.dev`:
+The Worker, its D1 database `tui-lipan-usage`, and the `usage.tui-lipan.dev` custom domain live on
+the Cloudflare account that owns `tui-lipan.dev`. From this directory, logged in with
+`npx wrangler login`:
 
-1. `npx wrangler d1 create tui-lipan-usage`, and put the printed `database_id` into
-   `wrangler.jsonc`.
-2. `npm run deploy`. It applies pending migrations, then deploys the Worker and creates the
-   `usage.tui-lipan.dev` custom domain.
-3. Check it: `curl -s https://usage.tui-lipan.dev/` and `curl -s https://usage.tui-lipan.dev/v1/stats`.
+```bash
+npm run deploy
+```
 
-Later deploys are `npm run deploy` again. Schema changes are new numbered files in `migrations/`;
-never edit an applied one.
+It applies pending migrations to the remote database, then deploys the Worker. Check it with
+`curl -s https://usage.tui-lipan.dev/v1/stats`. Schema changes are new numbered files in
+`migrations/`; never edit an applied one.
+
+The database is bound as `DB`. If a `wrangler d1` command offers to add a binding to
+`wrangler.jsonc`, decline: a second entry under another name is never read.
 
 ## Changing the contract
 

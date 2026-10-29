@@ -195,7 +195,12 @@ target.
 
 ### Copy the last command output
 
-**Copy last command output** and the prompt jumps in copy mode need shell integration; see
+**Copy last command output** copies what the most recent command printed. While a command is still
+running, it copies the output so far. While a full-screen program such as `vim` or `htop` is open,
+it copies the output of the command that finished before it, since the program's own screen is not
+kept in scrollback.
+
+This and the prompt jumps in copy mode need shell integration; see
 [Working directories and shell metadata](#working-directories-and-shell-metadata). For scripts,
 `rozi capture-pane --last-output` captures the same output.
 

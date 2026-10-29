@@ -932,7 +932,7 @@ impl TerminalPane {
 
     /// Plain text of the last shell-integration command's output, when marks are available.
     pub fn capture_last_command_output(&self) -> Option<String> {
-        self.screen.borrow().export_last_command_output()
+        self.screen.borrow_mut().export_last_command_output()
     }
 
     /// Absolute-line semantic marks from OSC 133 (Prompt / OutputStart / OutputEnd).

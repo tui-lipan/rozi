@@ -282,7 +282,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 21,
+  "schema": 1,
   "session_protocol": 37,
   "capabilities": [
     "agent-prompt-results",

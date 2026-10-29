@@ -77,30 +77,25 @@ impl AvailableUpdate {
         self.compatibility_note().is_some()
     }
 
+    /// The extension API is a public contract, so the note names its step. The session protocol is
+    /// an internal counter that moves with every wire change: only whether it differs matters, and
+    /// its number stays out of the notice.
     fn compatibility_note(&self) -> Option<String> {
         let compatibility = self.compatibility.as_ref()?;
         let extension_bump = (compatibility.extension_api > EXTENSION_API_VERSION)
             .then_some(compatibility.extension_api);
-        let protocol_bump = (compatibility.session_protocol > PROTOCOL_VERSION)
-            .then_some(compatibility.session_protocol);
-        let mut parts = Vec::new();
-        if let Some(extension_api) = extension_bump {
-            parts.push(format!(
-                "extension API {EXTENSION_API_VERSION}→{extension_api}"
-            ));
-        }
-        if let Some(protocol) = protocol_bump {
-            parts.push(format!("session protocol {PROTOCOL_VERSION}→{protocol}"));
-        }
-        match (extension_bump, protocol_bump) {
-            (None, None) => return None,
-            (Some(_), None) => parts.push("review extensions first".to_string()),
-            (None, Some(_)) => parts.push("restart sessions after".to_string()),
-            (Some(_), Some(_)) => {
-                parts.push("review extensions, restart sessions after".to_string());
-            }
-        }
-        Some(parts.join(" · "))
+        let protocol_changes = compatibility.session_protocol != PROTOCOL_VERSION;
+        let Some(extension_api) = extension_bump else {
+            return protocol_changes.then(|| "restart running sessions".to_string());
+        };
+        let action = if protocol_changes {
+            "review extensions, restart sessions after"
+        } else {
+            "review extensions first"
+        };
+        Some(format!(
+            "extension API {EXTENSION_API_VERSION}→{extension_api} · {action}"
+        ))
     }
 
     /// An update to `latest` from the running build, optionally moving the extension API and
@@ -333,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_note_names_each_contract_that_moves_forward() {
+    fn compatibility_note_names_the_extension_step_and_the_session_restart() {
         let both = compatibility(EXTENSION_API_VERSION + 1, PROTOCOL_VERSION + 1);
         assert!(both.needs_caution());
         let body = both.toast_body(false);
@@ -341,19 +336,39 @@ mod tests {
             .lines()
             .nth(2)
             .expect("a third row carries the caution");
-        assert!(note.starts_with("extension API"), "{note}");
-        assert!(note.contains("session protocol"), "{note}");
-        assert!(note.ends_with("restart sessions after"), "{note}");
+        assert_eq!(
+            note,
+            format!(
+                "extension API {EXTENSION_API_VERSION}→{} · review extensions, restart sessions after",
+                EXTENSION_API_VERSION + 1
+            )
+        );
+
+        let extension =
+            compatibility(EXTENSION_API_VERSION + 1, PROTOCOL_VERSION).toast_body(false);
+        assert!(
+            extension.ends_with("review extensions first"),
+            "{extension}"
+        );
 
         let protocol = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION + 1).toast_body(false);
-        assert!(protocol.ends_with(&format!(
-            "session protocol {PROTOCOL_VERSION}→{} · restart sessions after",
-            PROTOCOL_VERSION + 1
-        )));
+        assert!(
+            protocol.ends_with("\nrestart running sessions"),
+            "{protocol}"
+        );
 
         let unchanged = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION);
         assert!(!unchanged.needs_caution());
         assert_eq!(unchanged.toast_body(false).lines().count(), 2);
+    }
+
+    /// Peers accept only their own protocol, so a release on a lower one strands running sessions
+    /// just as a higher one does.
+    #[test]
+    fn any_session_protocol_change_needs_a_restart() {
+        let lower = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION - 1);
+        assert!(lower.needs_caution());
+        assert!(lower.installed_body().ends_with("restart running sessions"));
     }
 
     /// The body is rows a glance can take in, not a sentence: the step, then what to do.

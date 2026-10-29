@@ -188,8 +188,8 @@ unavailable.
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available`, with the version
 step and the update command for your install channel. If the release raises the extension API or
-the session protocol, the toast uses warning colors and adds a row naming the change. Each release
-is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
+needs running sessions restarted, the toast uses warning colors and adds a row saying so. Each
+release is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
 Commands, which runs the update in a popup (see
 [Update notices](configuration.md#update-notices)).
 

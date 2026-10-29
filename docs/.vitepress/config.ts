@@ -301,6 +301,7 @@ export default defineConfig({
           { text: "Core concepts", link: "/core-concepts" },
           { text: "Platform support", link: "/platform-support" },
           { text: "Troubleshooting", link: "/troubleshooting" },
+          { text: "Usage count", link: "/usage-count" },
         ],
       },
       {

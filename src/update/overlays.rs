@@ -711,7 +711,10 @@ pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
 /// cancelling the tick in flight; `crate::ops::config` arms a fresh one when it comes back on.
 pub(super) fn update_check_tick(ctx: &mut Context<AppRoot>) -> Update {
     match ctx.state.update_check_interval() {
-        Some(interval) => Update::command_only(crate::check_for_update_and_reschedule(interval)),
+        Some(interval) => Update::command_only(crate::check_for_update_and_reschedule(
+            interval,
+            ctx.state.usage_count_enabled(),
+        )),
         None => Update::none(),
     }
 }
@@ -748,6 +751,26 @@ pub(super) fn update_available(
         update.toast_body(in_commands),
         update.needs_caution(),
     );
+    Update::full()
+}
+
+/// Tell the user, once per install, that rozi counts it in the weekly usage count and how to opt
+/// out, then record that it was shown. Only this records it: a client that exits before getting
+/// here leaves the notice for the next launch. The first report waits at least a day after this.
+pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
+    crate::pane::pty_events::notify_update(
+        ctx,
+        "Anonymous usage count",
+        format!(
+            "once a week rozi adds itself to a public count of active installs\n\
+             no ID or personal data; starts tomorrow\n\
+             opt out with `[updates] count_usage = false`\n\
+             {}",
+            crate::ops::usage_count::DOCS_URL
+        ),
+        false,
+    );
+    crate::ops::usage_count::notice_shown();
     Update::full()
 }
 
@@ -1071,15 +1094,41 @@ mod tests {
             assert!(backend.state().config.updates.check);
             assert!(!backend.state().update_checks_allowed);
             assert!(backend.state().update_check_interval().is_none());
+            assert!(!backend.state().usage_count_enabled());
 
             backend.state_mut().update_checks_allowed = true;
             assert_eq!(
                 backend.state().update_check_interval(),
                 Some(std::time::Duration::from_secs(6 * 3600))
             );
+            assert!(backend.state().usage_count_enabled());
 
+            backend.state_mut().config.updates.count_usage = false;
+            assert!(backend.state().update_check_interval().is_some());
+            assert!(!backend.state().usage_count_enabled());
+
+            // The usage count rides on the release check: turning checks off ends both.
+            backend.state_mut().config.updates.count_usage = true;
             backend.state_mut().config.updates.check = false;
             assert!(backend.state().update_check_interval().is_none());
+            assert!(!backend.state().usage_count_enabled());
+        });
+    }
+
+    #[test]
+    fn the_usage_count_notice_says_how_to_opt_out() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.dispatch(Msg::UsageCountNotice).unwrap();
+            assert!(
+                crate::ops::usage_count::notice_recorded_for_test(),
+                "showing the notice records it as shown"
+            );
+            let toast = last_toast(&backend);
+            assert!(toast.starts_with("Anonymous usage count"), "{toast}");
+            assert!(toast.contains("`[updates] count_usage = false`"), "{toast}");
+            assert!(toast.ends_with("/usage-count"), "{toast}");
         });
     }
 

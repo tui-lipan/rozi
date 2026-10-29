@@ -590,6 +590,12 @@ impl State {
             .then(|| self.config.updates.interval())
     }
 
+    /// Whether this client's release checks also take part in the anonymous weekly usage count.
+    /// Asked on every check, so a config reload takes effect at the next one.
+    pub(crate) fn usage_count_enabled(&self) -> bool {
+        self.update_check_interval().is_some() && self.config.updates.count_usage
+    }
+
     pub(crate) fn begin_pane_event(&mut self, animation: GeometryAnimation) {
         self.animation = animation;
         if matches!(

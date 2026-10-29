@@ -94,6 +94,9 @@ open = "5.4.4"
 # Registry rather than a path dep so Cargo.lock pins the exact engine a signed release was built
 # against. A 0.0.x requirement resolves to that version alone, so an upgrade is always deliberate.
 relswap = "0.0.12"
+# Posts the weekly usage count. The same version and TLS features relswap resolves, so it adds no
+# crate to the build.
+ureq = { version = "3.3", default-features = false, features = ["rustls", "platform-verifier"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.11"

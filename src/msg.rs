@@ -21,6 +21,10 @@ pub enum Msg {
         update: crate::ops::update_check::AvailableUpdate,
         announce: bool,
     },
+    /// This install is about to join the anonymous weekly usage count for the first time, and this
+    /// client is the one that tells the user. The client records the notice as shown once it has
+    /// raised it; until then another launch may be told to show it again.
+    UsageCountNotice,
     /// Time to look for a newer release again. Rescheduled from its own handler for as long as
     /// `[updates] check` stays on.
     UpdateCheckTick,

@@ -493,8 +493,9 @@ These settings apply on reload and are also in the General category of Settings.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `check` | bool | `true` | Looks for a newer release shortly after a client starts, then every `interval_hours`. Off, rozi never contacts the release host on its own. |
+| `check` | bool | `true` | Looks for a newer release shortly after a client starts, then every `interval_hours`. Off, rozi never contacts the release host or the usage counter on its own. |
 | `interval_hours` | integer | `6` | Hours between re-checks in a client that stays open. Minimum `1`; lower values are clamped with a warning. |
+| `count_usage` | bool | `true` | Adds this install to the anonymous weekly [usage count](usage-count.md) during these checks. Has no effect while `check` is off. |
 
 `rozi update --check` checks on demand, whether or not `check` is on. Turning `check` back on
 schedules the next check one interval later, not immediately.

@@ -53,6 +53,8 @@ pub(super) struct StartupTasks {
     /// How long after the startup check the first re-check fires, or `None` when this client does
     /// no release checks at all.
     pub(super) update_check_interval: Option<Duration>,
+    /// Whether those checks also report this install to the weekly usage count.
+    pub(super) count_usage: bool,
     pub(super) watch_hangup: bool,
     pub(super) control_listener: Option<crate::platform::ipc::IpcListener>,
     pub(super) event_hub: events::EventHub,
@@ -94,7 +96,8 @@ impl StartupTasks {
         });
         if let Some(interval) = self.update_check_interval {
             let update_link = link.clone();
-            std::thread::spawn(move || check_for_update(update_link, interval));
+            let count_usage = self.count_usage;
+            std::thread::spawn(move || check_for_update(update_link, interval, count_usage));
         }
         ops::config::spawn_config_watcher(&link);
         ops::config::spawn_extension_store_watcher(&link);
@@ -529,13 +532,15 @@ fn requested_new_profile(new: &cli::NewSession) -> Option<StartupProfile> {
     Some(load_startup_profile(profile_name, path))
 }
 
-/// Look for a newer release, then arm the next look.
+/// Look for a newer release and, when `count_usage`, report this week's usage count, then arm the
+/// next look.
 ///
 /// The next tick is armed after the check returns rather than alongside it, so a release host that
 /// never answers costs one waiting thread instead of a growing pile of them. Blocking is fine
 /// here: every caller is already on a worker thread of its own.
-pub(super) fn check_for_update(link: CommandLink<Msg>, interval: Duration) {
+pub(super) fn check_for_update(link: CommandLink<Msg>, interval: Duration, count_usage: bool) {
     ops::update_check::announce_available(&link);
+    ops::usage_count::report_if_due(&link, count_usage);
     link.send_after(interval, Msg::UpdateCheckTick);
 }
 

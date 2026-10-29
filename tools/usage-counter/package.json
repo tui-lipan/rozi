@@ -1,0 +1,13 @@
+{
+  "name": "tui-lipan-usage-counter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler d1 migrations apply tui-lipan-usage --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.0"
+  }
+}

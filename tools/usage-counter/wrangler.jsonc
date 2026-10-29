@@ -1,0 +1,27 @@
+{
+  // The tui-lipan usage counter. See README.md for what it stores and how to deploy it.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tui-lipan-usage",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  // No request logs: the address is used only for rate limiting and must not be kept anywhere.
+  "observability": { "enabled": false },
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "usage.tui-lipan.dev", "custom_domain": true }],
+  // Expires report tokens daily, so they go on time even when no report arrives.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tui-lipan-usage",
+      "database_id": "4aa6a529-309e-42cc-92ce-efe866d946f9",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Bounds what one address can add: a NAT full of real users stays well under this, and a
+  // script replaying reports gets at most this many a minute.
+  "ratelimits": [
+    { "name": "COUNT_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ]
+}

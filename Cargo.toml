@@ -89,6 +89,8 @@ tui-lipan = { version = "0.34.0", features = [
   "devtools",
   # `capture-pane --render png`.
   "ui-snapshot-png",
+  # The What's new dialog renders the release notes.
+  "markdown",
 ] }
 open = "5.4.4"
 # Registry rather than a path dep so Cargo.lock pins the exact engine a signed release was built

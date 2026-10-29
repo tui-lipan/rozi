@@ -991,6 +991,9 @@ pub struct UpdatesConfig {
     /// Whether the client includes this install in the anonymous weekly usage count. It rides on
     /// the release check, so `check = false` turns it off too.
     pub count_usage: bool,
+    /// Whether the first idle moment after an update opens the new release's notes. Needs no
+    /// network: a release build carries its own notes.
+    pub release_notes: bool,
 }
 
 impl UpdatesConfig {
@@ -1009,6 +1012,7 @@ impl Default for UpdatesConfig {
             check: true,
             interval_hours: 6,
             count_usage: true,
+            release_notes: true,
         }
     }
 }

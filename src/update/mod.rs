@@ -226,6 +226,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::extensions_manager::update_checked(ctx, epoch, id, check)
         }
         Msg::CloseExtensionDetail => crate::ops::extensions_manager::close_detail(ctx),
+        Msg::CloseReleaseNotes => crate::ops::release_notes::close(ctx),
+        Msg::OpenReleaseNotesPage => crate::ops::release_notes::open_page(ctx),
         Msg::CloseSettingsNumberEditor => overlays::close_settings_number_editor(ctx),
         Msg::SettingsNumberChanged(field, event) => {
             overlays::settings_number_changed(ctx, field, event)
@@ -1184,6 +1186,11 @@ fn post_update_sync(
     }
 
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
+        let command = update.command.take();
+        update = Update::with_command(command);
+    }
+
+    if crate::ops::release_notes::show_if_due(ctx) {
         let command = update.command.take();
         update = Update::with_command(command);
     }

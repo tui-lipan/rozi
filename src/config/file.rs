@@ -629,6 +629,7 @@ struct UpdatesFileConfig {
     check: Option<bool>,
     interval_hours: Option<u32>,
     count_usage: Option<bool>,
+    release_notes: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1280,6 +1281,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(count_usage) = parsed.updates.count_usage {
         config.updates.count_usage = count_usage;
+    }
+    if let Some(release_notes) = parsed.updates.release_notes {
+        config.updates.release_notes = release_notes;
     }
     if let Some(enabled) = parsed.notifications.enabled {
         config.notifications.enabled = enabled;
@@ -2397,6 +2401,7 @@ mod file_tests {
             check: true,
             interval_hours: 6,
             count_usage: true,
+            release_notes: true,
         };
         assert_eq!(config.interval(), std::time::Duration::from_secs(6 * 3600));
     }

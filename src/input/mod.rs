@@ -75,6 +75,8 @@ pub enum Action {
     OpenExtensions,
     /// Install the newer release a check found, in a popup, with this install's own updater.
     UpdateRozi,
+    /// Show the notes of the release this build is.
+    ShowReleaseNotes,
     OpenAppearance,
     OpenAlerts,
     ToggleDoNotDisturb,
@@ -216,6 +218,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenSettings,
     Action::OpenExtensions,
     Action::UpdateRozi,
+    Action::ShowReleaseNotes,
     Action::OpenAppearance,
     Action::OpenAlerts,
     Action::ToggleDoNotDisturb,
@@ -347,6 +350,7 @@ impl Action {
             Action::OpenSettings => "settings",
             Action::OpenExtensions => "extensions",
             Action::UpdateRozi => "update-rozi",
+            Action::ShowReleaseNotes => "release-notes",
             Action::OpenAppearance => "change-appearance",
             Action::OpenAlerts => "alerts",
             Action::ToggleDoNotDisturb => "toggle-do-not-disturb",

@@ -49,6 +49,8 @@ pub enum Msg {
         epoch: u64,
     },
     CommandPaletteQueryChanged(String),
+    CloseReleaseNotes,
+    OpenReleaseNotesPage,
     CloseHelp,
     HelpQueryChanged(InputEvent),
     HelpTabSelected(usize),

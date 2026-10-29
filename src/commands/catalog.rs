@@ -364,6 +364,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ShowReleaseNotes,
+        label: "What's new in rozi",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ReloadExtensions,
         label: "Reload extensions",
         category: "App",

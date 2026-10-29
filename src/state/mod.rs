@@ -426,6 +426,13 @@ pub struct State {
     /// went, and this process keeps running the old build either way, so offering the same update
     /// again would only repeat it.
     pub(crate) update_started: bool,
+    /// The notes this build carries, which **What's new** shows. `None` for a build made outside
+    /// the release workflow.
+    pub(crate) release_notes: Option<crate::ops::release_notes::ReleaseNotes>,
+    /// The startup decision to show [`Self::release_notes`] once, as soon as nothing else holds the
+    /// screen. Cleared when it fires.
+    pub(crate) release_notes_due: bool,
+    pub(crate) show_release_notes: bool,
     pub event_hub: crate::events::EventHub,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
@@ -756,6 +763,9 @@ impl State {
             update_checks_allowed: false,
             available_update: None,
             update_started: false,
+            release_notes: None,
+            release_notes_due: false,
+            show_release_notes: false,
             event_hub: crate::events::EventHub::default(),
             publish_streams: std::collections::HashMap::new(),
             terminal_presentation_subscription: None,
@@ -1264,6 +1274,7 @@ impl State {
             (self.search.is_some(), "search"),
             (self.show_pick, "pick"),
             (self.show_layout_picker, "layout-picker"),
+            (self.show_release_notes, "release-notes"),
             (self.show_theme_picker, "theme-picker"),
             (self.keybindings.is_some(), "help"),
             (self.extensions.is_some(), "extensions"),

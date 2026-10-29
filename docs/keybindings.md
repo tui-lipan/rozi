@@ -137,6 +137,7 @@ These actions are available in the command palette, and you can bind them under 
 - `settings`
 - `extensions`
 - `update-rozi` (listed only when a newer release is known)
+- `release-notes` (listed only in builds from a release archive)
 - `open-config`
 - `apply-profile`
 - `collaborators`

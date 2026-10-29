@@ -31,11 +31,10 @@ an install from one week to the next.
 ## What is kept
 
 The counter keeps one number per week for each combination of the fields above except the token
-and week,
-such as "week 44, rozi 0.0.37, release, linux, x86_64, managed, age 2: 118 installs". It keeps the
-tokens it has seen in a separate list, without the other fields, and deletes each one two weeks
-later. It does not store the request, your IP address, or the time it arrived. Your address is
-used only to limit how often it can send.
+and week, such as "week 44, rozi 0.0.37, release, linux, x86_64, managed, age 2: 118 installs".
+It keeps the tokens it has seen in a separate list, without the other fields, for at least two
+weeks and at most three, then deletes them. It does not store the request, your IP address, or
+the time it arrived. Your address is used only to limit how often it can send.
 
 The totals are public: <https://usage.tui-lipan.dev/v1/stats?app=rozi>. The counter's source is
 [`tools/usage-counter`](../tools/usage-counter/) in the rozi repository.

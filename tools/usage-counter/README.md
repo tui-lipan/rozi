@@ -14,9 +14,10 @@ Two D1 tables, and nothing else:
   channel, OS, architecture, install channel, install-age bucket).
 - `report_tokens`: the token of each report counted, with its week and nothing else, so a report
   the client resends after a lost answer is not counted twice. Tokens are random and new for each
-  week's report, so they link nothing across weeks. Each is deleted once its week is two weeks
-  old, by a daily scheduled run as well as on each report, so tokens expire even when no report
-  arrives.
+  week's report, so they link nothing across weeks. Each is kept at least two weeks and at most
+  three: it is deleted once its week is three weeks back, by a daily scheduled run as well as on
+  each report, so tokens expire even when no report arrives. Only the week is stored, which is
+  why the bound is in weeks; a resend after more than two weeks may be counted as a new report.
 
 No request, address, user agent, or time finer than the week is kept. The address is used only as
 the rate-limit key, and Worker observability is off so no request log exists either.

@@ -20,9 +20,11 @@ const DEFAULT_WEEKS = 26;
 const MAX_WEEKS = 520;
 const STATS_MAX_AGE = 3600;
 const DIMENSIONS = ["version", "channel", "os", "arch", "install", "age"];
-// How long a token is remembered. A client resends an unanswered report at its next check, hours
-// later, so two weeks covers an install that goes offline mid-send and stays off for a while.
-const TOKEN_WEEKS = 2;
+// A token is kept until its week is this many weeks back. Only the week is stored, so a token from
+// late Sunday would get a week less than one from Monday; keeping three weeks of them means every
+// token lasts at least two weeks, which covers an install that goes offline mid-send and stays
+// off for a while.
+const TOKEN_WEEKS = 3;
 
 export default {
   async fetch(request, env) {
@@ -34,7 +36,7 @@ export default {
   },
 };
 
-/** Delete tokens whose week is two weeks old or more. */
+/** Delete tokens whose week is `TOKEN_WEEKS` or more weeks back: each lasts two to three weeks. */
 export async function expireTokens(env, now) {
   await expiry(env, now).run();
 }

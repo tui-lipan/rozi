@@ -1233,9 +1233,10 @@ mod tests {
         assert!(!is_iso_week("../../etc"));
     }
 
-    /// rozi's real HTTPS client against the live counter: it asks the week, posts a report that is
-    /// invalid on purpose, and posts a valid one prepared for a long-past week. The counter refuses
-    /// both and stores nothing. Run by hand: `cargo test --lib live_counter -- --ignored`.
+    /// rozi's real HTTPS client against the live counter: it asks the week and posts a report whose
+    /// token is malformed, which every counter version refuses before counting anything. Nothing
+    /// sent here is a valid report, so a stale or broken deploy cannot turn this check into a
+    /// count; the counter's other answers are covered by its own tests. Run by hand: `cargo test --lib live_counter -- --ignored`.
     #[test]
     #[ignore = "reaches the live counter"]
     fn live_counter_refuses_an_invalid_report_over_https() {
@@ -1250,17 +1251,6 @@ mod tests {
             .expect("the counter names its week");
         assert!(is_iso_week(&week), "{week}");
         assert_eq!(transport.post(ENDPOINT, &body), Delivery::Rejected);
-
-        let stale = serde_json::to_vec(&Report {
-            token: new_token(),
-            week: "2000-W01".to_string(),
-            ..template()
-        })
-        .unwrap();
-        assert_eq!(
-            transport.post(ENDPOINT, &stale),
-            Delivery::WeekChanged { week }
-        );
     }
 
     #[test]

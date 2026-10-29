@@ -169,24 +169,40 @@ describe("POST /v1/count", () => {
     assert.ok(!everything.includes("laptop"));
   });
 
+  // Only the week is stored, so the shortest-lived token is one from the last moment of its week.
+  // It must still be recognised two weeks later, or a resend after a lost first answer would
+  // count the install as new a second time.
+  test("a token from late Sunday is still known two weeks later", async () => {
+    const lateSunday = report();
+    await send(lateSunday, new Date("2026-10-18T23:59:59Z"));
+    const twoWeeksLater = new Date("2026-11-01T23:59:59Z");
+    await expireTokens(env, twoWeeksLater);
+    assert.deepEqual(await send(lateSunday, twoWeeksLater), {
+      week: "2026-W42",
+      counted: false,
+    });
+    const [row] = await rows();
+    assert.equal(row.installs, 1);
+  });
+
   test("the daily cleanup forgets tokens even when no report arrives", async () => {
     await send(report(), new Date("2026-10-15T12:00:00Z"));
     await send(report(), new Date("2026-10-22T12:00:00Z"));
-    await expireTokens(env, new Date("2026-10-29T03:17:00Z"));
+    // Monday of W45: W42 is three weeks back, W43 two.
+    await expireTokens(env, new Date("2026-11-02T03:17:00Z"));
     assert.deepEqual(
       (await tokens()).map((row) => row.week),
       ["2026-W43"],
     );
   });
 
-  test("tokens are forgotten once their week is two weeks old", async () => {
-    const old = report();
-    await send(old, new Date("2026-10-15T12:00:00Z"));
+  test("reports also expire tokens three weeks back", async () => {
+    await send(report(), new Date("2026-10-15T12:00:00Z"));
     await send(report(), new Date("2026-10-22T12:00:00Z"));
-    await send(report(), thursday);
+    await send(report(), new Date("2026-11-02T12:00:00Z"));
     assert.deepEqual(
       (await tokens()).map((row) => row.week),
-      ["2026-W43", "2026-W44"],
+      ["2026-W43", "2026-W45"],
     );
   });
 

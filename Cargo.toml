@@ -79,7 +79,7 @@ exclude = [
 # 0.32.0: superseded-frame elision and opt-in root-frame edits for inline image relay.
 # 0.33.0: toast slide and restack motion, and no image flashes under partial repaints of
 # pixel-mask effects.
-tui-lipan = { version = "0.33.0", features = [
+tui-lipan = { version = "0.34.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

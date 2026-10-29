@@ -38,8 +38,8 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session whose first pane starts in DIR",
             ),
             row(
-                "new <NAME> --detach",
-                "Start a session without opening a UI",
+                "new <NAME> --detach [--no-resurrect]",
+                "Start without a UI, optionally never saved",
             ),
             row(
                 "kill <NAME> [--remote <HOST>]",
@@ -169,9 +169,11 @@ fn parse_new(
     let name = take_target(iter, &cli, "sessions new")?;
     let mut new = NewSession::default();
     let mut detach = false;
+    let mut no_resurrect = false;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--detach" => detach = true,
+            "--no-resurrect" => no_resurrect = true,
             "--profile" => {
                 let profile = require_value(iter, "--profile requires a profile name")?;
                 if new.profile.replace(profile).is_some() {
@@ -194,7 +196,10 @@ fn parse_new(
         }
     }
     if detach {
-        return parse_new_detached(name, &new, cli);
+        return parse_new_detached(name, &new, !no_resurrect, cli);
+    }
+    if no_resurrect {
+        return Err("--no-resurrect can only be used with sessions new --detach".to_string());
     }
     cli.attach_session = Some(name);
     cli.session_command = SessionCommand::New(new);
@@ -206,6 +211,7 @@ fn parse_new(
 fn parse_new_detached(
     name: String,
     new: &NewSession,
+    resurrect: bool,
     cli: CliArgs,
 ) -> std::result::Result<ParsedCli, String> {
     let refused = if new.profile.is_some() {
@@ -225,6 +231,7 @@ fn parse_new_detached(
     }
     Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
         name,
+        resurrect,
         config_path: cli.config_path,
     }))
 }
@@ -581,6 +588,10 @@ mod tests {
                 &["sessions", "new", "eph-1", "--detach"][..],
                 "invalid session name",
             ),
+            (
+                &["sessions", "new", "dev", "--no-resurrect"][..],
+                "--no-resurrect can only be used with sessions new --detach",
+            ),
         ] {
             assert_eq!(parse(args).expect_err("must reject"), message, "{args:?}");
         }
@@ -590,9 +601,27 @@ mod tests {
     fn detach_creates_without_launching() {
         assert!(matches!(
             parse(&["--config", "c.toml", "sessions", "new", "dev", "--detach"]),
-            Ok(ParsedCli::Sessions(SessionsCommand::NewDetached { name, config_path }))
-                if name == "dev" && config_path.as_deref() == Some("c.toml")
+            Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
+                name,
+                resurrect: true,
+                config_path,
+            })) if name == "dev" && config_path.as_deref() == Some("c.toml")
         ));
+        for args in [
+            &["sessions", "new", "dev", "--detach", "--no-resurrect"][..],
+            &["sessions", "new", "dev", "--no-resurrect", "--detach"][..],
+        ] {
+            assert!(
+                matches!(
+                    parse(args),
+                    Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
+                        resurrect: false,
+                        ..
+                    }))
+                ),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

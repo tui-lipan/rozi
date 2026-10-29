@@ -238,9 +238,10 @@ pub fn run() -> Result<()> {
             fresh,
             config_path,
             startup_nonce,
+            resurrect,
         } => {
             apply_config_path(config_path);
-            return cli::run_server_cli(&name, fresh, startup_nonce);
+            return cli::run_server_cli(&name, fresh, startup_nonce, resurrect);
         }
         cli::ParsedCli::RemoteServe { name, autostart } => {
             return cli::run_remote_serve_cli(&name, autostart);
@@ -277,9 +278,13 @@ pub fn run() -> Result<()> {
                 apply_config_path(config_path);
                 return cli::run_list_sessions_cli(format, remote.as_deref());
             }
-            cli::SessionsCommand::NewDetached { name, config_path } => {
+            cli::SessionsCommand::NewDetached {
+                name,
+                resurrect,
+                config_path,
+            } => {
                 apply_config_path(config_path);
-                return cli::run_new_detached_session_cli(&name);
+                return cli::run_new_detached_session_cli(&name, resurrect);
             }
             cli::SessionsCommand::Kill {
                 name,

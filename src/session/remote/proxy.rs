@@ -124,7 +124,14 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, Opt
 
     let exe = std::env::current_exe()?;
     let nonce = fresh_server_nonce();
-    let mut child = server_lifecycle::spawn_detached_server(&exe, name, false, Some(&nonce))?;
+    let mut child = server_lifecycle::spawn_detached_server(
+        &exe,
+        name,
+        server_lifecycle::ServerStart {
+            startup_nonce: Some(&nonce),
+            ..Default::default()
+        },
+    )?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut last_err = None;
     while Instant::now() < deadline {

@@ -52,6 +52,8 @@ pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
 pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
 /// `sessions new <NAME> --detach` starts a session server and returns without opening a UI.
 pub const DETACHED_SESSION_CREATE_CAPABILITY: &str = "detached-session-create";
+/// `sessions new <NAME> --detach --no-resurrect` starts a session that never writes a snapshot.
+pub const SESSION_NO_RESURRECT_CAPABILITY: &str = "session-no-resurrect";
 pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
 /// This binary can both forward a control command to a session on another host and serve one
 /// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
@@ -159,6 +161,7 @@ impl ApiDescription {
                 crate::extension_runtime::protocol::CAPABILITY,
                 RUNTIME_EVENTS_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
+                SESSION_NO_RESURRECT_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
                 SIDEBAR_TAB_SETTINGS_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,

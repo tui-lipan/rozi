@@ -142,6 +142,65 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A detached session stopped without `sessions kill` — a shutdown or crash — stays restorable
+    /// like any named session, unless it was created with `--no-resurrect`.
+    #[test]
+    fn no_resurrect_detached_session_leaves_nothing_restorable_after_a_stop() {
+        // Short label and names: the session socket must stay under macOS's 104-byte `sun_path`.
+        let root = isolated_home("nores");
+        let rozi = |args: &[&str]| command(&root).args(args).output().unwrap();
+        let stderr =
+            |output: &std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
+        for (name, extra, restorable) in [
+            ("keep", None, true),
+            ("drop", Some("--no-resurrect"), false),
+        ] {
+            let mut create = vec!["sessions", "new", name, "--detach"];
+            create.extend(extra);
+            let created = rozi(&create);
+            assert!(
+                created.status.success(),
+                "{name}: create: {}",
+                stderr(&created)
+            );
+            let split = rozi(&["--session", name, "split", "--argv", "sh", "-c", "sleep 30"]);
+            assert!(split.status.success(), "{name}: split: {}", stderr(&split));
+
+            // What a machine shutdown does to the server: a stop signal, not `sessions kill`. The
+            // PID comes from this test's own session socket, so no other rozi on the machine is
+            // ever signalled.
+            let socket = root.join(format!("runtime/rozi/session-{name}.sock"));
+            let server_pid = rozi::platform::ipc::IpcEndpoint::at_path(&socket)
+                .connect()
+                .unwrap_or_else(|err| panic!("{name}: connect {}: {err}", socket.display()))
+                .peer_pid()
+                .expect("Linux and macOS report a socket peer's PID");
+            let signalled = Command::new("kill")
+                .args(["-TERM", &server_pid.to_string()])
+                .status()
+                .unwrap();
+            assert!(signalled.success(), "{name}: kill -TERM {server_pid}");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let listed = loop {
+                let listed = rozi(&["sessions", "list", "--format", "json"]);
+                let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+                let stopped = !listed.contains(&format!(r#""name": "{name}""#))
+                    || listed.contains(r#""status": "restorable""#);
+                if stopped || Instant::now() >= deadline {
+                    break listed;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            assert_eq!(
+                listed.contains(&format!(r#""name": "{name}""#)),
+                restorable,
+                "{name}: {listed}"
+            );
+            let _ = rozi(&["sessions", "kill", name]);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// Racing creators of one name: exactly one is told it created the session, and every other one
     /// is refused, whatever the platform can say about a socket peer.
     #[test]

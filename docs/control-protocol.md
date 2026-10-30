@@ -1060,9 +1060,17 @@ the window as well as the identity. When a window leaves the session, by detachi
 losing its connection, the rows of its publishers are withdrawn; a window that reconnects reports
 its live publishers' rows again.
 
-Every attached window lists every window's rows in Activity, but only the window holding a stream
-can send it activations. Selecting another window's row focuses its pane; the program behind it
-does not switch to that row, because its stream is in the other window.
+Each window runs its own copy of an extension, so `--kind agent` publishers are the exception: one
+window's publisher speaks for the pane, and the same identity from another window waits. When the
+speaking one withdraws its rows or its window leaves, a waiting one takes over, and rows with the
+same ID keep their run clocks. A publisher that withdraws its rows and lists them again while the
+pane runs the same program, as a service does when its window shows another session and returns,
+continues their run clocks too. Selecting an agent row sends the activation to the selecting
+window's own publisher with that identity, whichever window's row is listed.
+
+Every attached window lists every window's activity rows in Activity, but only the window holding
+a stream can send it activations. Selecting another window's activity row focuses its pane; the
+program behind it does not switch to that row, because its stream is in the other window.
 
 A publisher's identity in its window is:
 

@@ -445,7 +445,12 @@ pub struct SessionPickerState {
     /// A host explicitly opened in this picker, retained while browsing other tabs.
     pub opened_host: Option<crate::session::remote::RemoteTarget>,
     pub browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
+    /// The row each tab was left on, by identity because a refresh reorders rows.
+    pub tab_selected: Vec<(SessionPickerTab, SessionIdentity)>,
 }
+
+/// A session's name and host, which stay the same as its row moves.
+pub type SessionIdentity = (String, Option<crate::session::remote::RemoteTarget>);
 
 /// Where one row of the global Agents view points, and therefore what opening it has to do.
 ///
@@ -516,6 +521,8 @@ pub struct AgentPickerState {
     /// the cursor onto a different agent between one frame and the next — which is how a jump ends
     /// up somewhere the user never selected.
     pub selected: Option<AgentLocation>,
+    /// The row each tab was left on.
+    pub tab_selected: Vec<(AgentPickerTab, AgentLocation)>,
 }
 
 impl AgentPickerState {
@@ -524,7 +531,22 @@ impl AgentPickerState {
             tab: AgentPickerTab::All,
             input: TextInput::new(""),
             selected,
+            tab_selected: Vec::new(),
         }
+    }
+
+    /// Show `tab`, on the row it was left on if it has one.
+    pub fn switch_tab(&mut self, tab: AgentPickerTab) {
+        let previous = std::mem::replace(&mut self.tab, tab);
+        self.tab_selected.retain(|(tab, _)| *tab != previous);
+        if let Some(location) = self.selected.take() {
+            self.tab_selected.push((previous, location));
+        }
+        self.selected = self
+            .tab_selected
+            .iter()
+            .find(|(tab, _)| *tab == self.tab)
+            .map(|(_, location)| location.clone());
     }
 }
 
@@ -964,6 +986,7 @@ pub enum OverlayOrigin {
         tab: SessionPickerTab,
         opened_host: Option<Box<crate::session::remote::RemoteTarget>>,
         browse_selected: Option<(String, Option<crate::session::remote::RemoteTarget>)>,
+        tab_selected: Vec<(SessionPickerTab, SessionIdentity)>,
     },
     RemoteHosts {
         query: String,
@@ -1012,6 +1035,7 @@ impl SessionPickerState {
             tab: SessionPickerTab::default(),
             opened_host: None,
             browse_selected: None,
+            tab_selected: Vec::new(),
         }
     }
 
@@ -1034,6 +1058,32 @@ impl SessionPickerState {
     /// Index of the active tab's first row.
     pub fn first_in_tab(&self) -> Option<usize> {
         self.entries.iter().position(|entry| self.in_tab(entry))
+    }
+
+    /// Show `tab`, on the row it was left on, or its first row if that is gone or it is new. A search
+    /// in progress does not count: the tab is left on the row the search started from.
+    pub fn switch_tab(&mut self, tab: SessionPickerTab) {
+        let leaving = self.browse_selected.take().or_else(|| {
+            self.entries
+                .get(self.selected)
+                .filter(|entry| self.in_tab(entry))
+                .map(|entry| (entry.name.clone(), entry.remote_target.clone()))
+        });
+        let previous = std::mem::replace(&mut self.tab, tab);
+        self.tab_selected.retain(|(tab, _)| *tab != previous);
+        if let Some(identity) = leaving {
+            self.tab_selected.push((previous, identity));
+        }
+        let remembered = self
+            .tab_selected
+            .iter()
+            .find(|(tab, _)| *tab == self.tab)
+            .and_then(|(_, (name, target))| {
+                self.entries.iter().position(|entry| {
+                    &entry.name == name && &entry.remote_target == target && self.in_tab(entry)
+                })
+            });
+        self.selected = remembered.or_else(|| self.first_in_tab()).unwrap_or(0);
     }
 
     /// Move the highlight onto the active tab when a rebuild or a tab change left it elsewhere.

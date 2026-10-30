@@ -59,8 +59,7 @@ pub(crate) fn select_tab(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(picker) = ctx.state.agent_picker.as_mut() else {
         return Update::none();
     };
-    picker.tab = tab;
-    picker.selected = None;
+    picker.switch_tab(tab);
     sync_picker_selection(&mut ctx.state);
     crate::ops::focus::request_agent_picker_focus(ctx);
     Update::full()
@@ -959,44 +958,45 @@ mod tests {
         });
     }
 
-    /// All lists every row, so a highlight carried over from another tab would land mid-list.
+    /// Tabs do not share a selection: All lists every row, so one carried over would land mid-list.
     #[test]
-    fn switching_tabs_lands_on_the_top_row() {
+    fn each_tab_keeps_its_own_selection() {
         crate::test_support::on_large_stack(|| {
             let mut backend = tabbed_backend();
-            let top_of_all = backend
-                .state()
-                .agent_picker
-                .as_ref()
-                .unwrap()
-                .selected
-                .clone();
-            let last_session = picker_tabs(backend.state()).len() - 2;
-            backend.dispatch(Msg::AgentPickerTab(last_session)).unwrap();
-            let on_session = backend
-                .state()
-                .agent_picker
-                .as_ref()
-                .unwrap()
-                .selected
-                .clone();
-            assert!(on_session.is_some());
-
-            for tab in 0..=last_session + 1 {
-                backend.dispatch(Msg::AgentPickerTab(tab)).unwrap();
-                let state = backend.state();
-                let picker = state.agent_picker.as_ref().unwrap();
-                let top = crate::view::agents::global_agent_rows(state)
+            let location = |backend: &TestBackend<AppRoot>, label: &str| {
+                crate::view::agents::global_agent_rows(backend.state())
                     .into_iter()
-                    .find(|row| row.in_tab(state, &picker.tab))
-                    .map(|row| row.location);
-                assert_eq!(picker.selected, top, "tab {tab}");
-            }
-            assert_eq!(
-                backend.state().agent_picker.as_ref().unwrap().selected,
-                top_of_all,
-                "All starts at its top row again"
-            );
+                    .find(|row| row.label().contains(label))
+                    .map(|row| row.location)
+            };
+            let selected = |backend: &TestBackend<AppRoot>| {
+                backend
+                    .state()
+                    .agent_picker
+                    .as_ref()
+                    .unwrap()
+                    .selected
+                    .clone()
+            };
+            let local = location(&backend, "Local Codex");
+            let codex = location(&backend, "Remote Codex");
+            let claude = location(&backend, "Remote Claude");
+            // dev, dev@workbox, All.
+            let (workbox_tab, all_tab) = (1, 2);
+
+            backend
+                .dispatch(Msg::AgentPickerSelect(local.clone().unwrap()))
+                .unwrap();
+            backend.dispatch(Msg::AgentPickerTab(workbox_tab)).unwrap();
+            assert_eq!(selected(&backend), codex, "a new tab starts on top");
+            backend
+                .dispatch(Msg::AgentPickerSelect(claude.clone().unwrap()))
+                .unwrap();
+
+            backend.dispatch(Msg::AgentPickerTab(all_tab)).unwrap();
+            assert_eq!(selected(&backend), local, "All's own row");
+            backend.dispatch(Msg::AgentPickerTab(workbox_tab)).unwrap();
+            assert_eq!(selected(&backend), claude, "the session tab's own row");
         });
     }
 

@@ -105,7 +105,8 @@ The marker before each name shows how the session stands with this client:
 
 Rows are listed in that order: the session you are in, the others this client holds, running
 sessions, saved sessions, then remembered ones. Within each group, local sessions come first, then
-each host's by name. Switching tabs moves the selection to the top row.
+each host's by name. Each tab keeps its own selection while Sessions is open, starting on its top
+row.
 
 A session with nothing running to attach to says so first — `Restorable`, `Last seen`, `Busy`, or
 `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
@@ -185,8 +186,8 @@ Agents
 ```
 
 The picker opens on **All**. Each session with agents also gets its own tab; switch tabs with
-`Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter. Switching tabs moves the
-selection to the top row.
+`Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter. Each tab keeps its own selection
+while Agents is open, starting on its top row.
 
 Each row leads with the agent's task when it names one, followed by the agent's name; two rows that
 would read the same are numbered. The glyph shows the agent's state. The right side adds the reason

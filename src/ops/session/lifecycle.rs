@@ -171,10 +171,8 @@ pub(crate) fn select_session_picker_tab(ctx: &mut Context<AppRoot>, index: usize
     let Some(picker) = ctx.state.session_picker.as_mut() else {
         return Update::none();
     };
-    picker.tab = tab.clone();
+    picker.switch_tab(tab.clone());
     picker.input.set_text(String::new());
-    picker.browse_selected = None;
-    picker.selected = picker.first_in_tab().unwrap_or(0);
     if ctx.state.is_launcher()
         && let SessionPickerTab::Host(target) = tab
     {
@@ -287,7 +285,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // snapping back to the top; it also keeps our `selected` in step with the persistent
     // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
     // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
-    let (query, selected, tab, opened_host, browse_selected) = ctx
+    let (query, selected, tab, opened_host, browse_selected, tab_selected) = ctx
         .state
         .session_picker
         .as_ref()
@@ -298,6 +296,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
                 p.tab.clone(),
                 p.opened_host.clone(),
                 p.browse_selected.clone(),
+                p.tab_selected.clone(),
             )
         })
         .unwrap_or_default();
@@ -307,6 +306,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     picker.tab = tab;
     picker.opened_host = opened_host;
     picker.browse_selected = browse_selected;
+    picker.tab_selected = tab_selected;
     picker.selected = selected.min(picker.entries.len().saturating_sub(1));
     picker.keep_selection_in_tab();
     ctx.state.session_picker = Some(picker);

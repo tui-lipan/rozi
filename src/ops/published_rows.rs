@@ -416,25 +416,24 @@ pub(crate) fn unload_extensions(
 /// has stopped reading is indistinguishable from one that is slow. The pane is focused either way,
 /// so the click is never a no-op.
 pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneId, row: &RowKey) {
-    // The server qualifies each publisher by the client whose stream it is. Another client's row
-    // has no stream here, whatever its publisher is called in that client.
+    // The server qualifies each publisher by the client whose stream it is.
     let Some((owner, publisher)) = crate::session::protocol::publisher_owner(&row.publisher) else {
         return;
     };
-    let origin = if crate::pane::lifecycle::pane_is_local(state, pane_id) {
+    let local = crate::pane::lifecycle::pane_is_local(state, pane_id);
+    let origin = if local {
         // A scratch or popup pane is this client's alone, on whichever connection it used.
         PublishOrigin::Local
     } else {
-        if state
+        current_origin(state)
+    };
+    let own = local
+        || state
             .current()
             .shared
             .as_ref()
-            .is_none_or(|shared| shared.client_id != owner)
-        {
-            return;
-        }
-        current_origin(state)
-    };
+            .is_some_and(|shared| shared.client_id == owner);
+    let attached = state.current().shared.is_some();
     let key = PublishStreamKey {
         origin,
         pane: pane_id,
@@ -443,6 +442,13 @@ pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneI
     let Some(stream) = state.publish_streams.get(&key) else {
         return;
     };
+    // Another client's row has no stream here, whatever its publisher is called in that client -
+    // unless it is an agent publisher. Then this stream is this client's copy of the one speaking
+    // for the pane, listing the same conversations, and it is the one that can act in this client.
+    let copy = attached && stream.identity.kind == PublisherKind::Agent;
+    if !(own || copy) {
+        return;
+    }
     let line = format!("{}\n", serde_json::json!({ "activate": row.id }));
     // A publisher that is not draining its activations is either wedged or gone; either way the
     // stream is no longer useful, so drop it rather than blocking the UI thread on it. Only its
@@ -805,6 +811,30 @@ mod tests {
             );
             assert!(backend.state().publish_streams.is_empty());
             drop(prs_rx);
+        });
+    }
+
+    /// The pane lists one window's copy of an agent publisher. Selecting its row here reaches this
+    /// window's copy, which lists the same conversations and can act on this window's behalf.
+    #[test]
+    fn activating_another_windows_agent_row_reaches_this_windows_copy() {
+        with_backend(|backend| {
+            let _outbound = attach(backend);
+            let (tx, rx) = std::sync::mpsc::sync_channel(4);
+            open_stream(
+                backend,
+                Open {
+                    kind: PublisherKind::Agent,
+                    ..Open::anonymous(1)
+                },
+                tx,
+            );
+            super::request_activation(
+                backend.state_mut(),
+                1,
+                &row_key(CLIENT + 1, "publish:default", "ses_b"),
+            );
+            assert_eq!(rx.try_recv().unwrap().trim(), r#"{"activate":"ses_b"}"#);
         });
     }
 

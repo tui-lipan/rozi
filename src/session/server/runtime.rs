@@ -251,6 +251,7 @@ impl AgentScratch {
     /// Forget every row report: the pane's program is gone, and the rows with it.
     pub(super) fn clear_row_reports(&mut self) {
         self.row_reports.clear();
+        self.standby_rows.clear();
     }
 
     pub(super) fn reset_detection(&mut self) {
@@ -263,6 +264,7 @@ impl AgentScratch {
         // A row report belongs to another process than the one detection follows, so a change in
         // what the pane runs says nothing about it.
         let row_reports = std::mem::take(&mut self.row_reports);
+        let standby_rows = std::mem::take(&mut self.standby_rows);
         *self = Self {
             references,
             next_incarnation,
@@ -271,6 +273,7 @@ impl AgentScratch {
             launches,
             retained_resume,
             row_reports,
+            standby_rows,
             ..Self::default()
         };
     }
@@ -787,6 +790,15 @@ impl SessionServer {
         if pane.exited.is_some() {
             return Err(("pane-exited", format!("pane {pane_id} has exited")));
         }
+        // Each attached client runs its own copy of an extension, and every copy lists the same
+        // conversations. One speaks for the pane; the rest wait their turn.
+        if publisher.kind == protocol::PublisherKind::Agent {
+            if !rows.is_empty() && another_client_speaks(&pane.runtime.rows, &publisher.id) {
+                pane.agent.standby_rows.insert(publisher.id, rows);
+                return Ok(None);
+            }
+            pane.agent.standby_rows.remove(&publisher.id);
+        }
         // The UI refuses a publisher beyond the limit when its stream opens; this only stops a
         // client that did not.
         let others = pane
@@ -821,6 +833,14 @@ impl SessionServer {
             .into_iter()
             .filter(|row| row.publisher == publisher.id)
             .collect();
+        let previous = if previous.is_empty() {
+            pane.agent
+                .withdrawn_rows
+                .remove(&publisher.id)
+                .unwrap_or_default()
+        } else {
+            previous
+        };
         let mut rows = sanitize_rows(rows, &previous, now, local, &publisher);
         fold_row_reports(&mut rows, &pane.agent.row_reports);
         restamp_row_clocks(
@@ -829,6 +849,14 @@ impl SessionServer {
             pane.runtime.integration.as_deref(),
             now,
         );
+        if rows.is_empty() {
+            rows = promote_standby_rows(pane, &publisher.id, &previous, now, local);
+            if rows.is_empty() && !previous.is_empty() {
+                pane.agent
+                    .withdrawn_rows
+                    .insert(publisher.id.clone(), previous);
+            }
+        }
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
         if next == pane.runtime.rows {
             return Ok(None);
@@ -858,19 +886,39 @@ impl SessionServer {
         let session_instance = self.instance_id.clone();
         let mut messages = Vec::new();
         let mut resume_changed = false;
+        let now = unix_now_secs();
         for (&pane_id, pane) in &mut self.panes {
-            let next: Vec<_> = pane
+            let departs = |publisher: &str| {
+                protocol::publisher_owner(publisher).is_some_and(|(owner, _)| owner == client)
+            };
+            pane.agent
+                .standby_rows
+                .retain(|publisher, _| !departs(publisher));
+            let mut next: Vec<_> = pane
                 .runtime
                 .rows
                 .iter()
-                .filter(|row| {
-                    protocol::publisher_owner(&row.publisher)
-                        .is_none_or(|(owner, _)| owner != client)
-                })
+                .filter(|row| !departs(&row.publisher))
                 .cloned()
                 .collect();
             if next.len() == pane.runtime.rows.len() {
                 continue;
+            }
+            let withdrawn: Vec<_> = protocol::rows_with_integration(&pane.runtime)
+                .into_iter()
+                .filter(|row| departs(&row.publisher))
+                .collect();
+            let local = pane.runtime.cwd_host.is_none();
+            let mut publishers: Vec<&str> =
+                withdrawn.iter().map(|row| row.publisher.as_str()).collect();
+            publishers.dedup();
+            for publisher in publishers {
+                let previous: Vec<_> = withdrawn
+                    .iter()
+                    .filter(|row| row.publisher == publisher)
+                    .cloned()
+                    .collect();
+                next.extend(promote_standby_rows(pane, publisher, &previous, now, local));
             }
             // The agent and its conversation are still running; only the window that listed
             // them left. Keep what a snapshot would have resumed from those rows - unless another
@@ -1334,13 +1382,19 @@ fn derive_path_runtime(
 
 /// Refresh expensive process-based identity only when its probe is stale. Screen state is read on
 /// every poll so agent transitions and run clocks do not wait for the identity refresh interval.
-fn derive_detected_agent(
+pub(super) fn derive_detected_agent(
     pane: &mut ServerPane,
     agents: Option<&AgentCatalog>,
     foreground_program: Option<&str>,
     foreground_job: Option<&ForegroundJob>,
     process_refreshed: bool,
 ) -> Option<DetectedAgent> {
+    // The sweep that notices a process leaving runs once, and a publisher's rows outlive that
+    // process by up to a poll of its own. So what the pane runs is followed under rows too, or a
+    // withdrawn row would hand the pane back to an agent that is long gone.
+    if process_refreshed && let Some(agents) = agents {
+        refresh_agent_identity(pane, agents, foreground_program, foreground_job);
+    }
     // An agent publisher's rows describe all its sessions, while screen detection sees only the
     // session in view. Activity rows say nothing about the pane's agent, so they leave it alone.
     let agent_rows = crate::session::protocol::agent_rows_with_integration(&pane.runtime);
@@ -1361,36 +1415,44 @@ fn derive_detected_agent(
     let Some(agents) = agents else {
         return pane.runtime.detected_agent.clone();
     };
-    if process_refreshed {
-        let adopting = std::mem::take(&mut pane.agent.adopting);
-        let named = identify_pane_agent(pane, agents, foreground_program, foreground_job);
-        let identity = named
-            .as_ref()
-            .map(|(definition, _, _)| definition.id().to_string());
-        let relaunched = named.as_ref().is_some_and(|(_, _, relaunched)| *relaunched);
-        let launched = identity != pane.agent.identity || relaunched;
-        if launched {
-            let launch = identity.is_some() && !adopting;
-            pane.agent.startup = launch.then(|| super::AgentStartup::new(Instant::now()));
-            if launch {
-                pane.agent.launches = pane.agent.launches.wrapping_add(1);
-            }
-            // What the screen said about the previous program does not describe this one. Held
-            // over, its `working` would outlast the new loading screen and then end as a run.
-            pane.agent.read = None;
-            pane.agent.hold = None;
-            pane.agent.settled = None;
-            pane.agent.identity = identity;
-        }
-        // The process a launch was first seen as stays the anchor while it lives: the sweep may
-        // name one of its namesake children instead, and that child exiting is not a restart.
-        // A name-only record gives way to the first real process seen, which is better evidence.
-        let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
-        if !anchored {
-            pane.agent.process = named.map(|(_, process, _)| process);
-        }
-    }
     read_agent_state(pane, agents)
+}
+
+/// Note which agent a fresh process sweep names in the pane, and whether that is a new launch.
+fn refresh_agent_identity(
+    pane: &mut ServerPane,
+    agents: &AgentCatalog,
+    foreground_program: Option<&str>,
+    foreground_job: Option<&ForegroundJob>,
+) {
+    let adopting = std::mem::take(&mut pane.agent.adopting);
+    let named = identify_pane_agent(pane, agents, foreground_program, foreground_job);
+    let identity = named
+        .as_ref()
+        .map(|(definition, _, _)| definition.id().to_string());
+    let relaunched = named.as_ref().is_some_and(|(_, _, relaunched)| *relaunched);
+    let launched = identity != pane.agent.identity || relaunched;
+    if launched {
+        pane.agent.withdrawn_rows.clear();
+        let launch = identity.is_some() && !adopting;
+        pane.agent.startup = launch.then(|| super::AgentStartup::new(Instant::now()));
+        if launch {
+            pane.agent.launches = pane.agent.launches.wrapping_add(1);
+        }
+        // What the screen said about the previous program does not describe this one. Held
+        // over, its `working` would outlast the new loading screen and then end as a run.
+        pane.agent.read = None;
+        pane.agent.hold = None;
+        pane.agent.settled = None;
+        pane.agent.identity = identity;
+    }
+    // The process a launch was first seen as stays the anchor while it lives: the sweep may
+    // name one of its namesake children instead, and that child exiting is not a restart.
+    // A name-only record gives way to the first real process seen, which is better evidence.
+    let anchored = !launched && pane.agent.process.as_ref().is_some_and(|p| p.pid != 0);
+    if !anchored {
+        pane.agent.process = named.map(|(_, process, _)| process);
+    }
 }
 
 fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeState) -> bool {
@@ -2037,6 +2099,64 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
 /// The publisher keeps its place: its new rows go where its first old row was, and a publisher
 /// with no rows yet goes last. Publishers therefore stay in the order they first published, which
 /// is the order the pane-level active row is chosen in.
+/// Whether another client's copy of `publisher` already lists this pane's agents.
+fn another_client_speaks(rows: &[protocol::PublishedRow], publisher: &str) -> bool {
+    let name = protocol::publisher_owner(publisher).map(|(_, name)| name);
+    rows.iter().any(|row| {
+        row.is_agent()
+            && row.publisher != publisher
+            && protocol::publisher_owner(&row.publisher).map(|(_, name)| name) == name
+    })
+}
+
+/// The rows of the client's copy that takes over from `withdrawn`, the publisher that spoke for
+/// the pane, whose `previous` rows they continue: a run does not restart because the client
+/// listing it left.
+fn promote_standby_rows(
+    pane: &mut ServerPane,
+    withdrawn: &str,
+    previous: &[protocol::PublishedRow],
+    now: u64,
+    local: bool,
+) -> Vec<protocol::PublishedRow> {
+    if previous.is_empty() {
+        return Vec::new();
+    }
+    let name = protocol::publisher_owner(withdrawn).map(|(_, name)| name);
+    let Some(id) = pane
+        .agent
+        .standby_rows
+        .keys()
+        .filter(|id| protocol::publisher_owner(id).map(|(_, name)| name) == name)
+        .min()
+        .cloned()
+    else {
+        return Vec::new();
+    };
+    let rows = pane.agent.standby_rows.remove(&id).unwrap_or_default();
+    let publisher = PanePublisher {
+        id,
+        kind: protocol::PublisherKind::Agent,
+    };
+    let previous: Vec<_> = previous
+        .iter()
+        .cloned()
+        .map(|row| protocol::PublishedRow {
+            publisher: publisher.id.clone(),
+            ..row
+        })
+        .collect();
+    let mut rows = sanitize_rows(rows, &previous, now, local, &publisher);
+    fold_row_reports(&mut rows, &pane.agent.row_reports);
+    restamp_row_clocks(
+        &mut rows,
+        &previous,
+        pane.runtime.integration.as_deref(),
+        now,
+    );
+    rows
+}
+
 fn splice_publisher_rows(
     current: &[protocol::PublishedRow],
     publisher: &str,
@@ -4596,6 +4716,43 @@ mod tests {
     fn sweep(pane: &mut ServerPane, job: &ForegroundJob) -> bool {
         derive_detected_agent(pane, Some(&catalog()), None, Some(job), true);
         pane.agent.startup.is_some()
+    }
+
+    /// A publisher notices its agent leaving only at its next poll, after the one sweep that saw
+    /// the process go. The withdrawn rows must not hand the pane back to the agent.
+    #[test]
+    fn an_agent_that_exits_under_published_rows_is_gone_when_they_are_withdrawn() {
+        let mut pane = make_pane();
+        sweep(&mut pane, &agent_job(100, &[(100, "pi")]));
+        pane.runtime.detected_agent =
+            derive_detected_agent(&mut pane, Some(&catalog()), None, None, false);
+        assert!(pane.runtime.detected_agent.is_some());
+        pane.runtime
+            .rows
+            .push(crate::session::protocol::PublishedRow {
+                id: "conversation".into(),
+                title: String::new(),
+                status: "idle".into(),
+                reason: None,
+                active: true,
+                publisher: "1/sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+                live_session: None,
+                reported: false,
+            });
+
+        // The exit: the sweep sees a shell at its prompt, and is the last one to run.
+        derive_detected_agent(&mut pane, Some(&catalog()), None, None, true);
+        pane.runtime.rows.clear();
+
+        assert_eq!(
+            derive_detected_agent(&mut pane, Some(&catalog()), None, None, false),
+            None
+        );
     }
 
     /// `ROZI_AGENT` names the agent from the pane's environment, so it is named while the shell

@@ -442,6 +442,13 @@ pub struct AgentScratch {
     /// speaks for the published row whose reporting session it names, such as a conversation a
     /// client sent to the background; see [`runtime::RowReport`].
     row_reports: HashMap<String, runtime::RowReport>,
+    /// The latest rows of each agent publisher waiting for another client's copy of it to stop
+    /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
+    standby_rows: HashMap<String, Vec<protocol::PublishedRow>>,
+    /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
+    /// A service closes its stream when its window moves to another session, and the agent runs on:
+    /// reporting the same rows on return continues their runs rather than starting new ones.
+    withdrawn_rows: HashMap<String, Vec<protocol::PublishedRow>>,
     /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
     ///
     /// Naming the agent sweeps every process on the host to find this pane's process-group

@@ -6346,6 +6346,117 @@ fn session_row(
     }
 }
 
+/// Every window runs its own copy of an extension, and all of them list the same conversations. The
+/// pane shows one copy's rows; another takes over, keeping the run clock, when that copy goes.
+#[test]
+fn one_windows_copy_of_an_agent_publisher_speaks_for_the_pane() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    let (third, _third_stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let generation = server.panes[&7].generation;
+    server.panes.get_mut(&7).unwrap().runtime.rows.clear();
+    let agent = protocol::PublisherKind::Agent;
+    let publisher = || super::runtime::PanePublisher {
+        id: "sessions".into(),
+        kind: agent,
+    };
+    let rows = || {
+        vec![protocol::PublishedRow {
+            status: "working".into(),
+            ..session_row("sessions".into(), agent, "origin", "origin")
+        }]
+    };
+    let report = |server: &mut SessionServer, client, rows| {
+        server
+            .report_pane_rows(client, 7, generation, false, publisher(), rows)
+            .unwrap();
+    };
+    let listed = |server: &SessionServer| {
+        server.panes[&7]
+            .runtime
+            .rows
+            .iter()
+            .map(|row| row.publisher.clone())
+            .collect::<Vec<_>>()
+    };
+
+    report(&mut server, first, rows());
+    report(&mut server, second, rows());
+    report(&mut server, third, rows());
+    let speaker = protocol::qualified_publisher(first, "sessions");
+    assert_eq!(listed(&server), [speaker]);
+    server.panes.get_mut(&7).unwrap().runtime.rows[0].work_started_at = Some(1234);
+
+    // A copy that stops publishing is no longer waiting, so it cannot take over.
+    report(&mut server, third, Vec::new());
+    server.withdraw_client_rows(first);
+    assert_eq!(
+        listed(&server),
+        [protocol::qualified_publisher(second, "sessions")]
+    );
+    assert_eq!(
+        server.panes[&7].runtime.rows[0].work_started_at,
+        Some(1234),
+        "the run did not restart because a window left"
+    );
+
+    report(&mut server, third, rows());
+    report(&mut server, second, Vec::new());
+    assert_eq!(
+        listed(&server),
+        [protocol::qualified_publisher(third, "sessions")]
+    );
+}
+
+/// A service closes its stream when its window shows another session. The agent runs on, so its
+/// rows returning continue their run - until the pane runs something else.
+#[test]
+fn rows_withdrawn_while_their_agent_runs_keep_their_clock_when_they_return() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let generation = server.panes[&7].generation;
+    server.panes.get_mut(&7).unwrap().runtime.rows.clear();
+    let publisher = || super::runtime::PanePublisher {
+        id: "sessions".into(),
+        kind: protocol::PublisherKind::Agent,
+    };
+    let working = vec![protocol::PublishedRow {
+        status: "working".into(),
+        ..session_row(
+            "sessions".into(),
+            protocol::PublisherKind::Agent,
+            "origin",
+            "origin",
+        )
+    }];
+    let report = |server: &mut SessionServer, rows| {
+        server
+            .report_pane_rows(client, 7, generation, false, publisher(), rows)
+            .unwrap();
+    };
+    report(&mut server, working.clone());
+    server.panes.get_mut(&7).unwrap().runtime.rows[0].work_started_at = Some(1234);
+
+    report(&mut server, Vec::new());
+    assert!(server.panes[&7].runtime.rows.is_empty());
+    report(&mut server, working.clone());
+    assert_eq!(server.panes[&7].runtime.rows[0].work_started_at, Some(1234));
+
+    report(&mut server, Vec::new());
+    let pane = server.panes.get_mut(&7).unwrap();
+    pane.agent.identity = Some("claude".into());
+    super::runtime::derive_detected_agent(pane, Some(&agent_catalog(Vec::new())), None, None, true);
+    report(&mut server, working);
+    assert_ne!(
+        server.panes[&7].runtime.rows[0].work_started_at,
+        Some(1234),
+        "a program that left took its run along"
+    );
+}
+
 /// A window that detaches takes its rows with it, and a row reporter whose conversation no row
 /// names any more goes with them. One another window still lists keeps reporting into that row.
 #[test]

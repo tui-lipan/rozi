@@ -1330,6 +1330,99 @@ fn a_pane_is_held_while_its_remote_viewer_has_too_much_on_the_way() {
     assert_eq!(server.transport_backlog(7, None, presenter), 5);
 }
 
+fn ordered_output(bytes: Vec<u8>) -> tui_lipan::TerminalOutputTransaction {
+    tui_lipan::TerminalOutputTransaction {
+        class: tui_lipan::TerminalOutputClass::Ordered,
+        bytes,
+        media: Vec::new(),
+    }
+}
+
+/// Attach a client while `slow` is past the transport hold and image output only its encoding suits
+/// is still staged, with `padding` megabytes of the image ahead of the part naming a server file.
+/// The attach has to finish that output without waiting for the backed-up client, because the loop
+/// that would drain it is the one the attach is running inside.
+fn attach_behind_reader_specific_output(padding: usize) {
+    let (done, finished) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(7, test_pane(3));
+        server.panes.insert(8, test_pane(1));
+        let (slow, _slow_stream) = attach_client(&mut server);
+        broadcast_pane_output(
+            &mut server,
+            8,
+            1,
+            &vec![b'q'; graphics_pacer::TRANSPORT_HOLD_BACKLOG + 1],
+        );
+
+        let source = tempfile::NamedTempFile::new().unwrap();
+        fs::write(source.path(), [1, 2, 3, 255]).unwrap();
+        let file = tui_lipan::TerminalImmutableFile::acquire(source.path(), 4, 32).unwrap();
+        let command = b"\x1b_Ga=T,t=f,f=32,s=1,v=1;immutable\x1b\\".to_vec();
+        let mut transactions: Vec<_> = (0..padding)
+            .map(|_| ordered_output(vec![b'i'; 1024 * 1024]))
+            .collect();
+        transactions.push(tui_lipan::TerminalOutputTransaction {
+            class: tui_lipan::TerminalOutputClass::Ordered,
+            media: vec![tui_lipan::TerminalOutputMedia {
+                command_range: 0..command.len(),
+                file,
+            }],
+            bytes: command,
+        });
+        server
+            .media
+            .stage_output_for_test((None, 7, 3), transactions);
+        assert!(server.media.has_reader_specific_output());
+        assert!(
+            !server.pump_media_output(),
+            "the fixture must be holding the image back for the slow client"
+        );
+
+        let (joined, _joined_stream) = attach_client(&mut server);
+
+        assert!(server.client_attached(joined));
+        assert!(server.client_attached(slow), "the slow client stays");
+        assert!(!server.media.has_reader_specific_output());
+        assert!(!server.media.pending());
+        let client = server.client_mut(slow).unwrap();
+        assert!(client.outbox_bytes <= DEFAULT_MAX_BACKLOG);
+        let key = PaneSeedKey {
+            pane_id: 7,
+            generation: 3,
+        };
+        if padding * 1024 * 1024 > DEFAULT_MAX_BACKLOG {
+            assert!(
+                client.resync_pending.contains(&key),
+                "what does not fit is replayed"
+            );
+        } else {
+            assert!(!outbox_pane_bytes(client, 7).is_empty());
+            assert!(client.resync_pending.is_empty());
+        }
+        done.send(()).unwrap();
+    });
+    match finished.recv_timeout(Duration::from_secs(10)) {
+        Ok(()) => worker.join().unwrap(),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            std::panic::resume_unwind(worker.join().unwrap_err())
+        }
+        // The spinning worker is left behind: it cannot be stopped, and the process exit ends it.
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("the attach never finished"),
+    }
+}
+
+#[test]
+fn attaching_finishes_reader_specific_output_held_back_for_a_slow_client() {
+    attach_behind_reader_specific_output(0);
+}
+
+#[test]
+fn attaching_sheds_held_back_output_too_large_for_a_slow_client() {
+    attach_behind_reader_specific_output(9);
+}
+
 /// A frame larger than the outbox limit waits on the server and reaches a slow client as the link
 /// takes it, rather than overflowing the outbox and blanking the pane in a replay.
 #[test]
@@ -1344,7 +1437,7 @@ fn a_prepared_image_larger_than_the_outbox_limit_is_emitted_as_the_client_drains
     let frame = DEFAULT_MAX_BACKLOG * 2;
     server
         .media
-        .stage_output_for_test((None, 7, 3), vec![b'i'; frame]);
+        .stage_output_for_test((None, 7, 3), vec![ordered_output(vec![b'i'; frame])]);
 
     let mut delivered = 0;
     while server.media.pending() {

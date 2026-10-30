@@ -224,16 +224,15 @@ impl MediaPipeline {
     }
 
     #[cfg(all(test, unix))]
-    pub(super) fn stage_output_for_test(&mut self, key: MediaKey, bytes: Vec<u8>) {
+    pub(super) fn stage_output_for_test(
+        &mut self,
+        key: MediaKey,
+        transactions: Vec<tui_lipan::TerminalOutputTransaction>,
+    ) {
         self.active = Some(key);
         self.output = Some(PendingMediaOutput {
             offset: 0,
-            transactions: vec![tui_lipan::TerminalOutputTransaction {
-                class: tui_lipan::TerminalOutputClass::Ordered,
-                bytes,
-                media: Vec::new(),
-            }]
-            .into(),
+            transactions: transactions.into(),
         });
     }
 
@@ -318,7 +317,7 @@ impl SessionServer {
         self.emit_media_batch()
     }
 
-    fn emit_media_batch(&mut self) -> bool {
+    pub(super) fn emit_media_batch(&mut self) -> bool {
         let Some((key, transactions, continuation)) = self.media.output_batch() else {
             return false;
         };

@@ -1353,9 +1353,11 @@ impl SessionServer {
         }
         // Complete output encoded for the existing recipients, named files or frame edits, before
         // this reader joins the common representation. The new reader's baseline replay carries
-        // pixels.
+        // pixels. This does not wait for the existing readers to have room: only the server loop
+        // this attach is running inside can drain them. The output goes to their outboxes, which
+        // shed and replay what does not fit, so a slow reader cannot block here.
         while self.media.has_reader_specific_output() {
-            self.pump_media_output();
+            self.emit_media_batch();
         }
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
         if let Some(client) = self.client_mut(client_id) {

@@ -13,6 +13,12 @@
 Use concise conventional prefixes, for example `fix: improve toast confirmation behavior` or
 `feat: live reload config changes`.
 
+Mark every breaking change with `!` after the type or scope, for example
+`feat(sidebar)!: move tab settings into the app`. Add a `### Breaking changes` section saying what
+breaks and how to migrate. It goes in the PR Summary, or in the commit body when there is no PR. A
+`!` title without it fails the `PR description` check, and release notes list the section under
+Compatibility.
+
 Every commit needs a `Signed-off-by` trailer matching its author identity. The tracked
 `.githooks/prepare-commit-msg` hook adds that trailer automatically from your own `user.name` and
 `user.email`, and refuses the commit when either is unset. The
@@ -38,7 +44,8 @@ assign copyright or grant relicensing rights.
 ## Pull request descriptions
 
 Use `.github/PULL_REQUEST_TEMPLATE.md` when creating or rewriting a pull request description.
-Keep its Summary, Verification, and Checklist headings. Put test results, manual checks, and
+Keep its Summary, Verification, and Checklist headings. Release notes are written from the Summary,
+and the `PR description` check fails without it on `feat`, `fix`, `perf`, and `!` titles. Put test results, manual checks, and
 limitations under Verification. Keep the Checklist as a separate list with no blank lines between
 items so GitHub renders it compactly. Wrap continuation lines within the same item; put detailed
 explanations under Verification.

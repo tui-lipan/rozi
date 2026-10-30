@@ -14,6 +14,9 @@ non-user-facing work. These are fixed release facts. Do not fetch GitHub release
 source or diffs, alter the range, add excluded commits, or build another commit list.
 
 Write each entry from the Summary. The subject is the category and a short label, not the note.
+When a user-facing candidate's Summary is `(none)`, write its entry from the subject. Never skip a
+`feat`, `fix`, or `perf` candidate that changes product code, and never skip one marked
+`Breaking: yes`.
 Describe the user-visible effect: what broke or changed, and what happens now. Do not restate the
 subject. Do not start every bullet with "Rozi now...". Drop implementation, tests, reviewer notes,
 and checklists even when they appear in a Summary. Changed-file lists are only for grouping related
@@ -54,13 +57,16 @@ Inclusion rules:
 - Skip tests, CI, formatting, docs-only changes, release metadata, and pure refactors.
 - Do not mention implementation file or module names unless users need them.
 - Do not invent behavior that the subject and summary do not state.
-- Do not repeat the same change in multiple sections.
+- Do not repeat the same change in multiple sections, except for the Compatibility entry below.
 - Keep entries concise, normally one to three sentences.
 - End each entry with its PR link from the input, as `([#N](url))`. If you combine
   commits, include every corresponding PR link. Omit the link when the input says
   `(none)`. Do not invent PR numbers or URLs.
 - Preserve commands, configuration keys, protocol/API names, environment variables, and shortcuts
   when a subject or summary names them.
+- Every candidate marked `Breaking: yes` needs a Compatibility entry with its PR link, even when
+  another section also covers it. Give the migration step only when the subject or summary states
+  one.
 - Report exact compatibility values only when a subject or summary states them. Never choose or
   infer a version.
 

@@ -1,0 +1,33 @@
+name: PR description
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: PR description
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Squash merges copy the title and body into history, and release notes are written from
+      # them. A problem can be fixed here by editing the PR, but not after the merge.
+      - name: Check that the PR can produce a release note
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python3 scripts/release_notes.py check-pr \
+            --title "$PR_TITLE" \
+            --body-file "$RUNNER_TEMP/pr-body.md"

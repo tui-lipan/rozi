@@ -25,6 +25,9 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   detail. The rules are in `.agents/instructions/documentation.md`.
 - GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`. The `/changelog` command
   defines release-note structure; Rosie writes the prose from each PR Summary.
+- Mark every breaking change with `!` in the commit or PR title and add a `### Breaking changes`
+  section saying what breaks and how to migrate. The rules are in
+  `.agents/instructions/git-contributions.md`.
 - Prefer a clean breaking change over aliases or compatibility shims unless the user asks for
   compatibility or a protocol test intentionally covers version skew.
 - The repository is MPL-2.0. Contributions require a DCO sign-off.

@@ -151,6 +151,12 @@ Keep each pull request to one coherent change. Explain the user-visible effect a
 is needed. List the exact tests you ran, documentation changes, platform coverage, and any
 dependency updates. Call out checks you could not run and known follow-up work.
 
+Release notes are written from the PR Summary. Mark a breaking change with `!` in the title and add
+a `### Breaking changes` section to the Summary saying what breaks and how to migrate. The
+`PR description` check enforces this while the PR can still be edited. At release time, the notes
+must link every user-facing PR and list every breaking one under Compatibility, or the release stops
+before anything publishes.
+
 Before submitting, confirm:
 
 - [ ] Focused tests cover the change.

@@ -144,10 +144,20 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$OPENAI_API_KEY"
-          opencode run --variant low --command changelog
           # Empty is a valid answer: a release of packaging or tooling fixes has nothing to tell
-          # users, and the validate step below publishes a fixed note for it instead.
-          test -f release-notes.md
+          # users, and validation publishes a fixed note for it unless a change needed a note.
+          # The writer is not deterministic, so one dropped change should not fail a tagged release.
+          for attempt in 1 2 3; do
+            opencode run --variant low --command changelog
+            if test -f release-notes.md && python3 scripts/release_notes.py validate \
+              --input release-notes.md \
+              --metadata release-notes-range.json \
+              --output release-notes-checked.md; then
+              exit 0
+            fi
+            echo "::warning::Release notes attempt $attempt failed validation"
+          done
+          exit 1
 
       - name: Validate and freeze generated Markdown
         run: |

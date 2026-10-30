@@ -27,11 +27,53 @@ RELEASE_METADATA_PATHS = {
     "docs/installation.md",
 }
 SUMMARY_MAX_CHARS = 4_000
+# Reviewer-facing sections that never reach the notes, whichever section a PR uses for its summary.
+NON_RELEASE_SECTIONS = {
+    "checklist",
+    "notes for reviewers",
+    "screenshots",
+    "test plan",
+    "testing",
+    "validation",
+    "verification",
+}
+UPGRADE_SECTION_RE = re.compile(r"\b(breaking|migrat|upgrad|compatibility)", re.IGNORECASE)
+BREAKING_SECTION_RE = re.compile(r"\bbreaking\b", re.IGNORECASE)
+NO_BREAKING_RE = re.compile(r"^(none|n/a|no\b)", re.IGNORECASE)
+TITLE_RE = re.compile(r"^(?P<type>[a-z]+)(?:\([^)]*\))?(?P<breaking>!)?: \S")
+# Commit types that are user-visible unless every changed path says otherwise.
+USER_FACING_TYPES = {"feat", "fix", "perf"}
+COMMIT_TYPES = USER_FACING_TYPES | {
+    "bench",
+    "build",
+    "chore",
+    "ci",
+    "deps",
+    "docs",
+    "refactor",
+    "release",
+    "revert",
+    "style",
+    "test",
+}
+NON_USER_FACING_PATH_PREFIXES = (
+    ".agents/",
+    ".githooks/",
+    ".github/",
+    ".opencode/",
+    "benches/",
+    "dev/",
+    "docs/",
+    "scripts/",
+    "tests/",
+)
+PR_LINK_RE = re.compile(r"/pull/(\d+)\b")
 TRAILER_RE = re.compile(
     r"^(Signed-off-by|Co-authored-by|Reviewed-by|Acked-by):",
     re.IGNORECASE,
 )
-HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$")
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 PR_TRAILER_RE = re.compile(r"\(#(\d+)\)\s*$")
 
 
@@ -47,6 +89,7 @@ class Commit:
     paths: tuple[str, ...]
     included: bool
     exclusion_reason: str | None
+    breaking: bool = False
 
 
 def run(command: Sequence[str]) -> str:
@@ -166,8 +209,24 @@ def exclusion_reason(subject: str, paths: Sequence[str]) -> str | None:
     return None
 
 
-def commit_summary(body: str) -> str:
-    """Keep the PR Summary, or the preamble, and drop checklists and trailers."""
+@dataclass(frozen=True)
+class Section:
+    level: int
+    title: str | None
+    lines: tuple[str, ...]
+
+    @property
+    def name(self) -> str:
+        return (self.title or "").strip().rstrip(":").strip().lower()
+
+    def text(self) -> str:
+        return "\n".join(self.lines).strip()
+
+    def content(self) -> str:
+        return "\n".join(self.lines[1:] if self.title is not None else self.lines).strip()
+
+
+def clean_body(body: str) -> list[str]:
     text = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
     lines = text.replace("\r\n", "\n").splitlines()
     while lines and (
@@ -176,28 +235,94 @@ def commit_summary(body: str) -> str:
         or set(lines[-1].strip()) <= {"-"}
     ):
         lines.pop()
+    return lines
 
-    sections: list[tuple[str | None, list[str]]] = []
-    name: str | None = None
+
+def split_sections(lines: Sequence[str]) -> list[Section]:
+    """Split at headings, ignoring `#` lines inside fenced code."""
+    sections: list[Section] = []
+    level = 0
+    title: str | None = None
     current: list[str] = []
+    fence: str | None = None
     for line in lines:
-        heading = HEADING_RE.match(line)
+        fence_match = FENCE_RE.match(line)
+        if fence_match is not None:
+            marker = fence_match.group(1)
+            fence = marker if fence is None else (None if fence == marker else fence)
+        heading = None if fence is not None else HEADING_RE.match(line)
         if heading is None:
             current.append(line)
             continue
-        sections.append((name, current))
-        name = heading.group(1).strip().lower()
-        current = []
-    sections.append((name, current))
+        sections.append(Section(level, title, tuple(current)))
+        level = len(heading.group(1))
+        title = heading.group(2)
+        current = [line]
+    sections.append(Section(level, title, tuple(current)))
+    return sections
 
-    chosen = next((content for title, content in sections if title == "summary"), None)
-    if chosen is None:
-        preamble = next((content for title, content in sections if title is None), [])
-        chosen = preamble
-    summary = "\n".join(chosen).strip()
-    if len(summary) > SUMMARY_MAX_CHARS:
-        summary = summary[:SUMMARY_MAX_CHARS].rsplit("\n", 1)[0].strip()
-    return summary
+
+def summary_range(sections: Sequence[Section]) -> range | None:
+    """The Summary section together with the subsections nested under it."""
+    start = next((i for i, section in enumerate(sections) if section.name == "summary"), None)
+    if start is None:
+        return None
+    end = start + 1
+    while end < len(sections) and sections[end].level > sections[start].level:
+        end += 1
+    return range(start, end)
+
+
+def has_breaking_section(sections: Sequence[Section]) -> bool:
+    return any(
+        BREAKING_SECTION_RE.search(section.name)
+        and section.content()
+        and not NO_BREAKING_RE.match(section.content())
+        for section in sections
+    )
+
+
+def is_breaking(subject: str, body: str) -> bool:
+    title = TITLE_RE.match(subject)
+    if title is not None and title.group("breaking"):
+        return True
+    return has_breaking_section(split_sections(clean_body(body)))
+
+
+def commit_summary(body: str) -> str:
+    """Keep what the notes need from a PR body and drop what only reviewers need.
+
+    Prefers the Summary section with its subsections, then the preamble, then every
+    section that is not reviewer-facing, so a PR without a Summary still reaches the
+    notes. Upgrade guidance is kept wherever it is written, and survives truncation.
+    """
+    sections = split_sections(clean_body(body))
+    chosen = summary_range(sections)
+    if chosen is not None:
+        main = [sections[i] for i in chosen if i != chosen.start]
+        lead = sections[chosen.start].content()
+    elif sections[0].text():
+        main = []
+        lead = sections[0].text()
+    else:
+        main = [section for section in sections[1:] if section.name not in NON_RELEASE_SECTIONS]
+        lead = ""
+    upgrade = [
+        section
+        for section in sections
+        if UPGRADE_SECTION_RE.search(section.name) and section.content()
+    ]
+    body_parts = [lead] + [
+        section.text()
+        for section in main
+        if section not in upgrade and section.name not in NON_RELEASE_SECTIONS
+    ]
+    upgrade_text = "\n\n".join(section.text() for section in upgrade)
+    summary = "\n\n".join(part for part in body_parts if part).strip()
+    room = SUMMARY_MAX_CHARS - len(upgrade_text)
+    if len(summary) > room:
+        summary = summary[: max(room, 0)].rsplit("\n", 1)[0].strip()
+    return "\n\n".join(part for part in (summary, upgrade_text) if part)
 
 
 def pull_request_url(repository: str, subject: str) -> str | None:
@@ -223,7 +348,8 @@ def collect_commits(from_commit: str, to_commit: str) -> list[Commit]:
     commits = []
     for sha in shas:
         subject = git("show", "-s", "--format=%s", sha).strip()
-        summary = commit_summary(git("show", "-s", "--format=%b", sha))
+        body = git("show", "-s", "--format=%b", sha)
+        summary = commit_summary(body)
         paths = changed_paths(sha)
         reason = exclusion_reason(subject, paths)
         commits.append(
@@ -234,6 +360,7 @@ def collect_commits(from_commit: str, to_commit: str) -> list[Commit]:
                 paths=paths,
                 included=reason is None,
                 exclusion_reason=reason,
+                breaking=is_breaking(subject, body),
             )
         )
     return commits
@@ -271,6 +398,8 @@ def write_input(
                 f"### Candidate {index}: `{commit.sha}`",
                 "",
                 f"Subject: {commit.subject}",
+                "",
+                f"Breaking: {'yes' if commit.breaking else 'no'}",
                 "",
                 f"PR: {pull_request_url(repository, commit.subject) or '(none)'}",
                 "",
@@ -378,6 +507,75 @@ def release_body(raw: str, from_tag: str) -> str:
     return validate_notes(raw)
 
 
+def requires_note(commit: dict[str, Any]) -> bool:
+    """Whether a release-range commit must appear in the notes."""
+    if not commit.get("included"):
+        return False
+    title = TITLE_RE.match(commit["subject"])
+    if commit.get("breaking"):
+        return True
+    if title is None or title.group("type") not in USER_FACING_TYPES:
+        return False
+    return not paths_are(
+        commit.get("paths", ()),
+        lambda path: path.startswith(NON_USER_FACING_PATH_PREFIXES)
+        or path in {"Cargo.lock", "Cargo.toml"},
+    )
+
+
+def section_text(notes: str, heading: str) -> str:
+    match = re.search(rf"^## {heading}\n(.*?)(?=^## |\Z)", notes, re.DOTALL | re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def validate_coverage(notes: str, commits: Sequence[dict[str, Any]]) -> None:
+    """Fail when the notes drop a change, hide a break, or cite an unknown PR."""
+    numbers = {
+        commit["sha"]: match.group(1)
+        for commit in commits
+        if (match := PR_TRAILER_RE.search(commit["subject"])) is not None
+    }
+    cited = set(PR_LINK_RE.findall(notes))
+    compatibility = set(PR_LINK_RE.findall(section_text(notes, "Compatibility")))
+    problems = []
+    for commit in commits:
+        number = numbers.get(commit["sha"])
+        if number is None or not requires_note(commit):
+            continue
+        if number not in cited:
+            problems.append(f"#{number} is missing: {commit['subject']}")
+        elif commit.get("breaking") and number not in compatibility:
+            problems.append(f"#{number} is breaking but not in Compatibility: {commit['subject']}")
+    unknown = cited - set(numbers.values())
+    problems.extend(f"#{number} is not in this release range" for number in sorted(unknown))
+    if problems:
+        raise ReleaseNotesError(
+            "generated release notes do not match the release range:\n- " + "\n- ".join(problems)
+        )
+
+
+def check_pull_request(title: str, body: str) -> list[str]:
+    """What stops this PR from producing a correct release note, if anything."""
+    match = TITLE_RE.match(title)
+    if match is None or match.group("type") not in COMMIT_TYPES:
+        return [f"title is not a Conventional Commit: {title}"]
+    breaking = match.group("breaking") is not None
+    if match.group("type") not in USER_FACING_TYPES and not breaking:
+        return []
+    sections = split_sections(clean_body(body))
+    problems = []
+    chosen = summary_range(sections)
+    if chosen is None:
+        problems.append("add a `## Summary` section: release notes are written from it")
+    elif not "".join(sections[i].content() for i in chosen).strip():
+        problems.append("the `## Summary` section is empty: release notes are written from it")
+    if breaking and not has_breaking_section(sections):
+        problems.append(
+            "a `!` title needs a `### Breaking changes` section saying what breaks and how to migrate"
+        )
+    return problems
+
+
 def prepare(arguments: argparse.Namespace) -> None:
     releases = github_releases(arguments.repository)
     from_tag = select_previous_release(releases, arguments.to_tag)
@@ -415,7 +613,7 @@ def prepare(arguments: argparse.Namespace) -> None:
     metadata_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "from_tag": from_tag,
                 "from_commit": from_commit,
                 "to_tag": arguments.to_tag,
@@ -437,8 +635,17 @@ def validate(arguments: argparse.Namespace) -> None:
     raw = Path(arguments.input).read_text(encoding="utf-8")
     metadata = json.loads(Path(arguments.metadata).read_text(encoding="utf-8"))
     body = release_body(raw, metadata["from_tag"])
+    validate_coverage(body, metadata["commits"])
     Path(arguments.output).write_text(body, encoding="utf-8")
     print(f"validated release notes in {arguments.output}")
+
+
+def check_pr(arguments: argparse.Namespace) -> None:
+    body = Path(arguments.body_file).read_text(encoding="utf-8")
+    problems = check_pull_request(arguments.title, body)
+    if problems:
+        raise ReleaseNotesError("pull request description:\n- " + "\n- ".join(problems))
+    print("pull request description can produce a release note")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -458,6 +665,11 @@ def parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--output", required=True)
     validate_parser.add_argument("--metadata", required=True)
     validate_parser.set_defaults(function=validate)
+
+    check_pr_parser = commands.add_parser("check-pr")
+    check_pr_parser.add_argument("--title", required=True)
+    check_pr_parser.add_argument("--body-file", required=True)
+    check_pr_parser.set_defaults(function=check_pr)
     return root
 
 
@@ -465,7 +677,7 @@ def main() -> int:
     arguments = parser().parse_args()
     try:
         arguments.function(arguments)
-    except (OSError, ValueError, ReleaseNotesError) as error:
+    except (OSError, ValueError, KeyError, ReleaseNotesError) as error:
         print(f"release notes: {error}", file=sys.stderr)
         return 1
     return 0

@@ -1,6 +1,8 @@
 ## Summary
 
-<!-- Explain what changed, why it is needed, and the user-visible effect. -->
+<!-- Explain what changed, why it is needed, and the user-visible effect. Release notes are written
+from this section. Put breaking changes under `### Breaking changes` here, with migration steps. A
+`!` title requires that section. -->
 
 ## Verification
 

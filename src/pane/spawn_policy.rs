@@ -73,7 +73,7 @@ pub(crate) fn resolve_placement(
 /// Where the client opening a pane runs, relative to the session server.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum ClientSite {
-    /// On the server's machine.
+    /// On the server's machine, so it reads what a pane should know from its own environment.
     #[default]
     Local,
     /// Attached over SSH. The pane runs on the far host, where this client's socket, binary, and
@@ -91,7 +91,8 @@ pub(crate) enum ClientSite {
 /// A pane this leaves without a display gets the host's current desktop from the session server
 /// (see [`crate::platform::environment::fill_host_desktop_environment`]), which is the only process
 /// that can ask the host. The server's own copy is as old as the server, and a named server can
-/// outlive several desktops, so a pane never inherits it.
+/// outlive several desktops, so a pane never inherits it. The same goes for the SSH connection that
+/// happened to start the server: a pane has one only if the client opening it does.
 pub(crate) enum SpawnOrigin<'a> {
     /// A client, which forwards its own live environment and advertises itself.
     Client {

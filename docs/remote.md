@@ -333,7 +333,7 @@ files, and relays its requests back to your client. `rozi extensions status` sho
 `rozi sessions list --remote`, `rozi sessions kill --remote`, and `rozi worktrees --remote` each run
 as a separate SSH command. Quote `~` in their paths so your local shell does not expand it.
 
-A new remote pane has `SSH_CONNECTION` set. On a Linux host with a systemd user session, it also gets
+A new remote pane has `SSH_CONNECTION` set to your current connection. On a Linux host with a systemd user session, it also gets
 the desktop variables, such as `DISPLAY` and `WAYLAND_DISPLAY`, of the desktop running on that host,
 so a window it opens appears on the host's screen rather than yours. With no running desktop, it has
 none.

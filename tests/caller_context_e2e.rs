@@ -630,6 +630,9 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         ("ROZI_EXTENSION", "planted-extension"),
         ("ROZI_EXTENSION_CREDENTIAL", "planted-credential"),
         ("ROZI_SHELL_INTEGRATION_LOADED", "1"),
+        ("SSH_CONNECTION", "192.0.2.1 5000 192.0.2.2 22"),
+        ("SSH_CLIENT", "192.0.2.1 5000 22"),
+        ("SSH_TTY", "/dev/pts/planted"),
     ];
     let mut command = cli();
     for (key, value) in planted {
@@ -651,6 +654,9 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         "ROZI_EXTENSION",
         "ROZI_EXTENSION_CREDENTIAL",
         "ROZI_SHELL_INTEGRATION_LOADED",
+        "SSH_CONNECTION",
+        "SSH_CLIENT",
+        "SSH_TTY",
     ] {
         assert!(!env.contains_key(key), "{key} is set in a headless pane");
     }

@@ -46,7 +46,7 @@ pub fn fill_host_desktop_environment(env: &mut Vec<(String, String)>) {
 
 fn names_a_display(env: &[(String, String)]) -> bool {
     env.iter()
-        .any(|(key, _)| key == "DISPLAY" || key == "WAYLAND_DISPLAY")
+        .any(|(key, value)| (key == "DISPLAY" || key == "WAYLAND_DISPLAY") && !value.is_empty())
 }
 
 fn host_desktop_environment() -> Vec<(String, String)> {
@@ -129,9 +129,12 @@ fn live_desktop_environment(
         .or(process_runtime_dir);
     env.retain(|(key, value)| match key.as_str() {
         "DISPLAY" => x11_socket_path(value).is_some_and(|path| socket_exists(&path)),
-        "WAYLAND_DISPLAY" => runtime_dir
-            .as_deref()
-            .is_some_and(|dir| socket_exists(&dir.join(value))),
+        "WAYLAND_DISPLAY" => {
+            !value.is_empty()
+                && runtime_dir
+                    .as_deref()
+                    .is_some_and(|dir| socket_exists(&dir.join(value)))
+        }
         _ => true,
     });
     if names_a_display(&env) {
@@ -149,7 +152,9 @@ fn x11_socket_path(display: &str) -> Option<PathBuf> {
     valid.then(|| PathBuf::from(format!("/tmp/.X11-unix/X{number}")))
 }
 
-/// Read the built-in desktop variables and explicitly configured additions from this client.
+/// Read the built-in desktop variables, this client's SSH connection, and explicitly configured
+/// additions from this client. A client inside an SSH login talks to the server over local IPC, and
+/// a pane it opens is on that login's connection all the same.
 ///
 /// Non-Unicode values cannot cross the JSON session protocol and are omitted. Duplicate names are
 /// read once, preserving the built-in-first order used by pane environment precedence.
@@ -165,6 +170,7 @@ fn forwarded_client_environment_with(
     DESKTOP_VARIABLES
         .iter()
         .copied()
+        .chain(std::iter::once("SSH_CONNECTION"))
         .chain(configured.iter().map(String::as_str))
         .filter(|name| seen.insert((*name).to_string()))
         .filter_map(|name| read(name).map(|value| (name.to_string(), value)))
@@ -190,6 +196,21 @@ mod tests {
                 ("WAYLAND_DISPLAY".to_string(), "wayland-1".to_string()),
                 ("CURSOR_API_KEY".to_string(), "secret".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn a_client_in_an_ssh_login_forwards_its_own_connection() {
+        let env = forwarded_client_environment_with(&[], |name| match name {
+            "SSH_CONNECTION" => Some("10.0.0.2 5000 10.0.0.1 22".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            env,
+            vec![(
+                "SSH_CONNECTION".to_string(),
+                "10.0.0.2 5000 10.0.0.1 22".to_string()
+            )]
         );
     }
 
@@ -242,6 +263,22 @@ mod tests {
             ])
         );
         assert!(with_sockets(&[]).is_empty(), "no display means no desktop");
+    }
+
+    #[test]
+    fn an_empty_display_is_not_a_display() {
+        // Joining an empty name yields the runtime directory itself, which does exist.
+        let env = live_desktop_environment(
+            vars(&[
+                ("WAYLAND_DISPLAY", ""),
+                ("XDG_CURRENT_DESKTOP", "Hyprland"),
+                ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ]),
+            None,
+            |_| true,
+        );
+        assert!(env.is_empty(), "{env:?}");
+        assert!(!names_a_display(&vars(&[("DISPLAY", "")])));
     }
 
     #[test]

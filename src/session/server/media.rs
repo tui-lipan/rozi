@@ -223,7 +223,7 @@ impl MediaPipeline {
         self.output.as_ref().and(self.active)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn stage_output_for_test(&mut self, key: MediaKey, bytes: Vec<u8>) {
         self.active = Some(key);
         self.output = Some(PendingMediaOutput {

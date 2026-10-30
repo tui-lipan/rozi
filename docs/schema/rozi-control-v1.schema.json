@@ -815,7 +815,7 @@
           "type": "integer"
         },
         "exports": {
-          "description": "Pane screens exported for resyncs. A pane that falls behind again mid-resync is exported\nagain, so this outgrowing `started` is what a flood that never lets a client catch up looks\nlike.",
+          "description": "Pane screens exported for resyncs. A pane that falls behind again mid-resync is exported\nagain by a later resync, so this tracks `started` under a flood.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

@@ -122,6 +122,7 @@ settings_actions! {
     ToggleFocusOnHover,
     EditScrollMultiplier,
     ToggleBackgroundFollowsTerminal,
+    EditUnfocusedDim,
     ChooseTitlebar,
     CycleTitleStyle,
     ChooseWorkbar,
@@ -641,6 +642,9 @@ impl SettingsNumberEditor {
             SettingsAction::EditScrollMultiplier => {
                 Some(Self::scroll_multiplier(config.input.scroll_multiplier))
             }
+            SettingsAction::EditUnfocusedDim => {
+                Some(Self::unfocused_dim(config.pane.unfocused_dim))
+            }
             _ => None,
         }
     }
@@ -678,6 +682,24 @@ impl SettingsNumberEditor {
         }
     }
 
+    /// Edited as a whole percentage, since the fields take whole numbers; the config holds the
+    /// fraction.
+    pub fn unfocused_dim(dim: f32) -> Self {
+        Self {
+            action: SettingsAction::EditUnfocusedDim,
+            title: "Unfocused dim",
+            invalid_title: "Invalid unfocused dim",
+            fields: vec![SettingsNumberField::new(
+                "Percent",
+                Some(unfocused_dim_percent(dim)),
+                0,
+                100,
+            )],
+            focus: 0,
+            note: None,
+        }
+    }
+
     pub fn is_last(&self, field: usize) -> bool {
         field + 1 >= self.fields.len()
     }
@@ -685,6 +707,17 @@ impl SettingsNumberEditor {
 
 pub fn scroll_multiplier_label(multiplier: u16) -> String {
     format!("{multiplier}×")
+}
+
+fn unfocused_dim_percent(dim: f32) -> u16 {
+    (dim * 100.0).round() as u16
+}
+
+pub fn unfocused_dim_label(dim: f32) -> String {
+    match unfocused_dim_percent(dim) {
+        0 => "Off".to_string(),
+        percent => format!("{percent}%"),
+    }
 }
 
 #[cfg(test)]
@@ -724,6 +757,20 @@ mod tests {
 
         assert_eq!(scroll_multiplier_label(3), "3×");
         assert!(!SettingsAction::EditScrollMultiplier.shows_choice_ellipsis(&Config::default()));
+    }
+
+    #[test]
+    fn unfocused_dim_is_edited_and_labelled_as_a_percentage() {
+        let editor = SettingsNumberEditor::unfocused_dim(0.25);
+        let field = &editor.fields[0];
+        assert_eq!(field.input.text(), "25");
+        assert!(field.accepts("0") && field.accepts("100") && !field.accepts("101"));
+        assert_eq!(field.range_hint(), "Enter 0 to 100");
+
+        assert_eq!(unfocused_dim_label(0.0), "Off");
+        assert_eq!(unfocused_dim_label(0.25), "25%");
+        assert_eq!(unfocused_dim_label(1.0), "100%");
+        assert!(!SettingsAction::EditUnfocusedDim.shows_choice_ellipsis(&Config::default()));
     }
 
     #[test]

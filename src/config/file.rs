@@ -546,6 +546,7 @@ pub(super) struct PaneFileConfig {
     pub(super) workbar_tab_style: Option<String>,
     pub(super) workbar_style: Option<String>,
     pub(super) toast_opacity: Option<f32>,
+    pub(super) unfocused_dim: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

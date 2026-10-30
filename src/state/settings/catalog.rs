@@ -691,6 +691,13 @@ pub static SETTINGS: &[SettingSpec] = {
             &["margins", "insets", "spacing"],
             Custom,
         ),
+        row(
+            EditUnfocusedDim,
+            G::Background,
+            "Unfocused dim",
+            &["inactive", "fade", "focus", "opacity"],
+            Custom,
+        ),
         // Panes: borders
         row(
             CycleBorderMode,

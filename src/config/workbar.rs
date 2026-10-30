@@ -187,6 +187,15 @@ pub(super) fn apply_workbar_style_config(
             ));
         }
     }
+    if let Some(dim) = parsed.unfocused_dim {
+        if dim.is_finite() && (0.0..=1.0).contains(&dim) {
+            config.unfocused_dim = dim;
+        } else {
+            warnings.push(format!(
+                "Ignored pane.unfocused_dim {dim} (expected a number between 0.0 and 1.0)"
+            ));
+        }
+    }
 }
 
 pub(super) fn apply_picker_style_config(
@@ -367,6 +376,25 @@ mod tests {
             assert_eq!(warnings.len(), 1, "{raw} should warn");
             assert_eq!(pane.toast_opacity, 0.8, "{raw} must not take effect");
         }
+    }
+
+    #[test]
+    fn unfocused_dim_is_off_by_default_and_takes_only_a_unit_fraction() {
+        assert_eq!(PaneConfig::default().unfocused_dim, 0.0);
+
+        let apply = |raw: &str| {
+            let parsed: PaneFileConfig = toml::from_str(raw).expect("config parses");
+            let mut pane = PaneConfig::default();
+            let mut warnings = Vec::new();
+            apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+            (pane.unfocused_dim, warnings.len())
+        };
+        assert_eq!(apply("unfocused_dim = 0.25"), (0.25, 0));
+        // Settings saves the whole percentages at either end as bare integers.
+        assert_eq!(apply("unfocused_dim = 1"), (1.0, 0));
+        assert_eq!(apply("unfocused_dim = 0"), (0.0, 0));
+        assert_eq!(apply("unfocused_dim = 1.5"), (0.0, 1));
+        assert_eq!(apply("unfocused_dim = -0.2"), (0.0, 1));
     }
 
     #[test]

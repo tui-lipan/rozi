@@ -200,6 +200,23 @@ Separate settings choose the frame style for each kind of pane and for pickers:
 
 See [Configuration](configuration.md#pane).
 
+## Dim unfocused panes
+
+To make the focused pane stand out, fade the content of the others toward the canvas. Set
+**Panes › Background › Unfocused dim** in Settings as a percentage, or set the same amount as a
+fraction:
+
+```toml
+[pane]
+unfocused_dim = 0.25
+```
+
+The value runs from `0.0`, which is off, to `1.0`. Pictures in a pane fade with its text; frames and
+titlebars keep their own focus colors. A pane with an alert stays at full strength, and panes
+behind a dialog or the scratchpad take that backdrop's dim instead of adding this one.
+
+With `focus_on_hover` on, the dim moves as the pointer crosses panes.
+
 ## Workspaces
 
 rozi has nine workspaces.

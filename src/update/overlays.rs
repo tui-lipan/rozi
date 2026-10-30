@@ -384,7 +384,7 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             Theme => {
                 execute_action(ctx, Action::OpenThemePicker);
             }
-            EditPadding | EditScrollMultiplier => {
+            EditPadding | EditScrollMultiplier | EditUnfocusedDim => {
                 ctx.state.settings_number_editor =
                     crate::state::SettingsNumberEditor::for_action(action, &ctx.state.config);
                 ctx.request_focus(crate::view::settings_number_field_key(0));
@@ -397,7 +397,10 @@ fn settings_apply(ctx: &mut Context<AppRoot>, action: crate::state::SettingsActi
             _ => return open_settings_choice(ctx, action),
         },
     }
-    if !matches!(action, Theme | EditPadding | EditScrollMultiplier) {
+    if !matches!(
+        action,
+        Theme | EditPadding | EditScrollMultiplier | EditUnfocusedDim
+    ) {
         ctx.state.show_settings = true;
         crate::state::assign_settings_selection(&mut ctx.state, Some(action));
         ctx.request_focus(crate::view::settings_palette_key());
@@ -656,6 +659,16 @@ fn apply_settings_number(
             if let Err(err) = crate::config::persist_section_values(
                 "input",
                 &[("scroll_multiplier", &multiplier.to_string())],
+            ) {
+                preference_error(ctx, err);
+            }
+        }
+        (EditUnfocusedDim, &[percent]) => {
+            let dim = f32::from(percent) / 100.0;
+            ctx.state.config.pane.unfocused_dim = dim;
+            if let Err(err) = crate::config::persist_section_values(
+                "pane",
+                &[("unfocused_dim", &dim.to_string())],
             ) {
                 preference_error(ctx, err);
             }
@@ -1745,6 +1758,50 @@ mod tests {
                 backend.state().config.session.resurrect_foreground,
                 crate::config::ForegroundRestore::Auto
             );
+        });
+    }
+
+    #[test]
+    fn settings_unfocused_dim_applies_and_saves_a_typed_percentage() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _config = crate::test_support::lock_config_file();
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 96,
+                h: 40,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+                state.show_settings = true;
+                state.settings_navigation.tab = crate::state::SettingsTab::Panes;
+            }
+            backend.render();
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::EditUnfocusedDim,
+                ))
+                .unwrap();
+            backend.render();
+            backend.send_paste("25").unwrap();
+            press(&mut backend, KeyCode::Enter);
+
+            assert!(backend.state().settings_number_editor.is_none());
+            assert_eq!(backend.state().config.pane.unfocused_dim, 0.25);
+            let saved = std::fs::read_to_string(crate::config::config_path()).unwrap();
+            assert!(saved.contains("unfocused_dim = 0.25"), "{saved}");
+
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(500));
+            let frame = backend.capture_frame().to_fixed_grid();
+            let row = frame
+                .lines()
+                .find(|line| line.contains("Unfocused dim"))
+                .unwrap_or_else(|| panic!("no Unfocused dim row:\n{frame}"));
+            assert!(row.contains("25%"), "{row}");
         });
     }
 

@@ -556,6 +556,40 @@ fn pane_content_alert_tint(
     Some((target, amount))
 }
 
+/// The opacity an unfocused pane's content fades to, as an amount that eases when focus moves.
+/// `None` while `unfocused_dim` is off.
+///
+/// A pane with an alert keeps its full strength, since it is asking to be looked at. So does any
+/// pane under a dialog's or the scratchpad's backdrop, because the dims never compound.
+fn pane_unfocused_dim(
+    ctx: &Context<AppRoot>,
+    pane: &Pane,
+    focused: bool,
+    kind: PaneKind,
+) -> Option<EffectAmount> {
+    let config = &ctx.state.config.pane;
+    if config.unfocused_dim <= 0.0 {
+        return None;
+    }
+    let (workspace_dimmed, dialog_open) = ctx.state.dim_targets.get();
+    let under_backdrop = match kind {
+        PaneKind::Scratch => dialog_open,
+        _ => workspace_dimmed,
+    };
+    let dimmed = !focused
+        && !under_backdrop
+        && pane_alert(pane, focused, config, &ctx.state.agent_attention).is_none();
+    Some(ctx.animated_amount(
+        pane.keys.content_dim.clone(),
+        if dimmed {
+            1.0 - config.unfocused_dim
+        } else {
+            1.0
+        },
+        animation::focus_chrome_transition_config(ctx),
+    ))
+}
+
 fn pane_alert_pulses(
     theme: &Theme,
     color: BadgeColor,
@@ -1356,6 +1390,16 @@ pub(crate) fn pane_element(
         // its own pixels whether the tint holds still or breathes.
         Some((color, amount)) => EffectScope::new().cells_only().tint_by(color, amount),
         None => EffectScope::new(),
+    };
+    let scope = match pane_unfocused_dim(ctx, pane, focused, kind) {
+        Some(opacity) => {
+            let fade = ColorTransform::opacity_toward(opacity, theme.surface.backdrop);
+            scope.effect(VisualEffect::ColorTransform {
+                fg: Some(fade),
+                bg: Some(fade),
+            })
+        }
+        None => scope,
     };
     let terminal: Element = scope.child(terminal).into();
 
@@ -2366,8 +2410,11 @@ fn app_allows_cursor(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::state::PaneAlert;
+    use tui_lipan::TestBackend;
 
     fn alert_test_pane() -> Pane {
         Pane::new(
@@ -3048,6 +3095,182 @@ mod tests {
         pane.terminal_active = true;
         pane.terminal.recording = true;
         backend
+    }
+
+    /// Two tiled panes showing `probe<id>`, the first focused, `unfocused_dim` at `dim`, and the
+    /// canvas at `backdrop` with the palette to match, so panes draw it as their default background.
+    fn dim_backend(dim: f32, backdrop: Color) -> TestBackend<AppRoot> {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        backend.render();
+        {
+            let state = backend.state_mut();
+            state.config.pane.unfocused_dim = dim;
+            state.config.animations.session = crate::layout::anim::SessionAnimationStyle::Off;
+            state.theme.surface.backdrop = backdrop;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes.clear();
+            for id in [1, 2] {
+                let mut pane = Pane::new(id, 100, FloatRect::default());
+                pane.opening = false;
+                pane.terminal_active = true;
+                // Low enough to stay clear of a centered dialog.
+                pane.terminal.with_screen_mut(|screen| {
+                    screen.process_bytes(format!("\x1b[18;1Hprobe{id}").as_bytes());
+                });
+                workspace.panes.push(pane);
+                crate::layout::tiling::append_tiled_window(workspace, id);
+            }
+            workspace.focused_pane = Some(1);
+            state.current_mut().focused_pane = Some(1);
+            crate::ops::theme::apply_terminal_palette_to_state(state);
+        }
+        backend.render();
+        backend.advance(Duration::from_secs(1));
+        backend
+    }
+
+    /// What a pane's `probe` text and the blank cell after it are drawn in.
+    fn probe_colors(backend: &TestBackend<AppRoot>, id: PaneId) -> (Color, Color) {
+        let frame = backend.capture_frame();
+        let (row, column, text) = cell_at(&frame, &format!("probe{id}"))
+            .unwrap_or_else(|| panic!("no probe{id}\n{}", frame.plain_text()));
+        let blank = &frame.cells[row * usize::from(frame.width) + column + 8];
+        assert_eq!(blank.symbol, " ", "{}", frame.plain_text());
+        (text.fg, blank.bg)
+    }
+
+    #[test]
+    fn an_unfocused_pane_fades_toward_the_canvas_and_leaves_its_background_alone() {
+        crate::test_support::on_large_stack(|| {
+            // Toward the canvas on either theme polarity: darkening a light theme would not fade.
+            for backdrop in [Color::Rgb(6, 7, 15), Color::Rgb(250, 250, 245)] {
+                let off = dim_backend(0.0, backdrop);
+                let (text, background) = probe_colors(&off, 1);
+                assert_eq!(
+                    probe_colors(&off, 2),
+                    (text, background),
+                    "off dims nothing"
+                );
+
+                let dimmed = dim_backend(0.25, backdrop);
+                assert_eq!(
+                    probe_colors(&dimmed, 1),
+                    (text, background),
+                    "the focused pane"
+                );
+                assert_eq!(
+                    probe_colors(&dimmed, 2),
+                    (text.blend_toward(backdrop, 0.25), background),
+                    "the unfocused pane on {backdrop:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn the_dim_follows_focus_and_eases_between_panes() {
+        crate::test_support::on_large_stack(|| {
+            let backdrop = Color::Rgb(6, 7, 15);
+            let mut backend = dim_backend(0.25, backdrop);
+            let (full, _) = probe_colors(&backend, 1);
+            let (faded, _) = probe_colors(&backend, 2);
+            assert_ne!(full, faded);
+
+            let state = backend.state_mut();
+            state.current_mut().workspaces[0].focused_pane = Some(2);
+            state.current_mut().focused_pane = Some(2);
+            let duration = state.config.animations.focus_chrome_duration;
+            backend.render();
+            backend.advance(duration / 2);
+            let (easing, _) = probe_colors(&backend, 1);
+            assert!(easing != full && easing != faded, "mid-fade: {easing:?}");
+
+            backend.advance(Duration::from_secs(1));
+            assert_eq!(probe_colors(&backend, 1).0, faded);
+            assert_eq!(probe_colors(&backend, 2).0, full);
+        });
+    }
+
+    #[test]
+    fn a_pane_with_an_alert_keeps_its_full_strength() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = dim_backend(0.25, Color::Rgb(6, 7, 15));
+            let (full, _) = probe_colors(&backend, 1);
+            {
+                let state = backend.state_mut();
+                // Border only, so a content tint cannot account for the colour either way.
+                state.config.pane.alert_paint = crate::state::PaneAlertPaint::Border;
+                crate::pane::lifecycle::find_pane_mut(state, 2)
+                    .unwrap()
+                    .terminal
+                    .error_unseen = true;
+            }
+            backend.render();
+            backend.advance(Duration::from_secs(1));
+            assert_eq!(probe_colors(&backend, 2).0, full);
+        });
+    }
+
+    #[test]
+    fn a_dimmed_pane_dims_its_pictures_too() {
+        crate::test_support::on_large_stack(|| {
+            let picture = |dim: f32| {
+                let mut backend = dim_backend(dim, Color::Rgb(6, 7, 15));
+                let command = format!(
+                    "\x1b_Ga=T,f=24,s=20,v=20,t=d,i=1;{}\x1b\\",
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        [255u8, 0, 0].repeat(20 * 20)
+                    )
+                );
+                let state = backend.state_mut();
+                crate::pane::lifecycle::find_pane_mut(state, 2)
+                    .unwrap()
+                    .terminal
+                    .with_screen_mut(|screen| {
+                        screen.set_cell_size(tui_lipan::prelude::TerminalCellSize {
+                            width: 10,
+                            height: 20,
+                        });
+                        screen.process_bytes(command.as_bytes());
+                    });
+                backend.render();
+                backend.advance(Duration::from_secs(1));
+                let frame = backend.capture_frame();
+                let image = frame.images.first().expect("the picture is captured");
+                image.rgba[..3].to_vec()
+            };
+            assert_eq!(picture(0.0), [255, 0, 0]);
+            let dimmed = picture(0.25);
+            assert!(
+                dimmed[0] < 255,
+                "the picture stayed at full strength: {dimmed:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn the_dim_does_not_compound_with_a_dialog_backdrop() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = dim_backend(0.25, Color::Rgb(6, 7, 15));
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::TogglePalette))
+                .unwrap();
+            backend.advance(Duration::from_secs(1));
+            assert!(backend.state().show_palette);
+            assert_eq!(
+                probe_colors(&backend, 1).0,
+                probe_colors(&backend, 2).0,
+                "both panes sit under the one backdrop dim"
+            );
+        });
     }
 
     /// The cell holding the first `needle` on screen, and its row and column.

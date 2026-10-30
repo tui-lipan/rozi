@@ -242,6 +242,7 @@ pub(crate) fn attached(
         ctx.state.session_view_revision += 1;
     }
     ctx.state.current_mut().path_family = client.path_family;
+    ctx.state.current_mut().ssh_connection = client.ssh_connection.clone();
     ctx.state.current_mut().session_client = Some(client);
     ctx.state.current_mut().session_name = Some(session.clone());
     ctx.state.current_mut().session_instance = Some(session_instance);

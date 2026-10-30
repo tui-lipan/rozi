@@ -485,10 +485,13 @@ A session endpoint refuses `split` when:
 - **`--focus` is given.** There is no focus to move.
 - **The session has an invalid layout.** Restore a valid session snapshot before adding panes.
 
-A pane opened this way receives only `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM`, and
-`TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or
-`ROZI_BIN`, since there is no UI, and it does not inherit desktop variables such as `DISPLAY`,
-`WAYLAND_DISPLAY`, or anything `[environment] forward` adds from the short-lived CLI process.
+A pane opened this way receives `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM`, and
+`TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or `ROZI_BIN`, since there is no UI, or anything
+`[environment] forward` adds from the short-lived CLI process. It has no SSH variables such as
+`SSH_CONNECTION`, even when an SSH connection started the session, except that a pane opened with
+`--here` gets the calling pane's `SSH_CONNECTION`. On Linux with a systemd user session,
+it gets the desktop variables, such as `DISPLAY` and `WAYLAND_DISPLAY`, of the desktop running on that
+machine at that moment. With no running desktop, it has none.
 
 ## Layout
 

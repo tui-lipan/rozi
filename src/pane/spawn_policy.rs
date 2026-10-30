@@ -70,28 +70,42 @@ pub(crate) fn resolve_placement(
     (requested_workspace.or(rule_workspace), placement)
 }
 
+/// Where the client opening a pane runs, relative to the session server.
+#[derive(Clone, Debug, Default)]
+pub(crate) enum ClientSite {
+    /// On the server's machine, so it reads what a pane should know from its own environment.
+    #[default]
+    Local,
+    /// Attached over SSH. The pane runs on the far host, where this client's socket, binary, and
+    /// desktop variables all name things that are not there.
+    Remote {
+        /// The SSH connection serving this client, as the far host reported it. A pane opened
+        /// through it is on that connection, whatever the server's own start looked like, and
+        /// programs use this to decide how to reach the person's terminal.
+        ssh_connection: Option<String>,
+    },
+}
+
 /// Who is opening a pane, and therefore what the pane can be told about its surroundings.
+///
+/// A pane this leaves without a display gets the host's current desktop from the session server
+/// (see [`crate::platform::environment::fill_host_desktop_environment`]), which is the only process
+/// that can ask the host. The server's own copy is as old as the server, and a named server can
+/// outlive several desktops, so a pane never inherits it. The same goes for the SSH connection that
+/// happened to start the server: a pane has one only if the client or verified pane opening it does.
 pub(crate) enum SpawnOrigin<'a> {
     /// A client, which forwards its own live environment and advertises itself.
-    ///
-    /// The environment is sampled from the *client* rather than the session server on purpose: a
-    /// named server can outlive several clients, and the `DISPLAY` it was started with years of
-    /// uptime ago names a session that is gone.
     Client {
         control_socket: Option<&'a Path>,
         /// `[environment] forward`, on top of the desktop allowlist.
         forward: &'a [String],
-        /// Attached over SSH. The pane runs on the far host, where this client's socket, binary,
-        /// and desktop variables all name things that are not there.
-        remote: bool,
+        site: &'a ClientSite,
     },
     /// The session server itself, with no client in the picture (headless control, resurrection).
     ///
     /// Nothing is forwarded and nothing is advertised. `ROZI_SOCKET` and `ROZI_BIN` name a UI
-    /// process and there is not one; the desktop variables would have to come either from the
-    /// server's own environment, which is as old as the server, or from the one-shot CLI process
-    /// that asked, which will be gone long before the pane is. A pane that inherits neither is
-    /// wrong in a way its program can detect; one that inherits a dangling `DISPLAY` is not.
+    /// process and there is not one, and the one-shot CLI process that asked will be gone long
+    /// before the pane is.
     Headless,
 }
 
@@ -107,10 +121,17 @@ pub(crate) fn spawn_environment(
     let mut env = match &origin {
         SpawnOrigin::Client {
             forward,
-            remote: false,
+            site: ClientSite::Local,
             ..
         } => crate::platform::environment::forwarded_client_environment(forward),
-        SpawnOrigin::Client { remote: true, .. } | SpawnOrigin::Headless => Vec::new(),
+        SpawnOrigin::Client {
+            site: ClientSite::Remote { ssh_connection },
+            ..
+        } => ssh_connection
+            .iter()
+            .map(|value| ("SSH_CONNECTION".to_string(), value.clone()))
+            .collect(),
+        SpawnOrigin::Headless => Vec::new(),
     };
     env.extend([
         ("ROZI".to_string(), "1".to_string()),
@@ -118,7 +139,7 @@ pub(crate) fn spawn_environment(
     ]);
     if let SpawnOrigin::Client {
         control_socket,
-        remote: false,
+        site: ClientSite::Local,
         ..
     } = &origin
     {
@@ -222,7 +243,9 @@ mod tests {
             SpawnOrigin::Client {
                 control_socket: Some(Path::new("/run/rozi/control-1.sock")),
                 forward: &forward,
-                remote: true,
+                site: &ClientSite::Remote {
+                    ssh_connection: Some("10.0.0.2 5000 10.0.0.1 22".to_string()),
+                },
             },
             4,
             &[("EXTRA".to_string(), "1".to_string())],
@@ -230,6 +253,13 @@ mod tests {
         assert!(remote.iter().all(|(key, _)| key != "ROZI_SOCKET"));
         assert!(remote.iter().all(|(key, _)| key != "ROZI_BIN"));
         assert!(remote.contains(&("EXTRA".to_string(), "1".to_string())));
+        assert!(
+            remote.contains(&(
+                "SSH_CONNECTION".to_string(),
+                "10.0.0.2 5000 10.0.0.1 22".to_string()
+            )),
+            "a pane opened over SSH says so: {remote:?}"
+        );
     }
 
     #[test]
@@ -238,7 +268,7 @@ mod tests {
             SpawnOrigin::Client {
                 control_socket: Some(Path::new("/run/rozi/control-1.sock")),
                 forward: &[],
-                remote: false,
+                site: &ClientSite::Local,
             },
             9,
             &[],

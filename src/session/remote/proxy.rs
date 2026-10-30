@@ -229,6 +229,29 @@ mod tests {
     }
 
     #[test]
+    fn preamble_carries_the_ssh_connection_and_tolerates_a_proxy_without_one() {
+        let mut buf = Vec::new();
+        write_preamble(
+            &mut buf,
+            &RemotePreamble {
+                ssh_connection: Some("10.0.0.2 5000 10.0.0.1 22".to_string()),
+                ..RemotePreamble::current(false)
+            },
+        )
+        .unwrap();
+        let decoded = crate::session::remote::preamble::read_preamble(&mut &buf[..]).unwrap();
+        assert_eq!(
+            decoded.ssh_connection.as_deref(),
+            Some("10.0.0.2 5000 10.0.0.1 22")
+        );
+
+        let mut older = serde_json::to_value(RemotePreamble::current(false)).unwrap();
+        older.as_object_mut().unwrap().remove("ssh_connection");
+        let decoded: RemotePreamble = serde_json::from_value(older).unwrap();
+        assert_eq!(decoded.ssh_connection, None);
+    }
+
+    #[test]
     fn preamble_server_started_flag_round_trips_for_create_only() {
         let mut buf = Vec::new();
         write_preamble(

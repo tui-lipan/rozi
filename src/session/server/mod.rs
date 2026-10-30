@@ -326,6 +326,9 @@ pub struct ServerPane {
     output_sequence: u64,
     output_coalesce_epoch: u64,
     output_times: VecDeque<(u64, Instant)>,
+    /// Bytes sent so far as of each recent output sequence, for what a viewer has not acknowledged.
+    output_ledger: VecDeque<(u64, u64)>,
+    output_bytes_sent: u64,
     pub generation: u64,
     pub title: Option<String>,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
@@ -787,8 +790,9 @@ struct AttachSeedState {
     catch_up_replacements: HashMap<ReplacementKey, u64>,
     catch_up_bytes: usize,
     baseline_queued: bool,
-    /// Panes whose screen this barrier has exported, so exporting one again is visible.
-    exported: HashSet<PaneSeedKey>,
+    /// Panes whose live output overflowed behind this barrier. Their replays still finish, so the
+    /// barrier always lifts and every other pane catches up; they are replayed again after it.
+    outdated: HashSet<PaneSeedKey>,
     started: Instant,
     disconnect_reason: Option<&'static str>,
 }
@@ -813,7 +817,7 @@ impl AttachSeedState {
             catch_up_replacements: HashMap::new(),
             catch_up_bytes: 0,
             baseline_queued: false,
-            exported: HashSet::new(),
+            outdated: HashSet::new(),
             started: Instant::now(),
             disconnect_reason: None,
         }
@@ -1159,6 +1163,10 @@ impl ClientConn {
     ) -> ClientFrameResult {
         loop {
             let seed = self.seed.as_mut().expect("catch-up needs an active seed");
+            if delta.pane().is_some_and(|key| seed.outdated.contains(&key)) {
+                self.shed_bytes += bytes.len() as u64;
+                return ClientFrameResult::Ignored;
+            }
             let index = replacement
                 .and_then(|key| seed.catch_up_replacements.get(&key).copied())
                 .and_then(|position| position.checked_sub(seed.catch_up_base))
@@ -1233,9 +1241,12 @@ impl ClientConn {
     }
 
     fn largest_outbox_pane(&self) -> Option<PaneSeedKey> {
+        let keep_replay = self.replay_barrier_up();
         let mut totals: HashMap<PaneSeedKey, usize> = HashMap::new();
         for frame in self.sheddable_outbox() {
-            if let Some(key) = frame.pane {
+            if let Some(key) = frame.pane
+                && !(keep_replay && frame.class == OutboxClass::SeedReplay)
+            {
                 *totals.entry(key).or_default() += frame.bytes.len();
             }
         }
@@ -1268,6 +1279,10 @@ impl ClientConn {
             .map(|(key, _)| key)
     }
 
+    fn replay_barrier_up(&self) -> bool {
+        self.seed.as_ref().is_some_and(|seed| !seed.baseline_queued)
+    }
+
     /// Stop delivering a pane's transcript to this client and arrange for a replay in its place.
     fn shed_pane(&mut self, key: PaneSeedKey) {
         let freed = self.purge_outbox_pane(key);
@@ -1276,11 +1291,6 @@ impl ClientConn {
             self.resync_pending.insert(key);
             return;
         };
-        if seed.replay.as_ref().is_some_and(|replay| replay.key == key) {
-            // The client has part of a replay that can no longer finish in order. The next export
-            // starts with a reset, so the partial replay is simply overwritten.
-            seed.replay = None;
-        }
         let mut freed_catch_up = 0;
         seed.catch_up.retain(|frame| {
             let shed = frame.delta.pane() == Some(key);
@@ -1297,24 +1307,29 @@ impl ClientConn {
             }
         }
         seed.catch_up_bytes -= freed_catch_up;
-        if seed.manifest.insert(key, PaneSeedState::Pending) != Some(PaneSeedState::Pending) {
-            seed.pending.push_back(key);
-        }
-        if seed.exported.remove(&key) {
+        // A pane still waiting for its export will be current without anything further. One already
+        // exported finishes that replay, because restarting it under a steady flood never finishes
+        // and every other pane waits behind this barrier.
+        if seed.manifest.get(&key) != Some(&PaneSeedState::Pending) && seed.outdated.insert(key) {
             self.requeued_panes += 1;
         }
         self.shed_bytes += freed_catch_up as u64;
     }
 
-    /// Drop every queued, unwritten frame of `key`'s transcript. Returns the bytes freed.
+    /// Drop every queued, unwritten frame of `key`'s transcript, except a replay the barrier is
+    /// still sending. Returns the bytes freed.
     fn purge_outbox_pane(&mut self, key: PaneSeedKey) -> usize {
+        let keep_replay = self.replay_barrier_up();
         let pinned_front = self.front_started();
         let (mut freed, mut seed_freed, mut catch_up_freed) = (0, 0, 0);
         let mut index = 0;
         self.outbox.retain(|frame| {
             let pinned = index == 0 && pinned_front;
             index += 1;
-            if pinned || frame.pane != Some(key) {
+            if pinned
+                || frame.pane != Some(key)
+                || (keep_replay && frame.class == OutboxClass::SeedReplay)
+            {
                 return true;
             }
             freed += frame.bytes.len();

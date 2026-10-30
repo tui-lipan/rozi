@@ -76,8 +76,7 @@ pub struct ClientResyncMetrics {
     pub started: u64,
     pub completed: u64,
     /// Pane screens exported for resyncs. A pane that falls behind again mid-resync is exported
-    /// again, so this outgrowing `started` is what a flood that never lets a client catch up looks
-    /// like.
+    /// again by a later resync, so this tracks `started` under a flood.
     pub exports: u64,
     /// Panes put back in a replay queue because the client fell behind them again before their
     /// replay finished, during an attach or a resync.

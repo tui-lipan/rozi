@@ -219,6 +219,23 @@ impl MediaPipeline {
         }
     }
 
+    fn output_key(&self) -> Option<MediaKey> {
+        self.output.as_ref().and(self.active)
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn stage_output_for_test(
+        &mut self,
+        key: MediaKey,
+        transactions: Vec<tui_lipan::TerminalOutputTransaction>,
+    ) {
+        self.active = Some(key);
+        self.output = Some(PendingMediaOutput {
+            offset: 0,
+            transactions: transactions.into(),
+        });
+    }
+
     fn output_batch(
         &mut self,
     ) -> Option<(MediaKey, Vec<tui_lipan::TerminalOutputTransaction>, bool)> {
@@ -283,7 +300,24 @@ impl SessionServer {
         }
     }
 
+    /// Emit the next part of a prepared image once its viewer has room, so the image waits here
+    /// rather than ahead of other panes' output, and an image larger than the outbox limit still
+    /// fits. Acknowledgements do not pace this: a client cannot present part of an image.
     pub(super) fn pump_media_output(&mut self) -> bool {
+        if self
+            .media
+            .output_key()
+            .is_some_and(|(owner, id, generation)| {
+                self.transport_outbox(id, generation, owner)
+                    > super::graphics_pacer::TRANSPORT_HOLD_BACKLOG
+            })
+        {
+            return false;
+        }
+        self.emit_media_batch()
+    }
+
+    pub(super) fn emit_media_batch(&mut self) -> bool {
         let Some((key, transactions, continuation)) = self.media.output_batch() else {
             return false;
         };
@@ -294,7 +328,8 @@ impl SessionServer {
     pub(super) fn finish_pending_media(&mut self) {
         while self.media.pending() {
             self.poll_media();
-            self.pump_media_output();
+            // Shutting down: a client that stopped reading cannot be allowed to hold this up.
+            self.emit_media_batch();
             if !self.media.pending() {
                 break;
             }

@@ -243,6 +243,8 @@ impl SessionServer {
                         output_sequence: 0,
                         output_coalesce_epoch: 0,
                         output_times: VecDeque::new(),
+                        output_ledger: VecDeque::new(),
+                        output_bytes_sent: 0,
                         graphics_pacer: Default::default(),
                         output_seen: seed.is_some(),
                         cols: cols.max(1),
@@ -298,6 +300,8 @@ impl SessionServer {
                             output_sequence: 0,
                             output_coalesce_epoch: 0,
                             output_times: VecDeque::new(),
+                            output_ledger: VecDeque::new(),
+                            output_bytes_sent: 0,
                             graphics_pacer: Default::default(),
                             output_seen: seed.is_some(),
                             cols: cols.max(1),
@@ -338,7 +342,9 @@ impl SessionServer {
     ) {
         if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
             pane.graphics_pacer.input(Instant::now());
-            if let Some(pty) = &pane.pty {
+            if let Some(pty) = &pane.pty
+                && !pane.graphics_pacer.transport_held()
+            {
                 pty.read_gate().resume();
             }
         }

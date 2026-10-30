@@ -174,7 +174,7 @@ pub(crate) fn select_session_picker_tab(ctx: &mut Context<AppRoot>, index: usize
     picker.tab = tab.clone();
     picker.input.set_text(String::new());
     picker.browse_selected = None;
-    picker.keep_selection_in_tab();
+    picker.selected = picker.first_in_tab().unwrap_or(0);
     if ctx.state.is_launcher()
         && let SessionPickerTab::Host(target) = tab
     {

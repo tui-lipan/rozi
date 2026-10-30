@@ -60,6 +60,7 @@ pub(crate) fn select_tab(ctx: &mut Context<AppRoot>, index: usize) -> Update {
         return Update::none();
     };
     picker.tab = tab;
+    picker.selected = None;
     sync_picker_selection(&mut ctx.state);
     crate::ops::focus::request_agent_picker_focus(ctx);
     Update::full()
@@ -954,6 +955,47 @@ mod tests {
             backend.render();
             assert!(
                 matches!(&backend.state().agent_picker.as_ref().unwrap().selected, Some(AgentLocation::OtherSession { target: Some(target), .. }) if target == &url)
+            );
+        });
+    }
+
+    /// All lists every row, so a highlight carried over from another tab would land mid-list.
+    #[test]
+    fn switching_tabs_lands_on_the_top_row() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = tabbed_backend();
+            let top_of_all = backend
+                .state()
+                .agent_picker
+                .as_ref()
+                .unwrap()
+                .selected
+                .clone();
+            let last_session = picker_tabs(backend.state()).len() - 2;
+            backend.dispatch(Msg::AgentPickerTab(last_session)).unwrap();
+            let on_session = backend
+                .state()
+                .agent_picker
+                .as_ref()
+                .unwrap()
+                .selected
+                .clone();
+            assert!(on_session.is_some());
+
+            for tab in 0..=last_session + 1 {
+                backend.dispatch(Msg::AgentPickerTab(tab)).unwrap();
+                let state = backend.state();
+                let picker = state.agent_picker.as_ref().unwrap();
+                let top = crate::view::agents::global_agent_rows(state)
+                    .into_iter()
+                    .find(|row| row.in_tab(state, &picker.tab))
+                    .map(|row| row.location);
+                assert_eq!(picker.selected, top, "tab {tab}");
+            }
+            assert_eq!(
+                backend.state().agent_picker.as_ref().unwrap().selected,
+                top_of_all,
+                "All starts at its top row again"
             );
         });
     }

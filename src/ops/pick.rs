@@ -242,7 +242,7 @@ pub(crate) fn tab_selected(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     // The armed row belongs to the page being left.
     pick.pending_action = None;
     pick.active = index;
-    // The palette remounts for the new page, so seed it with what was typed there last time.
+    // The palette starts over on the new page, so seed it with what was typed there last time.
     let page = pick.page_mut();
     page.restore_query = page.query.clone();
     if let Some(tab) = page.tab.as_deref() {

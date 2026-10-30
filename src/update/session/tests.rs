@@ -1006,9 +1006,9 @@ fn current_rename_relabels_open_session_picker_row() {
         let state = backend.state();
         let picker = state.session_picker.as_ref().expect("picker stays open");
         let names: Vec<_> = picker.entries.iter().map(|row| row.name.as_str()).collect();
-        assert_eq!(names, ["alpha", "work"]);
-        assert!(!picker.entries[1].ephemeral);
-        assert_eq!(picker.selected, 1);
+        assert_eq!(names, ["work", "alpha"]);
+        assert!(!picker.entries[0].ephemeral);
+        assert_eq!(picker.selected, 0);
         let sidebar: Vec<_> = state
             .sidebar
             .sessions

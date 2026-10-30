@@ -103,7 +103,7 @@ pub(crate) fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<Discovere
         &[],
     );
     retain_tabbed_rows(&ctx.state, &mut rows);
-    sort_session_rows(&mut rows);
+    sort_picker_rows(&ctx.state, &mut rows);
     rows
 }
 
@@ -208,6 +208,7 @@ pub(crate) fn apply_discovered_sessions(
 /// Share selection preservation and confirmation invalidation between local sweeps and host pushes.
 pub(crate) fn replace_picker_rows(ctx: &mut Context<AppRoot>, mut rows: Vec<DiscoveredSession>) {
     retain_tabbed_rows(&ctx.state, &mut rows);
+    sort_picker_rows(&ctx.state, &mut rows);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         let selected_identity = picker
             .entries
@@ -479,6 +480,16 @@ pub(crate) fn sort_session_rows(rows: &mut [DiscoveredSession]) {
         (None, Some(_)) => std::cmp::Ordering::Less,
         (Some(_), None) => std::cmp::Ordering::Greater,
         (a_host, b_host) => a_host.cmp(&b_host).then_with(|| a.name.cmp(&b.name)),
+    });
+}
+
+/// The Sessions picker's order: by how each session stands with this client, then as
+/// [`sort_session_rows`] orders them. A session's standing depends on this client's attachments, so
+/// this stays out of the rows shared with the sidebar and the host cache.
+fn sort_picker_rows(state: &crate::state::State, rows: &mut [DiscoveredSession]) {
+    sort_session_rows(rows);
+    rows.sort_by_cached_key(|row| {
+        crate::view::vocabulary::session_row_presence(state, row).picker_group()
     });
 }
 

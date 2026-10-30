@@ -235,7 +235,7 @@ pub(crate) fn overlay_interceptor(ctx: &Context<AppRoot>, actions: &[OverlayActi
 
 /// Pages of an [`OverlayPalette`], drawn below the query, above the results.
 ///
-/// The palette remounts per page, seeded with the caller's query and highlight.
+/// The palette starts over on each page, from the caller's query and highlight.
 pub(crate) struct OverlayTabs {
     labels: Vec<String>,
     active: usize,
@@ -557,7 +557,9 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
         if let Some(tabs) = tabs {
             let select = tabs.select;
             let labels = tabs.labels.iter().map(String::as_str).collect::<Vec<_>>();
-            palette = palette.results_header(
+            // Reset rather than remount: each page brings its own query and highlight, but the tab
+            // strip above them has to keep its scroll position.
+            palette = palette.reset_key(tabs.active.to_string()).results_header(
                 VStack::new()
                     .height(Length::Auto)
                     .child(picker_tabs(
@@ -569,13 +571,8 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
                     ))
                     .child(Spacer::new().height(Length::Px(1))),
             );
-            // Keyed per page: the query field and highlight are seeded only on mount, and each
-            // page brings its own.
-            let palette: Element = palette.into();
-            body = body.child(palette.key(format!("{key}-page-{}", tabs.active)));
-        } else {
-            body = body.child(palette);
         }
+        body = body.child(palette);
         if let Some(detail) = detail {
             body = body.child(detail);
         }

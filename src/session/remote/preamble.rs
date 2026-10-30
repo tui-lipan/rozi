@@ -45,6 +45,10 @@ pub struct RemotePreamble {
     /// preamble instead of autostarting a replacement.
     #[serde(default)]
     pub session_missing: bool,
+    /// The proxy's own `SSH_CONNECTION`. Only this end of the link can read it, and the client hands
+    /// it to the panes it opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_connection: Option<String>,
 }
 
 impl RemotePreamble {
@@ -64,6 +68,7 @@ impl RemotePreamble {
             server_started,
             server_nonce,
             session_missing: false,
+            ssh_connection: std::env::var("SSH_CONNECTION").ok(),
         }
     }
 

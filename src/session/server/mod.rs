@@ -2247,6 +2247,7 @@ fn pty_config(
     // a per-spawn value still wins, including over a removal.
     INHERITED_ENV_REMOVED
         .iter()
+        .chain(crate::platform::environment::DESKTOP_SESSION_VARIABLES)
         .fold(config, |config, key| config.env_remove(*key))
         .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))

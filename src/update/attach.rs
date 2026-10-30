@@ -160,6 +160,7 @@ pub(crate) fn spawn_state_panes_on_session(
     // empty argv (the server resolves its own default shell) and drop the integration env. Mirrors
     // the same guard in `pane_lifecycle::request_pane_spawn` for later splits.
     let is_remote = ctx.state.current().remote_host.is_some();
+    let client_site = ctx.state.current().client_site();
     let (shell, integration_env, command_shell) = if is_remote {
         (Vec::new(), Vec::new(), Vec::new())
     } else {
@@ -209,7 +210,7 @@ pub(crate) fn spawn_state_panes_on_session(
                 .chain(pane_env(
                     control_socket.as_deref(),
                     pane,
-                    is_remote,
+                    &client_site,
                     &forwarded_environment,
                 ))
                 .collect::<Vec<_>>();

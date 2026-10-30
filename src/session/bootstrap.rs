@@ -603,6 +603,7 @@ fn try_attach_remote(
                 Ok((mut client, attached)) => {
                     client.path_family =
                         crate::platform::paths::PathFamily::from_os(&preamble.platform);
+                    client.ssh_connection = preamble.ssh_connection;
                     link.send(Msg::SessionConnected {
                         epoch,
                         name: name.to_string(),

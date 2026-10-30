@@ -22,7 +22,8 @@
 //! - [`command`] - interactive-shell/command-runner resolution (Phase 4), wired into every
 //!   pane/hook/workbar/`[keys] run` spawn path, plus Windows `PATH`/`PATHEXT` program lookup
 //!   (Phase 10).
-//! - [`environment`] - the safe client environment overlay for newly created local panes.
+//! - [`environment`] - the safe client environment overlay for newly created local panes, and the
+//!   host's current desktop for panes no local client speaks for (Linux with systemd only).
 //! - [`clipboard`] - host clipboard conventions used by Rozi's default interaction policy.
 //! - `errno` (Unix only) - the per-libc `errno` accessor the signal handlers in [`cursor`] and
 //!   [`server_lifecycle`] need to save and restore it around their writes.

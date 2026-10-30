@@ -76,6 +76,8 @@ pub struct Attachment {
     pub remote_host: Option<String>,
     /// The session server's filesystem rules, retained while disconnected and when parked.
     pub(crate) path_family: crate::platform::paths::PathFamily,
+    /// `SSH_CONNECTION` the far host reported for the current link; `None` for local sessions.
+    pub(crate) ssh_connection: Option<String>,
     /// The resolved `--remote` target for the current session, carried alongside `remote_host` so a
     /// dropped link reconnects to the *same* remote host instead of re-parsing (or, worse, falling
     /// back to a same-named local session). `None` for local sessions.
@@ -144,6 +146,17 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    /// Where this attachment's client runs relative to the server spawning its panes.
+    pub(crate) fn client_site(&self) -> crate::pane::spawn_policy::ClientSite {
+        if self.remote_host.is_some() {
+            crate::pane::spawn_policy::ClientSite::Remote {
+                ssh_connection: self.ssh_connection.clone(),
+            }
+        } else {
+            crate::pane::spawn_policy::ClientSite::Local
+        }
+    }
+
     /// A fresh, unattached attachment (no session client, purely local, nothing pending) with an
     /// empty set of workspaces. Callers that need an initial pane populate `workspaces` after.
     pub fn new() -> Self {
@@ -162,6 +175,7 @@ impl Attachment {
             session_instance: None,
             remote_host: None,
             path_family: crate::platform::paths::PathFamily::local(),
+            ssh_connection: None,
             remote_target: None,
             origin: crate::session::origin::SessionOrigin::default(),
             deferred_profile_seed: None,

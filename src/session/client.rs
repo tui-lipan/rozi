@@ -154,6 +154,8 @@ pub struct SessionClient {
     server_pid: Option<u32>,
     /// Filesystem family announced by the remote proxy, or the local platform for local IPC.
     pub(crate) path_family: crate::platform::paths::PathFamily,
+    /// `SSH_CONNECTION` announced by the remote proxy; `None` for local IPC.
+    pub(crate) ssh_connection: Option<String>,
     /// Wire version agreed with this server. Gates messages added after the minimum supported
     /// version so an older server never receives a variant it cannot deserialize.
     effective_protocol: u32,
@@ -276,6 +278,7 @@ impl SessionClient {
                 test_observer: Some(test_tx),
                 cell: tui_lipan::TerminalCellSize::default(),
                 path_family: crate::platform::paths::PathFamily::local(),
+                ssh_connection: None,
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
@@ -574,6 +577,7 @@ impl SessionClient {
             #[cfg(test)]
             test_observer: None,
             path_family: crate::platform::paths::PathFamily::local(),
+            ssh_connection: None,
             server_pid,
             effective_protocol,
             capabilities,
@@ -2060,6 +2064,7 @@ mod tests {
             piped_buffer: None,
             test_observer: None,
             path_family: crate::platform::paths::PathFamily::local(),
+            ssh_connection: None,
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),

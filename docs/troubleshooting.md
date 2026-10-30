@@ -204,6 +204,10 @@ In a remote session, OSC 52 and mouse selection use your local clipboard. A remo
 calls a clipboard tool directly uses the remote host's clipboard. See
 [Select, copy, and paste](terminal.md#select-copy-and-paste).
 
+Some programs, such as Codex, choose when they start by checking for variables like `SSH_CONNECTION`.
+If one started in a pane opened on the host itself copies only to the host's clipboard, start it again
+in a pane opened from your SSH client.
+
 ### Image paste reports that the clipboard is unavailable
 
 In a managed remote session, use `Ctrl+V`, the `v` command key, or the paste

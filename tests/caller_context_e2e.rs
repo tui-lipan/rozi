@@ -621,20 +621,7 @@ mv "$4.tmp" "$4"
 #[cfg(unix)]
 #[test]
 fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
-
-    struct Server(std::process::Child);
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-
     rozi::test_support::isolate_user_dirs();
-    let files = tempfile::tempdir().unwrap();
-    let session = format!("inherited-env-{}", std::process::id());
     let planted = [
         ("ROZI_PANE", "4242"),
         ("ROZI_SESSION_INSTANCE", "planted-instance"),
@@ -645,14 +632,127 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         ("ROZI_SHELL_INTEGRATION_LOADED", "1"),
     ];
     let mut command = cli();
+    for (key, value) in planted {
+        command.env(key, value);
+    }
+    let env = headless_pane_environment("inherited-env", command);
+    assert_eq!(env.get("ROZI").map(String::as_str), Some("1"));
+    for (key, value) in planted {
+        assert_ne!(
+            env.get(key).map(String::as_str),
+            Some(value),
+            "{key} leaked into the pane"
+        );
+    }
+    // A headless pane has no UI, so it names none rather than the one that started its server.
+    for key in [
+        "ROZI_SOCKET",
+        "ROZI_BIN",
+        "ROZI_EXTENSION",
+        "ROZI_EXTENSION_CREDENTIAL",
+        "ROZI_SHELL_INTEGRATION_LOADED",
+    ] {
+        assert!(!env.contains_key(key), "{key} is set in a headless pane");
+    }
+}
+
+/// A server can outlive the desktop it started from, so a pane gets the desktop running on the host
+/// now, never the server's copy, and a display whose socket is gone does not count.
+#[cfg(target_os = "linux")]
+#[test]
+fn server_panes_get_the_hosts_current_desktop_rather_than_the_servers_copy() {
+    rozi::test_support::isolate_user_dirs();
+    let runtime = tempfile::tempdir().unwrap();
+    std::fs::write(runtime.path().join("wayland-live"), "").unwrap();
+    let env = headless_pane_environment(
+        "live-desktop",
+        command_with_stub_systemctl(
+            runtime.path(),
+            &format!(
+                "printf '%s\\n' HOME=/stub DISPLAY=:9999 WAYLAND_DISPLAY=wayland-live \\
+                 XDG_CURRENT_DESKTOP=Live XDG_RUNTIME_DIR={}",
+                runtime.path().display()
+            ),
+        ),
+    );
+    assert_eq!(
+        env.get("WAYLAND_DISPLAY").map(String::as_str),
+        Some("wayland-live")
+    );
+    assert_eq!(
+        env.get("XDG_CURRENT_DESKTOP").map(String::as_str),
+        Some("Live")
+    );
+    assert!(!env.contains_key("DISPLAY"), "X11 socket is gone: {env:?}");
+    assert!(
+        !env.contains_key("XDG_SESSION_TYPE"),
+        "the server's session type leaked: {env:?}"
+    );
+    assert_ne!(env.get("HOME").map(String::as_str), Some("/stub"));
+}
+
+/// With no desktop to report, a pane has no display at all, which its programs can detect. The
+/// variables that belong to the user rather than the desktop still come through.
+#[cfg(target_os = "linux")]
+#[test]
+fn server_panes_have_no_display_when_the_host_reports_no_desktop() {
+    rozi::test_support::isolate_user_dirs();
+    let stub = tempfile::tempdir().unwrap();
+    let env = headless_pane_environment(
+        "no-desktop",
+        command_with_stub_systemctl(stub.path(), "exit 1"),
+    );
+    for key in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP"] {
+        assert!(!env.contains_key(key), "{key} leaked: {env:?}");
+    }
+    assert!(env.contains_key("XDG_RUNTIME_DIR"), "{env:?}");
+}
+
+/// A CLI command for a server that has a stale desktop and finds `script` as its `systemctl`.
+#[cfg(target_os = "linux")]
+fn command_with_stub_systemctl(dir: &std::path::Path, script: &str) -> Command {
+    use std::os::unix::fs::PermissionsExt;
+
+    let stub = dir.join("systemctl");
+    std::fs::write(&stub, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::var_os("PATH").unwrap();
+    let mut search = vec![dir.to_path_buf()];
+    search.extend(std::env::split_paths(&path));
+
+    let mut command = cli();
+    command
+        .env("PATH", std::env::join_paths(search).unwrap())
+        .env("DISPLAY", ":98")
+        .env("WAYLAND_DISPLAY", "wayland-stale")
+        .env("XDG_CURRENT_DESKTOP", "Stale")
+        .env("XDG_SESSION_TYPE", "stale");
+    command
+}
+
+/// Start a real server from `command` and report the environment of a pane it opens with no UI.
+#[cfg(unix)]
+fn headless_pane_environment(
+    label: &str,
+    mut command: Command,
+) -> std::collections::HashMap<String, String> {
+    use std::time::{Duration, Instant};
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let files = tempfile::tempdir().unwrap();
+    let session = format!("{label}-{}", std::process::id());
     command
         .args(["--server", &session])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    for (key, value) in planted {
-        command.env(key, value);
-    }
     let _server = Server(command.spawn().unwrap());
 
     let deadline = Instant::now() + common::io_timeout();
@@ -691,25 +791,12 @@ fn server_panes_never_inherit_the_starting_panes_rozi_environment() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let dumped = std::fs::read_to_string(&dump).unwrap();
-    let env: HashMap<&str, &str> = dumped
+    std::fs::read_to_string(&dump)
+        .unwrap()
         .lines()
         .filter_map(|line| line.split_once('='))
-        .collect();
-    assert_eq!(env.get("ROZI"), Some(&"1"));
-    for (key, value) in planted {
-        assert_ne!(env.get(key), Some(&value), "{key} leaked into the pane");
-    }
-    // A headless pane has no UI, so it names none rather than the one that started its server.
-    for key in [
-        "ROZI_SOCKET",
-        "ROZI_BIN",
-        "ROZI_EXTENSION",
-        "ROZI_EXTENSION_CREDENTIAL",
-        "ROZI_SHELL_INTEGRATION_LOADED",
-    ] {
-        assert!(!env.contains_key(key), "{key} is set in a headless pane");
-    }
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect()
 }
 
 /// Discoverable control endpoints accept liveness connections as well as context probes.

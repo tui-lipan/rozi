@@ -17,6 +17,7 @@ use std::fmt::Write as _;
 
 use crate::config::ExtensionProvenance;
 use crate::config::Placement;
+use crate::config::SessionScope;
 use crate::session::protocol::SessionInstanceId;
 use crate::session::remote::RemoteTarget;
 
@@ -97,6 +98,7 @@ pub struct Worker {
     pub extension: ExtensionProvenance,
     pub placement: Placement,
     pub binding: WorkerBinding,
+    pub session_scope: SessionScope,
     pub runtime: WorkerRuntime,
     pub kind: WorkerKind,
     credential: String,
@@ -127,6 +129,26 @@ impl WorkerRegistry {
         runtime: WorkerRuntime,
         kind: WorkerKind,
     ) -> &Worker {
+        self.issue_scoped(
+            extension,
+            placement,
+            binding,
+            SessionScope::Active,
+            runtime,
+            kind,
+        )
+    }
+
+    /// [`Self::issue`], for a service whose manifest declares a [`SessionScope`].
+    pub fn issue_scoped(
+        &mut self,
+        extension: ExtensionProvenance,
+        placement: Placement,
+        binding: WorkerBinding,
+        session_scope: SessionScope,
+        runtime: WorkerRuntime,
+        kind: WorkerKind,
+    ) -> &Worker {
         self.next_id += 1;
         let id = WorkerId(self.next_id);
         let credential = fresh_credential();
@@ -138,6 +160,7 @@ impl WorkerRegistry {
                 extension,
                 placement,
                 binding,
+                session_scope,
                 runtime,
                 kind,
                 credential,

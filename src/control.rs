@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 1;
+pub const API_SCHEMA_VERSION: u32 = 2;
 
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
 pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
@@ -88,6 +88,9 @@ pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
 /// `description`, `choices`, `min`, `max`) and `settings` on `[[sidebar_tabs]]`, offered in the tab
 /// settings picker. An older binary rejects both.
 pub const SIDEBAR_TAB_SETTINGS_CAPABILITY: &str = "sidebar-tab-settings";
+/// `list-panes --scope attached`, and a service manifest's `session_scope`. A placed service runs
+/// the host's `rozi`, so its host has to offer this too, not only the client that loaded it.
+pub const ATTACHED_SESSION_SCOPE_CAPABILITY: &str = "attached-session-scope";
 /// A UI answers `prompt`, a modal text prompt with no picker behind it.
 pub const PROMPT_CAPABILITY: &str = "prompt";
 /// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
@@ -122,6 +125,7 @@ impl ApiDescription {
                 AGENT_PROMPT_RESULTS_CAPABILITY,
                 AGENT_WAITS_CAPABILITY,
                 ATTACHED_CONTROL_CAPABILITY,
+                ATTACHED_SESSION_SCOPE_CAPABILITY,
                 CALLER_CONTEXT_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,
@@ -419,6 +423,8 @@ pub enum ControlCommand {
     /// Verified caller identity on a server; attachment metadata on a UI.
     Context,
     ListPanes,
+    /// The panes of every session this UI has attached, on screen or not.
+    ListAttachedPanes,
     /// Report workspaces and where each pane sits. `workspace` is one-based and narrows the report
     /// to that workspace.
     LayoutGet {
@@ -928,6 +934,9 @@ pub struct PaneInfo {
     pub id: PaneId,
     /// Absent only from a UI endpoint that has no session behind it.
     pub reference: Option<crate::session::protocol::PaneRef>,
+    /// Whether this pane's session is the one on screen. Pane ids repeat across sessions, so a
+    /// command naming a pane by id reaches this pane only while this is true.
+    pub on_screen: bool,
     pub agent_ref: Option<crate::session::protocol::AgentRef>,
     pub title: String,
     /// One-based workspace, or `0` when the session has no layout document yet - nothing has
@@ -3402,6 +3411,7 @@ mod tests {
             title: "pane 3".to_string(),
             workspace: 1,
             command: None,
+            on_screen: true,
             argv: None,
             foreground_program: None,
             foreground_programs: Vec::new(),
@@ -3439,6 +3449,7 @@ mod tests {
                 "foreground_program",
                 "foreground_programs",
                 "id",
+                "on_screen",
                 "reference",
                 "reported_status",
                 "session",

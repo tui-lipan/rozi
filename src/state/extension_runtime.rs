@@ -79,7 +79,13 @@ impl From<crate::extension_runtime::protocol::SpawnFailure> for Unavailable {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostRuntimeStatus {
     Connecting,
-    Ready { os: String, version: Option<String> },
+    Ready {
+        os: String,
+        version: Option<String>,
+        /// Whether the host's `rozi` understands `list-panes --scope attached`, which a service
+        /// declaring `session_scope = "attached"` runs there.
+        attached_scope: bool,
+    },
     Unavailable(Unavailable),
 }
 

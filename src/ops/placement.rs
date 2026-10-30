@@ -19,7 +19,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::config::{
     ExtensionProvenance, LaunchTemplate, NamedCommand, PlacedService, Placement, ServiceRestart,
-    SharedPlacements,
+    SessionScope, SharedPlacements,
 };
 use crate::extension_runtime::client::{RuntimeConnection, RuntimeEvent};
 use crate::extension_runtime::protocol::{Capture, Message, SpawnCwd, SpawnFailure};
@@ -40,6 +40,7 @@ struct LaunchSpec {
     placements: SharedPlacements,
     placement: Placement,
     binding: WorkerBinding,
+    session_scope: SessionScope,
     kind: WorkerKind,
     purpose: WorkerPurpose,
     launch: LaunchTemplate,
@@ -224,6 +225,12 @@ fn reconcile(ctx: &mut Context<AppRoot>, changed: bool) {
                     Unavailable::RuntimeUnreachable { .. } => {
                         host_retry_due(&ctx.state, &key.binding.host, now, &mut next_wake)
                     }
+                    // A host that reconnected after an update can run it now.
+                    Unavailable::RuntimeUnsupported { .. }
+                        if service.session_scope == SessionScope::Attached =>
+                    {
+                        changed || host_offers_attached_scope(&ctx.state, &key.binding.host)
+                    }
                     _ => changed,
                 },
             },
@@ -302,12 +309,73 @@ fn arm_wake(state: &mut State, at: Option<Instant>) {
     }
 }
 
+fn host_offers_attached_scope(state: &State, host: &HostKey) -> bool {
+    state
+        .extension_runtime
+        .hosts
+        .get(host)
+        .is_some_and(|runtime| {
+            matches!(
+                runtime.status,
+                HostRuntimeStatus::Ready {
+                    attached_scope: true,
+                    ..
+                }
+            )
+        })
+}
+
+/// What a service declaring `session_scope = "attached"` needs of its host before it starts.
+enum AttachedScopeCheck {
+    Start,
+    /// The handshake is not done, so the host's capabilities are unknown. Readiness reconciles.
+    Wait,
+    Refuse(Unavailable),
+}
+
+/// The client that loaded the extension met its `min_rozi`, but the service runs the host's `rozi`,
+/// and an older one that still speaks the protocol would refuse `list-panes --scope attached` on
+/// every start. So the host's own answer decides, before anything is launched.
+fn check_attached_scope(state: &mut State, host: &HostKey) -> AttachedScopeCheck {
+    // A runtime that cannot be reached is reported by the launch, like any other service's.
+    if ensure_runtime(state, host).is_err() {
+        return AttachedScopeCheck::Start;
+    }
+    match state
+        .extension_runtime
+        .hosts
+        .get(host)
+        .map(|runtime| &runtime.status)
+    {
+        Some(HostRuntimeStatus::Connecting) => AttachedScopeCheck::Wait,
+        Some(HostRuntimeStatus::Ready {
+            attached_scope: false,
+            ..
+        }) => AttachedScopeCheck::Refuse(Unavailable::RuntimeUnsupported {
+            detail: format!(
+                "the host's Rozi cannot run a service with `session_scope = \"attached\"` ({}); \
+                 update Rozi there",
+                crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY
+            ),
+        }),
+        _ => AttachedScopeCheck::Start,
+    }
+}
+
 fn start_instance(
     ctx: &mut Context<AppRoot>,
     key: InstanceKey,
     placements: SharedPlacements,
     service: &PlacedService,
 ) {
+    let check = if service.session_scope == SessionScope::Attached {
+        check_attached_scope(&mut ctx.state, &key.binding.host)
+    } else {
+        AttachedScopeCheck::Start
+    };
+    if matches!(check, AttachedScopeCheck::Wait) {
+        return;
+    }
     let generation = ctx
         .state
         .extension_generations
@@ -328,6 +396,7 @@ fn start_instance(
         placements: placements.clone(),
         placement: service.placement,
         binding: key.binding.clone(),
+        session_scope: service.session_scope,
         kind: WorkerKind::Service {
             name: service.name.clone(),
         },
@@ -340,7 +409,11 @@ fn start_instance(
         capture: None,
     };
     let session_name = bound_session_name(&ctx.state, &key.binding);
-    let status = match launch(&mut ctx.state, spec) {
+    let launched = match check {
+        AttachedScopeCheck::Refuse(reason) => Err(reason),
+        _ => launch(&mut ctx.state, spec),
+    };
+    let status = match launched {
         Ok(worker) => InstanceStatus::Running { worker },
         Err(reason) => InstanceStatus::Unavailable(reason),
     };
@@ -433,13 +506,14 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
         WorkerKind::Tab { id } => ("tab", id),
     };
     let unit = crate::extension_runtime::log::unit_name(kind, &spec.placements.id, public_id);
-    let worker = state.extension_workers.issue(
+    let worker = state.extension_workers.issue_scoped(
         ExtensionProvenance {
             id: spec.placements.id.clone(),
             generation,
         },
         spec.placement,
         spec.binding,
+        spec.session_scope,
         WorkerRuntime(epoch),
         spec.kind,
     );
@@ -682,9 +756,14 @@ pub(crate) fn runtime_event(
                 .hosts
                 .get_mut(&host)
                 .expect("checked above");
+            let attached_scope = hello
+                .capabilities
+                .iter()
+                .any(|item| item == crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY);
             runtime.status = HostRuntimeStatus::Ready {
                 os: hello.os.unwrap_or_default(),
                 version: hello.version,
+                attached_scope,
             };
             runtime.failures = 0;
             runtime.retry_at = None;
@@ -1170,6 +1249,7 @@ pub(crate) fn run_command_from_pane(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Command {
             id: command.id.clone(),
         },
@@ -1242,6 +1322,7 @@ pub(crate) fn poll_tab(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Tab {
             id: tab.as_str().to_string(),
         },
@@ -1297,6 +1378,7 @@ pub(crate) fn click_tab(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Tab {
             id: tab.as_str().to_string(),
         },
@@ -1341,7 +1423,7 @@ pub(crate) fn status_report(state: &State) -> crate::control::ExtensionRuntimeRe
         .map(|host| {
             let (status, os, version, reason) = match &host.status {
                 HostRuntimeStatus::Connecting => ("connecting", None, None, None),
-                HostRuntimeStatus::Ready { os, version } => {
+                HostRuntimeStatus::Ready { os, version, .. } => {
                     ("ready", Some(os.clone()), version.clone(), None)
                 }
                 HostRuntimeStatus::Unavailable(reason) => {
@@ -1504,6 +1586,7 @@ mod tests {
                     status: HostRuntimeStatus::Ready {
                         os: "linux".to_string(),
                         version: None,
+                        attached_scope: true,
                     },
                     connection: None,
                     staged: HashSet::new(),
@@ -1676,6 +1759,119 @@ mod tests {
         });
     }
 
+    /// A service declaring `session_scope = "attached"` runs the host's `rozi`. A host too old to
+    /// list attached sessions gets no process that would only fail and restart, and says why; once
+    /// it reconnects updated, the service starts. The handshake decides, so nothing launches
+    /// before it.
+    #[test]
+    fn an_attached_scope_service_waits_for_a_host_that_can_run_it() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while backend.state().command_link.is_none() {
+                assert!(Instant::now() < deadline, "no command link");
+                backend.pump().unwrap();
+            }
+            let state = backend.state_mut();
+            state
+                .extension_generations
+                .insert("sessions".to_string(), "g1".to_string());
+            state.current_mut().session_attached = true;
+            state.config.extension_placements.insert(
+                "sessions".to_string(),
+                std::sync::Arc::new(crate::config::ExtensionPlacements {
+                    id: "sessions".to_string(),
+                    platforms: Vec::new(),
+                    local_dir: "/x".to_string(),
+                    bundle: std::sync::Arc::new(
+                        crate::extension_runtime::bundle::Bundle::from_files(Vec::new()).unwrap(),
+                    ),
+                    commands: Default::default(),
+                    tabs: Default::default(),
+                    services: vec![crate::config::PlacedService {
+                        session_scope: SessionScope::Attached,
+                        name: "sessions.watch".to_string(),
+                        placement: Placement::EachHost,
+                        launch: LaunchTemplate::Shell("exit 0".to_string()),
+                        cwd: ".".to_string(),
+                        restart: ServiceRestart::OnFailure,
+                        env: Default::default(),
+                    }],
+                    client_unsupported: None,
+                }),
+            );
+            state.extension_runtime.next_epoch = 1;
+            state.extension_runtime.hosts.insert(
+                HostKey::Local,
+                HostRuntime {
+                    host: HostKey::Local,
+                    epoch: 1,
+                    status: HostRuntimeStatus::Connecting,
+                    connection: None,
+                    staged: HashSet::new(),
+                    staging: HashSet::new(),
+                    failures: 0,
+                    retry_at: None,
+                },
+            );
+            let signature = signature(state);
+            state.extension_runtime.signature = Some(signature);
+
+            backend.dispatch(crate::Msg::PlacementTick).unwrap();
+            assert!(
+                backend.state().extension_runtime.instances.is_empty(),
+                "the host's capabilities are unknown until the handshake"
+            );
+            assert!(backend.state().extension_runtime.processes.is_empty());
+
+            let ready = |capabilities: Option<Vec<String>>| {
+                let mut hello =
+                    crate::extension_runtime::protocol::Hello::current(Some("linux".to_string()));
+                if let Some(capabilities) = capabilities {
+                    hello.capabilities = capabilities;
+                }
+                crate::Msg::ExtensionRuntime {
+                    host: HostKey::Local,
+                    epoch: 1,
+                    event: RuntimeEvent::Ready(hello),
+                }
+            };
+            let old = vec![
+                crate::extension_runtime::protocol::CAPABILITY.to_string(),
+                crate::extension_runtime::protocol::STATE_CAPABILITY.to_string(),
+            ];
+            backend.dispatch(ready(Some(old))).unwrap();
+            let runtime = &backend.state().extension_runtime;
+            assert!(
+                runtime.processes.is_empty(),
+                "nothing launched on an old host"
+            );
+            let InstanceStatus::Unavailable(Unavailable::RuntimeUnsupported { detail }) =
+                &runtime.instances[0].status
+            else {
+                panic!("expected a refusal, got {:?}", runtime.instances[0].status);
+            };
+            assert!(
+                detail.contains(crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY),
+                "{detail}"
+            );
+
+            backend.dispatch(crate::Msg::PlacementTick).unwrap();
+            assert!(
+                backend.state().extension_runtime.processes.is_empty(),
+                "and a refusal is not retried on every tick"
+            );
+
+            backend.dispatch(ready(None)).unwrap();
+            let runtime = &backend.state().extension_runtime;
+            assert!(matches!(
+                runtime.instances[0].status,
+                InstanceStatus::Running { .. }
+            ));
+            assert_eq!(runtime.processes.len(), 1);
+        });
+    }
+
     /// A runtime whose cache lease failed announces its end. Every service it ran - not just the
     /// one whose launch hit the failure - is marked unreachable, the host reconnects once the
     /// backoff passes, and all of them are launched again under the new runtime.
@@ -1694,6 +1890,7 @@ mod tests {
                 .insert("sessions".to_string(), "g1".to_string());
             state.current_mut().session_attached = true;
             let service = |name: &str| crate::config::PlacedService {
+                session_scope: SessionScope::Active,
                 name: format!("sessions.{name}"),
                 placement: Placement::EachHost,
                 launch: LaunchTemplate::Shell("exit 0".to_string()),
@@ -1726,6 +1923,7 @@ mod tests {
                     status: HostRuntimeStatus::Ready {
                         os: std::env::consts::OS.to_string(),
                         version: None,
+                        attached_scope: true,
                     },
                     connection: None,
                     staged: HashSet::new(),

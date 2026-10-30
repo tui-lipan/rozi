@@ -15,7 +15,7 @@ use super::manifest::{
 use super::paths::{normalize_direct_argv, resolve_declared_path};
 use super::placement::{
     LaunchTemplate, PlacedCommand, PlacedContributions, PlacedService, PlacedTab, Placement,
-    check_host_program, host_relative_cwd,
+    SessionScope, check_host_program, host_relative_cwd,
 };
 use super::{
     ExtensionInfo, ExtensionNavigationTargetDiagnostic, ExtensionSuggestedKeybindingDiagnostic,
@@ -635,6 +635,14 @@ pub(super) fn validate_service(
             None
         }
     };
+    let session_scope = match SessionScope::parse(raw.session_scope.as_deref(), placement) {
+        Ok(scope) => scope,
+        Err(error) => {
+            info.errors
+                .push(format!("extension service `{name}`: {error}"));
+            SessionScope::Active
+        }
+    };
     if launch.is_some()
         && let (Some(restart), Some(template), Some(cwd)) = (restart, template, host_cwd)
     {
@@ -644,6 +652,7 @@ pub(super) fn validate_service(
         placed.services.push(PlacedService {
             name: name.clone(),
             placement,
+            session_scope,
             launch: template,
             cwd,
             restart,

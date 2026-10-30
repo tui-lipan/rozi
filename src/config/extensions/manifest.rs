@@ -91,6 +91,9 @@ pub(super) struct ExtensionServiceFile {
     pub(super) env: BTreeMap<String, String>,
     /// Where, and how many, instances run. See [`super::placement`].
     pub(super) placement: Option<String>,
+    /// Which sessions a placed instance may list and publish into. See
+    /// [`super::placement::SessionScope`].
+    pub(super) session_scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

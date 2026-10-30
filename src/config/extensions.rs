@@ -2431,6 +2431,7 @@ mod tests {
                 "name",
                 "placement",
                 "restart",
+                "session_scope",
                 "shell"
             ]
         );
@@ -2642,6 +2643,40 @@ mod tests {
             placed.bundle_digest()
         ));
         assert_eq!(contributions.commands.len(), 2);
+    }
+
+    #[test]
+    fn a_service_declares_its_session_scope_only_with_a_placement_that_bounds_it() {
+        let scope = |placement: &str, declared: &str| {
+            let temp = tempfile::tempdir().unwrap();
+            let dir = write_manifest(
+                temp.path(),
+                "sessions",
+                &placed_manifest(
+                    "sessions",
+                    &format!(
+                        "[[services]]\nname = \"watch\"\nexec = [\"./bin/run\"]\n\
+                         placement = \"{placement}\"\nsession_scope = \"{declared}\"\n"
+                    ),
+                ),
+            );
+            write_program(&dir, "bin/run");
+            let contributions = contributions_in(temp.path());
+            contributions
+                .placements
+                .get("sessions")
+                .and_then(|placed| placed.services.first())
+                .map(|service| service.session_scope)
+        };
+        use placement::SessionScope;
+        assert_eq!(scope("each-host", "attached"), Some(SessionScope::Attached));
+        assert_eq!(
+            scope("each-session", "attached"),
+            Some(SessionScope::Attached)
+        );
+        assert_eq!(scope("each-host", "active"), Some(SessionScope::Active));
+        assert_eq!(scope("active-session", "attached"), None);
+        assert_eq!(scope("each-host", "everything"), None);
     }
 
     #[test]

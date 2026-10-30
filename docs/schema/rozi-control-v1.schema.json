@@ -889,6 +889,19 @@
           "type": "object"
         },
         {
+          "description": "The panes of every session this UI has attached, on screen or not.",
+          "properties": {
+            "cmd": {
+              "const": "list-attached-panes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report workspaces and where each pane sits. `workspace` is one-based and narrows the report\nto that workspace.",
           "properties": {
             "cmd": {
@@ -2387,6 +2400,19 @@
           "properties": {
             "cmd": {
               "const": "list-panes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The panes of every session this UI has attached, on screen or not.",
+          "properties": {
+            "cmd": {
+              "const": "list-attached-panes",
               "type": "string"
             }
           },
@@ -4692,6 +4718,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "on_screen": {
+          "description": "Whether this pane's session is the one on screen. Pane ids repeat across sessions, so a\ncommand naming a pane by id reaches this pane only while this is true.",
+          "type": "boolean"
+        },
         "recording": {
           "description": "The session server is recording this pane; `record list` says where.",
           "type": "boolean"
@@ -4740,6 +4770,7 @@
       "required": [
         "session",
         "id",
+        "on_screen",
         "title",
         "workspace",
         "foreground_programs",
@@ -7499,5 +7530,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 1
+  "x-rozi-schema-version": 2
 }

@@ -204,7 +204,7 @@ attached.
 | Command | Purpose | `--session` |
 | --- | --- | --- |
 | `context [--format text\|json]` | Verify caller identity and report UI availability. | caller only |
-| `list-panes [--format text\|json]` | List panes visible to this endpoint. | yes |
+| `list-panes [--scope current\|attached] [--format text\|json]` | List panes visible to this endpoint. `attached` needs a UI. | yes |
 | `layout get [--workspace 1-9] [--format text\|json]` | Report workspaces and where each pane sits. | yes |
 | `layout set --workspace 1-9 [<LAYOUT>] [--master-ratio R] [--if-revision N]` | Set a workspace's tiling layout, its master share, or both. | yes |
 | `pane set --target ID [--floating B] [--fullscreen B] [--rect X,Y,W,H \| --rect-fraction X,Y,W,H] [--split-ratio R \| --width-ratio R] [--if-revision N]` | Float, tile, place, size, or fullscreen a pane. | yes |
@@ -282,12 +282,13 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 1,
+  "schema": 2,
   "session_protocol": 37,
   "capabilities": [
     "agent-prompt-results",
     "agent-waits",
     "attached-control",
+    "attached-session-scope",
     "caller-context",
     "capture-render",
     "capture-scale",
@@ -354,6 +355,10 @@ command.
 `agent-state-changed` and `foreground-changed` events. An older binary refuses a subscription that
 names either.
 
+`attached-session-scope` means `list-panes` accepts `--scope attached` and extension manifests
+accept `session_scope`. An older binary refuses the option and rejects a manifest that uses the
+field.
+
 `sidebar-tab-settings` means extension manifests accept a setting's table form and
 [`settings` on a sidebar tab](writing-extensions.md#tab-settings). An older binary rejects a
 manifest that uses either.
@@ -380,6 +385,10 @@ document is also written to stdout.
 attachment and client-local scratch panes, not every named session. From `--session`, it includes
 every pane in that session, including panes whose process has exited, which report
 `exited (<CODE>)` instead of `ready`. Use `rozi sessions list` to discover session servers.
+
+`--scope attached` asks a UI for the panes of every session it has attached, on screen or not, and
+its client-local scratch panes. A pane's `on_screen` says whether its session is the one showing.
+Pane IDs repeat across sessions, and a command naming a pane by ID reaches the session on screen.
 
 Human-readable help and reports use rozi's palette when written to a terminal; redirected output
 stays plain. `NO_COLOR`, `CLICOLOR=0`, and `TERM=dumb` disable styling. `CLICOLOR_FORCE` enables it

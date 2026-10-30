@@ -234,6 +234,11 @@ placement = "each-host"   # client | active-session | each-host | each-session
 - Pane commands apply only while a session on its own host (and session, for `active-session`
   and `each-session`) is on screen: `list-panes` returns nothing otherwise, others fail with
   `out-of-scope`. Code for that case rather than treating it as an error.
+- `session_scope = "attached"` on an `each-host` or `each-session` service also lets it run
+  `rozi list-panes --scope attached` and publish into those sessions off screen, with `ROZI_PANE` and
+  `ROZI_SESSION_INSTANCE` set on the `rozi publish` process. Key panes by session instance and pane
+  ID, check `on_screen`, and never type or capture off screen. It starts only on a host whose Rozi
+  offers `attached-session-scope`; `min_rozi` checks only the client.
 - `run-action` works only for the extension's own `active-session` commands. Anything that could
   start a process on the client fails with `not-permitted`.
 - `platforms` is checked on each host; a missing program, an old host Rozi, or an unreachable host

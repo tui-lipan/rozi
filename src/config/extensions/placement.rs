@@ -72,6 +72,40 @@ impl Placement {
     }
 }
 
+/// Which sessions a placed service may list and publish rows into.
+///
+/// Everything else a placed process does - typing, reading a screen, moving a pane - stays on the
+/// session on screen whatever this says. It widens what a third-party process can see, so a service
+/// asks for it in its manifest and never gets it by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SessionScope {
+    /// Only the session on screen.
+    #[default]
+    Active,
+    /// Every attached session within the service's placement, on screen or not.
+    Attached,
+}
+
+impl SessionScope {
+    /// Parse a manifest value. An `active-session` instance follows the screen and a client service
+    /// has no placement to bound it, so only the long-running placed forms can declare it.
+    pub(super) fn parse(raw: Option<&str>, placement: Placement) -> Result<Self, String> {
+        match raw.map(str::trim).unwrap_or("active") {
+            "active" => Ok(Self::Active),
+            "attached" if matches!(placement, Placement::EachHost | Placement::EachSession) => {
+                Ok(Self::Attached)
+            }
+            "attached" => Err(format!(
+                "session_scope `attached` needs placement `each-host` or `each-session`, not `{}`",
+                placement.as_str()
+            )),
+            other => Err(format!(
+                "unknown session_scope `{other}` (allowed: active, attached)"
+            )),
+        }
+    }
+}
+
 /// A process launch written against the extension's own files rather than a directory on any one
 /// machine. `{extension_dir}` stays a placeholder and a `./` program stays relative until a host
 /// resolves them against wherever the extension's files are on it.
@@ -133,6 +167,7 @@ pub struct PlacedService {
     /// Public name, `<extension>.<service>`.
     pub name: String,
     pub placement: Placement,
+    pub session_scope: SessionScope,
     pub launch: LaunchTemplate,
     /// Relative to the extension's files on the executing host.
     pub cwd: String,

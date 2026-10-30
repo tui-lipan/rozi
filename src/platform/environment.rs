@@ -224,7 +224,7 @@ mod tests {
         ]);
         let with_sockets = |live: &'static [&'static str]| {
             live_desktop_environment(record.clone(), None, |path| {
-                live.contains(&path.to_str().unwrap())
+                live.iter().any(|socket| Path::new(socket) == path)
             })
         };
 

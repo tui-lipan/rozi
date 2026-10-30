@@ -211,11 +211,12 @@ fraction:
 unfocused_dim = 0.25
 ```
 
-The value runs from `0.0`, which is off, to `1.0`. Pictures in a pane fade with its text; frames and
+The value runs from `0.0`, which is off, to `1.0`. Pictures in a pane dim too; frames and
 titlebars keep their own focus colors. A pane with an alert stays at full strength, and panes
 behind a dialog or the scratchpad take that backdrop's dim instead of adding this one.
 
-With `focus_on_hover` on, the dim moves as the pointer crosses panes.
+When focus moves, text eases to its new strength and pictures switch at once. With
+`focus_on_hover` on, the dim moves as the pointer crosses panes.
 
 ## Workspaces
 

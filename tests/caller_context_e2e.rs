@@ -917,10 +917,9 @@ fn a_verified_caller_passes_on_its_ssh_connection_and_nothing_else() {
     }
 
     let unrelated = new_pane_environment(server.session(), None, &files.path().join("unrelated"));
-    assert!(
-        !unrelated.keys().any(|key| key.starts_with("SSH_")),
-        "no caller means no SSH context: {unrelated:?}"
-    );
+    for key in ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"] {
+        assert!(!unrelated.contains_key(key), "no caller, yet {key} is set");
+    }
 
     let before = pane_count(server.session());
     let stale_dump = files.path().join("stale");

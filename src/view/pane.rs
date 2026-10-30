@@ -557,7 +557,8 @@ fn pane_content_alert_tint(
 }
 
 /// The opacity an unfocused pane's content fades to, as an amount that eases when focus moves.
-/// `None` while `unfocused_dim` is off.
+/// `None` while `unfocused_dim` is off. Text eases; a picture takes the end value at once, since
+/// following the amount would re-encode it on every frame.
 ///
 /// A pane with an alert keeps its full strength, since it is asking to be looked at. So does any
 /// pane under a dialog's or the scratchpad's backdrop, because the dims never compound.
@@ -3218,34 +3219,75 @@ mod tests {
         });
     }
 
+    /// Shows a red picture in pane `id` and lets the frame settle.
+    fn show_red_picture(backend: &mut TestBackend<AppRoot>, id: PaneId) {
+        let command = format!(
+            "\x1b_Ga=T,f=24,s=20,v=20,t=d,i=1;{}\x1b\\",
+            base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                [255u8, 0, 0].repeat(20 * 20)
+            )
+        );
+        crate::pane::lifecycle::find_pane_mut(backend.state_mut(), id)
+            .unwrap()
+            .terminal
+            .with_screen_mut(|screen| {
+                screen.set_cell_size(tui_lipan::prelude::TerminalCellSize {
+                    width: 10,
+                    height: 20,
+                });
+                screen.process_bytes(command.as_bytes());
+            });
+        backend.render();
+        backend.advance(Duration::from_secs(1));
+    }
+
+    fn first_picture_pixel(backend: &TestBackend<AppRoot>) -> Vec<u8> {
+        let frame = backend.capture_frame();
+        let image = frame.images.first().expect("the picture is captured");
+        image.rgba[..3].to_vec()
+    }
+
+    /// Following the fade would re-encode the picture on every frame of it, so a picture takes the
+    /// strength the fade ends at while the text around it eases there.
+    #[test]
+    fn a_picture_switches_at_once_while_the_text_around_it_eases() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = dim_backend(0.25, Color::Rgb(6, 7, 15));
+            let (full_text, _) = probe_colors(&backend, 1);
+            let (faded_text, _) = probe_colors(&backend, 2);
+            show_red_picture(&mut backend, 2);
+            let faded_picture = first_picture_pixel(&backend);
+            assert_ne!(faded_picture, [255, 0, 0]);
+            let duration = backend.state().config.animations.focus_chrome_duration;
+            let focus = |backend: &mut TestBackend<AppRoot>, id: PaneId| {
+                let state = backend.state_mut();
+                state.current_mut().workspaces[0].focused_pane = Some(id);
+                state.current_mut().focused_pane = Some(id);
+                backend.render();
+                backend.advance(duration / 2);
+            };
+
+            focus(&mut backend, 2);
+            let (easing, _) = probe_colors(&backend, 2);
+            assert!(easing != full_text && easing != faded_text, "{easing:?}");
+            assert_eq!(first_picture_pixel(&backend), [255, 0, 0], "gaining focus");
+
+            backend.advance(Duration::from_secs(1));
+            focus(&mut backend, 1);
+            let (easing, _) = probe_colors(&backend, 2);
+            assert!(easing != full_text && easing != faded_text, "{easing:?}");
+            assert_eq!(first_picture_pixel(&backend), faded_picture, "losing focus");
+        });
+    }
+
     #[test]
     fn a_dimmed_pane_dims_its_pictures_too() {
         crate::test_support::on_large_stack(|| {
             let picture = |dim: f32| {
                 let mut backend = dim_backend(dim, Color::Rgb(6, 7, 15));
-                let command = format!(
-                    "\x1b_Ga=T,f=24,s=20,v=20,t=d,i=1;{}\x1b\\",
-                    base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        [255u8, 0, 0].repeat(20 * 20)
-                    )
-                );
-                let state = backend.state_mut();
-                crate::pane::lifecycle::find_pane_mut(state, 2)
-                    .unwrap()
-                    .terminal
-                    .with_screen_mut(|screen| {
-                        screen.set_cell_size(tui_lipan::prelude::TerminalCellSize {
-                            width: 10,
-                            height: 20,
-                        });
-                        screen.process_bytes(command.as_bytes());
-                    });
-                backend.render();
-                backend.advance(Duration::from_secs(1));
-                let frame = backend.capture_frame();
-                let image = frame.images.first().expect("the picture is captured");
-                image.rgba[..3].to_vec()
+                show_red_picture(&mut backend, 2);
+                first_picture_pixel(&backend)
             };
             assert_eq!(picture(0.0), [255, 0, 0]);
             let dimmed = picture(0.25);

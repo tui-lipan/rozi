@@ -53,7 +53,11 @@ impl Hello {
         Self {
             protocol_min: VERSION,
             protocol_max: VERSION,
-            capabilities: vec![CAPABILITY.to_string(), STATE_CAPABILITY.to_string()],
+            capabilities: vec![
+                CAPABILITY.to_string(),
+                STATE_CAPABILITY.to_string(),
+                crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY.to_string(),
+            ],
             version: os.as_ref().map(|_| env!("CARGO_PKG_VERSION").to_string()),
             os,
         }

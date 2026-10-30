@@ -288,6 +288,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "agent-prompt-results",
     "agent-waits",
     "attached-control",
+    "attached-session-scope",
     "caller-context",
     "capture-render",
     "capture-scale",
@@ -353,6 +354,10 @@ command.
 `runtime-events` means [`subscribe`](#subscriptions) and [hooks](hooks.md) accept the
 `agent-state-changed` and `foreground-changed` events. An older binary refuses a subscription that
 names either.
+
+`attached-session-scope` means `list-panes` accepts `--scope attached` and extension manifests
+accept `session_scope`. An older binary refuses the option and rejects a manifest that uses the
+field.
 
 `sidebar-tab-settings` means extension manifests accept a setting's table form and
 [`settings` on a sidebar tab](writing-extensions.md#tab-settings). An older binary rejects a

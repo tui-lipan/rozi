@@ -403,6 +403,11 @@ It then also may:
   `ROZI_SESSION_INSTANCE` set to the pane's `id` and its `reference.session_instance`: pane IDs
   repeat across sessions, so both are required.
 
+The service runs the host's `rozi`, so that host needs the `attached-session-scope` capability as
+well as the client (see [Check the installed API](control.md#check-the-installed-api)). `min_rozi`
+checks only the client. On an older host the service does not start, and `rozi extensions status`
+says to update Rozi there.
+
 Every other command stays on the session on screen, so such a service cannot type into, read the
 screen of, or move a pane of a session you are not looking at. Check a pane's `on_screen` before
 naming it in one of those commands. Use the session instance rather than the session name to tell

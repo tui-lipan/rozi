@@ -88,6 +88,9 @@ pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
 /// `description`, `choices`, `min`, `max`) and `settings` on `[[sidebar_tabs]]`, offered in the tab
 /// settings picker. An older binary rejects both.
 pub const SIDEBAR_TAB_SETTINGS_CAPABILITY: &str = "sidebar-tab-settings";
+/// `list-panes --scope attached`, and a service manifest's `session_scope`. A placed service runs
+/// the host's `rozi`, so its host has to offer this too, not only the client that loaded it.
+pub const ATTACHED_SESSION_SCOPE_CAPABILITY: &str = "attached-session-scope";
 /// A UI answers `prompt`, a modal text prompt with no picker behind it.
 pub const PROMPT_CAPABILITY: &str = "prompt";
 /// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
@@ -122,6 +125,7 @@ impl ApiDescription {
                 AGENT_PROMPT_RESULTS_CAPABILITY,
                 AGENT_WAITS_CAPABILITY,
                 ATTACHED_CONTROL_CAPABILITY,
+                ATTACHED_SESSION_SCOPE_CAPABILITY,
                 CALLER_CONTEXT_CAPABILITY,
                 CAPTURE_RENDER_CAPABILITY,
                 CAPTURE_SCALE_CAPABILITY,

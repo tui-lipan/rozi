@@ -202,67 +202,8 @@ pub(super) fn format_panes_text(data: Option<&serde_json::Value>, styles: Output
     }
 
     let session = panes.first().and_then(|pane| value_string(pane, "session"));
-    let rows = panes
-        .iter()
-        .map(|pane| {
-            let reported = value_string(pane, "reported_status");
-            let agent_state = value_string(pane, "agent_state");
-            let state = reported.or(agent_state).unwrap_or("—");
-            let size = value_string(pane, "status").unwrap_or("—");
-            let command = value_string(pane, "foreground_program")
-                .map(str::to_string)
-                .or_else(|| value_string(pane, "command").map(str::to_string))
-                .or_else(|| {
-                    pane.get("argv")
-                        .and_then(serde_json::Value::as_array)
-                        .map(|argv| {
-                            argv.iter()
-                                .filter_map(serde_json::Value::as_str)
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        })
-                })
-                .filter(|command| !command.is_empty())
-                .unwrap_or_else(|| "—".to_string());
-            vec![
-                TableCell::new(
-                    value_u64(pane, "id")
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "—".to_string()),
-                    OutputTone::Key,
-                ),
-                TableCell::plain(
-                    value_u64(pane, "workspace")
-                        .map(|workspace| {
-                            if workspace == 0 {
-                                "scratch".to_string()
-                            } else {
-                                workspace.to_string()
-                            }
-                        })
-                        .unwrap_or_else(|| "—".to_string()),
-                ),
-                TableCell::plain(value_string(pane, "title").unwrap_or("—")),
-                TableCell::new(state, pane_status_tone(state)),
-                TableCell::plain(value_string(pane, "agent").unwrap_or("—")),
-                TableCell::plain(size),
-                TableCell::plain(command),
-            ]
-        })
-        .collect::<Vec<_>>();
-    let table = format_table(
-        &[
-            "ID",
-            "WORKSPACE",
-            "TITLE",
-            "STATE",
-            "AGENT",
-            "SIZE",
-            "COMMAND",
-        ],
-        &rows,
-        styles,
-    );
+    let rows = panes.iter().map(pane_cells).collect::<Vec<_>>();
+    let table = format_table(&PANE_COLUMNS, &rows, styles);
     match session {
         Some(session) => format!(
             "{}  {}\n\n{table}",
@@ -271,6 +212,97 @@ pub(super) fn format_panes_text(data: Option<&serde_json::Value>, styles: Output
         ),
         None => table,
     }
+}
+
+const PANE_COLUMNS: [&str; 7] = [
+    "ID",
+    "WORKSPACE",
+    "TITLE",
+    "STATE",
+    "AGENT",
+    "SIZE",
+    "COMMAND",
+];
+
+/// Panes of several sessions, whose ids repeat, so every row says which session it is in.
+pub(super) fn format_attached_panes_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let panes = data
+        .and_then(serde_json::Value::as_array)
+        .map(|panes| panes.as_slice())
+        .unwrap_or_default();
+    if panes.is_empty() {
+        return format!("{}\n", styles.paint("No panes found.", OutputTone::Muted));
+    }
+    let rows = panes
+        .iter()
+        .map(|pane| {
+            let on_screen = pane
+                .get("on_screen")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let mut cells = vec![
+                TableCell::new(
+                    value_string(pane, "session").unwrap_or("—"),
+                    OutputTone::Accent,
+                ),
+                TableCell::plain(if on_screen { "yes" } else { "no" }),
+            ];
+            cells.extend(pane_cells(pane));
+            cells
+        })
+        .collect::<Vec<_>>();
+    let mut columns = vec!["SESSION", "ON SCREEN"];
+    columns.extend(PANE_COLUMNS);
+    format_table(&columns, &rows, styles)
+}
+
+fn pane_cells(pane: &serde_json::Value) -> Vec<TableCell> {
+    let reported = value_string(pane, "reported_status");
+    let agent_state = value_string(pane, "agent_state");
+    let state = reported.or(agent_state).unwrap_or("—");
+    let size = value_string(pane, "status").unwrap_or("—");
+    let command = value_string(pane, "foreground_program")
+        .map(str::to_string)
+        .or_else(|| value_string(pane, "command").map(str::to_string))
+        .or_else(|| {
+            pane.get("argv")
+                .and_then(serde_json::Value::as_array)
+                .map(|argv| {
+                    argv.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+        })
+        .filter(|command| !command.is_empty())
+        .unwrap_or_else(|| "—".to_string());
+    vec![
+        TableCell::new(
+            value_u64(pane, "id")
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            OutputTone::Key,
+        ),
+        TableCell::plain(
+            value_u64(pane, "workspace")
+                .map(|workspace| {
+                    if workspace == 0 {
+                        "scratch".to_string()
+                    } else {
+                        workspace.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "—".to_string()),
+        ),
+        TableCell::plain(value_string(pane, "title").unwrap_or("—")),
+        TableCell::new(state, pane_status_tone(state)),
+        TableCell::plain(value_string(pane, "agent").unwrap_or("—")),
+        TableCell::plain(size),
+        TableCell::plain(command),
+    ]
 }
 
 fn format_cell_rect(rect: Option<&serde_json::Value>) -> String {
@@ -871,9 +903,8 @@ pub(super) fn format_control_text(
 ) -> String {
     let data = response.get("data");
     match command {
-        control::ControlCommand::ListPanes | control::ControlCommand::ListAttachedPanes => {
-            format_panes_text(data, styles)
-        }
+        control::ControlCommand::ListPanes => format_panes_text(data, styles),
+        control::ControlCommand::ListAttachedPanes => format_attached_panes_text(data, styles),
         control::ControlCommand::LayoutGet { .. } => format_layout_text(data, styles),
         control::ControlCommand::LayoutSet { .. }
         | control::ControlCommand::PaneSet { .. }
@@ -1380,6 +1411,27 @@ mod tests {
             "Session  dev\n\n\
              ID  WORKSPACE  TITLE  STATE    AGENT   SIZE   COMMAND\n\
              3   2          tests  working  cursor  80×24  cargo\n"
+        );
+
+        let attached = serde_json::json!({
+            "ok": true,
+            "data": [
+                {"session": "lab", "id": 1, "on_screen": false, "workspace": 1, "title": "one",
+                 "status": "80×24", "agent": "claude", "agent_state": "idle",
+                 "foreground_program": "claude"},
+                {"session": "lab2", "id": 1, "on_screen": true, "workspace": 1, "title": "two",
+                 "status": "80×24"}
+            ]
+        });
+        assert_eq!(
+            format_control_text(
+                &control::ControlCommand::ListAttachedPanes,
+                &attached,
+                OutputStyles::plain()
+            ),
+            "SESSION  ON SCREEN  ID  WORKSPACE  TITLE  STATE  AGENT   SIZE   COMMAND\n\
+             lab      no         1   1          one    idle   claude  80×24  claude\n\
+             lab2     yes        1   1          two    —      —       80×24  —\n"
         );
 
         let capture = serde_json::json!({

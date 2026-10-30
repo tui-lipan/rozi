@@ -139,6 +139,8 @@ pub struct PaneKeys {
     pub effect_scope: Key,
     /// Tracks opacity independently of the pane's live or closing widget parent.
     pub(crate) opacity: Key,
+    /// Tracks how far the pane's content has faded while it is unfocused.
+    pub(crate) content_dim: Key,
     /// One animation key per [`ChromeSlot`], indexed by the slot.
     chrome: [Key; ChromeSlot::ALL.len()],
 }
@@ -150,6 +152,7 @@ impl PaneKeys {
             terminal: crate::view::pane_terminal_key(id).into(),
             effect_scope: Key::from(format!("rozi-pane-effect-{id}")),
             opacity: Key::from(format!("rozi-pane-opacity-{id}")),
+            content_dim: Key::from(format!("rozi-pane-content-dim-{id}")),
             chrome: ChromeSlot::ALL
                 .map(|slot| Key::from(format!("rozi-pane-chrome-{id}-{}", slot.name()))),
         }

@@ -282,6 +282,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
 | `workbar_powerline` | bool | `true` | Joins trailing workbar badges. |
 | `toast_opacity` | float | `0.8` | Finite value in `0.0..=1.0`. Invalid values are ignored. |
+| `unfocused_dim` | float | `0.0` | How far an unfocused pane's content, images included, fades toward the canvas. Finite value in `0.0..=1.0`; `0.0` is off. Invalid values are ignored. [Described in Dim unfocused panes.](layouts-and-panes.md#dim-unfocused-panes) |
 | `background_follows_terminal` | bool | `false` | Uses the host terminal's background for the canvas. |
 
 The border style tokens are `"rounded"`, `"plain"`, `"double"`, `"thick"`, `"light-double-dashed"`,

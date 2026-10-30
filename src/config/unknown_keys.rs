@@ -148,6 +148,7 @@ const PANE_KEYS: &[&str] = &[
     "workbar_tab_style",
     "workbar_style",
     "toast_opacity",
+    "unfocused_dim",
 ];
 
 const PANE_ALERT_KEYS: &[&str] = &["blocked", "error", "finished", "working", "idle"];

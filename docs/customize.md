@@ -50,8 +50,8 @@ To change a setting:
 4. Press `Enter` to apply and save the highlighted value, or `Esc` to cancel and undo any preview.
 
 `Shift+Enter` cycles through values without opening the list. `Esc` clears the search, and `Esc`
-with an empty search closes Settings. **Theme** opens its own picker. **Terminal padding** and
-**Scroll multiplier** open a small number editor: type a value, press `Enter` to move to the next
+with an empty search closes Settings. **Theme** opens its own picker. **Terminal padding**,
+**Unfocused dim**, and **Scroll multiplier** open a small number editor: type a value, press `Enter` to move to the next
 field or apply the last one, and `Esc` to cancel. A setting that depends on a feature you turned off stays visible but dimmed,
 and becomes editable when you turn that feature back on.
 

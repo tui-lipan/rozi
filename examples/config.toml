@@ -171,6 +171,9 @@
 # but contrast then depends on what is underneath; raise it if your theme's toasts read
 # poorly.
 #toast_opacity = 0.8
+# How far an unfocused pane's content fades toward the canvas, from 0.0 (off) to 1.0. Around
+# 0.25 keeps it readable. A pane with an alert stays at full strength.
+#unfocused_dim = 0.0
 # Pin the canvas backdrop to the host terminal's own background, overriding whatever the
 # active theme authored.
 #background_follows_terminal = false

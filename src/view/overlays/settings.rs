@@ -46,6 +46,9 @@ fn custom_status(ctx: &Context<AppRoot>, action: SettingsAction) -> String {
             crate::state::scroll_multiplier_label(config.input.scroll_multiplier)
         }
         SettingsAction::EditPadding => padding_summary(config.pane.padding),
+        SettingsAction::EditUnfocusedDim => {
+            crate::state::unfocused_dim_label(config.pane.unfocused_dim)
+        }
         SettingsAction::ChooseTitlebar | SettingsAction::ChooseWorkbar => {
             choice_status(ctx, action)
         }

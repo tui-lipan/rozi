@@ -786,6 +786,10 @@ pub struct PaneConfig {
     /// on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` — and those last 2 are at their own
     /// theme's ceiling either way. Raise it on a theme whose toasts read poorly.
     pub toast_opacity: f32,
+    /// How far an unfocused pane's content fades toward the canvas backdrop, in `0.0..=1.0`. `0.0`
+    /// leaves it alone. Off by default because `focus_on_hover` would repaint panes as the pointer
+    /// crosses them, and a pane read while typing in another should stay legible.
+    pub unfocused_dim: f32,
 }
 
 impl Default for PaneConfig {
@@ -825,6 +829,7 @@ impl Default for PaneConfig {
             workbar_tab_style: CapStyle::Padded,
             workbar_style: CapStyle::Padded,
             toast_opacity: 0.8,
+            unfocused_dim: 0.0,
         }
     }
 }

@@ -261,6 +261,7 @@ fn settings_all_keeps_every_control_available() {
             "Border",
             "Selection style",
             "Terminal padding",
+            "Unfocused dim",
             "Follows terminal",
             "Background follows canvas",
             "Layout",
@@ -1147,7 +1148,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
             (SettingsTab::General, 22, "Pane close"),
-            (SettingsTab::Panes, 12, "Scratchpad"),
+            (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 21, "Bell urgency"),
             (SettingsTab::Sessions, 7, "On shared attach"),

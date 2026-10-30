@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 1;
+pub const API_SCHEMA_VERSION: u32 = 2;
 
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
 pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";

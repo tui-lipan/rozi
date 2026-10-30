@@ -19,7 +19,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::config::{
     ExtensionProvenance, LaunchTemplate, NamedCommand, PlacedService, Placement, ServiceRestart,
-    SharedPlacements,
+    SessionScope, SharedPlacements,
 };
 use crate::extension_runtime::client::{RuntimeConnection, RuntimeEvent};
 use crate::extension_runtime::protocol::{Capture, Message, SpawnCwd, SpawnFailure};
@@ -40,6 +40,7 @@ struct LaunchSpec {
     placements: SharedPlacements,
     placement: Placement,
     binding: WorkerBinding,
+    session_scope: SessionScope,
     kind: WorkerKind,
     purpose: WorkerPurpose,
     launch: LaunchTemplate,
@@ -328,6 +329,7 @@ fn start_instance(
         placements: placements.clone(),
         placement: service.placement,
         binding: key.binding.clone(),
+        session_scope: service.session_scope,
         kind: WorkerKind::Service {
             name: service.name.clone(),
         },
@@ -433,13 +435,14 @@ fn launch(state: &mut State, spec: LaunchSpec) -> std::result::Result<WorkerId, 
         WorkerKind::Tab { id } => ("tab", id),
     };
     let unit = crate::extension_runtime::log::unit_name(kind, &spec.placements.id, public_id);
-    let worker = state.extension_workers.issue(
+    let worker = state.extension_workers.issue_scoped(
         ExtensionProvenance {
             id: spec.placements.id.clone(),
             generation,
         },
         spec.placement,
         spec.binding,
+        spec.session_scope,
         WorkerRuntime(epoch),
         spec.kind,
     );
@@ -1170,6 +1173,7 @@ pub(crate) fn run_command_from_pane(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Command {
             id: command.id.clone(),
         },
@@ -1242,6 +1246,7 @@ pub(crate) fn poll_tab(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Tab {
             id: tab.as_str().to_string(),
         },
@@ -1297,6 +1302,7 @@ pub(crate) fn click_tab(
         placements,
         placement: placed.placement,
         binding,
+        session_scope: SessionScope::Active,
         kind: WorkerKind::Tab {
             id: tab.as_str().to_string(),
         },
@@ -1694,6 +1700,7 @@ mod tests {
                 .insert("sessions".to_string(), "g1".to_string());
             state.current_mut().session_attached = true;
             let service = |name: &str| crate::config::PlacedService {
+                session_scope: SessionScope::Active,
                 name: format!("sessions.{name}"),
                 placement: Placement::EachHost,
                 launch: LaunchTemplate::Shell("exit 0".to_string()),

@@ -233,6 +233,7 @@ declares exactly one of `exec` or `shell`.
 | `restart` | `on-failure`, `always`, or `never` | `on-failure` |
 | `env` | string map | empty |
 | `placement` | `client`, `active-session`, `each-host`, or `each-session` | `client` |
+| `session_scope` | `active` or `attached`; `attached` needs `each-host` or `each-session` | `active` |
 
 By default, services run in the client, not the session server; `placement` runs them on the hosts
 of attached sessions instead (see [Run on the session host](#run-on-the-session-host)). A service
@@ -382,6 +383,30 @@ What the client honors depends on the command:
 
 These rules apply to placed processes on the client's own machine too, so a placed contribution
 behaves the same wherever it runs.
+
+A service that keeps rows about a session can ask to go on doing so while that session is off
+screen, with `session_scope = "attached"` in its manifest:
+
+```toml
+[[services]]
+name = "watch"
+exec = ["python3", "./bin/watch.py"]
+placement = "each-host"
+session_scope = "attached"
+```
+
+It then also may:
+
+- List the panes of every attached session within its placement with
+  `rozi list-panes --scope attached`.
+- Publish rows into any of those sessions. Open the stream with `ROZI_PANE` and
+  `ROZI_SESSION_INSTANCE` set to the pane's `id` and its `reference.session_instance`: pane IDs
+  repeat across sessions, so both are required.
+
+Every other command stays on the session on screen, so such a service cannot type into, read the
+screen of, or move a pane of a session you are not looking at. Check a pane's `on_screen` before
+naming it in one of those commands. Use the session instance rather than the session name to tell
+sessions apart: names can change and repeat.
 
 ### Security
 

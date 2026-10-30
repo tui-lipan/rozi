@@ -419,6 +419,8 @@ pub enum ControlCommand {
     /// Verified caller identity on a server; attachment metadata on a UI.
     Context,
     ListPanes,
+    /// The panes of every session this UI has attached, on screen or not.
+    ListAttachedPanes,
     /// Report workspaces and where each pane sits. `workspace` is one-based and narrows the report
     /// to that workspace.
     LayoutGet {
@@ -928,6 +930,9 @@ pub struct PaneInfo {
     pub id: PaneId,
     /// Absent only from a UI endpoint that has no session behind it.
     pub reference: Option<crate::session::protocol::PaneRef>,
+    /// Whether this pane's session is the one on screen. Pane ids repeat across sessions, so a
+    /// command naming a pane by id reaches this pane only while this is true.
+    pub on_screen: bool,
     pub agent_ref: Option<crate::session::protocol::AgentRef>,
     pub title: String,
     /// One-based workspace, or `0` when the session has no layout document yet - nothing has
@@ -3402,6 +3407,7 @@ mod tests {
             title: "pane 3".to_string(),
             workspace: 1,
             command: None,
+            on_screen: true,
             argv: None,
             foreground_program: None,
             foreground_programs: Vec::new(),
@@ -3439,6 +3445,7 @@ mod tests {
                 "foreground_program",
                 "foreground_programs",
                 "id",
+                "on_screen",
                 "reference",
                 "reported_status",
                 "session",

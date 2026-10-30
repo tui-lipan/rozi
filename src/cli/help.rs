@@ -196,7 +196,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                a UI.",
         rows: &[
             row(
-                "list-panes [--format text|json]",
+                "list-panes [--scope current|attached] [--format text|json]",
                 "List live panes; JSON when piped",
             ),
             row(

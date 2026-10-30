@@ -871,7 +871,9 @@ pub(super) fn format_control_text(
 ) -> String {
     let data = response.get("data");
     match command {
-        control::ControlCommand::ListPanes => format_panes_text(data, styles),
+        control::ControlCommand::ListPanes | control::ControlCommand::ListAttachedPanes => {
+            format_panes_text(data, styles)
+        }
         control::ControlCommand::LayoutGet { .. } => format_layout_text(data, styles),
         control::ControlCommand::LayoutSet { .. }
         | control::ControlCommand::PaneSet { .. }

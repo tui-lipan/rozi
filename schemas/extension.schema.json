@@ -201,6 +201,14 @@
             ],
             "default": "client",
             "description": "Where, and how many, instances run: one on the client; one on the active session's host; one on every host with an attached session; or one per attached session, on its host."
+          },
+          "session_scope": {
+            "enum": [
+              "active",
+              "attached"
+            ],
+            "default": "active",
+            "description": "Which sessions an `each-host` or `each-session` instance may list and publish rows into: only the session on screen, or every attached session within its placement. Other pane commands stay on the session on screen."
           }
         },
         "oneOf": [

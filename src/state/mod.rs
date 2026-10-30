@@ -144,6 +144,8 @@ pub struct PublishStreamState {
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
     /// within this binding.
     pub binding: Option<WorkerBinding>,
+    /// Whether that worker's rows may reach its session while another is on screen.
+    pub session_scope: crate::config::SessionScope,
 }
 
 pub struct ExtensionSubscriptionState {

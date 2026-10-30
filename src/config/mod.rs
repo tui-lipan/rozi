@@ -20,7 +20,7 @@ pub use appearance::*;
 pub use cursor::*;
 pub use extensions::placement::{
     ExtensionPlacements, LaunchTemplate, PlacedCommand, PlacedService, PlacedTab, Placement,
-    SharedPlacements,
+    SessionScope, SharedPlacements,
 };
 pub use extensions::revision as extension_store_revision;
 pub use extensions::{

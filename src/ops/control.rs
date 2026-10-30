@@ -90,6 +90,7 @@ pub(crate) fn handle_control_request(
     let response = match envelope.request.command {
         // The scratchpad's panes are this client's own, never a placed worker's to see.
         ControlCommand::ListPanes => list_panes(ctx, attribution.is_none()),
+        ControlCommand::ListAttachedPanes => list_attached_panes(ctx, attribution.as_ref()),
         ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
         ControlCommand::LayoutSet {
             workspace,
@@ -506,6 +507,7 @@ impl PaneInfo {
                 pane_id: pane.id,
                 generation: pane.pty_generation,
             }),
+            on_screen: true,
             agent_ref: session_instance
                 .and_then(|_| runtime.as_ref().map(|runtime| runtime.reference.clone())),
             title: pane.display_title(pane.terminal.title()),
@@ -1066,13 +1068,49 @@ fn pane_close(
 }
 
 fn list_panes(ctx: &Context<AppRoot>, include_scratch: bool) -> ControlResponse {
+    let mut panes = attachment_panes(ctx.state.current(), true);
+    if include_scratch {
+        panes.extend(scratch_panes(ctx));
+    }
+    ControlResponse::ok(crate::control::PaneListPayload(panes))
+}
+
+/// Every attached session's panes. A placed worker sees those within its placement, and never the
+/// scratchpad's, which are this client's own.
+fn list_attached_panes(
+    ctx: &Context<AppRoot>,
+    worker: Option<&crate::state::Worker>,
+) -> ControlResponse {
+    let current = ctx.state.current();
     let mut panes = Vec::new();
-    let attachment = ctx.state.current();
+    for attachment in std::iter::once(current).chain(ctx.state.background.values()) {
+        let admitted = worker.is_none_or(|worker| {
+            worker.binding.admits(
+                &crate::state::HostKey::of(attachment.remote_target.as_ref()),
+                attachment.session_instance.as_ref(),
+            )
+        });
+        if admitted && attachment.session_attached {
+            panes.extend(attachment_panes(
+                attachment,
+                std::ptr::eq(attachment, current),
+            ));
+        }
+    }
+    if worker.is_none() {
+        panes.extend(scratch_panes(ctx));
+    }
+    ControlResponse::ok(crate::control::PaneListPayload(panes))
+}
+
+fn attachment_panes(attachment: &crate::state::Attachment, on_screen: bool) -> Vec<PaneInfo> {
+    let mut panes = Vec::new();
     let session = session_label(attachment);
     let session_instance = attachment.session_instance.as_ref();
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
             let mut info = PaneInfo::new(pane, workspace_index + 1, &session, session_instance);
+            info.on_screen = on_screen;
             // A pid names a process on the server's host. Through a remote attachment that is not
             // this machine, and a caller here would match it against its own processes.
             if attachment.remote_host.is_some() {
@@ -1081,16 +1119,18 @@ fn list_panes(ctx: &Context<AppRoot>, include_scratch: bool) -> ControlResponse 
             panes.push(info);
         }
     }
-    for pane in ctx
-        .state
+    panes
+}
+
+fn scratch_panes(ctx: &Context<AppRoot>) -> Vec<PaneInfo> {
+    let session = session_label(ctx.state.current());
+    ctx.state
         .scratch
         .panes
         .iter()
-        .filter(|pane| include_scratch && !pane.closing)
-    {
-        panes.push(PaneInfo::new(pane, 0, &session, None));
-    }
-    ControlResponse::ok(crate::control::PaneListPayload(panes))
+        .filter(|pane| !pane.closing)
+        .map(|pane| PaneInfo::new(pane, 0, &session, None))
+        .collect()
 }
 
 fn list_agents(ctx: &Context<AppRoot>) -> Vec<crate::control::AgentInfo> {

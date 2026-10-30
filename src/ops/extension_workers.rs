@@ -22,6 +22,7 @@
 //! union of what all of a host's workers may do: nothing here may hand a host more than that.
 
 use crate::config::ExtensionProvenance;
+use crate::config::SessionScope;
 use crate::control::{
     AgentTarget, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ExtensionGrant,
     RequestOrigin,
@@ -111,6 +112,9 @@ pub(crate) enum Gate {
     Ui,
     /// Acts on, or reads, the session on screen.
     Session,
+    /// Lists what the worker's placement holds, on screen or not, for a service declaring
+    /// [`SessionScope::Attached`](crate::config::SessionScope::Attached).
+    Attached,
     /// Runs an action: allowed only for the worker's own extension's commands placed on the active
     /// session, which then run on that session's host, never here.
     RunAction,
@@ -128,6 +132,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::Notify { .. }
         | ControlCommand::CommandVisibility { .. }
         | ControlCommand::Subscribe { .. } => Gate::Ui,
+        ControlCommand::ListAttachedPanes => Gate::Attached,
         ControlCommand::ListPanes
         | ControlCommand::LayoutGet { .. }
         | ControlCommand::LayoutSet { .. }
@@ -223,6 +228,16 @@ pub(crate) fn admit(
     match gate(&request.command) {
         Gate::Denied(reason) => Err(not_permitted(reason)),
         Gate::Ui => Ok(Admission::Proceed),
+        Gate::Attached => {
+            if worker.session_scope == SessionScope::Attached {
+                Ok(Admission::Proceed)
+            } else {
+                Err(not_permitted(
+                    "listing every attached session needs `session_scope = \"attached\"` in the \
+                     service's manifest",
+                ))
+            }
+        }
         Gate::RunAction => {
             let ControlCommand::RunAction { action } = &request.command else {
                 unreachable!("gated as RunAction");
@@ -320,6 +335,45 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         ControlCommand::Publish { .. } => vec![None],
         _ => Vec::new(),
     })
+}
+
+/// Admit a worker's publish stream into `instance`, a session it names, on screen or not.
+///
+/// Only a service declaring [`SessionScope::Attached`] may, into a session within its placement.
+/// Rows are the one thing it reaches off screen with: every other pane command still goes through
+/// [`admit`]. The session is named, and the pane within it, because pane ids repeat across sessions.
+pub(crate) fn admit_attached_publish(
+    state: &State,
+    worker: &Worker,
+    instance: &crate::session::protocol::SessionInstanceId,
+    pane: Option<PaneId>,
+) -> Result<(), ControlResponse> {
+    if pane.is_none() {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::TargetRequired,
+            "publishing into a named session requires a pane",
+        ));
+    }
+    let admitted = std::iter::once(state.current())
+        .chain(state.background.values())
+        .find(|attachment| attachment.session_instance.as_ref() == Some(instance))
+        .is_some_and(|attachment| {
+            worker.binding.admits(
+                &HostKey::of(attachment.remote_target.as_ref()),
+                Some(instance),
+            )
+        });
+    if admitted {
+        Ok(())
+    } else {
+        Err(ControlResponse::error_with(
+            ControlErrorCode::OutOfScope,
+            format!(
+                "that session is not an attached one within this process's placement on {}",
+                worker.binding.host.label()
+            ),
+        ))
+    }
 }
 
 /// Refuse a pane that is not one of the on-screen session's own. Pane ids are only unique within a
@@ -583,6 +637,112 @@ mod tests {
                 &HostKey::Remote(RemoteTarget::Alias("laptop".to_string())),
             );
             let refused = ask(&mut backend, worker, send());
+            assert_eq!(refused.code, Some(ControlErrorCode::OutOfScope));
+        });
+    }
+
+    /// `session_scope = "attached"` widens what a service may list to its whole placement, and
+    /// nothing else: a command naming a pane still reaches only the session on screen.
+    #[test]
+    fn an_attached_scope_lists_the_placement_and_leaves_pane_commands_on_screen() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = backend();
+            let session = |host: &HostKey, instance: &str| {
+                let mut attachment = crate::state::Attachment::new();
+                attachment.session_attached = true;
+                attachment.remote_target = host.remote().cloned();
+                attachment.remote_host = host.remote().map(RemoteTarget::display_label);
+                attachment.session_instance = Some(
+                    crate::session::protocol::SessionInstanceId::for_test(instance),
+                );
+                attachment.workspaces[0].panes.push(crate::state::Pane::new(
+                    1,
+                    100,
+                    tui_lipan::prelude::FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 20.0,
+                        h: 10.0,
+                    },
+                ));
+                attachment
+            };
+            let other_host = HostKey::Remote(RemoteTarget::Alias("laptop".to_string()));
+            let state = backend.state_mut();
+            for attachment in [session(&pc(), "parked"), session(&other_host, "elsewhere")] {
+                let epoch = state.runtime_epoch;
+                state.background.insert(epoch + 100, attachment);
+                state.runtime_epoch = epoch + 1;
+            }
+            *state.current_mut() = session(&pc(), "shown");
+
+            let (narrow, _) = issue(&mut backend, pc(), WorkerRuntime(1));
+            let refused = ask(
+                &mut backend,
+                narrow,
+                request(ControlCommand::ListAttachedPanes),
+            );
+            assert_eq!(refused.code, Some(ControlErrorCode::NotPermitted));
+
+            let state = backend.state_mut();
+            state
+                .extension_generations
+                .insert("attached".to_string(), "g1".to_string());
+            let wide = state
+                .extension_workers
+                .issue_scoped(
+                    crate::config::ExtensionProvenance {
+                        id: "attached".to_string(),
+                        generation: "g1".to_string(),
+                    },
+                    crate::config::Placement::EachHost,
+                    WorkerBinding {
+                        host: pc(),
+                        session: None,
+                    },
+                    SessionScope::Attached,
+                    WorkerRuntime(1),
+                    WorkerKind::Service {
+                        name: "attached.watch".to_string(),
+                    },
+                )
+                .id;
+            let listed = ask(
+                &mut backend,
+                wide,
+                request(ControlCommand::ListAttachedPanes),
+            );
+            let panes = listed.data.unwrap();
+            let mut seen: Vec<(String, bool)> = panes
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|pane| {
+                    (
+                        pane["reference"]["session_instance"]
+                            .as_str()
+                            .unwrap()
+                            .to_string(),
+                        pane["on_screen"].as_bool().unwrap(),
+                    )
+                })
+                .collect();
+            seen.sort();
+            assert_eq!(
+                seen,
+                [("parked".to_string(), false), ("shown".to_string(), true)],
+                "its host's sessions, and no other host's"
+            );
+
+            // The plain listing and the typed commands stay with the session on screen.
+            let plain = ask(&mut backend, wide, request(ControlCommand::ListPanes));
+            assert_eq!(plain.data.unwrap().as_array().unwrap().len(), 1);
+            let mut typed = request(ControlCommand::Focus { target: 1 });
+            typed.source_session = Some(crate::session::protocol::SessionInstanceId::for_test(
+                "parked",
+            ));
+            show_session_on(&mut backend, &other_host);
+            let refused = ask(&mut backend, wide, typed);
             assert_eq!(refused.code, Some(ControlErrorCode::OutOfScope));
         });
     }

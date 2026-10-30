@@ -12,6 +12,7 @@
 use tui_lipan::prelude::*;
 
 use crate::app::AppRoot;
+use crate::config::SessionScope;
 use crate::session::protocol::{PublishedRow, PublisherKind, RowKey, SessionInstanceId};
 use crate::state::{PaneId, PublishOrigin, PublishStreamKey, PublisherIdentity};
 
@@ -98,6 +99,17 @@ pub(crate) fn stream_opened(
         Some(worker) => {
             let admitted =
                 crate::ops::extension_workers::live_worker(&ctx.state, worker).and_then(|worker| {
+                    if worker.session_scope == SessionScope::Attached
+                        && let Some(instance) = &source_session
+                    {
+                        return crate::ops::extension_workers::admit_attached_publish(
+                            &ctx.state,
+                            worker,
+                            instance,
+                            requested_pane,
+                        )
+                        .map(|()| (worker.binding.clone(), worker.session_scope));
+                    }
                     let request = crate::control::ControlRequest {
                         command: crate::control::ControlCommand::Publish {
                             kind,
@@ -110,7 +122,7 @@ pub(crate) fn stream_opened(
                         credential: None,
                     };
                     crate::ops::extension_workers::admit(&ctx.state, worker, &request)
-                        .map(|_| worker.binding.clone())
+                        .map(|_| (worker.binding.clone(), worker.session_scope))
                 });
             match admitted {
                 Ok(binding) => Some(binding),
@@ -121,6 +133,22 @@ pub(crate) fn stream_opened(
             }
         }
     };
+    // A session off screen has no focus to fall back on, and the focused pane is another session's.
+    if requested_pane.is_none()
+        && source_session
+            .as_ref()
+            .is_some_and(|instance| ctx.state.current().session_instance.as_ref() != Some(instance))
+    {
+        let _ = ack.send(Err(ControlResponse::error_with(
+            crate::control::ControlErrorCode::TargetRequired,
+            "publishing into a session off screen requires a pane",
+        )));
+        return Update::none();
+    }
+    let session_scope = binding
+        .as_ref()
+        .map_or_else(SessionScope::default, |(_, scope)| *scope);
+    let binding = binding.map(|(binding, _)| binding);
     let Some(pane_id) = requested_pane.or_else(|| ctx.state.focused_pane()) else {
         let _ = ack.send(Err(ControlResponse::error("publish requires a live pane")));
         return Update::none();
@@ -136,7 +164,7 @@ pub(crate) fn stream_opened(
     // asked: a caller-named session could otherwise be another session, even on another host.
     if binding
         .as_ref()
-        .is_some_and(|binding| !worker_may_publish(&ctx.state, binding, &origin))
+        .is_some_and(|binding| !worker_may_publish(&ctx.state, binding, session_scope, &origin))
     {
         let _ = ack.send(Err(ControlResponse::error_with(
             crate::control::ControlErrorCode::OutOfScope,
@@ -193,6 +221,7 @@ pub(crate) fn stream_opened(
             sender,
             extension,
             binding,
+            session_scope,
         },
     );
     let _ = ack.send(Ok(pane_id));
@@ -233,11 +262,26 @@ fn publish_origin(
 /// on screen, and the session on screen must lie within the binding - checked against where the
 /// stream is bound, never just against whatever is showing, so neither a caller-named background
 /// session nor a later switch to another in-scope session redirects its rows.
+///
+/// A service declaring [`SessionScope::Attached`] keeps a session's rows current off screen too:
+/// the stream names that session, so the rows can only land there, and it must still lie within
+/// the binding.
 fn worker_may_publish(
     state: &crate::state::State,
     binding: &crate::state::WorkerBinding,
+    session_scope: SessionScope,
     origin: &PublishOrigin,
 ) -> bool {
+    if session_scope == SessionScope::Attached
+        && let PublishOrigin::Session(instance) = origin
+    {
+        return attachment_for_session(state, instance).is_some_and(|attachment| {
+            binding.admits(
+                &crate::state::HostKey::of(attachment.remote_target.as_ref()),
+                Some(instance),
+            )
+        });
+    }
     let on_screen = match origin {
         PublishOrigin::Local => false,
         PublishOrigin::Session(instance) => {
@@ -334,11 +378,9 @@ fn send_latest(state: &crate::state::State, key: &PublishStreamKey) {
     let Some(stream) = state.publish_streams.get(key) else {
         return;
     };
-    if stream
-        .binding
-        .as_ref()
-        .is_some_and(|binding| !worker_may_publish(state, binding, &key.origin))
-    {
+    if stream.binding.as_ref().is_some_and(|binding| {
+        !worker_may_publish(state, binding, stream.session_scope, &key.origin)
+    }) {
         return;
     }
     report_rows(state, key, &stream.identity, stream.last_rows.clone());
@@ -970,6 +1012,127 @@ mod tests {
                 refused.unwrap_err().code,
                 Some(crate::control::ControlErrorCode::SessionNotAttached)
             );
+        });
+    }
+
+    /// A service declaring `session_scope = "attached"` keeps naming a session's rows while another
+    /// is on screen. Pane ids repeat, so it names the session and the pane; without its declaration,
+    /// or for a session outside its placement, the same stream is refused.
+    #[test]
+    fn an_attached_scope_keeps_publishing_into_a_named_session_off_screen() {
+        use crate::config::{ExtensionProvenance, Placement, SessionScope};
+        use crate::session::remote::RemoteTarget;
+        use crate::state::{HostKey, WorkerBinding, WorkerKind, WorkerRuntime};
+        with_backend(|backend| {
+            let pane = || {
+                crate::state::Pane::new(
+                    1,
+                    100,
+                    tui_lipan::prelude::FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 20.0,
+                        h: 10.0,
+                    },
+                )
+            };
+            // `parked` is off screen on `beta`, `elsewhere` off screen on `alpha`, and `shown` on
+            // screen on `beta`. All three have a pane 1.
+            let mut outbound = Vec::new();
+            for (instance, host) in [
+                ("parked", "beta"),
+                ("elsewhere", "alpha"),
+                ("shown", "beta"),
+            ] {
+                let (client, rx) = SessionClient::test_channel();
+                let mut attachment = crate::state::Attachment::new();
+                attachment.session_attached = true;
+                attachment.session_client = Some(client);
+                attachment.remote_target = Some(RemoteTarget::Alias(host.to_string()));
+                attachment.session_instance = Some(SessionInstanceId::for_test(instance));
+                attachment.workspaces[0].panes.push(pane());
+                outbound.push(rx);
+                let state = backend.state_mut();
+                let epoch = state.runtime_epoch;
+                state.park_current(epoch, attachment);
+                state.runtime_epoch = epoch + 1;
+            }
+            let state = backend.state_mut();
+            state
+                .extension_generations
+                .insert("probe".to_string(), "g1".to_string());
+            let provenance = || ExtensionProvenance {
+                id: "probe".to_string(),
+                generation: "g1".to_string(),
+            };
+            let mut issue = |scope| {
+                state
+                    .extension_workers
+                    .issue_scoped(
+                        provenance(),
+                        Placement::EachHost,
+                        WorkerBinding {
+                            host: HostKey::Remote(RemoteTarget::Alias("beta".to_string())),
+                            session: None,
+                        },
+                        scope,
+                        WorkerRuntime(1),
+                        WorkerKind::Service {
+                            name: "probe.watch".to_string(),
+                        },
+                    )
+                    .id
+            };
+            let narrow = issue(SessionScope::Active);
+            let wide = issue(SessionScope::Attached);
+            let open = |backend: &mut TestBackend<crate::AppRoot>,
+                        worker,
+                        stream_id: u64,
+                        session: &str,
+                        requested_pane| {
+                let (tx, _rx) = std::sync::mpsc::sync_channel(4);
+                let (ack, reply) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::PublishStreamOpen {
+                        stream_id,
+                        requested_pane,
+                        source_session: Some(SessionInstanceId::for_test(session)),
+                        kind: PublisherKind::Agent,
+                        name: None,
+                        extension: Some(provenance()),
+                        sender: tx,
+                        ack,
+                        worker: Some(worker),
+                    })
+                    .expect("dispatch stream open");
+                reply.recv().unwrap().map_err(|response| response.code)
+            };
+            use crate::control::ControlErrorCode::{OutOfScope, TargetRequired};
+            assert_eq!(
+                open(backend, narrow, 1, "parked", Some(1)),
+                Err(Some(OutOfScope)),
+                "the wider reach is declared, never assumed"
+            );
+            assert_eq!(
+                open(backend, wide, 2, "elsewhere", Some(1)),
+                Err(Some(OutOfScope)),
+                "another host is outside the placement"
+            );
+            assert_eq!(
+                open(backend, wide, 3, "parked", None),
+                Err(Some(TargetRequired)),
+                "the focused pane belongs to the session on screen"
+            );
+            assert_eq!(open(backend, wide, 4, "parked", Some(1)), Ok(1));
+            assert_eq!(open(backend, wide, 5, "shown", Some(1)), Ok(1));
+
+            report(backend, 4, vec![row("r", "working")]);
+            assert_eq!(
+                reports(&outbound[0]),
+                [("probe".into(), PublisherKind::Agent, vec!["r".to_string()])],
+                "the rows reach the session off screen"
+            );
+            assert!(reports(&outbound[2]).is_empty(), "and not the one showing");
         });
     }
 

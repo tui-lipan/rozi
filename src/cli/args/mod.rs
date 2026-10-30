@@ -656,8 +656,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 };
             }
             "list-panes" => {
-                let output_format = parse_output_format(&mut iter, "list-panes")?;
-                let command = control::ControlCommand::ListPanes;
+                let (attached, rest) = parse_list_scope(iter.collect())?;
+                let output_format = parse_output_format(&mut rest.into_iter(), "list-panes")?;
+                let command = if attached {
+                    control::ControlCommand::ListAttachedPanes
+                } else {
+                    control::ControlCommand::ListPanes
+                };
                 return Ok(ParsedCli::Control(ControlCli {
                     config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -1682,6 +1687,34 @@ pub(super) fn parse_list_format(
     }
 }
 
+/// Take `--scope` out of `list-panes`'s arguments: whether it asks for every attached session, and
+/// the arguments left.
+fn parse_list_scope(args: Vec<String>) -> std::result::Result<(bool, Vec<String>), String> {
+    let mut attached = None;
+    let mut rest = Vec::new();
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        if arg != "--scope" {
+            rest.push(arg);
+            continue;
+        }
+        let value = require_value(&mut iter, "--scope requires current or attached")?;
+        let scope = match value.as_str() {
+            "current" => false,
+            "attached" => true,
+            other => {
+                return Err(format!(
+                    "unknown list-panes scope `{other}` (allowed: current, attached)"
+                ));
+            }
+        };
+        if attached.replace(scope).is_some() {
+            return Err("list-panes --scope specified more than once".to_string());
+        }
+    }
+    Ok((attached.unwrap_or(false), rest))
+}
+
 pub(super) fn parse_output_format(
     iter: &mut impl Iterator<Item = String>,
     command: &str,
@@ -1852,6 +1885,36 @@ pub(super) fn control_request(command: control::ControlCommand) -> control::Cont
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_panes_takes_a_scope_in_any_order() {
+        let command = |args: &[&str]| {
+            let args = std::iter::once("list-panes")
+                .chain(args.iter().copied())
+                .map(String::from)
+                .collect();
+            match parse_cli_args(args) {
+                Ok(ParsedCli::Control(control)) => Ok(control.request.command),
+                Ok(_) => Err("not a control command".to_string()),
+                Err(error) => Err(error),
+            }
+        };
+        assert!(matches!(
+            command(&["--scope", "attached", "--format", "json"]),
+            Ok(control::ControlCommand::ListAttachedPanes)
+        ));
+        assert!(matches!(
+            command(&["--format", "json", "--scope", "attached"]),
+            Ok(control::ControlCommand::ListAttachedPanes)
+        ));
+        assert!(matches!(
+            command(&["--scope", "current"]),
+            Ok(control::ControlCommand::ListPanes)
+        ));
+        assert!(command(&["--scope", "everything"]).is_err());
+        assert!(command(&["--scope"]).is_err());
+        assert!(command(&["--scope", "attached", "--scope", "current"]).is_err());
+    }
 
     #[test]
     fn here_agent_reports_pin_the_caller_while_named_sessions_require_targets() {

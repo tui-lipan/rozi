@@ -116,6 +116,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
         | ControlCommand::RecordMark { .. } => None,
+        ControlCommand::ListAttachedPanes => Some(
+            "list-panes --scope attached needs a UI; a session server knows only its own panes",
+        ),
         ControlCommand::Focus { .. } => Some(
             "focus is client-local; a session server has no focused pane to move (every headless command names its pane with --target instead)",
         ),
@@ -1098,6 +1101,7 @@ impl SessionServer {
                         .as_ref()
                         .and_then(crate::pane::launch::PaneLaunch::argv)
                         .map(<[String]>::to_vec),
+                    on_screen: true,
                     foreground_program: pane.runtime.foreground_program.clone(),
                     foreground_programs: pane.runtime.foreground_programs.to_vec(),
                     foreground_arguments: pane.runtime.foreground_arguments.clone(),

@@ -210,8 +210,8 @@ client and replays the pane from the server's screen instead.
 
 - `active_clients` counts clients replaying now. `started` and `completed` count resyncs.
 - `exports` counts pane screens exported for them.
-- `requeued_panes` counts panes a client fell behind again before their replay finished, during an
-  attach or a resync.
+- `requeued_panes` counts panes that need another replay because a client fell behind again before
+  their replay finished, during an attach or a resync.
 - `shed_bytes` is pane output dropped rather than delivered.
 - `last_export_us` and `max_export_us` time one pane export for any replay. The server, and so
   every client, waits on each export.

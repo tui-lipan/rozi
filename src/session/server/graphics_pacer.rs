@@ -14,6 +14,18 @@ const HISTORY_LIMIT: usize = 256;
 /// queued in the kernel oldest first, so a release takes the whole backlog and staging keeps only
 /// the newest replacement. A one-frame credit would present the oldest queued frame instead.
 const DRAIN_BYTES: usize = 64 * 1024;
+/// Bytes on their way to a pane's viewer past which the pane stops being read. Small enough that a
+/// keypress in another pane is not left waiting behind seconds of image data on a slow link; at one
+/// round trip plus one client frame, it still moves tens of MB a second on a fast one.
+pub(super) const TRANSPORT_HOLD_BACKLOG: usize = 512 * 1024;
+/// Where reading starts again: low enough that the next frame is read once the link has nearly
+/// finished the last one, rather than queued behind it.
+const TRANSPORT_RESUME_BACKLOG: usize = 128 * 1024;
+/// What the framework's safety release may read during a transport hold. It cannot be turned off,
+/// and one byte per release cannot complete a command that would queue another whole frame.
+const TRANSPORT_HOLD_BYTES: usize = 1;
+/// How often a held pane checks whether its viewer has caught up.
+const TRANSPORT_POLL: Duration = Duration::from_millis(5);
 
 /// How long before the presenter's next frame a release drains the producer: enough for the
 /// output to reach and be drawn by the client (about 2 ms measured locally), and short enough
@@ -40,6 +52,9 @@ pub(super) struct GraphicsPacer {
     answer_until: Option<Instant>,
     read_in_flight: bool,
     continuation: bool,
+    transport_held: bool,
+    /// Released from a transport hold, and its first read has not finished.
+    transport_draining: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,12 +66,34 @@ pub(super) enum ReadPolicy {
 
 impl GraphicsPacer {
     pub fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            transport_held: self.transport_held,
+            ..Self::default()
+        };
     }
 
     pub fn input(&mut self, now: Instant) {
         self.answer_until = Some(now + ANSWER_WINDOW);
         self.read_in_flight = false;
+    }
+
+    pub fn transport_held(&self) -> bool {
+        self.transport_held
+    }
+
+    /// Follow how much output is queued for this pane's viewer, however its output is classified:
+    /// a link slower than the program has to slow the program, or the output is lost.
+    pub fn observe_backlog(&mut self, backlog: usize) {
+        if self.transport_held {
+            if backlog <= TRANSPORT_RESUME_BACKLOG {
+                self.transport_held = false;
+                self.transport_draining = true;
+                self.read_in_flight = false;
+            }
+        } else if backlog > TRANSPORT_HOLD_BACKLOG {
+            self.transport_held = true;
+            self.transport_draining = false;
+        }
     }
 
     /// Record one output transaction. `whole_frame` says the producer replaced an image whole,
@@ -103,9 +140,28 @@ impl GraphicsPacer {
     pub fn read_completed(&mut self, continuation: bool) {
         self.read_in_flight = false;
         self.continuation = continuation;
+        self.transport_draining = false;
     }
 
     pub fn policy(&mut self, now: Instant, presenter: Option<Presenter>) -> ReadPolicy {
+        if self.transport_held {
+            return ReadPolicy::Credit {
+                bytes: TRANSPORT_HOLD_BYTES,
+                available: false,
+            };
+        }
+        if self.transport_draining {
+            // The hold left the producer's output queued oldest first, so the release has to take
+            // all of it for the next frame sent to be the current one.
+            if self.read_in_flight {
+                return ReadPolicy::Unchanged;
+            }
+            self.read_in_flight = true;
+            return ReadPolicy::Credit {
+                bytes: DRAIN_BYTES,
+                available: true,
+            };
+        }
         if !self.streaming || self.answer_until.is_some_and(|until| now < until) {
             return ReadPolicy::Open;
         }
@@ -177,6 +233,9 @@ impl GraphicsPacer {
     }
 
     pub fn wake_after(&self, now: Instant) -> Option<Duration> {
+        if self.transport_held {
+            return Some(TRANSPORT_POLL);
+        }
         if self.read_in_flight {
             return None;
         }
@@ -204,6 +263,41 @@ pub(super) fn apply_policy(gate: &tui_lipan::TerminalReadGate, policy: ReadPolic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backed_up_viewer_holds_even_unpaced_output_until_it_catches_up() {
+        let now = Instant::now();
+        let mut pacer = GraphicsPacer::default();
+        pacer.observe(now, 1, OutputClass::Ordered, false);
+        assert_eq!(pacer.policy(now, None), ReadPolicy::Open);
+
+        pacer.observe_backlog(TRANSPORT_HOLD_BACKLOG + 1);
+        let held = ReadPolicy::Credit {
+            bytes: TRANSPORT_HOLD_BYTES,
+            available: false,
+        };
+        assert_eq!(pacer.policy(now, None), held);
+        assert_eq!(pacer.wake_after(now), Some(TRANSPORT_POLL));
+
+        // Neither ordered output nor input opens a hold: what they would read cannot be sent.
+        pacer.observe(now, 2, OutputClass::Ordered, false);
+        pacer.input(now);
+        pacer.observe_backlog(TRANSPORT_RESUME_BACKLOG + 1);
+        assert_eq!(pacer.policy(now, None), held);
+
+        pacer.observe_backlog(TRANSPORT_RESUME_BACKLOG);
+        assert_eq!(
+            pacer.policy(now, None),
+            ReadPolicy::Credit {
+                bytes: DRAIN_BYTES,
+                available: true,
+            },
+            "the release takes the whole backlog at once"
+        );
+        assert_eq!(pacer.policy(now, None), ReadPolicy::Unchanged);
+        pacer.read_completed(false);
+        assert_eq!(pacer.policy(now, None), ReadPolicy::Open);
+    }
 
     #[test]
     fn an_inflight_read_needs_no_polling_deadline() {

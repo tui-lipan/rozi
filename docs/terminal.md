@@ -273,6 +273,8 @@ Limits:
 - Programs can also hand images over in regular files, temporary files, or POSIX shared memory.
   Images keep updating when local and SSH clients share a session, including after a source is
   consumed or someone reconnects.
+- Over a slow connection, images show the newest frame the connection can carry and skip the ones
+  in between, so video and image-heavy pages update less often while other panes stay responsive.
 
 If images draw incorrectly in a Kitty-protocol terminal such as Ghostty, start rozi with
 `TUI_LIPAN_TERMINAL_IMAGES=composed`. rozi then draws every image itself instead of handing

@@ -36,6 +36,8 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         output_sequence: 0,
         output_coalesce_epoch: 0,
         output_times: VecDeque::new(),
+        output_ledger: VecDeque::new(),
+        output_bytes_sent: 0,
         graphics_pacer: Default::default(),
         output_seen: false,
         cols: 20,
@@ -232,7 +234,6 @@ fn install_manual_replay(
     let mut seed = AttachSeedState::new(vec![key]);
     seed.pending.clear();
     seed.manifest.insert(key, PaneSeedState::Replaying);
-    seed.exported.insert(key);
     seed.replay = Some(PaneSeedReplay {
         key,
         reset_frame: None,
@@ -387,6 +388,7 @@ fn sent_pane_output_matching(
     let client = server.client_mut(client).unwrap();
     let mut forwarded = Vec::new();
     while let Some(queued) = client.outbox.pop_front() {
+        client.outbox_bytes = client.outbox_bytes.saturating_sub(queued.bytes.len());
         let mut decoder = protocol::FrameDecoder::default();
         decoder.read_from_status(&mut &queued.bytes[..]).unwrap();
         while let Ok(Some(frame)) = decoder.next_frame::<ServerMessage>() {
@@ -1048,7 +1050,7 @@ fn pane_closed_while_pending_is_not_exported_and_its_delta_survives() {
 }
 
 #[test]
-fn catch_up_overflow_sheds_the_flooding_pane_and_requeues_its_replay() {
+fn catch_up_overflow_finishes_the_replay_and_replays_the_flooding_pane_again() {
     let mut server = SessionServer::new_named("dev");
     server.max_backlog = 20 * 1024 * 1024;
     let (live_client, _live_stream) = attach_client(&mut server);
@@ -1075,13 +1077,41 @@ fn catch_up_overflow_sheds_the_flooding_pane_and_requeues_its_replay() {
     assert!(server.client_attached(live_client));
     let client = server.client_mut(client_id).unwrap();
     let seed = client.seed.as_ref().unwrap();
-    assert!(seed.replay.is_none(), "the interrupted replay is abandoned");
-    assert_eq!(seed.manifest.get(&key), Some(&PaneSeedState::Pending));
-    assert_eq!(seed.pending.iter().copied().collect::<Vec<_>>(), [key]);
+    assert!(seed.replay.is_some(), "the replay keeps going");
+    assert_eq!(seed.manifest.get(&key), Some(&PaneSeedState::Replaying));
+    assert!(seed.pending.is_empty());
     assert_eq!(seed.catch_up_bytes, 0);
-    assert!(client.shed_bytes > 2 * chunk.len() as u64);
+    assert!(client.shed_bytes >= 2 * chunk.len() as u64);
     assert_eq!(server.runtime_metrics().attach_seed.disconnected, 0);
     assert_eq!(server.runtime_metrics().client_resync.requeued_panes, 1);
+
+    // However long the pane floods, the barrier lifts: another pane's output is delivered, and the
+    // flooding pane is left to a later replay.
+    server.broadcast_control(&ServerMessage::Ping { seq: 9 });
+    server.broadcast_outbound(&ServerOutbound::PaneOutput {
+        media: Vec::new(),
+        metadata: protocol::OutputMetadata::default(),
+        pane_id: key.pane_id,
+        local: false,
+        generation: key.generation,
+        bytes: chunk.clone(),
+    });
+    broadcast_pane_output(&mut server, 4, 1, b"other pane");
+    for _ in 0..4 {
+        server.pump_attach_seeds();
+    }
+    let client = server.client_mut(client_id).unwrap();
+    assert!(
+        client
+            .seed
+            .as_ref()
+            .is_some_and(|seed| seed.baseline_queued)
+    );
+    assert_eq!(
+        client.resync_pending.iter().copied().collect::<Vec<_>>(),
+        [key]
+    );
+    assert_eq!(outbox_pane_bytes(client, 3), vec![b's'; 64]);
 }
 
 #[test]
@@ -1240,6 +1270,93 @@ fn a_client_behind_on_one_pane_sheds_it_and_is_resynced_from_the_server_screen()
         (1, 1, 0)
     );
     assert!(metrics.shed_bytes > 0);
+}
+
+/// A program flooding a pane must slow to what its viewer can take, whatever its output's class,
+/// and a remote viewer's unacknowledged bytes count because SSH buffers far more than the outbox.
+#[test]
+fn a_pane_is_held_while_its_remote_viewer_has_too_much_on_the_way() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, test_pane(3));
+    let (client_id, _stream) = attach_client(&mut server);
+    let key = PresentationKey {
+        pane_id: 7,
+        generation: 3,
+        local: false,
+    };
+    let client = server.client_mut(client_id).unwrap();
+    client.shares_filesystem = false;
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+    client.presentation_interest.insert(
+        key,
+        protocol::PanePresentationInterest {
+            local: false,
+            pane_id: 7,
+            generation: 3,
+            visible: true,
+            focused: true,
+            frames_per_second: 60,
+        },
+    );
+    let pane = server.panes.get_mut(&7).unwrap();
+    pane.pty = None;
+    for _ in 0..4 {
+        pane.next_output_metadata(protocol::OutputClass::Ordered, 256 * 1024);
+    }
+    let client = server.client_mut(client_id).unwrap();
+    client.presented_sequences.insert(key, 1);
+    client.presented_at.insert(key, Instant::now());
+    let presenter = server.graphics_presenter(7, 3, None);
+    assert_eq!(presenter.map(|presenter| presenter.presented), Some(1));
+    assert_eq!(
+        server.transport_backlog(7, None, presenter),
+        3 * 256 * 1024,
+        "an empty outbox hides what SSH is still carrying"
+    );
+
+    // Silence from a client with nothing left to send it does not hold the pane forever.
+    let client = server.client_mut(client_id).unwrap();
+    client
+        .presented_at
+        .insert(key, Instant::now() - graphics::ACKNOWLEDGEMENT_STALL);
+    assert_eq!(server.transport_backlog(7, None, presenter), 0);
+
+    // A client sharing the filesystem is local: only its outbox counts.
+    let client = server.client_mut(client_id).unwrap();
+    client.presented_at.insert(key, Instant::now());
+    client.shares_filesystem = true;
+    client.outbox_bytes = 5;
+    assert_eq!(server.transport_backlog(7, None, presenter), 5);
+}
+
+/// A frame larger than the outbox limit waits on the server and reaches a slow client as the link
+/// takes it, rather than overflowing the outbox and blanking the pane in a replay.
+#[test]
+fn a_prepared_image_larger_than_the_outbox_limit_is_emitted_as_the_client_drains() {
+    let mut server = SessionServer::new_named("dev");
+    server.panes.insert(7, test_pane(3));
+    let (client_id, _stream) = attach_client(&mut server);
+    let client = server.client_mut(client_id).unwrap();
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+    server.client_mut(client_id).unwrap().shares_filesystem = false;
+    let frame = DEFAULT_MAX_BACKLOG * 2;
+    server
+        .media
+        .stage_output_for_test((None, 7, 3), vec![b'i'; frame]);
+
+    let mut delivered = 0;
+    while server.media.pending() {
+        while server.pump_media_output() {}
+        let client = server.client_mut(client_id).unwrap();
+        assert!(client.outbox_bytes < DEFAULT_MAX_BACKLOG);
+        assert!(client.resync_pending.is_empty(), "nothing was shed");
+        delivered += outbox_pane_bytes(client, 7).len();
+        client.outbox.clear();
+        client.outbox_bytes = 0;
+    }
+    assert_eq!(delivered, frame);
 }
 
 #[test]
@@ -4231,6 +4348,8 @@ fn resize_updates_screen_and_broadcasts_ack() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            output_ledger: VecDeque::new(),
+            output_bytes_sent: 0,
             graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
@@ -4402,6 +4521,8 @@ fn duplicate_spawn_is_rejected() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            output_ledger: VecDeque::new(),
+            output_bytes_sent: 0,
             graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
@@ -4465,6 +4586,8 @@ fn exited_pane_can_be_respawned() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            output_ledger: VecDeque::new(),
+            output_bytes_sent: 0,
             graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
@@ -4655,6 +4778,8 @@ fn attach_reports_layout_and_panes() {
         output_sequence: 0,
         output_coalesce_epoch: 0,
         output_times: VecDeque::new(),
+        output_ledger: VecDeque::new(),
+        output_bytes_sent: 0,
         graphics_pacer: Default::default(),
         output_seen: false,
         cols: 20,
@@ -4858,6 +4983,8 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             output_sequence: 0,
             output_coalesce_epoch: 0,
             output_times: VecDeque::new(),
+            output_ledger: VecDeque::new(),
+            output_bytes_sent: 0,
             graphics_pacer: Default::default(),
             output_seen: false,
             cols: 20,
@@ -4946,6 +5073,8 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 output_sequence: 0,
                 output_coalesce_epoch: 0,
                 output_times: VecDeque::new(),
+                output_ledger: VecDeque::new(),
+                output_bytes_sent: 0,
                 graphics_pacer: Default::default(),
                 output_seen: true,
                 cols: 20,
@@ -7260,7 +7389,15 @@ fn large_relay_emission_allows_text_between_its_chunks_and_keeps_the_next_source
         second.exists(),
         "a second expanded image must not accumulate while emitting the first"
     );
-    finish_media_events(&mut server);
+    // The attached client keeps reading, which is what lets the rest of the image go out.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.events.stats().len != 0 || server.media.pending() {
+        server.drain_pty_events();
+        server.pump_media_output();
+        sent_pane_output(&mut server, local);
+        assert!(Instant::now() < deadline, "media worker failed to complete");
+        std::thread::yield_now();
+    }
     assert!(!second.exists());
     while server.pump_attach_seeds() {}
     assert_inline_pixel(

@@ -1262,7 +1262,6 @@ impl SessionServer {
         let resync_export = snapshot.is_some() && seed.kind == SeedKind::Resync;
         if let Some((spool, remaining, cols, rows, cell)) = snapshot {
             seed.manifest.insert(key, PaneSeedState::Replaying);
-            seed.exported.insert(key);
             seed.replay = Some(PaneSeedReplay {
                 key,
                 reset_frame: encode_control(&ServerMessage::PaneReset {
@@ -1355,14 +1354,13 @@ impl SessionServer {
     }
 
     fn complete_attach_baseline(&mut self, id: ClientId) {
-        let seed = self
-            .client_mut(id)
-            .and_then(|client| client.seed.as_mut())
-            .expect("active seed");
+        let client = self.client_mut(id).expect("seeding client");
+        let seed = client.seed.as_mut().expect("active seed");
         for state in seed.manifest.values_mut() {
             *state = PaneSeedState::Live;
         }
         seed.baseline_queued = true;
+        client.resync_pending.extend(seed.outdated.drain());
     }
 
     fn note_attach_seed_high_water(&mut self) {

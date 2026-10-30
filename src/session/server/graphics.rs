@@ -108,7 +108,11 @@ impl ServerPane {
         }]
     }
 
-    fn next_output_metadata(&mut self, class: protocol::OutputClass) -> protocol::OutputMetadata {
+    pub(super) fn next_output_metadata(
+        &mut self,
+        class: protocol::OutputClass,
+        bytes: usize,
+    ) -> protocol::OutputMetadata {
         let independent = matches!(class, protocol::OutputClass::IndependentGraphics { .. });
         if !independent {
             self.output_coalesce_epoch = self.output_coalesce_epoch.saturating_add(1);
@@ -119,6 +123,12 @@ impl ServerPane {
             .push_back((self.output_sequence, Instant::now()));
         if self.output_times.len() > 32 {
             self.output_times.pop_front();
+        }
+        self.output_bytes_sent += bytes as u64;
+        self.output_ledger
+            .push_back((self.output_sequence, self.output_bytes_sent));
+        if self.output_ledger.len() > OUTPUT_LEDGER_LIMIT {
+            self.output_ledger.pop_front();
         }
         protocol::OutputMetadata {
             sequence: self.output_sequence,
@@ -172,7 +182,8 @@ impl SessionServer {
         let now = Instant::now();
         pane.graphics_pacer.read_completed(continuation);
         for transaction in transactions {
-            let metadata = pane.next_output_metadata(output_class(transaction.class));
+            let metadata =
+                pane.next_output_metadata(output_class(transaction.class), transaction.bytes.len());
             pane.graphics_pacer.observe(
                 now,
                 metadata.sequence,
@@ -203,8 +214,30 @@ impl SessionServer {
 /// It exceeds the pacer's safety hold, so a client only loses the lead after the pacer has
 /// already had to release without its acknowledgement.
 const STALLED_PRESENTER: Duration = Duration::from_millis(250);
+/// Output sequences whose byte counts are kept. A viewer further behind than this has more on its
+/// way than any hold allows, so older ones need no count.
+const OUTPUT_LEDGER_LIMIT: usize = 1024;
+/// A viewer with nothing left to send it that has acknowledged nothing for this long is not
+/// answering, so its silence does not hold the pane. It exceeds the time a hold's worth of output
+/// spends in the buffers between here and a slow client.
+pub(super) const ACKNOWLEDGEMENT_STALL: Duration = Duration::from_secs(3);
 
 impl ServerPane {
+    /// Bytes of this pane's output after the sequence a client last acknowledged.
+    fn unacknowledged_bytes(&self, presented: u64) -> u64 {
+        let index = self
+            .output_ledger
+            .partition_point(|(sequence, _)| *sequence <= presented);
+        let acknowledged = match index.checked_sub(1) {
+            Some(last) => self.output_ledger[last].1,
+            None => self
+                .output_ledger
+                .front()
+                .map_or(self.output_bytes_sent, |(_, sent)| *sent),
+        };
+        self.output_bytes_sent.saturating_sub(acknowledged)
+    }
+
     /// When the oldest output a client has not acknowledged was produced, if any is pending.
     fn oldest_unacknowledged(&self, presented: u64, acked_at: Option<Instant>) -> Option<Instant> {
         if presented >= self.output_sequence {
@@ -281,6 +314,93 @@ impl SessionServer {
             )
     }
 
+    /// The clients a pane's output should wait for, and the one showing it, if any. A client still
+    /// receiving its attach replay catches up through that replay, and is not yet answering
+    /// heartbeats that could expire it, so it holds nothing up.
+    fn transport_clients(
+        &self,
+        owner: Option<ClientId>,
+        presenter: Option<super::graphics_pacer::Presenter>,
+    ) -> (Option<&ClientConn>, impl Iterator<Item = &ClientConn>) {
+        let receiving = self.clients.iter().filter(move |client| {
+            client.attached
+                && !client.transport_closed
+                && owner.is_none_or(|owner| owner == client.id)
+                && client
+                    .seed
+                    .as_ref()
+                    .is_none_or(|seed| seed.kind != SeedKind::Attach)
+        });
+        let presenting =
+            presenter.and_then(|presenter| receiving.clone().find(|c| c.id == presenter.client));
+        (presenting, receiving)
+    }
+
+    /// Output queued for whoever a pane's output should wait for: the client showing it, or when
+    /// nobody is, every client it is sent to. Another client that falls behind has the pane shed
+    /// and replayed, so one slow follower does not slow the pane for the client presenting it.
+    pub(super) fn transport_outbox(
+        &self,
+        id: PaneId,
+        generation: u64,
+        owner: Option<ClientId>,
+    ) -> usize {
+        let presenter = self.graphics_presenter(id, generation, owner);
+        let (presenting, receiving) = self.transport_clients(owner, presenter);
+        presenting
+            .or_else(|| receiving.max_by_key(|client| client.outbox_bytes))
+            .map_or(0, |client| client.outbox_bytes)
+    }
+
+    /// Output on its way to whoever a pane's reading should wait for; see
+    /// [`Self::transport_outbox`]. The outbox shows only the first hop. A remote client's
+    /// acknowledgements also cover the SSH channel and socket buffers beyond it, which hold seconds
+    /// of output on a slow link.
+    pub(super) fn transport_backlog(
+        &self,
+        id: PaneId,
+        owner: Option<ClientId>,
+        presenter: Option<super::graphics_pacer::Presenter>,
+    ) -> usize {
+        let (presenting, receiving) = self.transport_clients(owner, presenter);
+        if let (Some(client), Some(presenter)) = (presenting, presenter) {
+            return client.outbox_bytes.max(self.unacknowledged_output(
+                client,
+                id,
+                owner,
+                presenter.presented,
+            ));
+        }
+        receiving
+            .map(|client| client.outbox_bytes)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn unacknowledged_output(
+        &self,
+        client: &ClientConn,
+        id: PaneId,
+        owner: Option<ClientId>,
+        presented: u64,
+    ) -> usize {
+        let Some(pane) = self.pane(owner, id) else {
+            return 0;
+        };
+        let key = PresentationKey {
+            pane_id: id,
+            generation: pane.generation,
+            local: owner.is_some(),
+        };
+        let answering = client.presented_at.get(&key).is_some_and(|acknowledged| {
+            client.outbox_bytes > 0 || acknowledged.elapsed() < ACKNOWLEDGEMENT_STALL
+        });
+        if client.shares_filesystem || !answering {
+            return 0;
+        }
+        usize::try_from(pane.unacknowledged_bytes(presented)).unwrap_or(usize::MAX)
+    }
+
     pub(super) fn update_graphics_pacing(&mut self) {
         let now = Instant::now();
         let presenters: HashMap<_, _> = self
@@ -304,8 +424,23 @@ impl SessionServer {
                 )
             })
             .collect();
+        let backlogs: HashMap<_, _> = presenters
+            .iter()
+            .map(|(&id, presenter)| (id, self.transport_backlog(id, None, *presenter)))
+            .collect();
+        let local_backlogs: HashMap<_, _> = local_presenters
+            .iter()
+            .map(|(&(owner, id), presenter)| {
+                (
+                    (owner, id),
+                    self.transport_backlog(id, Some(owner), *presenter),
+                )
+            })
+            .collect();
         for (&id, pane) in &mut self.panes {
             if let Some(pty) = &pane.pty {
+                pane.graphics_pacer
+                    .observe_backlog(backlogs.get(&id).copied().unwrap_or(0));
                 let policy = pane
                     .graphics_pacer
                     .policy(now, presenters.get(&id).copied().flatten());
@@ -314,6 +449,8 @@ impl SessionServer {
         }
         for (&key, pane) in &mut self.local_panes {
             if let Some(pty) = &pane.pty {
+                pane.graphics_pacer
+                    .observe_backlog(local_backlogs.get(&key).copied().unwrap_or(0));
                 let policy = pane
                     .graphics_pacer
                     .policy(now, local_presenters.get(&key).copied().flatten());

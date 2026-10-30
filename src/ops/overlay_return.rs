@@ -47,6 +47,7 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
             tab: picker.tab.clone(),
             opened_host: picker.opened_host.clone().map(Box::new),
             browse_selected: picker.browse_selected.clone(),
+            tab_selected: picker.tab_selected.clone(),
         })
 }
 
@@ -95,6 +96,7 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
             tab,
             opened_host,
             browse_selected,
+            tab_selected,
         } => {
             // Rebuilding the rows filters remembered ones by which hosts have a tab, and that reads
             // the picker's tab and explicitly opened host. Seed them first so a disconnected host
@@ -117,6 +119,7 @@ pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
                 picker.tab = tab;
                 picker.opened_host = opened_host.map(|target| *target);
                 picker.browse_selected = browse_selected;
+                picker.tab_selected = tab_selected;
                 picker.selected = selected_session
                     .and_then(|(name, target)| {
                         picker

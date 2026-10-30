@@ -222,6 +222,263 @@ fn merge_current_session_row_dedupes_by_name_and_host() {
     assert_eq!(empty.len(), 1);
 }
 
+/// Live sessions come before memories, whatever their hosts are called: an offline host sorting
+/// first by name must not bury a running session on another one.
+#[test]
+fn the_picker_lists_rows_by_standing_then_host_then_name() {
+    use crate::AppRoot;
+    use crate::session::discovery::DiscoveredSessionStatus;
+    use tui_lipan::TestBackend;
+
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.state_mut().current_mut().session_name = Some("here".to_string());
+        backend.state_mut().current_mut().remote_target = None;
+        // A remembered row is only listed while its host has a tab.
+        let alpha = crate::session::remote::RemoteTarget::Alias("alpha".into());
+        backend.state_mut().session_picker =
+            Some(SessionPickerState::new(Vec::new()).on_tab(Some(alpha)));
+        backend.state_mut().show_session_picker = true;
+        let epoch = backend.state().session_picker_epoch;
+
+        let with_status = |name: &str, host: Option<&str>, status: DiscoveredSessionStatus| {
+            let mut row = session_row(name, host);
+            row.status = status;
+            row
+        };
+        backend
+            .update_level(crate::Msg::SessionsDiscovered {
+                epoch,
+                rows: vec![
+                    with_status(
+                        "a-memory",
+                        Some("alpha"),
+                        DiscoveredSessionStatus::LastSeen { panes: 1 },
+                    ),
+                    with_status("saved", None, DiscoveredSessionStatus::Restorable),
+                    session_row("b-running", Some("zeta")),
+                    session_row("a-running", None),
+                    session_row("here", None),
+                ],
+                host_status: Vec::new(),
+            })
+            .expect("apply picker refresh");
+
+        let picker = backend.state().session_picker.as_ref().unwrap();
+        let names: Vec<_> = picker.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["here", "a-running", "b-running", "saved", "a-memory"]
+        );
+    });
+}
+
+/// Tabs do not share a selection: All lists every row, so one carried over would land mid-list.
+#[test]
+fn each_tab_keeps_its_own_selection() {
+    use crate::AppRoot;
+    use crate::session::remote::RemoteTarget;
+    use crate::state::SessionPickerTab;
+    use tui_lipan::TestBackend;
+
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let mut picker = SessionPickerState::new(vec![
+            session_row("alpha", None),
+            session_row("beta", None),
+            session_row("dev", Some("workbox")),
+            session_row("ops", Some("workbox")),
+        ])
+        .on_tab(Some(workbox.clone()));
+        picker.selected = 3;
+        backend.state_mut().session_picker = Some(picker);
+        backend.state_mut().show_session_picker = true;
+        let tabs = session_picker_tabs(backend.state());
+        let index = |tab: &SessionPickerTab| tabs.iter().position(|t| t == tab).unwrap();
+        let all = index(&SessionPickerTab::All);
+        let host = index(&SessionPickerTab::Host(Some(workbox)));
+        let local = index(&SessionPickerTab::Host(None));
+        let selected_name = |backend: &TestBackend<AppRoot>| {
+            let picker = backend.state().session_picker.as_ref().unwrap();
+            picker.entries[picker.selected].name.clone()
+        };
+        let switch = |backend: &mut TestBackend<AppRoot>, tab: usize| {
+            backend
+                .update_level(crate::Msg::SessionPickerTab(tab))
+                .unwrap();
+        };
+
+        switch(&mut backend, all);
+        assert_eq!(selected_name(&backend), "alpha", "a new tab starts on top");
+        backend
+            .update_level(crate::Msg::SessionPickerSelect(1))
+            .unwrap();
+
+        switch(&mut backend, host);
+        assert_eq!(selected_name(&backend), "ops", "the host tab's own row");
+        switch(&mut backend, all);
+        assert_eq!(selected_name(&backend), "beta", "All's own row");
+        switch(&mut backend, local);
+        assert_eq!(selected_name(&backend), "alpha", "a new tab starts on top");
+
+        // A search moves the highlight, but the tab is left where the search started.
+        switch(&mut backend, host);
+        backend
+            .update_level(crate::Msg::SessionPickerQueryChanged("dev".into()))
+            .unwrap();
+        assert_eq!(selected_name(&backend), "dev");
+        switch(&mut backend, local);
+        switch(&mut backend, host);
+        assert_eq!(selected_name(&backend), "ops");
+
+        // A rebuild keeps what the tabs remember, and a row that has gone falls back to the top.
+        let epoch = backend.state().session_picker_epoch;
+        switch(&mut backend, all);
+        backend
+            .update_level(crate::Msg::SessionsDiscovered {
+                epoch,
+                rows: vec![
+                    session_row("alpha", None),
+                    session_row("dev", Some("workbox")),
+                ],
+                host_status: Vec::new(),
+            })
+            .unwrap();
+        switch(&mut backend, host);
+        assert_eq!(selected_name(&backend), "dev");
+    });
+}
+
+/// Rebuilding the picker, as a refresh and a return from Remote hosts both do, keeps each tab's row.
+#[test]
+fn a_rebuilt_picker_keeps_each_tabs_selection() {
+    use crate::AppRoot;
+    use crate::session::remote::RemoteTarget;
+    use crate::state::SessionPickerTab;
+    use tui_lipan::TestBackend;
+
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let remembered = (
+            SessionPickerTab::All,
+            ("dev".to_string(), Some(workbox.clone())),
+        );
+        let mut picker = SessionPickerState::new(Vec::new()).on_tab(Some(workbox));
+        picker.tab_selected.push(remembered.clone());
+        backend.state_mut().session_picker = Some(picker);
+        backend.state_mut().show_session_picker = true;
+        let kept = |backend: &TestBackend<AppRoot>| {
+            backend
+                .state()
+                .session_picker
+                .as_ref()
+                .unwrap()
+                .tab_selected
+                .clone()
+        };
+
+        backend
+            .update_level(crate::Msg::SessionPickerRemoteHosts)
+            .unwrap();
+        assert!(backend.state().overlay_return.is_some());
+        backend.update_level(crate::Msg::CloseRemotePicker).unwrap();
+        assert_eq!(
+            kept(&backend),
+            std::slice::from_ref(&remembered),
+            "back from Remote hosts"
+        );
+
+        // A kill rebuilds the rows too, and closes the picker only when none are left.
+        backend.state_mut().current_mut().session_name = Some("here".to_string());
+        backend.state_mut().current_mut().session_attached = true;
+        backend
+            .update_level(crate::Msg::RemoteSessionKilled {
+                entry: session_row("gone", Some("workbox")),
+                result: Ok(()),
+            })
+            .unwrap();
+        assert_eq!(kept(&backend), [remembered], "after a kill");
+    });
+}
+
+/// The tab strip is part of the palette, so it keeps its position only as long as tab changes leave
+/// the palette mounted, while the search field still starts over on each page.
+#[test]
+fn switching_picker_tabs_keeps_the_strip_in_place_and_clears_the_search() {
+    use crate::AppRoot;
+    use crate::session::remote::RemoteTarget;
+    use crate::state::{HostProbe, SessionPickerTab};
+    use tui_lipan::TestBackend;
+
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 24,
+        });
+        backend.state_mut().config.animations.picker =
+            crate::layout::anim::PickerAnimationStyle::Off;
+        backend.state_mut().current_mut().session_name = Some("here".to_string());
+        backend.state_mut().current_mut().session_attached = true;
+        let hosts: Vec<_> = (0..9).map(|i| format!("workbox-{i}")).collect();
+        let targets: Vec<_> = hosts
+            .iter()
+            .map(|host| RemoteTarget::Alias(host.clone()))
+            .collect();
+        let state = backend.state_mut();
+        let remote_config = state.config.remote.clone();
+        state.remote.hosts.seed(&remote_config, &targets, &[], &[]);
+        for target in &targets {
+            state.remote.hosts.get_mut(target).unwrap().probe = HostProbe::Reached;
+        }
+        let rows = hosts
+            .iter()
+            .map(|host| session_row("dev", Some(host)))
+            .collect();
+        let mut picker = SessionPickerState::new(rows).on_tab(Some(targets[8].clone()));
+        // Seeds the search field as it mounts; the switch below has to clear it.
+        picker.input.set_text("typed".to_string());
+        state.session_picker = Some(picker);
+        state.show_session_picker = true;
+        backend.render();
+
+        let strip = |frame: String| {
+            frame
+                .lines()
+                .find(|line| line.contains("workbox-"))
+                .unwrap_or_else(|| panic!("no tab strip in:\n{frame}"))
+                .to_string()
+        };
+        let opened = strip(backend.capture_frame().plain_text());
+        assert!(opened.contains("workbox-8"), "opens on its tab: {opened}");
+
+        let tabs = session_picker_tabs(backend.state());
+        let neighbor = tabs
+            .iter()
+            .position(|tab| *tab == SessionPickerTab::Host(Some(targets[7].clone())))
+            .unwrap();
+        assert!(
+            backend.capture_frame().plain_text().contains("typed"),
+            "the search field starts seeded"
+        );
+        backend
+            .update_level(crate::Msg::SessionPickerTab(neighbor))
+            .unwrap();
+        backend.render();
+        let frame = backend.capture_frame().plain_text();
+        assert_eq!(strip(frame.clone()), opened, "the strip moved:\n{frame}");
+        assert!(!frame.contains("typed"), "search not cleared:\n{frame}");
+    });
+}
+
 #[test]
 fn picker_refresh_preserves_identity_and_clears_destructive_arms() {
     use crate::AppRoot;
@@ -1049,6 +1306,7 @@ fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline
                 tab: crate::state::SessionPickerTab::Host(None),
                 opened_host: None,
                 browse_selected: None,
+                tab_selected: Vec::new(),
             });
             state.rename_session = Some(SessionRenameState::new("dev", NamingMode::CreateSession));
         }

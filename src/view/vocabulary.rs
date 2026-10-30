@@ -179,6 +179,18 @@ impl SessionPresence {
         }
     }
 
+    /// Where the Sessions picker lists this standing. The groups are coarse on purpose: a session
+    /// reconnecting and then lost stays where it is instead of moving under the user's eye.
+    pub(crate) fn picker_group(self) -> u8 {
+        match self {
+            Self::Current => 0,
+            Self::Background | Self::Reconnecting | Self::Offline => 1,
+            Self::Running => 2,
+            Self::Restorable => 3,
+            Self::LastSeen | Self::Busy | Self::Unavailable => 4,
+        }
+    }
+
     /// Whether this client holds a connection to the session, on screen or not.
     pub(crate) fn is_held(self) -> bool {
         matches!(
@@ -411,6 +423,11 @@ pub(crate) fn session_presence_for(
         .attachment_by_identity(name, target)
         .map(|attachment| attachment.connection);
     SessionPresence::held(current, connection)
+}
+
+/// How a discovered session row stands with this client.
+pub(crate) fn session_row_presence(state: &State, entry: &DiscoveredSession) -> SessionPresence {
+    session_presence_for(state, &entry.name, entry.remote_target.as_ref()).discovered(&entry.status)
 }
 
 /// What a discovered session row says about the session after its status: its panes, the agents a

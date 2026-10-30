@@ -577,22 +577,10 @@ fn picker_has_unmatched_query(state: &crate::state::State, picker: &SessionPicke
 fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -> Element {
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
-    let current_name = ctx.state.current().session_name.as_deref();
-    let current_host = ctx.state.current().remote_host.as_deref();
-    let current_remote_target = &ctx.state.current().remote_target;
     let statuses: Vec<SessionPresence> = picker
         .entries
         .iter()
-        .map(|entry| {
-            let is_current = current_name == Some(entry.name.as_str())
-                && current_host == entry.host.as_deref()
-                && current_remote_target == &entry.remote_target;
-            let connection = ctx
-                .state
-                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
-                .map(|attachment| attachment.connection);
-            SessionPresence::held(is_current, connection).discovered(&entry.status)
-        })
+        .map(|entry| vocabulary::session_row_presence(&ctx.state, entry))
         .collect();
     let killing_entries: Vec<_> = picker
         .entries

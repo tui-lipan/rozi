@@ -92,7 +92,7 @@ pub(crate) enum ClientSite {
 /// (see [`crate::platform::environment::fill_host_desktop_environment`]), which is the only process
 /// that can ask the host. The server's own copy is as old as the server, and a named server can
 /// outlive several desktops, so a pane never inherits it. The same goes for the SSH connection that
-/// happened to start the server: a pane has one only if the client opening it does.
+/// happened to start the server: a pane has one only if the client or verified pane opening it does.
 pub(crate) enum SpawnOrigin<'a> {
     /// A client, which forwards its own live environment and advertises itself.
     Client {

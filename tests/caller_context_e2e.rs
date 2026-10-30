@@ -766,10 +766,18 @@ fn headless_pane_environment(
         assert!(Instant::now() < deadline, "session server did not start");
         std::thread::sleep(Duration::from_millis(10));
     }
-    let dump = files.path().join("env");
-    let spawned = run_session_control(
-        &session,
-        request(ControlCommand::NewPane {
+    new_pane_environment(&session, None, &files.path().join("env"))
+}
+
+/// A request that opens a pane reporting its environment to `dump`.
+#[cfg(unix)]
+fn dump_environment_request(
+    caller: Option<rozi::session::protocol::PaneRef>,
+    dump: &std::path::Path,
+) -> ControlRequest {
+    ControlRequest {
+        caller_context: caller.map(Box::new),
+        ..request(ControlCommand::NewPane {
             command: None,
             argv: Some(vec![
                 "sh".into(),
@@ -785,9 +793,21 @@ fn headless_pane_environment(
             focus: false,
             workspace: None,
             size: None,
-        }),
-    )
-    .unwrap();
+        })
+    }
+}
+
+/// Open a pane through direct session control and read back its environment.
+#[cfg(unix)]
+fn new_pane_environment(
+    session: &str,
+    caller: Option<rozi::session::protocol::PaneRef>,
+    dump: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    use std::time::{Duration, Instant};
+
+    let deadline = Instant::now() + common::io_timeout();
+    let spawned = run_session_control(session, dump_environment_request(caller, dump)).unwrap();
     assert!(spawned.ok, "{spawned:?}");
     while !dump.exists() {
         assert!(
@@ -797,12 +817,130 @@ fn headless_pane_environment(
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    std::fs::read_to_string(&dump)
+    std::fs::read_to_string(dump)
         .unwrap()
         .lines()
         .filter_map(|line| line.split_once('='))
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect()
+}
+
+/// `--here` from a remote pane reaches the server directly, so the new pane has no client to take a
+/// connection from. It is that pane's child, and a program in it must see the same SSH context its
+/// parent saw. Only that one value carries over, and only from a caller the server has verified.
+#[cfg(unix)]
+#[test]
+fn a_verified_caller_passes_on_its_ssh_connection_and_nothing_else() {
+    use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+    use rozi::session::protocol::{ClientMessage, Frame, PaneRef, ServerMessage, WirePalette};
+    use tui_lipan::prelude::TerminalColorPalette;
+
+    const CONNECTION: &str = "192.0.2.1 5000 192.0.2.2 22";
+    rozi::test_support::isolate_user_dirs();
+    let files = tempfile::tempdir().unwrap();
+    let server = spawn_listener(ServerSettings::default());
+    let (mut client, _) = common::attach_client(server.endpoint(), server.session(), "ssh client");
+    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    client.write_control(&ClientMessage::SpawnPane {
+        placement: Some(common::spawn_placement(0, &[(7, 1)])),
+        local: false,
+        pane_id: 7,
+        generation: 1,
+        launch: None,
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        keep_open: false,
+        env: vec![
+            ("SSH_CONNECTION".to_string(), CONNECTION.to_string()),
+            ("SSH_CLIENT".to_string(), "192.0.2.1 5000 22".to_string()),
+            ("CALLER_ONLY".to_string(), "1".to_string()),
+        ],
+        title: None,
+        palette: WirePalette::from(TerminalColorPalette::default()),
+        shell,
+        command_shell,
+        cell_width: 0,
+        cell_height: 0,
+    });
+    common::read_until(&mut client, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::SpawnResult { ok: true, .. })
+        )
+    });
+    // Direct session control needs layout control to be free.
+    client.write_control(&ClientMessage::Detach);
+    drop(client);
+    let deadline = std::time::Instant::now() + common::io_timeout();
+    let pane_count = |session: &str| {
+        run_session_control(session, request(ControlCommand::ListPanes))
+            .unwrap()
+            .data
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let probe = files.path().join("free");
+    while !run_session_control(server.session(), dump_environment_request(None, &probe))
+        .unwrap()
+        .ok
+    {
+        assert!(std::time::Instant::now() < deadline, "layout stayed held");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+        .unwrap()
+        .data
+        .unwrap();
+    let caller: PaneRef = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pane| pane["reference"]["pane_id"] == 7)
+        .map(|pane| serde_json::from_value(pane["reference"].clone()).unwrap())
+        .expect("the caller pane survives the detach");
+
+    let child = new_pane_environment(
+        server.session(),
+        Some(caller.clone()),
+        &files.path().join("child"),
+    );
+    assert_eq!(
+        child.get("SSH_CONNECTION").map(String::as_str),
+        Some(CONNECTION)
+    );
+    for key in ["SSH_CLIENT", "CALLER_ONLY"] {
+        assert!(!child.contains_key(key), "{key} came from the caller");
+    }
+
+    let unrelated = new_pane_environment(server.session(), None, &files.path().join("unrelated"));
+    assert!(
+        !unrelated.keys().any(|key| key.starts_with("SSH_")),
+        "no caller means no SSH context: {unrelated:?}"
+    );
+
+    let before = pane_count(server.session());
+    let stale_dump = files.path().join("stale");
+    let refused = run_session_control(
+        server.session(),
+        dump_environment_request(
+            Some(PaneRef {
+                generation: caller.generation + 1,
+                ..caller
+            }),
+            &stale_dump,
+        ),
+    )
+    .unwrap();
+    assert!(
+        !refused.ok,
+        "a replaced caller must be refused: {refused:?}"
+    );
+    assert_eq!(pane_count(server.session()), before);
+    assert!(!stale_dump.exists());
 }
 
 /// Discoverable control endpoints accept liveness connections as well as context probes.

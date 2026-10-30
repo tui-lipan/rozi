@@ -2219,6 +2219,11 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     "ROZI_SERVICE",
     // Fish and PowerShell export this guard. Each new shell must install its own hooks.
     "ROZI_SHELL_INTEGRATION_LOADED",
+    // The connection that started this server may be long gone. The client opening a pane supplies
+    // its own, so a pane never pairs a current connection with a stale client address or terminal.
+    "SSH_CONNECTION",
+    "SSH_CLIENT",
+    "SSH_TTY",
 ];
 
 fn pty_config(
@@ -2262,6 +2267,7 @@ fn pty_config(
     // a per-spawn value still wins, including over a removal.
     INHERITED_ENV_REMOVED
         .iter()
+        .chain(crate::platform::environment::DESKTOP_SESSION_VARIABLES)
         .fold(config, |config, key| config.env_remove(*key))
         .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))

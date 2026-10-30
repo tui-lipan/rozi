@@ -191,7 +191,7 @@ pub(crate) fn spawn_pane_in_scratch(
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
         &pane,
-        false,
+        &crate::pane::spawn_policy::ClientSite::Local,
         &ctx.state.config.environment.forward,
     );
     let request = PaneSpawnRequest {
@@ -466,7 +466,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
         &pane,
-        ctx.state.current().remote_host.is_some(),
+        &ctx.state.current().client_site(),
         &ctx.state.config.environment.forward,
     );
     let identity = pane.identity.clone();
@@ -653,7 +653,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let generation = ctx.state.current().next_pty_generation;
     ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
-    let remote_attached = ctx.state.current().remote_host.is_some();
+    let client_site = ctx.state.current().client_site();
     let forwarded_environment = ctx.state.config.environment.forward.clone();
     let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
@@ -676,7 +676,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
             pane_env(
                 control_socket.as_deref(),
                 pane,
-                remote_attached,
+                &client_site,
                 &forwarded_environment,
             ),
             pane.identity.clone(),

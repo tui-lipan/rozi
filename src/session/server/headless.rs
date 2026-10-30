@@ -636,6 +636,7 @@ impl SessionServer {
                 size,
             } => self.session_new_pane(
                 SessionSpawn {
+                    caller_env: self.caller_ssh_environment(request.caller_context.as_deref()),
                     command,
                     argv,
                     cwd: local_cwd.or(cwd),
@@ -1678,6 +1679,20 @@ impl SessionServer {
         ControlResponse::ok(data)
     }
 
+    /// What a new pane takes from the verified pane that asked for it: its `SSH_CONNECTION`, and
+    /// nothing else. The pane is that command's child in every way that matters here, so it gets the
+    /// value the caller was launched with, not that of whichever client is watching now. Without a
+    /// verified caller there is no connection to speak of.
+    fn caller_ssh_environment(&self, caller: Option<&protocol::PaneRef>) -> Vec<(String, String)> {
+        caller
+            .and_then(|caller| self.panes.get(&caller.pane_id))
+            .into_iter()
+            .flat_map(|pane| &pane.env)
+            .filter(|(key, _)| key == "SSH_CONNECTION")
+            .cloned()
+            .collect()
+    }
+
     fn session_new_pane(
         &mut self,
         spawn: SessionSpawn,
@@ -1802,7 +1817,7 @@ impl SessionServer {
                 env: crate::pane::spawn_policy::spawn_environment(
                     crate::pane::spawn_policy::SpawnOrigin::Headless,
                     pane_id,
-                    &[],
+                    &spawn.caller_env,
                 ),
                 palette,
                 shell,
@@ -1982,6 +1997,8 @@ fn validate_agent_prompt_state(
 
 /// What a headless `split` asked for.
 struct SessionSpawn {
+    /// Inherited from a verified caller pane; see [`SessionServer::caller_ssh_environment`].
+    caller_env: Vec<(String, String)>,
     command: Option<String>,
     argv: Option<Vec<String>>,
     cwd: Option<String>,

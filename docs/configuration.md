@@ -221,8 +221,9 @@ output (OSC 133). See
 | --- | --- | --- | --- |
 | `forward` | array of strings | `[]` | Extra client environment variables to copy into new local panes. Empty names are removed and duplicates collapsed. Values are not persisted or forwarded through remote attachments. |
 
-rozi already forwards the desktop session variables that Wayland, X11, D-Bus, and Hyprland need.
-Existing panes keep their original environment.
+rozi already forwards the desktop session variables that Wayland, X11, D-Bus, and Hyprland need. A
+client with no display of its own, such as one attached over SSH, gets the host's current desktop
+instead on Linux with a systemd user session. Existing panes keep their original environment.
 
 ## `[input]`
 

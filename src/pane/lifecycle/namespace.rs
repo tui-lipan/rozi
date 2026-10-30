@@ -185,14 +185,14 @@ pub(crate) fn clear_pane_local_state(state: &mut State, id: PaneId) {
 pub(crate) fn pane_env(
     control_socket_path: Option<&std::path::Path>,
     pane: &Pane,
-    remote_attached: bool,
+    site: &crate::pane::spawn_policy::ClientSite,
     forwarded_environment: &[String],
 ) -> Vec<(String, String)> {
     crate::pane::spawn_policy::spawn_environment(
         crate::pane::spawn_policy::SpawnOrigin::Client {
             control_socket: control_socket_path,
             forward: forwarded_environment,
-            remote: remote_attached,
+            site,
         },
         pane.id,
         &pane.identity.env,

@@ -252,10 +252,12 @@ pub(crate) fn start(
                 error.kind(),
                 io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
             );
-            report(Err(format!(
-                "{}; reconnect from Remote hosts to answer SSH authentication",
-                error
-            )));
+            let message = if unsupported {
+                format!("{error}; reconnect from Remote hosts to resolve this failure")
+            } else {
+                error.to_string()
+            };
+            report(Err(message));
             if unsupported {
                 break;
             }
@@ -311,9 +313,7 @@ fn handshake_error(error: io::Error, detail: &str) -> io::Error {
     let kind =
         if detail.contains("unknown sessions command") || detail.contains("unexpected argument") {
             io::ErrorKind::Unsupported
-        } else if detail.contains("Permission denied")
-            || detail.contains("Host key verification failed")
-        {
+        } else if crate::session::discovery::ssh_failure_needs_user(detail) {
             io::ErrorKind::PermissionDenied
         } else {
             error.kind()
@@ -328,6 +328,82 @@ fn handshake_error(error: io::Error, detail: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn monitor_retry_process_case() {
+        let Ok(case) = std::env::var("ROZI_MONITOR_RETRY_CASE") else {
+            return;
+        };
+        let target = RemoteTarget::Alias("monitor-retry-fixture".into());
+        let config = crate::config::RemoteConfig::default();
+        if case.ends_with("handshake") {
+            super::super::binary::remember(
+                &target,
+                &config,
+                "rozi".into(),
+                super::super::bootstrap::RemoteFamily::Posix,
+            )
+            .unwrap();
+        }
+        let (send, receive) = mpsc::channel();
+        let monitor = start(target, 1, config, move |result| {
+            send.send(result).unwrap();
+        });
+        let first = receive
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .unwrap_err();
+        if case.starts_with("auth") {
+            assert!(first.contains("reconnect from Remote hosts"), "{first}");
+            assert!(matches!(
+                receive.recv_timeout(Duration::from_secs(2)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            ));
+        } else {
+            assert!(!first.contains("reconnect from Remote hosts"), "{first}");
+            assert!(
+                receive
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .is_err()
+            );
+        }
+        drop(monitor);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn monitor_stops_on_authentication_and_retries_timeouts() {
+        use std::os::unix::fs::PermissionsExt;
+        for case in [
+            "auth-probe",
+            "auth-handshake",
+            "timeout-probe",
+            "timeout-handshake",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let ssh = root.path().join("ssh");
+            std::fs::write(&ssh, "#!/bin/sh\ncase \"$ROZI_MONITOR_RETRY_CASE\" in\nauth*) echo 'Permission denied (publickey,password).' >&2 ;;\n*) echo 'ssh: connect to host fixture port 22: Connection timed out' >&2 ;;\nesac\nexit 255\n").unwrap();
+            std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "session::remote::monitor::tests::monitor_retry_process_case",
+                    "--nocapture",
+                ])
+                .env("ROZI_MONITOR_RETRY_CASE", case)
+                .env("PATH", format!("{}:/usr/bin:/bin", root.path().display()))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     #[test]
     fn capabilities_are_additive_and_required_features_are_checked() {

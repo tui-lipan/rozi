@@ -308,7 +308,8 @@ fn resolve_attach_binary(
         }
         let resolved = ResolvedRemote::resolve(target, config);
         if resolved.binary_path.is_some() {
-            return super::binary::resolve(target, config).map_err(RemoteConnectError::Message);
+            return super::binary::resolve(target, config)
+                .map_err(|error| RemoteConnectError::Message(error.message));
         }
         return Err(RemoteConnectError::Message(
             "remote Rozi path is no longer known; reopen the host to probe it again".to_string(),
@@ -320,7 +321,8 @@ fn resolve_attach_binary(
         super::ensure_remote_binary(target, config, false)
     }
     .map_err(RemoteConnectError::Message)?;
-    let binary = super::binary::resolve(target, config).map_err(RemoteConnectError::Message)?;
+    let binary = super::binary::resolve(target, config)
+        .map_err(|error| RemoteConnectError::Message(error.message))?;
     if binary.path != path {
         return Err(RemoteConnectError::Message(
             "remote Rozi path changed while preparing the connection; retry".into(),
@@ -396,7 +398,7 @@ pub fn kill_remote_session(
     }
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
-    let remote_bin = super::binary::resolve(target, config)?;
+    let remote_bin = super::binary::resolve(target, config).map_err(|error| error.message)?;
     validate_remote_executable_token(&remote_bin.path)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);

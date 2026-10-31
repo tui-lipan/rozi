@@ -36,7 +36,8 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
 ) -> Result<Reply, TransportError> {
     validate_remote_target(target).map_err(TransportError::Preflight)?;
     let resolved = ResolvedRemote::resolve(target, config);
-    let binary = super::binary::resolve(target, config).map_err(TransportError::Preflight)?;
+    let binary = super::binary::resolve(target, config)
+        .map_err(|error| TransportError::Preflight(error.message))?;
     validate_remote_executable_token(&binary.path).map_err(TransportError::Preflight)?;
     let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
     let mut command = ssh_base_command(&resolved, config);

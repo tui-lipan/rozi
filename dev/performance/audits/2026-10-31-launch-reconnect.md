@@ -80,5 +80,9 @@ were inspected outside the repository and are not committed.
   monitors and their live session lists remained. A fresh fourth window started no monitor for
   the removed host.
 
-The measurement covers three sessions with one agent each and stable metadata. More panes,
-published agent rows, or changing project summaries can increase the payload and query work.
+The measurement covers three sessions with one agent each and stable metadata, with the agents
+idle at their sign-in screen rather than working. More panes, published agent rows, or changing
+project summaries can increase the payload and query work. The budget was met for this setup, not
+for a larger one: scaling these results linearly to five sessions gives an estimated 1.1% of one
+core and 2.5 KB/s across three clients. That estimate is not a measurement. It is close enough to
+the budget of about 1% that the enabled default stands.

@@ -564,7 +564,7 @@ mod tests {
             let _persist = crate::test_support::lock_persisted_state();
             let _restore = crate::test_support::preserve_persisted_state();
             for target in crate::session::read_reconnect_hosts() {
-                crate::session::forget_reconnect_host(&target);
+                crate::session::forget_reconnect_host(&target).unwrap();
             }
             let target = crate::session::remote::RemoteTarget::Alias("launchbox".into());
             crate::session::add_reconnect_host(&target).unwrap();
@@ -609,7 +609,7 @@ mod tests {
                 "{rendered}"
             );
             // Another window's disconnect affects future launches, not this client's snapshot.
-            crate::session::forget_reconnect_host(&target);
+            crate::session::forget_reconnect_host(&target).unwrap();
             assert!(backend.state().remote.reconnect_hosts.contains(&target));
             backend.state_mut().command_link = None;
             backend.state_mut().remote.monitors.push(
@@ -650,7 +650,7 @@ mod tests {
             let _persist = crate::test_support::lock_persisted_state();
             let _restore = crate::test_support::preserve_persisted_state();
             for target in crate::session::read_reconnect_hosts() {
-                crate::session::forget_reconnect_host(&target);
+                crate::session::forget_reconnect_host(&target).unwrap();
             }
             let empty = TestBackend::new(reconnect_root(true));
             assert!(empty.state().remote.reconnect_hosts.is_empty());
@@ -775,15 +775,129 @@ mod tests {
                     assert_eq!(request.name, "resume-work");
                     assert_eq!(
                         request.mode,
-                        state::AttachMode::Reconnect,
-                        "reconnect reuses the monitor's binary and never installs"
+                        state::AttachMode::Join,
+                        "this client never had the session, so this is a first attach"
                     );
                     assert_eq!(request.prompting, state::AttachPrompting::Forbidden);
+
+                    // Landing is a new view, which is what seeds it rather than reconciling panes
+                    // this client never had.
+                    let revision = backend.state().session_view_revision;
+                    let epoch = {
+                        let (client, _outbound) =
+                            crate::session::client::SessionClient::test_channel();
+                        let pending = backend
+                            .state_mut()
+                            .current_mut()
+                            .pending_session_attach
+                            .as_mut()
+                            .unwrap();
+                        pending.client = Some(client);
+                        pending.epoch
+                    };
+                    backend
+                        .update_level(Msg::SessionAttached {
+                            epoch,
+                            session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                                "resume-work",
+                            ),
+                            session: "resume-work".into(),
+                            client_id: 1,
+                            panes: Vec::new(),
+                            layout_rev: 0,
+                            layout: None,
+                            controller: Some(1),
+                            clients: Vec::new(),
+                            input_locked: false,
+                            allow_takeover: false,
+                            read_only: false,
+                            origin: Default::default(),
+                        })
+                        .unwrap();
+                    assert_eq!(backend.state().session_view_revision, revision + 1);
                 } else {
                     assert!(backend.state().current().pending_session_attach.is_none());
                     assert!(backend.state().show_session_picker);
                 }
             }
+        });
+    }
+
+    /// The monitor's snapshot can be out of date by the time the attach reaches the host. This
+    /// client never held the session, so that is a failed attach and not a session lost.
+    #[test]
+    fn a_global_remote_last_that_vanishes_before_attaching_returns_to_sessions() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let _restore = crate::test_support::preserve_persisted_state();
+            let target = crate::session::remote::RemoteTarget::Alias("vanish-launchbox".into());
+            crate::session::add_reconnect_host(&target).unwrap();
+            let mut root = reconnect_root(true);
+            root.startup_session = StartupSession::RemoteLast {
+                target: target.clone(),
+                name: "vanish-work".into(),
+            };
+            let mut backend = TestBackend::new(root);
+            backend.state_mut().command_link = None;
+            backend.state_mut().remote.monitors.push(
+                crate::session::remote::monitor::Monitor::dormant(target.clone(), 86),
+            );
+            backend
+                .update_level(Msg::HostMetadata {
+                    target: target.clone(),
+                    generation: 86,
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "vanish-work".into(),
+                        host: Some(target.display_label()),
+                        remote_target: Some(target.clone()),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                        },
+                    }]),
+                    agents: Vec::new(),
+                    projects: Vec::new(),
+                })
+                .unwrap();
+            let pending = backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .expect("the live snapshot starts the attach");
+            assert!(!pending.request.is_reconnect());
+            let epoch = pending.epoch;
+
+            // Only an attachment this client already held can be lost.
+            backend
+                .update_level(Msg::SessionLost {
+                    epoch,
+                    message: "the original remote session is gone".into(),
+                })
+                .unwrap();
+            assert!(backend.state().current().pending_session_attach.is_some());
+            assert!(!backend.state().current().remote_session_lost);
+
+            backend
+                .update_level(Msg::SessionAttachFailed {
+                    epoch,
+                    message: "Session `vanish-work` is not running on the remote host".into(),
+                })
+                .unwrap();
+            let state = backend.state();
+            assert!(state.current().pending_session_attach.is_none());
+            assert!(!state.current().remote_session_lost);
+            assert!(state.is_launcher());
+            assert_ne!(
+                state.current().connection,
+                state::ConnectionState::Unreachable,
+                "the launcher is not an offline session"
+            );
+            assert!(state.show_session_picker);
         });
     }
 

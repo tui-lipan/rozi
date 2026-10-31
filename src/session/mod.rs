@@ -297,14 +297,15 @@ pub(crate) fn add_reconnect_host(target: &remote::RemoteTarget) -> Result<(), St
     })
 }
 
-pub(crate) fn forget_reconnect_host(target: &remote::RemoteTarget) {
+pub(crate) fn forget_reconnect_host(target: &remote::RemoteTarget) -> Result<(), String> {
     persist_io(|| {
         let mut entries = read_reconnect_hosts();
-        if entries.contains(target) {
-            entries.retain(|entry| entry != target);
-            let _ = write_hosts(RECONNECT_HOSTS_FILE, &entries);
+        if !entries.contains(target) {
+            return Ok(());
         }
-    });
+        entries.retain(|entry| entry != target);
+        write_hosts(RECONNECT_HOSTS_FILE, &entries)
+    })
 }
 
 pub(crate) fn replace_reconnect_host(
@@ -535,7 +536,7 @@ mod tests {
         assert_eq!(read_reconnect_hosts(), vec![first.clone(), second.clone()]);
         replace_reconnect_host(&first, &second).unwrap();
         assert_eq!(read_reconnect_hosts(), vec![second.clone()]);
-        forget_reconnect_host(&second);
+        forget_reconnect_host(&second).unwrap();
         assert!(read_reconnect_hosts().is_empty());
     }
 

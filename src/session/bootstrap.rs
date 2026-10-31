@@ -88,7 +88,7 @@ pub(crate) fn run_attach(
             epoch,
             name,
             read_only,
-            RemoteAttachPolicy::from(request.mode),
+            RemoteAttachPolicy::new(request.mode, request.prompting),
             target,
             request.prompting.remote_config(remote_config),
             link,
@@ -125,16 +125,20 @@ struct RemoteAttachPolicy {
     existing_only: bool,
     create_only: bool,
     reconnect: bool,
+    /// Whether this attempt may copy rozi onto the host. Independent of the attach's lifecycle: an
+    /// attempt nobody asked for must not install, and that holds for a first join as well.
+    may_install: bool,
 }
 
-impl From<crate::state::AttachMode> for RemoteAttachPolicy {
-    fn from(mode: crate::state::AttachMode) -> Self {
+impl RemoteAttachPolicy {
+    fn new(mode: crate::state::AttachMode, prompting: crate::state::AttachPrompting) -> Self {
         use crate::state::AttachMode;
 
         Self {
             existing_only: matches!(mode, AttachMode::Join | AttachMode::Reconnect),
             create_only: matches!(mode, AttachMode::Create | AttachMode::Recreate),
             reconnect: matches!(mode, AttachMode::Reconnect | AttachMode::Recreate),
+            may_install: prompting == crate::state::AttachPrompting::Allowed,
         }
     }
 }
@@ -534,6 +538,7 @@ fn try_attach_remote(
         budget,
         cancel_epoch,
         policy.existing_only,
+        policy.may_install,
     ) {
         Ok((stream, preamble)) => {
             if cancel_epoch.is_some_and(remote_attach_cancelled) {
@@ -999,7 +1004,13 @@ mod tests {
             (AttachMode::Reconnect, true, false, true, false),
             (AttachMode::Recreate, false, true, true, false),
         ] {
-            let policy = RemoteAttachPolicy::from(mode);
+            let policy = RemoteAttachPolicy::new(mode, crate::state::AttachPrompting::Allowed);
+            assert!(policy.may_install, "{mode:?}");
+            assert!(
+                !RemoteAttachPolicy::new(mode, crate::state::AttachPrompting::Forbidden)
+                    .may_install,
+                "an attempt nobody asked for never installs: {mode:?}"
+            );
             assert_eq!(policy.existing_only, existing_only, "{mode:?}");
             assert_eq!(policy.create_only, create_only, "{mode:?}");
             assert_eq!(policy.reconnect, reconnect, "{mode:?}");

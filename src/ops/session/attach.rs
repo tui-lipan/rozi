@@ -752,14 +752,17 @@ fn begin_named_attach(
     )
 }
 
-/// Resume a remembered live session after its launch monitor answered. Reuse the resolved binary
-/// through the reconnect path, which neither probes interactively nor installs an upload override.
+/// Resume a remembered live session after its launch monitor answered.
+///
+/// A first attach for this client, so a `Join`: it seeds its layout as a new view, and a session
+/// that vanished after the snapshot fails back to Sessions rather than reading as a session lost.
+/// `Forbidden` is what keeps it from prompting or installing, since nobody asked for this attempt.
 pub(crate) fn resume_remote_session(
     ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
     name: String,
 ) -> Update {
-    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::Reconnect)
+    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::Join)
         .on_host(Some(target))
         .with_prompting(crate::state::AttachPrompting::Forbidden);
     begin_named_attach(ctx, request, None)
@@ -1092,7 +1095,7 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
-    super::remotes::forget_reconnect_host(&mut ctx.state, target);
+    super::remotes::forget_reconnect_host(ctx, target);
     ctx.state.remote.agents.remove(target);
     ctx.state.remote.projects.remove(target);
     ctx.state

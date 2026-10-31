@@ -211,6 +211,79 @@ fn forgetting_removes_and_disarms_intent() {
     });
 }
 
+/// The file is what causes a connection at the next launch, so a removal that did not reach it has
+/// to say so, while this client still lets go of the host.
+#[cfg(unix)]
+#[test]
+fn a_disconnect_whose_removal_cannot_be_saved_warns_and_still_disconnects() {
+    use std::os::unix::fs::PermissionsExt;
+    with_backend(|backend| {
+        use crate::state::{SessionPickerState, SessionPickerTab};
+        let target = RemoteTarget::Alias("intent-unsaved.invalid".into());
+        // A link into a directory that refuses new files: the entry stays readable, and the
+        // atomic replace, which writes a sibling of the link's target, fails.
+        let locked = tempfile::tempdir().unwrap();
+        let held = locked.path().join("reconnect-hosts");
+        std::fs::write(&held, target.to_spec()).unwrap();
+        let link = crate::platform::paths::private_state_dir(
+            &crate::platform::paths::PlatformEnv::from_process(),
+        )
+        .unwrap()
+        .join("reconnect-hosts");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&held, &link).unwrap();
+        std::fs::set_permissions(locked.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        // Permissions do not bind root, which leaves nothing here to observe.
+        let refused = std::fs::File::create(locked.path().join("probe")).is_err();
+
+        picker(backend, &target, HostProbe::Reached);
+        backend.state_mut().remote_picker = None;
+        backend
+            .state_mut()
+            .remote
+            .reconnect_hosts
+            .push(target.clone());
+        let mut sessions = SessionPickerState::new(Vec::new());
+        sessions.tab = SessionPickerTab::Host(Some(target.clone()));
+        backend.state_mut().session_picker = Some(sessions);
+        backend.state_mut().show_session_picker = true;
+        backend.state_mut().remote.monitors.push(
+            crate::session::remote::monitor::Monitor::dormant(target.clone(), 91),
+        );
+        backend
+            .update_level(Msg::SessionPickerDisconnectHost)
+            .unwrap();
+
+        if refused {
+            assert!(stored(&target), "the entry could not be removed");
+            assert!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .values()
+                    .any(|toast| toast.content().contains("reconnect preference not saved")),
+                "the failure is reported"
+            );
+        }
+        let state = backend.state();
+        assert!(!state.remote.reconnect_hosts.contains(&target));
+        assert!(
+            state
+                .remote
+                .monitors
+                .iter()
+                .all(|monitor| monitor.target != target)
+        );
+        assert_eq!(
+            state.remote.hosts.get(&target).unwrap().probe,
+            HostProbe::Idle
+        );
+
+        std::fs::set_permissions(locked.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_file(&link).unwrap();
+    });
+}
+
 #[test]
 fn sidebar_connect_arms_and_monitor_only_disconnect_removes_intent() {
     with_backend(|backend| {

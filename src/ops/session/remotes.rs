@@ -21,7 +21,10 @@ pub(crate) fn remember_reached_host(ctx: &mut Context<AppRoot>, target: &RemoteT
     }
 }
 
-pub(crate) fn forget_reconnect_host(state: &mut crate::state::State, target: &RemoteTarget) {
+/// Stop reconnecting `target` on future launches. This client lets go of it either way; a write that
+/// failed is reported, because the host would otherwise be contacted again at the next launch.
+pub(crate) fn forget_reconnect_host(ctx: &mut Context<AppRoot>, target: &RemoteTarget) {
+    let state = &mut ctx.state;
     state.remote.disarm_reconnect(target);
     state.remote.reconnect_hosts.retain(|entry| entry != target);
     if state
@@ -32,7 +35,9 @@ pub(crate) fn forget_reconnect_host(state: &mut crate::state::State, target: &Re
     {
         state.remote.startup_resume = None;
     }
-    crate::session::forget_reconnect_host(target);
+    if let Err(error) = crate::session::forget_reconnect_host(target) {
+        crate::pane::pty_events::notify_warning(ctx, "Host reconnect preference not saved", error);
+    }
 }
 
 pub(crate) fn resume_startup_session(
@@ -338,7 +343,7 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
         .remote
         .added_hosts
         .retain(|entry| entry != &target);
-    forget_reconnect_host(&mut ctx.state, &target);
+    forget_reconnect_host(ctx, &target);
     crate::session::forget_saved_host(&target);
     crate::session::forget_recent_remote(&target);
     crate::session::forget_host_sessions(&target);

@@ -770,7 +770,7 @@ mod tests {
         let target = crate::session::remote::RemoteTarget::Alias("global-lastbox".into());
         crate::session::record_last_session(None, "local-global-last");
         crate::session::record_last_session(Some(&target), "remote-global-last");
-        crate::session::forget_reconnect_host(&target);
+        crate::session::forget_reconnect_host(&target).unwrap();
         for (enabled, durable) in [(false, false), (true, false), (false, true), (true, true)] {
             if durable {
                 crate::session::add_reconnect_host(&target).unwrap();

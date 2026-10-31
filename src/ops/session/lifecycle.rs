@@ -72,7 +72,13 @@ pub(crate) fn host_can_disconnect(
     state: &State,
     target: &crate::session::remote::RemoteTarget,
 ) -> bool {
-    state.current().remote_target.as_ref() == Some(target)
+    state
+        .remote
+        .monitors
+        .iter()
+        .any(|monitor| &monitor.target == target)
+        || state.remote.reconnect_hosts.contains(target)
+        || state.current().remote_target.as_ref() == Some(target)
         || state
             .background
             .values()
@@ -130,6 +136,7 @@ pub(crate) fn session_picker_tabs(state: &State) -> Vec<SessionPickerTab> {
                 .flatten(),
         )
         .chain(state.active_launcher_scope())
+        .chain(state.remote.reconnect_hosts.iter())
         .chain(
             state
                 .remote

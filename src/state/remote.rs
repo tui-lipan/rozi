@@ -8,6 +8,12 @@ use super::HostRegistry;
 /// last-seen session cache. Overlay pickers and attachment lifecycle still live on [`super::State`].
 #[derive(Default)]
 pub struct RemoteRuntimeState {
+    /// This client's launch snapshot, updated by its own explicit host actions only.
+    pub reconnect_hosts: Vec<crate::session::remote::RemoteTarget>,
+    /// Explicit connections waiting for their first successful probe or monitor snapshot.
+    pub remember_on_reach: Vec<crate::session::remote::RemoteTarget>,
+    /// A global-last launch waits for a live snapshot before resuming this session.
+    pub(crate) startup_resume: Option<(crate::session::remote::RemoteTarget, String)>,
     /// Global remote-discovery generation. Unlike picker-local state, this survives closing and
     /// reopening the picker so a late result can never match a newer request by accident.
     pub probe_epoch: u64,
@@ -47,6 +53,16 @@ pub struct RemoteRuntimeState {
 }
 
 impl RemoteRuntimeState {
+    pub(crate) fn arm_reconnect(&mut self, target: &crate::session::remote::RemoteTarget) {
+        if !self.remember_on_reach.contains(target) {
+            self.remember_on_reach.push(target.clone());
+        }
+    }
+
+    pub(crate) fn disarm_reconnect(&mut self, target: &crate::session::remote::RemoteTarget) {
+        self.remember_on_reach.retain(|entry| entry != target);
+    }
+
     pub(crate) fn session_is_killing(
         &self,
         entry: &crate::session::discovery::DiscoveredSession,

@@ -43,7 +43,8 @@ settings, such as an identity file, extra `ssh` arguments, or a fixed binary pat
 ## Manage remote hosts
 
 Open **Sessions** (`Ctrl+A`, then `s`) and press `Ctrl+R` to open **Remote hosts**. It lists
-configured hosts, hosts you added, recently used hosts, and hosts with a live attachment. Opening or
+configured hosts, hosts you added, recently used hosts, hosts remembered for reconnecting, and hosts
+with a live attachment. Opening or
 returning to this list does not contact any machine.
 
 `Enter` opens **Sessions** with that host’s tab selected.
@@ -377,15 +378,26 @@ seconds with no client attached; see
 ## Connected-host monitoring
 
 Connecting a host also opens a separate channel that watches the host's sessions. It stays open
-when you close the Sessions sidebar or switch to another machine. rozi never contacts a saved host
-just because rozi starts or a picker opens.
+when you close the Sessions sidebar or switch to another machine. Opening a picker does not start
+a connection. rozi never automatically contacts a host you haven't connected.
+
+By default, hosts you deliberately connected reconnect when rozi starts. Their tabs and last-seen sessions appear immediately while the connections happen in the
+background. rozi displays no SSH prompts and installs nothing during automatic reconnects.
+Configuring a host or launching with `--remote` alone does not add it to future launches. Adding
+and successfully connecting a host, opening it from Remote hosts, or connecting it from the
+Sessions sidebar does. A failed attempt is remembered only after that host connects successfully.
+
+Disconnect a host with `Ctrl+X` in Sessions or its sidebar close button to stop reconnecting it on
+future launches. Other windows keep their own connections until you disconnect them. Set
+`reconnect_on_launch = false` to leave remembered hosts disconnected at startup.
 
 The channel keeps the host's session list current. It does not attach to sessions, receive terminal
 output, or take layout control. If the host becomes unreachable, rozi keeps trying in the
 background, and its last session list stays visible with rows marked `Last seen`. `Ctrl+K` twice on a `Last seen` row forgets
 it without contacting the host; if the host still reports the session later, it is listed again.
 
-Background reconnects never prompt. If a host needs a password or host-key approval, select it in
+Background reconnects never prompt. SSH login and host-key failures wait for you to reconnect.
+If a host needs a password or host-key approval, select it in
 Remote hosts and reconnect with `Enter`, or `Ctrl+R` if it still shows connected; unless
 `[remote] batch_mode = true`, the SSH dialog then handles the prompt.
 
@@ -433,7 +445,7 @@ session.
 
 `Ctrl+W` disconnects one session attachment. `Ctrl+X` disconnects this client from the whole host:
 
-- Monitoring and its reconnect attempts stop.
+- Monitoring and its reconnect attempts stop, including on future launches.
 - Every attachment to that host closes, both current and background.
 - Named sessions on the host keep running, whichever client started them.
 - A temporary session this client created there and never used is closed, since nothing could

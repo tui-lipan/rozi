@@ -713,6 +713,7 @@ fn begin_named_attach(
     request: crate::state::AttachRequest,
     seed: Option<crate::state::Attachment>,
 ) -> Update {
+    ctx.state.remote.startup_resume = None;
     // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
     // stay scoped to their own identity. Reusing an offline attachment here would seed its panes
     // into the new target's empty server. Only a session still mid-connect is released.
@@ -749,6 +750,19 @@ fn begin_named_attach(
         ctx,
         crate::state::PendingSessionAttach::new(epoch, request).leaving(left, parked_epoch),
     )
+}
+
+/// Resume a remembered live session after its launch monitor answered. Reuse the resolved binary
+/// through the reconnect path, which neither probes interactively nor installs an upload override.
+pub(crate) fn resume_remote_session(
+    ctx: &mut Context<AppRoot>,
+    target: crate::session::remote::RemoteTarget,
+    name: String,
+) -> Update {
+    let request = crate::state::AttachRequest::new(name, crate::state::AttachMode::Reconnect)
+        .on_host(Some(target))
+        .with_prompting(crate::state::AttachPrompting::Forbidden);
+    begin_named_attach(ctx, request, None)
 }
 
 pub(crate) fn attach_session_by_name(
@@ -1078,6 +1092,7 @@ pub(crate) fn disconnect_host(
     ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
+    super::remotes::forget_reconnect_host(&mut ctx.state, target);
     ctx.state.remote.agents.remove(target);
     ctx.state.remote.projects.remove(target);
     ctx.state

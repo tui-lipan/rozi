@@ -543,7 +543,13 @@ pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
     // Disk first, then anything added this run that did not reach it. The roster the user can see
     // must not depend on a write having succeeded — see [`crate::state::RemoteRuntimeState::added_hosts`].
     let mut saved = crate::session::read_saved_hosts();
-    for target in &ctx.state.remote.added_hosts {
+    for target in ctx
+        .state
+        .remote
+        .added_hosts
+        .iter()
+        .chain(&ctx.state.remote.reconnect_hosts)
+    {
         if !saved.contains(target) {
             saved.push(target.clone());
         }

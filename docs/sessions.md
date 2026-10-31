@@ -112,8 +112,10 @@ A session with nothing running to attach to says so first — `Restorable`, `Las
 `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
 clients share it, and the profile it was created from.
 
-Opening Sessions never contacts a remote host. Sessions on remote hosts are listed from the last
-time each host answered. A host's tab shows the host's state in the picker's top-right corner, and
+Opening Sessions does not start a remote connection. With `[remote] reconnect_on_launch = true`,
+remembered hosts reconnect in the background when rozi starts, and their tabs appear immediately.
+Sessions on remote hosts are listed from the last time each host answered. A host's tab shows the
+host's state in the picker's top-right corner, and
 rows on a host this client is not attached to are marked `Last seen`, with the pane count the host
 last reported:
 
@@ -252,7 +254,8 @@ available, or returns to the sessionless launcher. Killing a named session also 
 | `last` | Reopen the most recently attached named session. |
 | `profile` | Open the session named by `[profile] default`. |
 
-A bare `rozi` applies this setting locally. `rozi --remote workbox` applies it on `workbox`:
+A bare `rozi` uses the most recently attached named session across workplaces for `last`; other
+startup values apply locally. `rozi --remote workbox` applies the setting on `workbox`:
 
 | Value | `rozi --remote workbox` |
 | --- | --- |
@@ -261,10 +264,11 @@ A bare `rozi` applies this setting locally. `rozi --remote workbox` applies it o
 | `last` | Attach the last session used on `workbox` if it is still there, else **Sessions** on the **workbox** tab. |
 | `profile` | Open or create the default-profile session on `workbox`, else **Sessions** on the **workbox** tab. |
 
-`last` is remembered separately for each host. It only reattaches a session that is still running;
-it never restores or creates one. On a remote host, rozi opens **Sessions** on the host’s tab and
-attaches the remembered session only if the host still lists it, without waiting on SSH before
-drawing the first frame. `profile`, by contrast, creates its session when needed.
+An explicit `--remote` uses that host's own last session. A bare launch reopens a remote last session
+only when the host is remembered for reconnecting and `[remote] reconnect_on_launch = true`.
+Otherwise it opens Sessions without contacting that host. Remote sessions resume only when they are
+still running, without SSH prompts or installation during an automatic reconnect. The host's tab
+and last-seen rows appear before it answers. `profile` creates its session when needed.
 
 A session you name explicitly — as a target, with `sessions attach` or `sessions new`, or through
 `--pick` — overrides `[session] startup`. If `last` or `profile` cannot find its session, rozi opens

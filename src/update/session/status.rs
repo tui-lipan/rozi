@@ -22,6 +22,15 @@ pub(crate) struct AgentEdges {
     pub(crate) failed: bool,
 }
 
+impl AgentEdges {
+    pub(crate) fn claim(&mut self, pane: &crate::session::protocol::PaneRef) {
+        use crate::session::alert_claim::{Edge, claim};
+        self.became_blocked = self.became_blocked && claim(pane, Edge::Blocked);
+        self.finished = self.finished && claim(pane, Edge::Finished);
+        self.failed = self.failed && claim(pane, Edge::Failed);
+    }
+}
+
 /// The alertable transitions between two summaries of one agent, for a monitor that only ever
 /// sees snapshots.
 ///
@@ -332,6 +341,14 @@ pub(crate) fn pane_runtime_changed(
     {
         baseline.emit_changes(&ctx.state, pane, local);
     }
+    claim_runtime_edges(
+        &ctx.state,
+        pane_id,
+        local,
+        &mut edges,
+        &mut finished_rows,
+        &mut failed_rows,
+    );
     // A row the publisher is not showing finished. Attending the pane cannot have acknowledged
     // it - the user was looking at a different tab of the same program - so it alerts regardless,
     // naming the rows that finished rather than the pane, whose title is the one on screen.
@@ -415,6 +432,44 @@ pub(crate) fn pane_runtime_changed(
     // Agents tab may already be open with nothing ticking.
     crate::update::sidebar::arm_agent_tick(ctx);
     Update::full()
+}
+
+/// A controller claims even an attended transition, so monitors in other windows stay quiet.
+/// Followers leave the claim to the controller. Generic activities have no monitor counterpart.
+fn claim_runtime_edges(
+    state: &crate::state::State,
+    pane_id: PaneId,
+    local: bool,
+    edges: &mut Option<AgentEdges>,
+    finished_rows: &mut Vec<crate::session::protocol::RowKey>,
+    failed_rows: &mut Vec<crate::session::protocol::RowKey>,
+) {
+    if !state.is_controller() || state.do_not_disturb {
+        return;
+    }
+    let Some(reference) = find_pane_in_namespace(state, pane_id, local)
+        .and_then(|pane| pane.agents.first())
+        .map(|record| &record.reference.pane)
+    else {
+        return;
+    };
+    let mut combined = AgentEdges {
+        became_blocked: edges.as_ref().is_some_and(|edge| edge.became_blocked),
+        finished: !finished_rows.is_empty() || edges.as_ref().is_some_and(|edge| edge.finished),
+        failed: !failed_rows.is_empty() || edges.as_ref().is_some_and(|edge| edge.failed),
+    };
+    combined.claim(reference);
+    if !combined.finished {
+        finished_rows.clear();
+    }
+    if !combined.failed {
+        failed_rows.clear();
+    }
+    if let Some(edges) = edges {
+        edges.became_blocked &= combined.became_blocked;
+        edges.finished &= combined.finished;
+        edges.failed &= combined.failed;
+    }
 }
 
 pub(crate) fn program_status_changed(

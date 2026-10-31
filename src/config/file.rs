@@ -406,6 +406,7 @@ pub(super) struct WorkbarFileConfig {
 pub(super) struct WorkbarAlertFileConfig {
     pub(super) bell: Option<bool>,
     pub(super) blocked: Option<bool>,
+    pub(super) error: Option<bool>,
     pub(super) finished: Option<bool>,
     pub(super) working: Option<bool>,
     pub(super) idle: Option<bool>,

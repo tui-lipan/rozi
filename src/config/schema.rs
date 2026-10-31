@@ -2676,6 +2676,7 @@ pub struct WorkbarConfig {
 pub struct WorkbarAlertConfig {
     pub bell: bool,
     pub blocked: bool,
+    pub error: bool,
     pub finished: bool,
     pub working: bool,
     pub idle: bool,
@@ -2688,6 +2689,7 @@ impl Default for WorkbarAlertConfig {
         Self {
             bell: true,
             blocked: true,
+            error: true,
             finished: true,
             working: false,
             idle: false,

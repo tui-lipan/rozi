@@ -806,6 +806,7 @@ A command segment times out after 5 seconds and keeps at most 64 KiB from each o
 | --- | --- | --- | --- |
 | `bell` | bool | `true` | Marks workspaces with a bell. |
 | `blocked` | bool | `true` | Marks blocked workspaces. |
+| `error` | bool | `true` | Marks workspaces with an error you have not looked at. |
 | `finished` | bool | `true` | Marks finished workspaces you have not looked at. |
 | `working` | bool | `false` | Marks working workspaces. |
 | `idle` | bool | `false` | Marks idle workspaces. |

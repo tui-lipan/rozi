@@ -162,6 +162,7 @@ settings_actions! {
     CycleWorkbarAlertPaint,
     ToggleMarkBell,
     ToggleMarkBlocked,
+    ToggleMarkError,
     ToggleMarkFinished,
     ToggleMarkWorking,
     ToggleMarkIdle,
@@ -320,6 +321,7 @@ impl SettingsAction {
             | Self::CycleWorkbarAlertPaint
             | Self::ToggleMarkBell
             | Self::ToggleMarkBlocked
+            | Self::ToggleMarkError
             | Self::ToggleMarkFinished
             | Self::ToggleMarkWorking
             | Self::ToggleMarkIdle

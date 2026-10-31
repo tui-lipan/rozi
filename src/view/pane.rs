@@ -412,14 +412,7 @@ pub(crate) fn pane_alert(
     }
     use crate::state::PaneAlert;
     let colors = config.alert_colors;
-    let osc_attention = pane
-        .terminal
-        .program_status_attention
-        .then(|| {
-            crate::session::protocol::program_status_summary(&pane.terminal.program_status)
-                .map(|record| record.state)
-        })
-        .flatten();
+    let osc_attention = pane.unseen_program_status();
     // Working/idle are live conditions the focused pane already shows in its own content, so
     // marking its border would only restate what is on screen and would never clear on its own.
     // An agent's blocked state stays lit on the focused pane, since answering the agent clears it
@@ -436,12 +429,7 @@ pub(crate) fn pane_alert(
                 || osc_attention == Some(tui_lipan::ProgramStatusState::Blocked),
             colors.blocked,
         ),
-        (
-            PaneAlert::Error,
-            pane.terminal.error_unseen
-                || osc_attention == Some(tui_lipan::ProgramStatusState::Error),
-            colors.error,
-        ),
+        (PaneAlert::Error, pane.error_unseen(), colors.error),
         (
             PaneAlert::Finished,
             pane.finished_unseen(attention),

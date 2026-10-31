@@ -73,6 +73,9 @@ pub(super) fn apply_workbar_config(
     if let Some(value) = raw.alert.blocked {
         workbar.alert.blocked = value;
     }
+    if let Some(value) = raw.alert.error {
+        workbar.alert.error = value;
+    }
     if let Some(value) = raw.alert.finished {
         workbar.alert.finished = value;
     }
@@ -282,7 +285,7 @@ mod tests {
     #[test]
     fn workbar_alert_config_overrides_each_trigger() {
         let raw: WorkbarFileConfig = toml::from_str(
-            "[alert]\nbell = false\nblocked = false\nfinished = false\nworking = true\nidle = true\nmode = \"static\"",
+            "[alert]\nbell = false\nblocked = false\nerror = false\nfinished = false\nworking = true\nidle = true\nmode = \"static\"",
         )
         .expect("config parses");
         let mut workbar = WorkbarConfig::default();
@@ -292,6 +295,7 @@ mod tests {
             super::super::schema::WorkbarAlertConfig {
                 bell: false,
                 blocked: false,
+                error: false,
                 finished: false,
                 working: true,
                 idle: true,

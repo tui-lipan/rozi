@@ -1039,6 +1039,13 @@ pub static SETTINGS: &[SettingSpec] = {
             ),
         ),
         row(
+            ToggleMarkError,
+            G::Marks,
+            "Error",
+            &["marker", "failed", "failure"],
+            toggle(config_field!(workbar.alert.error), "workbar.alert", "error"),
+        ),
+        row(
             ToggleMarkFinished,
             G::Marks,
             "Finished",

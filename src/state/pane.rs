@@ -351,6 +351,25 @@ impl Pane {
                 .any(|runtime| attention.runtime_finished_unseen(runtime))
     }
 
+    /// The state a program reported over OSC 7501 that nobody has looked at yet, if any.
+    pub fn unseen_program_status(&self) -> Option<tui_lipan::ProgramStatusState> {
+        self.terminal
+            .program_status_attention
+            .then(|| {
+                crate::session::protocol::program_status_summary(&self.terminal.program_status)
+                    .map(|record| record.state)
+            })
+            .flatten()
+    }
+
+    /// Whether this pane has an error nobody has looked at: a failure it latched, or a program's
+    /// own error status. Both clear once the user uses the pane, even while the failure lasts.
+    /// Drives the pane's error alert and its workspace's marker.
+    pub fn error_unseen(&self) -> bool {
+        self.terminal.error_unseen
+            || self.unseen_program_status() == Some(tui_lipan::ProgramStatusState::Error)
+    }
+
     /// Whether one published row finished something nobody has looked at: by `attention` for an
     /// agent row, by the pane's own record of it for an activity row.
     pub fn row_finished_unseen(

@@ -43,10 +43,9 @@ pub(crate) fn spawn_rozi_channel(
     crate::platform::ipc::IpcConnection,
     std::thread::JoinHandle<String>,
 )> {
-    validate_remote_target(target).map_err(std::io::Error::other)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let config = config.unattended();
-    let binary = binary::resolve(target, &config).map_err(std::io::Error::other)?;
+    let binary = binary::resolve(target, &config).map_err(binary::ResolveError::into_io)?;
     let mut command = ssh_base_command(&resolved, &config);
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &binary.path, args, binary.family);

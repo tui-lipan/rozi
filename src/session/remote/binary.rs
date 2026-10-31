@@ -12,6 +12,37 @@ pub(crate) struct RemoteBinary {
     pub family: bootstrap::RemoteFamily,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ResolveError {
+    pub message: String,
+    pub retry: bool,
+}
+
+impl ResolveError {
+    fn stop(message: String) -> Self {
+        Self {
+            message,
+            retry: false,
+        }
+    }
+
+    fn probe(message: String) -> Self {
+        let retry = !crate::session::discovery::ssh_failure_needs_user(&message);
+        Self { message, retry }
+    }
+
+    pub(crate) fn into_io(self) -> std::io::Error {
+        let kind = if self.retry {
+            std::io::ErrorKind::Other
+        } else if crate::session::discovery::ssh_failure_needs_user(&self.message) {
+            std::io::ErrorKind::PermissionDenied
+        } else {
+            std::io::ErrorKind::Unsupported
+        };
+        std::io::Error::new(kind, self.message)
+    }
+}
+
 struct CachedBinary {
     remote: ResolvedRemote,
     binary: RemoteBinary,
@@ -87,23 +118,60 @@ pub(crate) fn invalidate(target: &RemoteTarget, config: &RemoteConfig) {
 pub(crate) fn resolve(
     target: &RemoteTarget,
     config: &RemoteConfig,
-) -> Result<RemoteBinary, String> {
-    super::validate_remote_target(target)?;
+) -> Result<RemoteBinary, ResolveError> {
+    super::validate_remote_target(target).map_err(ResolveError::stop)?;
+    let remote = ResolvedRemote::resolve(target, config);
+    if let Some(path) = &remote.binary_path {
+        validate_remote_executable_token(path).map_err(ResolveError::stop)?;
+    }
+    if !crate::platform::command::program_exists("ssh") {
+        return Err(ResolveError::stop(
+            "ssh was not found on PATH (required for --remote)".into(),
+        ));
+    }
     if let Some(path) = cached(target, config) {
         return Ok(path);
     }
-    let report = bootstrap::probe_remote_report(target, config)?;
-    match bootstrap::select_compatible(&report) {
+    let report = bootstrap::probe_remote_report(target, config).map_err(ResolveError::probe)?;
+    resolve_report(target, config, &report)
+}
+
+fn resolve_report(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    report: &bootstrap::ProbeReport,
+) -> Result<RemoteBinary, ResolveError> {
+    match bootstrap::select_compatible(report) {
         bootstrap::ProbeResult::Found { path, .. } => {
-            remember(target, config, path, report.remote_family())
+            remember(target, config, path, report.remote_family()).map_err(ResolveError::stop)
         }
-        bootstrap::ProbeResult::Missing { detail } => Err(detail),
+        bootstrap::ProbeResult::Missing { detail } => Err(ResolveError::stop(detail)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_binaries_and_incompatible_protocols_never_retry() {
+        let target = RemoteTarget::Alias("missing-binary-fixture".into());
+        for output in [
+            "".to_string(),
+            "candidate=/old\nspeaks_remote=0\n".into(),
+            "candidate=/unversioned\nspeaks_remote=1\n".into(),
+            format!(
+                "candidate=/future\nspeaks_remote=1\nprotocol_min={}\nprotocol_max={}\n",
+                crate::session::protocol::PROTOCOL_VERSION + 1,
+                crate::session::protocol::PROTOCOL_VERSION + 1
+            ),
+        ] {
+            let report = bootstrap::parse_probe_output(&output);
+            let error = resolve_report(&target, &RemoteConfig::default(), &report).unwrap_err();
+            assert!(!error.retry, "{error:?}");
+            assert_eq!(error.into_io().kind(), std::io::ErrorKind::Unsupported);
+        }
+    }
 
     #[test]
     fn cached_paths_follow_connection_settings_and_invalidation() {

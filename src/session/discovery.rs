@@ -691,6 +691,21 @@ pub fn discover_sessions_from(
     }
 }
 
+/// Whether retrying SSH requires an explicit connection to fix authentication or trust.
+pub(crate) fn ssh_failure_needs_user(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "permission denied",
+        "authentication failed",
+        "too many authentication failures",
+        "host key verification failed",
+        "remote host identification has changed",
+        "host key has changed",
+    ]
+    .iter()
+    .any(|message| error.contains(message))
+}
+
 /// Why a host probe failed, in words a user can act on.
 ///
 /// A failed probe carries whatever ssh, the remote shell, or the JSON parser said, which is a
@@ -724,7 +739,10 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
         "Host key changed"
     } else if says("host key verification failed") {
         "Host key not trusted"
-    } else if says("permission denied") || says("authentication failed") {
+    } else if says("permission denied")
+        || says("authentication failed")
+        || says("too many authentication failures")
+    {
         "SSH login rejected"
     } else if says("could not resolve")
         || says("name or service not known")
@@ -772,8 +790,8 @@ fn discover_remote_sessions(
             "ssh was not found on PATH",
         ));
     }
-    let remote_bin =
-        crate::session::remote::binary::resolve(target, config).map_err(std::io::Error::other)?;
+    let remote_bin = crate::session::remote::binary::resolve(target, config)
+        .map_err(|error| std::io::Error::other(error.message))?;
     crate::session::remote::validate_remote_executable_token(&remote_bin.path)
         .map_err(std::io::Error::other)?;
     // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
@@ -898,6 +916,36 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_failures_requiring_user_action_stop_retries() {
+        for (message, needs_user) in [
+            ("user@host: Permission denied (publickey,password).", true),
+            ("Authentication failed.", true),
+            (
+                "Received disconnect from 192.0.2.1 port 22:2: Too many authentication failures",
+                true,
+            ),
+            ("Host key verification failed.", true),
+            ("WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!", true),
+            ("The host key has changed", true),
+            (
+                "ssh: connect to host host port 22: Connection timed out",
+                false,
+            ),
+            (
+                "ssh: connect to host host port 22: Connection refused",
+                false,
+            ),
+            (
+                "ssh: Could not resolve hostname host: Name or service not known",
+                false,
+            ),
+            ("Connection reset by peer", false),
+        ] {
+            assert_eq!(ssh_failure_needs_user(message), needs_user, "{message}");
+        }
+    }
 
     /// The worktree removal guard skips an endpoint only when connecting proves nobody is there.
     /// Windows reports a pipe whose instances are all in use as `WouldBlock` - a live server - so

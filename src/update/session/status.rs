@@ -444,7 +444,7 @@ fn claim_runtime_edges(
     finished_rows: &mut Vec<crate::session::protocol::RowKey>,
     failed_rows: &mut Vec<crate::session::protocol::RowKey>,
 ) {
-    if !state.is_controller() || state.do_not_disturb {
+    if !state.is_controller() {
         return;
     }
     let Some(reference) = find_pane_in_namespace(state, pane_id, local)

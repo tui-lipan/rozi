@@ -183,7 +183,7 @@ mod tests {
             AgentIdentity, AgentRecord, DetectedAgent, DetectedAgentState, PaneRuntimeState,
         };
         crate::test_support::on_large_stack(|| {
-            for controller in [true, false] {
+            for (controller, dnd) in [(true, false), (false, false), (true, true)] {
                 let mut reference = crate::session::protocol::AgentRef::for_test(7, 2, None);
                 reference.pane.session_instance =
                     crate::session::protocol::SessionInstanceId::generate();
@@ -196,6 +196,7 @@ mod tests {
                     state.current_mut().workspaces[0].panes = vec![pane];
                     state.current_mut().focused_pane = Some(7);
                     state.window_focused = true;
+                    state.do_not_disturb = dnd;
                     let mut shared = crate::state::SharedSessionState::new(1);
                     shared.controller = Some(if controller { 1 } else { 2 });
                     state.current_mut().shared = Some(shared);

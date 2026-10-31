@@ -122,9 +122,25 @@ fn header_row(state: &State, label: &str, host: Option<(&HostEntry, HostStatus)>
                 // is plainer than one the pointer has to go looking for.
                 None => row.detail("click to connect", super::super::fg_only(&theme.muted)),
             };
-            SidebarRow::item(row, RowTarget::HostConnect(host.target.clone()))
+            let row = SidebarRow::item(row, RowTarget::HostConnect(host.target.clone()));
+            if crate::ops::session::host_can_disconnect(state, &host.target) {
+                row.closable(crate::state::SidebarClose::Host {
+                    target: host.target.clone(),
+                })
+            } else {
+                row
+            }
         }
-        HostStatus::Connecting | HostStatus::Installing => SidebarRow::item(row, RowTarget::Inert),
+        HostStatus::Connecting | HostStatus::Installing => {
+            let row = SidebarRow::item(row, RowTarget::Inert);
+            if crate::ops::session::host_can_disconnect(state, &host.target) {
+                row.closable(crate::state::SidebarClose::Host {
+                    target: host.target.clone(),
+                })
+            } else {
+                row
+            }
+        }
     }
 }
 

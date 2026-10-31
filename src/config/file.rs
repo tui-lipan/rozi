@@ -471,6 +471,7 @@ struct SessionFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct RemoteFileConfig {
+    reconnect_on_launch: Option<bool>,
     default_host: Option<String>,
     connection_timeout_secs: Option<u64>,
     server_alive_interval_secs: Option<u64>,
@@ -1052,6 +1053,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(default_host) = non_empty(parsed.remote.default_host) {
         config.remote.default_host = Some(default_host);
+    }
+    if let Some(enabled) = parsed.remote.reconnect_on_launch {
+        config.remote.reconnect_on_launch = enabled;
     }
     if let Some(secs) = parsed.remote.connection_timeout_secs {
         config.remote.connection_timeout_secs = secs;

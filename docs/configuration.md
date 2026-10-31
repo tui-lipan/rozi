@@ -126,7 +126,8 @@ session's panes.
 | `session.on_attach` | Next writable attach by this client after reload. |
 | `session.resurrect`, `session.resurrect_foreground`, `session.resurrect_agents`, `session.allow_takeover` | Session servers started after the change. |
 | `logging.*` | Session servers started after the change. |
-| `remote.*` | New SSH connections. |
+| `remote.reconnect_on_launch` | Next client launch. |
+| Other `remote.*` settings | New SSH connections. |
 | `rules` | New pane spawns that carry a command. |
 | `services` | On reload. Changed services restart, removed services stop, and unchanged services keep running. |
 | `agents` | On reload, in the controlled session server and the local scratch session. |
@@ -625,6 +626,7 @@ See [Sessions](sessions.md).
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `default_host` | string | none | Host used by `--remote` without a value. |
+| `reconnect_on_launch` | bool | `true` | Reconnect hosts you deliberately connected, without SSH prompts or installation. Disconnecting a host removes it from future launches. |
 | `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. |
 | `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
 | `server_alive_count_max` | integer | `3` | Minimum `1`. |

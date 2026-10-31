@@ -158,7 +158,7 @@ impl StartupTasks {
                 });
             }
             SessionStart::RemotePicker { target } => {
-                link.send(Msg::RemotePickerHostActivate(target));
+                link.send(Msg::RemoteStartupActivate(target));
             }
         }
     }
@@ -171,6 +171,10 @@ pub(super) enum StartupSession {
         request: crate::state::AttachRequest,
         /// No session was named, so this is the client's own temporary session.
         auto_created: bool,
+    },
+    RemoteLast {
+        target: crate::session::remote::RemoteTarget,
+        name: String,
     },
     Picker {
         /// The host whose picker opens, `None` for this machine.
@@ -206,6 +210,7 @@ impl StartupPlan {
     pub(super) fn remote(&self) -> Option<&crate::session::remote::RemoteTarget> {
         match &self.session {
             StartupSession::Attach { request, .. } => request.remote.as_ref(),
+            StartupSession::RemoteLast { target, .. } => Some(target),
             StartupSession::Picker { remote, .. } => remote.as_ref(),
         }
     }
@@ -223,6 +228,7 @@ struct TargetResolution {
     cwd: Option<StartupCwd>,
     remote: Option<crate::session::remote::RemoteTarget>,
     last_session: Option<String>,
+    global_remote_last: bool,
 }
 
 impl TargetResolution {
@@ -238,6 +244,7 @@ impl TargetResolution {
             cwd: None,
             remote,
             last_session: None,
+            global_remote_last: false,
             config: loaded.config,
         };
         plan.cwd =
@@ -249,6 +256,12 @@ impl TargetResolution {
     }
 
     fn session(&mut self, cli: &cli::CliArgs) -> StartupSession {
+        if self.global_remote_last {
+            return StartupSession::RemoteLast {
+                target: self.remote.clone().expect("remote last has a host"),
+                name: self.last_session.take().expect("remote last has a session"),
+            };
+        }
         // Picker at startup only for a bare launch. `last` and `profile` reach here when the
         // named session could not be opened. Under `--remote` this opens that host's picker.
         let want_picker = self.attach_session.is_none()
@@ -309,20 +322,7 @@ impl TargetResolution {
             return;
         }
         match self.config.session.startup {
-            // `last` reopens a session, it never revives one. Locally that is settled here.
-            // Remotely it cannot be: answering "is `backend` still on workbox?" means an SSH round
-            // trip before the first frame. The name rides with the host picker instead, and is
-            // attached only if the host still lists it.
-            config::SessionStartup::Last if self.remote.is_some() => {
-                self.last_session = crate::session::read_last_session(self.remote.as_ref());
-            }
-            config::SessionStartup::Last => match resolve_last_session_target() {
-                LastSessionTarget::Reopen(name) => {
-                    self.attach_session = Some(name);
-                    self.autostart = true;
-                }
-                LastSessionTarget::Pick(name) => self.last_session = name,
-            },
+            config::SessionStartup::Last => self.apply_last_session_policy(),
             config::SessionStartup::Profile => {
                 match resolve_profile_session_target(&self.config, self.remote.as_ref()) {
                     Ok(name) => {
@@ -333,6 +333,33 @@ impl TargetResolution {
                 }
             }
             config::SessionStartup::Picker | config::SessionStartup::Ephemeral => {}
+        }
+    }
+
+    fn apply_last_session_policy(&mut self) {
+        if self.remote.is_some() {
+            self.last_session = crate::session::read_last_session(self.remote.as_ref());
+            return;
+        }
+        let Some((remote, name)) = crate::session::read_global_last_session() else {
+            return;
+        };
+        if let Some(target) = remote {
+            if self.config.remote.reconnect_on_launch
+                && crate::session::read_reconnect_hosts().contains(&target)
+            {
+                self.remote = Some(target);
+                self.last_session = Some(name);
+                self.global_remote_last = true;
+            }
+            return;
+        }
+        match select_last_session_target(name.clone(), session_openable_by_name(&name)) {
+            LastSessionTarget::Reopen(name) => {
+                self.attach_session = Some(name);
+                self.autostart = true;
+            }
+            LastSessionTarget::Pick(name) => self.last_session = name,
         }
     }
 
@@ -612,17 +639,6 @@ fn resolve_startup_remote(
     }
 }
 
-/// `startup = "last"` for a local launch, where openability is a local question with a local answer.
-/// The remote scope resolves through host discovery instead — see the `Last` arm of the startup
-/// policy.
-fn resolve_last_session_target() -> LastSessionTarget {
-    let Some(last) = crate::session::read_last_session(None) else {
-        return LastSessionTarget::Pick(None);
-    };
-    let reopenable = session_openable_by_name(&last);
-    select_last_session_target(last, reopenable)
-}
-
 /// Whether attaching to this name would land on something: a running server, a resurrection
 /// snapshot the server can restore, or its canonical same-name profile to launch from.
 fn session_openable_by_name(name: &str) -> bool {
@@ -724,6 +740,70 @@ mod tests {
                 rejected: false,
             },
         )
+    }
+
+    fn last_plan(args: &[&str], enabled: bool) -> StartupPlan {
+        let cli::ParsedCli::Run(cli) =
+            cli::parse_cli_args(args.iter().map(|arg| arg.to_string()).collect()).unwrap()
+        else {
+            panic!("expected launch")
+        };
+        let mut config = Config::default();
+        config.session.startup = config::SessionStartup::Last;
+        config.session.autosave = false;
+        config.remote.reconnect_on_launch = enabled;
+        StartupPlan::resolve(
+            &cli,
+            config::LoadedConfig {
+                config,
+                warnings: Vec::new(),
+                rejected: false,
+            },
+        )
+    }
+
+    #[test]
+    fn bare_last_uses_the_global_workplace_only_with_durable_enabled_remote_intent() {
+        crate::test_support::isolate_user_dirs();
+        let _persist = crate::test_support::lock_persisted_state();
+        let _restore = crate::test_support::preserve_persisted_state();
+        let target = crate::session::remote::RemoteTarget::Alias("global-lastbox".into());
+        crate::session::record_last_session(None, "local-global-last");
+        crate::session::record_last_session(Some(&target), "remote-global-last");
+        crate::session::forget_reconnect_host(&target).unwrap();
+        for (enabled, durable) in [(false, false), (true, false), (false, true), (true, true)] {
+            if durable {
+                crate::session::add_reconnect_host(&target).unwrap();
+            }
+            let plan = last_plan(&[], enabled);
+            if enabled && durable {
+                assert_eq!(
+                    plan.session,
+                    StartupSession::RemoteLast {
+                        target: target.clone(),
+                        name: "remote-global-last".into()
+                    }
+                );
+            } else {
+                assert!(
+                    matches!(plan.session, StartupSession::Picker { remote: None, .. }),
+                    "{:?}",
+                    plan.session
+                );
+            }
+            let explicit = last_plan(&["--remote", "global-lastbox"], enabled);
+            assert_eq!(
+                explicit.session,
+                StartupSession::Picker {
+                    remote: Some(target.clone()),
+                    last_session: Some("remote-global-last".into())
+                }
+            );
+        }
+        crate::session::record_last_session(None, "local-global-last");
+        assert!(
+            matches!(last_plan(&[], true).session, StartupSession::Picker { remote: None, last_session: Some(name) } if name == "local-global-last")
+        );
     }
 
     fn startup_request(plan: &StartupPlan) -> &crate::state::AttachRequest {
@@ -843,27 +923,6 @@ mod tests {
         assert_eq!(
             select_last_session_target("dev".to_string(), false),
             LastSessionTarget::Pick(Some("dev".to_string()))
-        );
-    }
-
-    /// `last` reads the scope the launch names, and never the other one: a session remembered on
-    /// `workbox` must not become what a bare `rozi` reaches for.
-    #[test]
-    fn startup_last_reads_only_its_own_scope() {
-        let _persist = crate::test_support::lock_persisted_state();
-        crate::test_support::isolate_user_dirs();
-        let workbox = crate::session::remote::RemoteTarget::Alias("startup-scope-box".into());
-        crate::session::record_last_session(Some(&workbox), "backend");
-
-        assert_eq!(
-            crate::session::read_last_session(Some(&workbox)).as_deref(),
-            Some("backend"),
-            "the remote scope carries the name the host's picker will try to resume"
-        );
-        assert_eq!(
-            resolve_last_session_target(),
-            LastSessionTarget::Pick(None),
-            "and the local scope has learned nothing from it"
         );
     }
 

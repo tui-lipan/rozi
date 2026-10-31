@@ -181,6 +181,7 @@ pub(crate) fn connect_host(
         return Update::none();
     }
     entry.probe = crate::state::HostProbe::InFlight;
+    ctx.state.remote.arm_reconnect(&target);
     ctx.state
         .remote
         .monitors

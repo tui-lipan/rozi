@@ -474,6 +474,7 @@ pub enum Msg {
     CloseRemotePicker,
     RemotePickerHostQueryChanged(String),
     RemotePickerHostSelect(crate::session::remote::RemoteTarget),
+    RemoteStartupActivate(crate::session::remote::RemoteTarget),
     RemotePickerHostActivate(crate::session::remote::RemoteTarget),
     RemotePickerNewHost,
     RemotePickerEditHost,

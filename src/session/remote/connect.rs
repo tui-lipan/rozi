@@ -62,7 +62,7 @@ pub fn connect_remote(
     session: &str,
     config: &RemoteConfig,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
-    connect_remote_within(target, session, config, None, None, false)
+    connect_remote_within(target, session, config, None, None, false, true)
 }
 
 /// Like [`connect_remote`], but cap SSH `ConnectTimeout` and the preamble read to `budget` so a
@@ -74,6 +74,7 @@ pub(crate) fn connect_remote_within(
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
     existing_only: bool,
+    may_install: bool,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err(RemoteConnectError::Message(
@@ -88,7 +89,7 @@ pub(crate) fn connect_remote_within(
         ));
     }
 
-    let remote_bin = resolve_attach_binary(target, config, budget, cancel_epoch)?;
+    let remote_bin = resolve_attach_binary(target, config, budget, cancel_epoch, may_install)?;
     validate_remote_executable_token(&remote_bin.path).map_err(RemoteConnectError::Message)?;
 
     let proxy = spawn_remote_proxy(
@@ -288,6 +289,7 @@ fn resolve_attach_binary(
     config: &RemoteConfig,
     budget: Option<Duration>,
     cancel_epoch: Option<u64>,
+    may_install: bool,
 ) -> Result<super::binary::RemoteBinary, RemoteConnectError> {
     if budget.is_some() {
         if cancel_epoch.is_some_and(crate::session::bootstrap::remote_attach_cancelled) {
@@ -314,6 +316,12 @@ fn resolve_attach_binary(
         return Err(RemoteConnectError::Message(
             "remote Rozi path is no longer known; reopen the host to probe it again".to_string(),
         ));
+    }
+    // Not `ensure_*` with an install policy of `never`: those upload `ROZI_REMOTE_BINARY` before
+    // they read the policy. `resolve` finds a compatible binary and can do nothing else.
+    if !may_install {
+        return super::binary::resolve(target, config)
+            .map_err(|error| RemoteConnectError::Message(error.message));
     }
     let path = if super::askpass::may_prompt() {
         super::ensure_remote_binary_in_ui(target, config, None)
@@ -514,6 +522,23 @@ mod tests {
             remaining,
             "interactive auth allowance must not outrun the reconnect deadline"
         );
+    }
+
+    #[test]
+    fn a_first_attach_that_may_not_install_reuses_the_binary_its_monitor_resolved() {
+        let target = RemoteTarget::Alias("no-install-attach.invalid".into());
+        let config = RemoteConfig::default().unattended();
+        super::super::binary::remember(
+            &target,
+            &config,
+            "/opt/rozi".into(),
+            super::super::bootstrap::RemoteFamily::Posix,
+        )
+        .unwrap();
+        let binary = resolve_attach_binary(&target, &config, None, None, false)
+            .unwrap_or_else(|_| panic!("the remembered binary is reused"));
+        assert_eq!(binary.path, "/opt/rozi");
+        super::super::binary::invalidate(&target, &config);
     }
 
     #[test]

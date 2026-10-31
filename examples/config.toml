@@ -379,6 +379,8 @@
 # PTYs run on the remote. See docs/remote.md.
 # Host used when --remote is passed with no argument. No default.
 #default_host = "workbox"
+# Reconnect hosts you deliberately connected when the next window starts.
+#reconnect_on_launch = true
 #connection_timeout_secs = 15
 #server_alive_interval_secs = 15
 #server_alive_count_max = 3

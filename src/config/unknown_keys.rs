@@ -99,6 +99,7 @@ const REMOTE_KEYS: &[&str] = &[
     "connection_timeout_secs",
     "server_alive_interval_secs",
     "server_alive_count_max",
+    "reconnect_on_launch",
     "install",
     "batch_mode",
     "hosts",

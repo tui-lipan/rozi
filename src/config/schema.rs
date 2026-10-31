@@ -617,6 +617,8 @@ pub struct RemoteHostConfig {
 /// `[remote]` configuration for SSH session attach.
 #[derive(Clone, Debug)]
 pub struct RemoteConfig {
+    /// Reconnect deliberately connected hosts when the next client starts.
+    pub reconnect_on_launch: bool,
     pub default_host: Option<String>,
     pub hosts: HashMap<String, RemoteHostConfig>,
     pub connection_timeout_secs: u64,
@@ -646,6 +648,7 @@ impl RemoteConfig {
 impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
+            reconnect_on_launch: true,
             default_host: None,
             hosts: HashMap::new(),
             connection_timeout_secs: 15,

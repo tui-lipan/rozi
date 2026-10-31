@@ -107,12 +107,14 @@ pub(crate) fn apply(
     {
         return Update::none();
     }
+    let reached = rows.is_ok();
     ctx.state
         .remote
         .live_sessions
         .retain(|row| row.remote_target.as_ref() != Some(&target));
     match rows {
         Ok(rows) => {
+            crate::ops::session::remotes::remember_reached_host(ctx, &target);
             if let Some(previous) = ctx.state.remote.agents.get(&target) {
                 retain_busy_agent_summaries(&rows, &mut agents, previous);
             }
@@ -196,6 +198,11 @@ pub(crate) fn apply(
         );
         crate::ops::session::discovery::sort_session_rows(&mut rows);
         crate::ops::session::discovery::replace_picker_rows(ctx, rows);
+    }
+    if reached
+        && let Some(update) = crate::ops::session::remotes::resume_startup_session(ctx, &target)
+    {
+        return update;
     }
     Update::full()
 }

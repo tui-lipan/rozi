@@ -38,7 +38,7 @@ on that worker thread, not the caller. The scopes below apply on the thread that
   has already measured. Endpoints go in a per-process directory inside the real `XDG_RUNTIME_DIR`
   rather than under the scratch root, because a socket path must stay under `SUN_LEN`.
 - Unit tests get a per-process scratch root through `PlatformEnv::from_process` under `cfg(test)`.
-- Tests that read or write `last-sessions.json`, `recent-remotes`, `saved-hosts`, or
+- Tests that read or write `last-sessions.json`, `recent-remotes`, `saved-hosts`, `reconnect-hosts`, or
   `host-sessions.json` must hold `lock_persisted_state()` on the thread that performs the I/O for
   the whole read/write/assert sequence. Persist helpers take that lock themselves; nested calls on
   the same thread reuse it.

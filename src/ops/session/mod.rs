@@ -44,3 +44,6 @@ pub(crate) use remotes::{open_new_host_flow, open_remote_hosts, open_startup_rem
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod reconnect_tests;

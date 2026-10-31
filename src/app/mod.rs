@@ -214,6 +214,19 @@ impl AppRoot {
                 request,
                 auto_created,
             } => (request, auto_created),
+            StartupSession::RemoteLast { target, name } => {
+                let seed = std::mem::take(ctx.state.current_mut());
+                ctx.state.launcher_seed = Some(seed);
+                ctx.state.launcher_scope = Some(target.clone());
+                let epoch = ops::session::open_startup_session_picker(ctx, Some(name.clone()));
+                if let Some(picker) = ctx.state.session_picker.as_mut() {
+                    picker.tab = state::SessionPickerTab::Host(Some(target.clone()));
+                    picker.opened_host = Some(target.clone());
+                    picker.keep_selection_in_tab();
+                }
+                ctx.state.remote.startup_resume = Some((target, name));
+                return SessionStart::Picker { epoch };
+            }
             StartupSession::Picker {
                 remote,
                 last_session,
@@ -314,6 +327,9 @@ impl Component for AppRoot {
                     .records_origin
                     .then(|| (profile.name.clone(), profile.path.clone()))
             });
+        if self.startup_tasks && self.config.remote.reconnect_on_launch {
+            state.remote.reconnect_hosts = crate::session::read_reconnect_hosts();
+        }
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -329,6 +345,15 @@ impl Component for AppRoot {
             crate::pane::pty_events::notify_error(ctx, "Startup warning", messages.join("\n"));
         }
         Self::start_theme_watcher(ctx);
+        if !ctx.state.remote.reconnect_hosts.is_empty() {
+            ops::session::seed_host_registry(ctx);
+            let targets = ctx.state.remote.reconnect_hosts.clone();
+            for target in targets {
+                if let Some(host) = ctx.state.remote.hosts.get_mut(&target) {
+                    host.probe = state::HostProbe::InFlight;
+                }
+            }
+        }
         let start = self.prepare_session_start(ctx);
         // Set here, not through `App::title`, so the first frame already carries the configured
         // title rather than a placeholder the first update replaces.
@@ -516,6 +541,251 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    fn reconnect_root(enabled: bool) -> AppRoot {
+        let mut root = AppRoot::default();
+        root.config.remote.reconnect_on_launch = enabled;
+        root.config.animations.enabled = false;
+        root.config.session.picker_open_on = config::SessionPickerOpenOn::All;
+        root.startup_tasks = true;
+        root.update_checks = false;
+        root.watch_hangup = false;
+        root.startup_session = StartupSession::Picker {
+            remote: None,
+            last_session: None,
+        };
+        root
+    }
+
+    #[test]
+    fn launch_reconnect_tabs_and_cached_rows_exist_on_the_first_frame_and_keep_their_position() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let _restore = crate::test_support::preserve_persisted_state();
+            for target in crate::session::read_reconnect_hosts() {
+                crate::session::forget_reconnect_host(&target);
+            }
+            let target = crate::session::remote::RemoteTarget::Alias("launchbox".into());
+            crate::session::add_reconnect_host(&target).unwrap();
+            crate::session::record_host_sessions(
+                &target,
+                vec![crate::session::CachedHostSession {
+                    name: "launch-work".into(),
+                    origin: Default::default(),
+                    ephemeral: false,
+                    panes: 3,
+                }],
+            );
+            for index in 0..11 {
+                crate::session::record_recent_remote(&crate::session::remote::RemoteTarget::Alias(
+                    format!("eviction-{index}"),
+                ));
+            }
+            assert!(!crate::session::read_recent_remotes().contains(&target));
+            let mut backend = TestBackend::new_with_viewport(
+                reconnect_root(true),
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 120,
+                    h: 40,
+                },
+            );
+            assert!(matches!(
+                backend.state().remote.hosts.get(&target).unwrap().probe,
+                state::HostProbe::InFlight
+            ));
+            let before = ops::session::session_picker_tabs(backend.state());
+            assert!(
+                before
+                    .iter()
+                    .any(|tab| tab.remote_target() == Some(&target))
+            );
+            let rendered = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(rendered.contains("launchbox"), "{rendered}");
+            assert!(
+                rendered.contains("launch-work") && rendered.contains("Last seen"),
+                "{rendered}"
+            );
+            // Another window's disconnect affects future launches, not this client's snapshot.
+            crate::session::forget_reconnect_host(&target);
+            assert!(backend.state().remote.reconnect_hosts.contains(&target));
+            backend.state_mut().command_link = None;
+            backend.state_mut().remote.monitors.push(
+                crate::session::remote::monitor::Monitor::dormant(target.clone(), 55),
+            );
+            backend
+                .update_level(Msg::HostMetadata {
+                    target: target.clone(),
+                    generation: 55,
+                    rows: Ok(vec![crate::session::discovery::DiscoveredSession {
+                        name: "launch-work".into(),
+                        host: Some(target.display_label()),
+                        remote_target: Some(target.clone()),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 3,
+                            clients: 0,
+                            has_layout: false,
+                        },
+                    }]),
+                    agents: Vec::new(),
+                    projects: Vec::new(),
+                })
+                .unwrap();
+            assert_eq!(ops::session::session_picker_tabs(backend.state()), before);
+            assert!(
+                !crate::session::read_reconnect_hosts().contains(&target),
+                "background reach does not rewrite deliberate disconnect"
+            );
+        });
+    }
+
+    #[test]
+    fn disabled_or_empty_launch_reconnect_never_seeds_inflight_hosts_and_preserves_the_file() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let _restore = crate::test_support::preserve_persisted_state();
+            for target in crate::session::read_reconnect_hosts() {
+                crate::session::forget_reconnect_host(&target);
+            }
+            let empty = TestBackend::new(reconnect_root(true));
+            assert!(empty.state().remote.reconnect_hosts.is_empty());
+            assert!(empty.state().remote.monitors.is_empty());
+            assert!(
+                empty
+                    .state()
+                    .remote
+                    .hosts
+                    .iter()
+                    .all(|host| !matches!(host.probe, state::HostProbe::InFlight))
+            );
+            let target = crate::session::remote::RemoteTarget::Alias("disabled-launchbox".into());
+            crate::session::add_reconnect_host(&target).unwrap();
+            let disabled = TestBackend::new(reconnect_root(false));
+            assert!(disabled.state().remote.reconnect_hosts.is_empty());
+            assert!(disabled.state().remote.monitors.is_empty());
+            assert!(
+                disabled
+                    .state()
+                    .remote
+                    .hosts
+                    .iter()
+                    .all(|host| !matches!(host.probe, state::HostProbe::InFlight))
+            );
+            assert!(crate::session::read_reconnect_hosts().contains(&target));
+            let mut no_tasks = reconnect_root(true);
+            no_tasks.startup_tasks = false;
+            assert!(
+                TestBackend::new(no_tasks)
+                    .state()
+                    .remote
+                    .reconnect_hosts
+                    .is_empty()
+            );
+        });
+    }
+
+    #[test]
+    fn global_remote_last_waits_for_a_live_snapshot_and_resumes_without_prompts_or_installation() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let _persist = crate::test_support::lock_persisted_state();
+            let _restore = crate::test_support::preserve_persisted_state();
+            let target = crate::session::remote::RemoteTarget::Alias("resume-launchbox".into());
+            crate::session::add_reconnect_host(&target).unwrap();
+            for present in [false, true] {
+                crate::session::record_host_sessions(
+                    &target,
+                    vec![crate::session::CachedHostSession {
+                        name: "resume-work".into(),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        panes: 1,
+                    }],
+                );
+                let mut root = reconnect_root(true);
+                root.startup_session = StartupSession::RemoteLast {
+                    target: target.clone(),
+                    name: "resume-work".into(),
+                };
+                let mut backend = TestBackend::new(root);
+                assert!(backend.state().current().pending_session_attach.is_none());
+                assert_eq!(
+                    backend
+                        .state()
+                        .session_picker
+                        .as_ref()
+                        .unwrap()
+                        .tab
+                        .remote_target(),
+                    Some(&target)
+                );
+                assert!(
+                    backend
+                        .state()
+                        .session_picker
+                        .as_ref()
+                        .unwrap()
+                        .entries
+                        .iter()
+                        .any(|row| row.name == "resume-work")
+                );
+                backend.state_mut().command_link = None;
+                backend.state_mut().remote.monitors.push(
+                    crate::session::remote::monitor::Monitor::dormant(target.clone(), 85),
+                );
+                let rows = if present {
+                    vec![crate::session::discovery::DiscoveredSession {
+                        name: "resume-work".into(),
+                        host: Some(target.display_label()),
+                        remote_target: Some(target.clone()),
+                        origin: Default::default(),
+                        ephemeral: false,
+                        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes: 1,
+                            clients: 0,
+                            has_layout: false,
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                };
+                backend
+                    .update_level(Msg::HostMetadata {
+                        target: target.clone(),
+                        generation: 85,
+                        rows: Ok(rows),
+                        agents: Vec::new(),
+                        projects: Vec::new(),
+                    })
+                    .unwrap();
+                assert!(backend.state().remote.startup_resume.is_none());
+                if present {
+                    let request = &backend
+                        .state()
+                        .current()
+                        .pending_session_attach
+                        .as_ref()
+                        .unwrap()
+                        .request;
+                    assert_eq!(request.name, "resume-work");
+                    assert_eq!(
+                        request.mode,
+                        state::AttachMode::Reconnect,
+                        "reconnect reuses the monitor's binary and never installs"
+                    );
+                    assert_eq!(request.prompting, state::AttachPrompting::Forbidden);
+                } else {
+                    assert!(backend.state().current().pending_session_attach.is_none());
+                    assert!(backend.state().show_session_picker);
+                }
+            }
+        });
+    }
 
     #[test]
     fn the_first_frame_carries_the_configured_window_title() {

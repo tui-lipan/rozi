@@ -332,7 +332,7 @@ impl Drop for PersistGuard {
 }
 
 /// Serialize tests that read or write process-wide persisted state under the per-process scratch
-/// root. Unit tests share one `host-sessions.json`, `saved-hosts`, `recent-remotes`, and
+/// root. Unit tests share one `host-sessions.json`, `saved-hosts`, `reconnect-hosts`, `recent-remotes`, and
 /// `last-sessions.json`, and `sidebar-docks.json`, so two tests mutating those files in parallel can observe each other's
 /// leftovers. Hold this for the whole read/write/assert sequence, on the thread that performs the
 /// I/O.
@@ -343,6 +343,48 @@ pub(crate) fn lock_persisted_state() -> PersistGuard {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     PERSIST_HELD.with(|held| held.set(true));
     PersistGuard { _lock: lock }
+}
+
+/// Restore persisted files a scenario changes, while its caller holds `lock_persisted_state()`.
+#[cfg(test)]
+pub(crate) struct PersistedStateSnapshot(Vec<(PathBuf, Option<Vec<u8>>)>);
+
+#[cfg(test)]
+pub(crate) fn preserve_persisted_state() -> PersistedStateSnapshot {
+    let directory =
+        crate::platform::paths::state_dir(&crate::platform::paths::PlatformEnv::from_process());
+    PersistedStateSnapshot(
+        [
+            "last-sessions.json",
+            "recent-remotes",
+            "saved-hosts",
+            "reconnect-hosts",
+            "host-sessions.json",
+        ]
+        .into_iter()
+        .map(|name| {
+            let path = directory.join(name);
+            let bytes = std::fs::read(&path).ok();
+            (path, bytes)
+        })
+        .collect(),
+    )
+}
+
+#[cfg(test)]
+impl Drop for PersistedStateSnapshot {
+    fn drop(&mut self) {
+        for (path, bytes) in &self.0 {
+            match bytes {
+                Some(bytes) => {
+                    let _ = crate::platform::persist::replace_file(path, bytes);
+                }
+                None => {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+    }
 }
 
 /// Run `f` with exclusive access to persisted state files. Nested calls on the same thread reuse

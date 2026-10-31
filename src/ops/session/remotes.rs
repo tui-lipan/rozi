@@ -4,6 +4,87 @@ use crate::AppRoot;
 use crate::session::remote::RemoteTarget;
 use crate::state::{RemotePickerState, SessionPickerTab};
 
+/// Record only a deliberate connection that reached its host, never background reconnects.
+pub(crate) fn remember_host(ctx: &mut Context<AppRoot>, target: &RemoteTarget) {
+    ctx.state.remote.disarm_reconnect(target);
+    if let Err(error) = crate::session::add_reconnect_host(target) {
+        crate::pane::pty_events::notify_warning(ctx, "Host reconnect preference not saved", error);
+    }
+    if !ctx.state.remote.reconnect_hosts.contains(target) {
+        ctx.state.remote.reconnect_hosts.push(target.clone());
+    }
+}
+
+pub(crate) fn remember_reached_host(ctx: &mut Context<AppRoot>, target: &RemoteTarget) {
+    if ctx.state.remote.remember_on_reach.contains(target) {
+        remember_host(ctx, target);
+    }
+}
+
+pub(crate) fn forget_reconnect_host(state: &mut crate::state::State, target: &RemoteTarget) {
+    state.remote.disarm_reconnect(target);
+    state.remote.reconnect_hosts.retain(|entry| entry != target);
+    if state
+        .remote
+        .startup_resume
+        .as_ref()
+        .is_some_and(|(host, _)| host == target)
+    {
+        state.remote.startup_resume = None;
+    }
+    crate::session::forget_reconnect_host(target);
+}
+
+pub(crate) fn resume_startup_session(
+    ctx: &mut Context<AppRoot>,
+    target: &RemoteTarget,
+) -> Option<Update> {
+    let (host, name) = ctx.state.remote.startup_resume.clone()?;
+    if &host != target {
+        return None;
+    }
+    ctx.state.remote.startup_resume = None;
+    if !ctx.state.is_launcher()
+        || ctx.state.session_picker.as_ref()?.tab.remote_target() != Some(target)
+    {
+        return None;
+    }
+    ctx.state.remote.live_sessions.iter().find(|row| {
+        row.remote_target.as_ref() == Some(target)
+            && row.name == name
+            && matches!(
+                row.status,
+                crate::session::discovery::DiscoveredSessionStatus::Running { .. }
+            )
+    })?;
+    Some(super::attach::resume_remote_session(
+        ctx,
+        target.clone(),
+        name,
+    ))
+}
+
+fn move_reconnect_host(ctx: &mut Context<AppRoot>, old: &RemoteTarget, new: &RemoteTarget) {
+    let armed = ctx.state.remote.remember_on_reach.contains(old);
+    ctx.state.remote.disarm_reconnect(old);
+    if armed {
+        ctx.state.remote.arm_reconnect(new);
+    }
+    for entry in &mut ctx.state.remote.reconnect_hosts {
+        if entry == old {
+            *entry = new.clone();
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    ctx.state
+        .remote
+        .reconnect_hosts
+        .retain(|entry| seen.insert(entry.clone()));
+    if let Err(error) = crate::session::replace_reconnect_host(old, new) {
+        crate::pane::pty_events::notify_warning(ctx, "Host reconnect preference not saved", error);
+    }
+}
+
 fn host_discovery_command(
     epoch: u64,
     target: RemoteTarget,
@@ -60,6 +141,9 @@ fn abandon_remote_probe(state: &mut crate::state::State) {
             .then(|| picker.probe_target.clone())
             .flatten()
     });
+    if let Some(target) = &target {
+        state.remote.disarm_reconnect(target);
+    }
     if let Some(target) = target
         && matches!(
             state.remote.hosts.get(&target).map(|entry| &entry.probe),
@@ -254,6 +338,7 @@ pub(crate) fn forget_host(ctx: &mut Context<AppRoot>) -> Update {
         .remote
         .added_hosts
         .retain(|entry| entry != &target);
+    forget_reconnect_host(&mut ctx.state, &target);
     crate::session::forget_saved_host(&target);
     crate::session::forget_recent_remote(&target);
     crate::session::forget_host_sessions(&target);
@@ -360,6 +445,19 @@ pub(crate) fn activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) ->
         return Update::none();
     }
     if host_is_connected(&ctx.state, &target) {
+        remember_host(ctx, &target);
+    } else {
+        ctx.state.remote.arm_reconnect(&target);
+    }
+    startup_activate_host(ctx, target)
+}
+
+/// The command line selects a host without adding durable reconnect intent.
+pub(crate) fn startup_activate_host(ctx: &mut Context<AppRoot>, target: RemoteTarget) -> Update {
+    if probe_in_flight(&ctx.state) {
+        return Update::none();
+    }
+    if host_is_connected(&ctx.state, &target) {
         open_host_sessions(ctx, target)
     } else {
         connect_host(ctx, target, true)
@@ -394,6 +492,7 @@ pub(crate) fn reconnect_host(ctx: &mut Context<AppRoot>) -> Update {
     else {
         return Update::none();
     };
+    remember_host(ctx, &target);
     connect_host(ctx, target, false)
 }
 
@@ -414,6 +513,7 @@ pub(crate) fn apply_host_discovery(
     let label = target.display_label();
     match rows {
         Ok(mut rows) => {
+            remember_reached_host(ctx, &target);
             for attached in crate::ops::session::attached_session_rows(&ctx.state)
                 .into_iter()
                 .filter(|session| session.remote_target.as_ref() == Some(&target))
@@ -642,6 +742,7 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         crate::state::HostFormMode::Add => crate::session::save_host(&target),
         crate::state::HostFormMode::Edit(previous) if previous == &target => Ok(()),
         crate::state::HostFormMode::Edit(previous) => {
+            move_reconnect_host(ctx, previous, &target);
             if ctx.state.launcher_scope.as_ref() == Some(previous) {
                 ctx.state.launcher_scope = None;
             }
@@ -689,6 +790,7 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         crate::ops::focus::request_remote_picker_focus(ctx);
         return Update::full();
     }
+    ctx.state.remote.arm_reconnect(&target);
     if probe_in_flight(&ctx.state) {
         // Only one connection at a time, and one is already out. The row is here and selected;
         // saying so beats appearing to do nothing with the `Enter` that just added it.

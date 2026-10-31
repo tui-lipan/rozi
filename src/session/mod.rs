@@ -10,10 +10,10 @@ pub mod remote;
 pub mod server;
 pub mod worktrees;
 
-/// The map key for the local machine's own last session, alongside one key per remote target spec.
-/// `local` is not a valid [`remote::RemoteTarget::to_spec`] output (those are `ssh://…` or a bare
-/// alias, and an alias may not contain a scheme), so it cannot collide with a host.
+/// The local workplace's per-host memory key.
 const LOCAL_SCOPE_KEY: &str = "local";
+// A control character cannot occur in a valid remote target spec.
+const LAST_SCOPE_KEY: &str = "\0last-scope";
 
 fn persist_io<T>(f: impl FnOnce() -> T) -> T {
     #[cfg(test)]
@@ -26,12 +26,7 @@ fn persist_io<T>(f: impl FnOnce() -> T) -> T {
     }
 }
 
-/// Which workplace a "last session" memory belongs to: this machine, or one exact remote host.
-///
-/// `startup = "last"` reopens the last session *of the scope it launches into*. A bare `rozi` must
-/// not reach for a name that only ever existed on `workbox`, and `rozi --remote workbox` must not
-/// reopen the local one — they are different workplaces that happen to share one setting. Keying on
-/// the canonical target spec keeps `dev@box:22` and `box` apart the same way the host registry does.
+/// Per-host memories serve explicit `--remote`; the last scope selects a bare launch.
 fn last_session_scope_key(scope: Option<&remote::RemoteTarget>) -> String {
     match scope {
         None => LOCAL_SCOPE_KEY.to_string(),
@@ -79,6 +74,11 @@ pub(crate) fn record_last_session(scope: Option<&remote::RemoteTarget>, name: &s
         }
         let mut entries = read_last_sessions();
         entries.insert(last_session_scope_key(scope), name.to_string());
+        // Empty means local; a remote host literally named `local` remains a remote host.
+        entries.insert(
+            LAST_SCOPE_KEY.into(),
+            scope.map(remote::RemoteTarget::to_spec).unwrap_or_default(),
+        );
         write_last_sessions(&entries);
     });
 }
@@ -91,12 +91,35 @@ pub(crate) fn read_last_session(scope: Option<&remote::RemoteTarget>) -> Option<
     })
 }
 
+pub(crate) fn read_global_last_session() -> Option<(Option<remote::RemoteTarget>, String)> {
+    persist_io(|| {
+        let entries = read_last_sessions();
+        let remote = match entries
+            .get(LAST_SCOPE_KEY)
+            .filter(|scope| !scope.is_empty())
+        {
+            Some(scope) => Some(remote::parse_remote_target(scope).ok()?),
+            None => None,
+        };
+        let name = entries
+            .get(&last_session_scope_key(remote.as_ref()))
+            .filter(|name| discovery::valid_session_name(name))?
+            .clone();
+        Some((remote, name))
+    })
+}
+
 /// Drop one host's last-session memory, for the same reason forgetting a host drops its session
 /// cache: the user asked for that machine to stop being one of their workplaces.
 pub(crate) fn forget_last_session(scope: Option<&remote::RemoteTarget>) {
     persist_io(|| {
         let mut entries = read_last_sessions();
-        if entries.remove(&last_session_scope_key(scope)).is_some() {
+        let global_scope = scope.map(remote::RemoteTarget::to_spec).unwrap_or_default();
+        let scope = last_session_scope_key(scope);
+        if entries.remove(&scope).is_some() {
+            if entries.get(LAST_SCOPE_KEY) == Some(&global_scope) {
+                entries.remove(LAST_SCOPE_KEY);
+            }
             write_last_sessions(&entries);
         }
     });
@@ -191,11 +214,11 @@ pub(crate) fn read_recent_remotes() -> Vec<remote::RemoteTarget> {
 /// handles out of band and rozi never sees.
 const SAVED_HOSTS_FILE: &str = "saved-hosts";
 
-fn saved_hosts_path() -> Option<std::path::PathBuf> {
+fn hosts_path(file: &str) -> Option<std::path::PathBuf> {
     crate::platform::paths::state_dir_if_available(
         &crate::platform::paths::PlatformEnv::from_process(),
     )
-    .map(|dir| dir.join(SAVED_HOSTS_FILE))
+    .map(|dir| dir.join(file))
 }
 
 /// Write the roster, saying why if it could not be written.
@@ -206,8 +229,8 @@ fn saved_hosts_path() -> Option<std::path::PathBuf> {
 /// restart with nothing to explain it. The usual cause is a state directory that is not private to
 /// its owner — `ensure_private_dir` refuses to write secrets-adjacent state into a directory other
 /// users can read, and says so.
-fn write_saved_hosts(entries: &[remote::RemoteTarget]) -> Result<(), String> {
-    let Some(path) = saved_hosts_path() else {
+fn write_hosts(file: &str, entries: &[remote::RemoteTarget]) -> Result<(), String> {
+    let Some(path) = hosts_path(file) else {
         return Err("no state directory to save hosts in (set HOME or XDG_STATE_HOME)".to_string());
     };
     crate::platform::paths::private_state_dir(&crate::platform::paths::PlatformEnv::from_process())
@@ -230,9 +253,9 @@ fn write_saved_hosts(entries: &[remote::RemoteTarget]) -> Result<(), String> {
 }
 
 /// Hosts the user added by hand, oldest first.
-pub(crate) fn read_saved_hosts() -> Vec<remote::RemoteTarget> {
+fn read_hosts(file: &str) -> Vec<remote::RemoteTarget> {
     persist_io(|| {
-        let Some(path) = saved_hosts_path() else {
+        let Some(path) = hosts_path(file) else {
             return Vec::new();
         };
         std::fs::read_to_string(path)
@@ -252,6 +275,58 @@ pub(crate) fn read_saved_hosts() -> Vec<remote::RemoteTarget> {
     })
 }
 
+pub(crate) fn read_saved_hosts() -> Vec<remote::RemoteTarget> {
+    read_hosts(SAVED_HOSTS_FILE)
+}
+
+const RECONNECT_HOSTS_FILE: &str = "reconnect-hosts";
+
+/// Durable intent, recorded only by deliberate host actions that reach the host.
+pub(crate) fn read_reconnect_hosts() -> Vec<remote::RemoteTarget> {
+    read_hosts(RECONNECT_HOSTS_FILE)
+}
+
+pub(crate) fn add_reconnect_host(target: &remote::RemoteTarget) -> Result<(), String> {
+    persist_io(|| {
+        let mut entries = read_reconnect_hosts();
+        if entries.contains(target) {
+            return Ok(());
+        }
+        entries.push(target.clone());
+        write_hosts(RECONNECT_HOSTS_FILE, &entries)
+    })
+}
+
+pub(crate) fn forget_reconnect_host(target: &remote::RemoteTarget) {
+    persist_io(|| {
+        let mut entries = read_reconnect_hosts();
+        if entries.contains(target) {
+            entries.retain(|entry| entry != target);
+            let _ = write_hosts(RECONNECT_HOSTS_FILE, &entries);
+        }
+    });
+}
+
+pub(crate) fn replace_reconnect_host(
+    old: &remote::RemoteTarget,
+    new: &remote::RemoteTarget,
+) -> Result<(), String> {
+    persist_io(|| {
+        let entries = read_reconnect_hosts();
+        if !entries.contains(old) {
+            return Ok(());
+        }
+        let mut replaced = Vec::new();
+        for entry in entries {
+            let entry = if &entry == old { new.clone() } else { entry };
+            if !replaced.contains(&entry) {
+                replaced.push(entry);
+            }
+        }
+        write_hosts(RECONNECT_HOSTS_FILE, &replaced)
+    })
+}
+
 /// Add a host the user typed. Appends rather than promoting: this list is a roster, not a history,
 /// so a host does not jump around under the cursor for having been touched.
 pub(crate) fn save_host(target: &remote::RemoteTarget) -> Result<(), String> {
@@ -261,7 +336,7 @@ pub(crate) fn save_host(target: &remote::RemoteTarget) -> Result<(), String> {
             return Ok(());
         }
         entries.push(target.clone());
-        write_saved_hosts(&entries)
+        write_hosts(SAVED_HOSTS_FILE, &entries)
     })
 }
 
@@ -272,7 +347,7 @@ pub(crate) fn forget_saved_host(target: &remote::RemoteTarget) {
         let before = entries.len();
         entries.retain(|entry| entry != target);
         if entries.len() != before {
-            let _ = write_saved_hosts(&entries);
+            let _ = write_hosts(SAVED_HOSTS_FILE, &entries);
         }
     });
 }
@@ -294,7 +369,7 @@ pub(crate) fn replace_saved_host(
         };
         entries.retain(|entry| entry == old || entry != new);
         entries[index] = new.clone();
-        write_saved_hosts(&entries)
+        write_hosts(SAVED_HOSTS_FILE, &entries)
     })
 }
 
@@ -421,10 +496,50 @@ pub(crate) fn reset_host_session_cache() {
 mod tests {
     use super::*;
 
-    /// `startup = "last"` means "last here", and `here` is the machine the launch names. A local
-    /// launch reaching for a session that only ever existed on `workbox` would try to start a
-    /// same-named local server; the reverse would strand a `--remote workbox` launch on a name that
-    /// host has never heard of.
+    #[test]
+    fn global_last_distinguishes_the_local_workplace_from_a_host_named_local() {
+        crate::test_support::isolate_user_dirs();
+        let _persist = crate::test_support::lock_persisted_state();
+        let _restore = crate::test_support::preserve_persisted_state();
+        let target = remote::RemoteTarget::Alias("local".into());
+        record_last_session(Some(&target), "remote-work");
+        assert_eq!(
+            read_global_last_session(),
+            Some((Some(target), "remote-work".into()))
+        );
+        record_last_session(None, "local-work");
+        assert_eq!(
+            read_global_last_session(),
+            Some((None, "local-work".into()))
+        );
+    }
+
+    #[test]
+    fn reconnect_roster_is_explicit_deduplicated_and_replaced_without_promoting_hosts() {
+        crate::test_support::isolate_user_dirs();
+        let _persist = crate::test_support::lock_persisted_state();
+        let _restore = crate::test_support::preserve_persisted_state();
+        write_hosts(RECONNECT_HOSTS_FILE, &[]).unwrap();
+        let first = remote::RemoteTarget::Alias("roster-first".into());
+        let second = remote::RemoteTarget::Alias("roster-second".into());
+        let missing = remote::RemoteTarget::Alias("roster-missing".into());
+        assert!(read_reconnect_hosts().is_empty());
+        save_host(&first).unwrap();
+        record_recent_remote(&first);
+        assert!(read_reconnect_hosts().is_empty());
+        add_reconnect_host(&first).unwrap();
+        add_reconnect_host(&second).unwrap();
+        add_reconnect_host(&first).unwrap();
+        assert_eq!(read_reconnect_hosts(), vec![first.clone(), second.clone()]);
+        replace_reconnect_host(&missing, &second).unwrap();
+        assert_eq!(read_reconnect_hosts(), vec![first.clone(), second.clone()]);
+        replace_reconnect_host(&first, &second).unwrap();
+        assert_eq!(read_reconnect_hosts(), vec![second.clone()]);
+        forget_reconnect_host(&second);
+        assert!(read_reconnect_hosts().is_empty());
+    }
+
+    /// Explicit host launches retain their own last session beside the global last workplace.
     #[test]
     fn last_session_is_remembered_per_workplace() {
         let _persist = crate::test_support::lock_persisted_state();

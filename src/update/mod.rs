@@ -475,6 +475,9 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RemotePickerHostSelect(target) => {
             crate::ops::session::remotes::host_selected(ctx, target)
         }
+        Msg::RemoteStartupActivate(target) => {
+            crate::ops::session::remotes::startup_activate_host(ctx, target)
+        }
         Msg::RemotePickerHostActivate(target) => {
             crate::ops::session::remotes::activate_host(ctx, target)
         }

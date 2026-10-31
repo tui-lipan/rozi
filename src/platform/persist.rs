@@ -66,6 +66,18 @@ pub fn create_private_file(path: &Path, overwrite: bool) -> io::Result<fs::File>
 pub fn open_private_append(path: &Path) -> io::Result<fs::File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true);
+    open_private(path, options)
+}
+
+/// Open a persistent lock file without truncating it. Windows file locking requires read or
+/// write access; an append-only handle cannot acquire a lock. Security matches private appends.
+pub fn open_private_lock(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    open_private(path, options)
+}
+
+fn open_private(path: &Path, mut options: OpenOptions) -> io::Result<fs::File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -284,6 +296,21 @@ mod tests {
         assert!(create_private_file(&link, true).is_err());
         assert!(open_private_append(dir.path()).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"onetwo");
+    }
+
+    #[test]
+    fn private_lock_handles_exclude_other_handles_and_release_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock");
+        let first = open_private_lock(&path).unwrap();
+        first.lock().unwrap();
+        let second = open_private_lock(&path).unwrap();
+        assert!(matches!(
+            second.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        drop(first);
+        second.try_lock().unwrap();
     }
 
     #[test]

@@ -246,7 +246,8 @@ fn apply_agents(
             continue;
         }
         let before = previous.iter().find(|earlier| earlier.same_agent(agent));
-        let edges = crate::update::session::status::summary_edges(before, agent);
+        let mut edges = crate::update::session::status::summary_edges(before, agent);
+        edges.claim(&agent.reference.pane);
         crate::pane::pty_events::maybe_notify_session_agent(
             &ctx.state.config,
             Some(&host),

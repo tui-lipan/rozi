@@ -64,9 +64,10 @@ pub(super) fn apply(
     let mut finished_any = false;
     let mut failed_any = false;
     for agent in &current.agents {
-        let Some(edges) = alert_edges_for(&ctx.state, &previous.agents, agent) else {
+        let Some(mut edges) = alert_edges_for(&ctx.state, &previous.agents, agent) else {
             continue;
         };
+        edges.claim(&agent.reference.pane);
         crate::pane::pty_events::maybe_notify_session_agent(
             &ctx.state.config,
             None,
@@ -118,6 +119,125 @@ mod tests {
             host: None,
             remote_target: None,
         }
+    }
+
+    fn alert_backend() -> tui_lipan::TestBackend<AppRoot> {
+        let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+        let state = backend.state_mut();
+        state.config.notifications.enabled = false;
+        state.config.sounds.enabled = true;
+        state.config.sounds.player = Some("/nonexistent-rozi-test-sound-player".into());
+        backend
+    }
+
+    fn monitor_transition(
+        backend: &mut tui_lipan::TestBackend<AppRoot>,
+        reference: &crate::session::protocol::AgentRef,
+    ) {
+        for status in ["working", "blocked"] {
+            let mut agent = summary("unattached", status);
+            agent.reference = reference.clone();
+            backend
+                .dispatch(crate::Msg::LocalAgentMetadata(Some(LocalAgentSnapshot {
+                    agents: vec![agent],
+                    sessions: Vec::new(),
+                    projects: Vec::new(),
+                })))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn windows_share_alert_claims_and_silenced_monitors_leave_them_available() {
+        crate::test_support::on_large_stack(|| {
+            for silenced in [false, true] {
+                let mut reference = crate::session::protocol::AgentRef::for_test(7, 2, None);
+                reference.pane.session_instance =
+                    crate::session::protocol::SessionInstanceId::generate();
+                let mut first = alert_backend();
+                first.state_mut().do_not_disturb = silenced;
+                monitor_transition(&mut first, &reference);
+                assert_eq!(
+                    first
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked),
+                    !silenced
+                );
+                let mut second = alert_backend();
+                monitor_transition(&mut second, &reference);
+                assert_eq!(
+                    second
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked),
+                    silenced
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn attended_controller_claims_and_a_follower_does_not() {
+        use crate::session::protocol::{
+            AgentIdentity, AgentRecord, DetectedAgent, DetectedAgentState, PaneRuntimeState,
+        };
+        crate::test_support::on_large_stack(|| {
+            for (controller, dnd) in [(true, false), (false, false), (true, true)] {
+                let mut reference = crate::session::protocol::AgentRef::for_test(7, 2, None);
+                reference.pane.session_instance =
+                    crate::session::protocol::SessionInstanceId::generate();
+                let mut attached = alert_backend();
+                {
+                    let state = attached.state_mut();
+                    let mut pane =
+                        crate::state::Pane::new(7, 100, tui_lipan::prelude::FloatRect::default());
+                    pane.pty_generation = 2;
+                    state.current_mut().workspaces[0].panes = vec![pane];
+                    state.current_mut().focused_pane = Some(7);
+                    state.window_focused = true;
+                    state.do_not_disturb = dnd;
+                    let mut shared = crate::state::SharedSessionState::new(1);
+                    shared.controller = Some(if controller { 1 } else { 2 });
+                    state.current_mut().shared = Some(shared);
+                }
+                for (sequence, agent_state) in [
+                    (1, DetectedAgentState::Working),
+                    (2, DetectedAgentState::Blocked),
+                ] {
+                    attached
+                        .dispatch(crate::Msg::SessionPaneRuntimeChanged {
+                            epoch: attached.state().runtime_epoch,
+                            pane_id: 7,
+                            generation: 2,
+                            local: false,
+                            agents: vec![AgentRecord::from(reference.clone())],
+                            state: PaneRuntimeState {
+                                sequence,
+                                detected_agent: Some(DetectedAgent {
+                                    agent: AgentIdentity::new("codex", "Codex").into(),
+                                    state: agent_state,
+                                }),
+                                ..Default::default()
+                            },
+                        })
+                        .unwrap();
+                }
+                assert!(
+                    attached.state().sound_cues.is_empty(),
+                    "attended panes stay silent"
+                );
+                let mut monitor = alert_backend();
+                monitor_transition(&mut monitor, &reference);
+                assert_eq!(
+                    monitor
+                        .state()
+                        .sound_cues
+                        .contains_key(&crate::platform::sound::Cue::Blocked),
+                    !controller
+                );
+            }
+        });
     }
 
     #[test]

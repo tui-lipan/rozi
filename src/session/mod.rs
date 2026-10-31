@@ -1,3 +1,4 @@
+pub(crate) mod alert_claim;
 pub(crate) mod bootstrap;
 pub mod client;
 pub mod discovery;

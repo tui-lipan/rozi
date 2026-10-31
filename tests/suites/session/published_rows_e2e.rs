@@ -452,3 +452,58 @@ fn publishers_of_two_clients_never_touch_each_others_rows() {
 
     a.write_control(&ClientMessage::Detach);
 }
+
+#[test]
+fn attached_agent_records_and_monitor_summaries_name_the_same_pane() {
+    use rozi::session::protocol::{self, Capabilities};
+    let server = spawn_listener(ServerSettings::default());
+    let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
+    spawn_pane(&mut controller);
+    controller.write_control(&ClientMessage::ReportPaneRows {
+        pane_id: PANE_ID,
+        local: false,
+        generation: PANE_GENERATION,
+        publisher: "sessions".into(),
+        kind: PublisherKind::Agent,
+        rows: vec![row("a", "working", true), row("b", "blocked", false)],
+    });
+    let mut records = Vec::new();
+    read_until(&mut controller, |frame| {
+        if let Frame::Control(ServerMessage::PaneRuntimeChanged { agents, .. }) = frame
+            && agents.len() == 2
+        {
+            records = agents.clone();
+            return true;
+        }
+        false
+    });
+    let mut query = server.endpoint().connect().unwrap();
+    query
+        .set_read_timeout(Some(crate::common::io_timeout()))
+        .unwrap();
+    protocol::write_frame(
+        &mut query,
+        &ClientMessage::Query {
+            session: server.session().to_string(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            capabilities: Some(Capabilities::current()),
+        },
+    )
+    .unwrap();
+    let ServerMessage::SessionInfo {
+        agents: summaries, ..
+    } = protocol::read_frame(&mut query).unwrap()
+    else {
+        panic!("expected monitor summaries");
+    };
+    assert_eq!(summaries.len(), records.len());
+    for record in records {
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.reference == record.reference)
+            .expect("every attached record has a monitor summary");
+        assert_eq!(record.reference.pane, summary.reference.pane);
+    }
+    controller.write_control(&ClientMessage::Detach);
+}

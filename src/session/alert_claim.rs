@@ -58,7 +58,7 @@ fn claim_in(directory: &Path, pane: &PaneRef, edge: Edge) -> io::Result<bool> {
     // Keep this file: unlinking a held lock would let another process lock a different inode.
     // Serializing the short file transaction also prevents two clients deleting the same stale
     // claim after one of them has already replaced it with a fresh claim.
-    let lock = crate::platform::persist::open_private_append(&directory.join(".lock"))?;
+    let lock = crate::platform::persist::open_private_lock(&directory.join(".lock"))?;
     lock.lock()?;
     claim_locked(directory, pane, edge)
 }

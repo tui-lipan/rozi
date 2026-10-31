@@ -481,6 +481,7 @@
 #[workbar.alert]
 #bell = true
 #blocked = true
+#error = true
 #finished = true
 #working = false
 #idle = false

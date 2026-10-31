@@ -319,7 +319,7 @@ fn settings_all_keeps_every_control_available() {
         setting_row(titlebar, "Style");
         setting_row(titlebar, "Focused");
         let marks = group_rows(&frame, "Marks", "Desktop notifications");
-        for mark in ["Bell", "Blocked", "Finished", "Working", "Idle"] {
+        for mark in ["Bell", "Blocked", "Error", "Finished", "Working", "Idle"] {
             setting_row(marks, mark);
         }
         let workbar = group_rows(&frame, "Workbar", "Sidebar");
@@ -1150,7 +1150,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
             (SettingsTab::General, 22, "Pane close"),
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
-            (SettingsTab::Alerts, 21, "Bell urgency"),
+            (SettingsTab::Alerts, 22, "Bell urgency"),
             (SettingsTab::Sessions, 7, "On shared attach"),
         ] {
             backend

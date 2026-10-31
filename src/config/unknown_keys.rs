@@ -227,7 +227,7 @@ const BINDING_TABLE_KEYS: &[&str] = &["add", "label", "run", "send", "popup", "e
 const WORKBAR_KEYS: &[&str] = &["left", "right", "clock_format", "alert"];
 
 const WORKBAR_ALERT_KEYS: &[&str] = &[
-    "bell", "blocked", "finished", "working", "idle", "mode", "paint",
+    "bell", "blocked", "error", "finished", "working", "idle", "mode", "paint",
 ];
 
 const WORKBAR_SEGMENT_KEYS: &[&str] = &["segment", "color"];

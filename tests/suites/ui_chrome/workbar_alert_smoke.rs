@@ -121,6 +121,22 @@ fn a_marked_tab_paints_a_background_no_quiet_tab_uses() {
             alert_row, quiet_row,
             "a blocked workspace left the workbar row identical to a quiet one"
         );
+
+        let mut error = quiet_backend();
+        error.state_mut().current_mut().workspaces[1].panes[0]
+            .terminal
+            .error_unseen = true;
+        let error_row = row_backgrounds(&mut error);
+        assert_eq!(
+            error_row, alert_row,
+            "an unseen error on a background workspace must paint the error role on its tab"
+        );
+        error.state_mut().config.workbar.alert.error = false;
+        assert_eq!(
+            row_backgrounds(&mut error),
+            quiet_row,
+            "disabling `[workbar.alert] error` must silence the error tab marker"
+        );
     });
 }
 

@@ -828,8 +828,9 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
                     && animations.enabled
                     && animations.focus_chrome
                     && crate::ops::theme::tab_alert_can_pulse(theme, role, paint);
-                // A finished workspace is good news you have not read; only blocked is asking for an
-                // answer, so it breathes slower off the same beat.
+                // A finished workspace is good news you have not read, so it breathes slower off the
+                // same beat; blocked asks for an answer and an error is a failure, so both breathe
+                // at the urgent rate.
                 let calm = marker.is_calm();
                 let phase = if calm {
                     state.alert_pulse_calm_phase
@@ -973,6 +974,7 @@ fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> S
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkspaceMarker {
     Attention,
+    Error,
     Finished,
     Working,
     Idle,
@@ -980,9 +982,9 @@ pub(crate) enum WorkspaceMarker {
 
 impl WorkspaceMarker {
     /// Whether this marker breathes at the slower calm rate. Mirrors `PaneAlert::is_calm`: only
-    /// something asking for an answer gets the urgent rate.
+    /// something asking for an answer, or a failure, gets the urgent rate.
     const fn is_calm(self) -> bool {
-        !matches!(self, Self::Attention)
+        !matches!(self, Self::Attention | Self::Error)
     }
 }
 
@@ -991,7 +993,8 @@ fn live_pane(pane: &Pane) -> bool {
 }
 
 /// The marker for a workspace, driven only by `[workbar.alert]`. Bell/blocked is actionable and
-/// therefore wins over finished, then ambient working/idle markers.
+/// therefore wins, then an unseen error, finished, and the ambient working/idle markers - the same
+/// order as pane alerts.
 ///
 /// `mode` is checked here rather than at the call sites so `off` suppresses the glyph, its color,
 /// and the pulse arming together - one switch, no surface left half-marked.
@@ -1005,9 +1008,16 @@ pub(crate) fn workspace_marker(
     }
     let mut panes = workspace.panes.iter().filter(|pane| live_pane(pane));
     if (alert.bell && panes.clone().any(|pane| pane.activity.bell))
-        || (alert.blocked && panes.clone().any(Pane::awaits_input))
+        || (alert.blocked
+            && panes.clone().any(|pane| {
+                pane.awaits_input()
+                    || pane.unseen_program_status() == Some(tui_lipan::ProgramStatusState::Blocked)
+            }))
     {
         return Some(WorkspaceMarker::Attention);
+    }
+    if alert.error && panes.clone().any(Pane::error_unseen) {
+        return Some(WorkspaceMarker::Error);
     }
     if alert.finished && panes.clone().any(|pane| pane.finished_unseen(attention)) {
         return Some(WorkspaceMarker::Finished);
@@ -1053,7 +1063,7 @@ pub(crate) fn has_inactive_marked_workspace(state: &crate::state::State) -> bool
 
 pub(crate) fn workspace_marker_color(marker: WorkspaceMarker) -> BadgeColor {
     match marker {
-        WorkspaceMarker::Attention => BadgeColor::Error,
+        WorkspaceMarker::Attention | WorkspaceMarker::Error => BadgeColor::Error,
         WorkspaceMarker::Finished => BadgeColor::Success,
         WorkspaceMarker::Working => BadgeColor::Info,
         WorkspaceMarker::Idle => BadgeColor::Neutral,
@@ -1371,6 +1381,7 @@ mod tests {
         let mut workspace = Workspace::new(0);
         let mut pane = marker_pane(1);
         pane.activity.bell = true;
+        pane.terminal.error_unseen = true;
         pane.terminal.finished_unseen = true;
         workspace.panes.push(pane);
         let alert = WorkbarAlertConfig::default();
@@ -1382,8 +1393,47 @@ mod tests {
         workspace.panes[0].activity.bell = false;
         assert_eq!(
             workspace_marker(&workspace, &alert, &Default::default()),
+            Some(WorkspaceMarker::Error)
+        );
+        assert_eq!(
+            workspace_marker(
+                &workspace,
+                &WorkbarAlertConfig {
+                    error: false,
+                    ..alert
+                },
+                &Default::default(),
+            ),
             Some(WorkspaceMarker::Finished)
         );
+
+        workspace.panes[0].terminal.error_unseen = false;
+        assert_eq!(
+            workspace_marker(&workspace, &alert, &Default::default()),
+            Some(WorkspaceMarker::Finished)
+        );
+        let mut screen = tui_lipan::prelude::TerminalScreen::new(24, 80, 100);
+        screen.set_program_status_enabled(true);
+        screen.process_bytes(b"\x1b]7501;state=error:app=cargo\x07");
+        workspace.panes[0].terminal.program_status = screen.program_status_snapshot();
+        workspace.panes[0].terminal.program_status_attention = true;
+        assert_eq!(
+            workspace_marker(&workspace, &alert, &Default::default()),
+            Some(WorkspaceMarker::Error)
+        );
+        workspace.panes[0].terminal.program_status_attention = false;
+        assert_eq!(
+            workspace_marker(&workspace, &alert, &Default::default()),
+            Some(WorkspaceMarker::Finished)
+        );
+        screen.process_bytes(b"\x1b]7501;state=blocked:app=cargo\x07");
+        workspace.panes[0].terminal.program_status = screen.program_status_snapshot();
+        workspace.panes[0].terminal.program_status_attention = true;
+        assert_eq!(
+            workspace_marker(&workspace, &alert, &Default::default()),
+            Some(WorkspaceMarker::Attention)
+        );
+        workspace.panes[0].terminal.program_status_attention = false;
         workspace.panes[0].closing = true;
         assert_eq!(
             workspace_marker(&workspace, &alert, &Default::default()),
@@ -1418,9 +1468,16 @@ mod tests {
             BadgeColor::Error
         );
         assert_eq!(
+            workspace_marker_color(WorkspaceMarker::Error),
+            BadgeColor::Error
+        );
+        assert_eq!(
             workspace_marker_color(WorkspaceMarker::Finished),
             BadgeColor::Success
         );
+        assert!(!WorkspaceMarker::Attention.is_calm());
+        assert!(!WorkspaceMarker::Error.is_calm());
+        assert!(WorkspaceMarker::Finished.is_calm());
 
         let mut pane = marker_pane(2);
         pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {

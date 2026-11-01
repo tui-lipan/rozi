@@ -19,7 +19,9 @@ pub(crate) mod skill;
 pub(crate) mod update;
 pub(crate) mod worktrees;
 
-pub(crate) use api::{run_api_describe_cli, run_api_schema_cli};
+pub(crate) use api::{
+    run_api_command_cli, run_api_commands_cli, run_api_describe_cli, run_api_schema_cli,
+};
 pub(crate) use args::{
     CliArgs, ExtensionsCommand, NewSession, ParsedCli, SessionCommand, SessionsCommand,
     parse_cli_args, print_agents_help, print_extensions_check_help, print_extensions_help,

@@ -824,6 +824,79 @@ pub(super) fn format_extension_deploy_text(
     }
 }
 
+/// A call's result is what the caller asked for, so it is all this prints.
+fn format_invocation_result_text(data: Option<&serde_json::Value>) -> String {
+    let result = data
+        .and_then(|data| data.get("result"))
+        .unwrap_or(&serde_json::Value::Null);
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(result).expect("a JSON value serializes")
+    )
+}
+
+fn format_invocations_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let calls: Vec<control::InvocationInfo> = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok())
+        .unwrap_or_default();
+    if calls.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No action calls running", OutputTone::Plain)
+        );
+    }
+    calls
+        .iter()
+        .map(|call| {
+            format!(
+                "{}  {}  depth {}\n",
+                styles.paint(&call.invocation_id, OutputTone::Key),
+                styles.paint(&call.action, OutputTone::Accent),
+                call.depth,
+            )
+        })
+        .collect()
+}
+
+fn format_invocation_cancelled_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let action = data
+        .and_then(|data| data.get("action"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("the call");
+    format!(
+        "{} {}\n",
+        styles.paint("Cancelling", OutputTone::Success),
+        styles.paint(action, OutputTone::Accent),
+    )
+}
+
+fn format_actions_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let actions: Vec<control::ActionInfo> = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok())
+        .unwrap_or_default();
+    if actions.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint("No actions deployed", OutputTone::Plain)
+        );
+    }
+    actions
+        .iter()
+        .map(|action| {
+            format!(
+                "{}  {}\n",
+                styles.paint(&action.id, OutputTone::Key),
+                action.title,
+            )
+        })
+        .collect()
+}
+
 pub(super) fn format_extension_undeploy_text(
     data: Option<&serde_json::Value>,
     styles: OutputStyles,
@@ -1103,6 +1176,12 @@ pub(super) fn format_control_text(
         control::ControlCommand::ExtensionsUndeploy { .. } => {
             format_extension_undeploy_text(data, styles)
         }
+        control::ControlCommand::Invoke { .. } => format_invocation_result_text(data),
+        control::ControlCommand::InvocationList => format_invocations_text(data, styles),
+        control::ControlCommand::InvocationCancel { .. } => {
+            format_invocation_cancelled_text(data, styles)
+        }
+        control::ControlCommand::ActionsList => format_actions_text(data, styles),
         control::ControlCommand::CapturePane { .. }
         | control::ControlCommand::CaptureUi { .. }
         | control::ControlCommand::SendText {

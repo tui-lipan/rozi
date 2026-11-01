@@ -189,6 +189,8 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::ApiDescribe => return cli::run_api_describe_cli(),
         cli::ParsedCli::ApiSchema => return cli::run_api_schema_cli(),
+        cli::ParsedCli::ApiCommands => return cli::run_api_commands_cli(),
+        cli::ParsedCli::ApiCommand(id) => return cli::run_api_command_cli(&id),
         parsed => parsed,
     };
 
@@ -317,6 +319,8 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::ReleaseNotes
         | cli::ParsedCli::ApiDescribe
         | cli::ParsedCli::ApiSchema
+        | cli::ParsedCli::ApiCommands
+        | cli::ParsedCli::ApiCommand(_)
         | cli::ParsedCli::Skill(_)
         | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::SessionsHelp

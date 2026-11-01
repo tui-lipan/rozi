@@ -588,6 +588,18 @@ exec = ["sh", "-c", "cat"]
     let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON");
     assert_eq!(printed["data"]["result"]["a"], 1);
 
+    let output = run(&[
+        "invoke",
+        "demo.add",
+        "--args-json",
+        r#"{"a":1}"#,
+        "--format",
+        "text",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("only the result");
+    assert_eq!(printed, json!({"a": 1}));
+
     let output = run(&["invoke", "demo.none"]);
     assert!(!output.status.success());
     let printed = format!(
@@ -599,6 +611,25 @@ exec = ["sh", "-c", "cat"]
 
     let output = run(&["invocation", "list"]);
     assert!(output.status.success(), "{output:?}");
+
+    let output = run(&["actions", "list", "--format", "json"]);
+    assert!(output.status.success(), "{output:?}");
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    assert_eq!(printed["data"][0]["id"], "demo.add");
+    assert_eq!(printed["data"][0]["deadline_ms"], 30000);
+    assert_eq!(printed["data"][0]["concurrency"], "parallel");
+    assert_eq!(printed["data"][0]["result_schema"], json!({}));
+
+    let output = run(&["actions", "list", "--format", "text"]);
+    assert!(output.status.success(), "{output:?}");
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        printed.contains("demo.add") && printed.contains("Add"),
+        "{printed}"
+    );
+
+    let output = run(&["invocation", "list", "--format", "text"]);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No action calls running"));
 }
 
 #[test]

@@ -56,3 +56,41 @@ fn api_schema_accepts_a_reader_that_stops_early() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn api_command_describes_a_command_from_the_binary_itself() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let output = rozi(home.path())
+        .args(["api", "commands"])
+        .output()
+        .expect("rozi runs");
+    assert!(output.status.success(), "{output:?}");
+    let commands: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the list is JSON");
+    assert!(
+        commands
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command["id"] == "invoke"),
+        "{commands}"
+    );
+
+    let output = rozi(home.path())
+        .args(["api", "command", "invoke"])
+        .output()
+        .expect("rozi runs");
+    assert!(output.status.success(), "{output:?}");
+    let description: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the description is JSON");
+    assert_eq!(description["id"], "invoke");
+    assert_eq!(description["reply"][0], "InvocationResult");
+    assert!(description["request"]["properties"]["args"].is_object());
+
+    let output = rozi(home.path())
+        .args(["api", "command", "nope"])
+        .output()
+        .expect("rozi runs");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rozi api commands"));
+}

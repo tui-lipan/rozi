@@ -227,8 +227,9 @@ attached.
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png\|spans] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `invoke <ACTION> [--args-json JSON] [--timeout DUR]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
-| `invocation list` | List the action calls running in the session. | yes |
+| `invoke <ACTION> [--args-json JSON] [--timeout DUR] [--format text\|json]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
+| `actions list [--format text\|json]` | List a session's deployed actions, with their schemas in JSON. | yes |
+| `invocation list [--format text\|json]` | List the action calls running in the session. | yes |
 | `invocation cancel <INVOCATION_ID>` | Stop a running action call. | yes |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, PNG, or styled runs. | yes |
 | `capture-ui [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
@@ -258,6 +259,8 @@ attached.
 | `extensions undeploy <ID> --session <NAME> [--remote HOST]` | Remove a session's copy of an extension. | — |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
+| `api commands` | List the installed binary's control commands. | — |
+| `api command <ID>` | Describe one control command: its request, what its reply carries, and the definitions they use. | — |
 
 `layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
 `[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
@@ -428,8 +431,11 @@ requests, the response envelope, error codes, each command's `data` payload, pub
 rows, agent records and references, and the event envelope.
 
 The schema is generated from the source, so it always matches the binary it ships with.
-`rozi api schema` prints that binary's copy, without connecting to a UI or session. Contributors
-regenerate it with:
+`rozi api schema` prints that binary's copy, without connecting to a UI or session.
+`rozi api commands` lists its commands by the `cmd` each is sent as, and `rozi api command <ID>` gives
+one command's request schema, the payload names its reply carries in `reply` (`[]` marks an array,
+and an empty list means no named payload), and every definition those use. Contributors regenerate
+it with:
 
 ```bash
 cargo run --features schema-gen --bin rozi-api-schema
@@ -968,9 +974,10 @@ command its manifest declares. See
 
 ## Call an action
 
-`invoke` calls an action an extension [deployed](extensions.md) to a session, and prints the JSON
-envelope with the action's answer in `data.result`. `run-action` runs a command the way a person
-would and answers nothing; `invoke` is for a caller that needs the result.
+`invoke` calls an action an extension [deployed](extensions.md) to a session. It prints the result
+on a terminal; piped, it prints the JSON envelope with the result in `data.result`. `run-action` runs
+a command the way a person would and answers nothing; `invoke` is for a caller that needs the result.
+`actions list --format json` shows what a session offers, with each action's schemas.
 
 ```sh
 rozi --session work invoke git-tools.run-tests --args-json '{"package":"rozi"}' --timeout 2m

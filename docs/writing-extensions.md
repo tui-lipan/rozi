@@ -511,6 +511,7 @@ Deploy the extension with `rozi extensions deploy <ID> --session <NAME>`, then c
 
 ```bash
 rozi --session work invoke git-tools.run-tests --args-json '{"package":"rozi"}'
+rozi --session work actions list --format json   # every deployed action, with its schemas
 ```
 
 Each call starts one process, in the deployed extension's directory. It reads its arguments from

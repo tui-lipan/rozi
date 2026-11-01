@@ -235,6 +235,8 @@ pub(crate) enum ParsedCli {
     ReleaseNotes,
     ApiDescribe,
     ApiSchema,
+    ApiCommands,
+    ApiCommand(String),
     Skill(SkillCommand),
     SkillHelp,
     AgentsHelp,
@@ -453,7 +455,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "api" => {
                 let subcommand = require_value(
                     &mut iter,
-                    "api requires a subcommand (expected `describe` or `schema`)",
+                    "api requires a subcommand (expected `describe`, `schema`, `commands`, or `command`)",
                 )?;
                 return match subcommand.as_str() {
                     "describe" => {
@@ -464,8 +466,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         reject_trailing_control_args(&mut iter, "api schema")?;
                         Ok(ParsedCli::ApiSchema)
                     }
+                    "commands" => {
+                        reject_trailing_control_args(&mut iter, "api commands")?;
+                        Ok(ParsedCli::ApiCommands)
+                    }
+                    "command" => {
+                        let id = require_value(&mut iter, "api command requires a command id")?;
+                        reject_trailing_control_args(&mut iter, "api command")?;
+                        Ok(ParsedCli::ApiCommand(id))
+                    }
                     other => Err(format!(
-                        "unknown api subcommand `{other}`; expected `describe` or `schema`"
+                        "unknown api subcommand `{other}`; expected `describe`, `schema`, `commands`, or `command`"
                     )),
                 };
             }
@@ -1271,8 +1282,16 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let action = require_value(&mut iter, "invoke requires an action id")?;
                 let mut args = None;
                 let mut timeout_ms = None;
+                let mut output_format = None;
                 while let Some(arg) = iter.next() {
                     match arg.as_str() {
+                        "--format" => {
+                            output_format = parse_output_format(
+                                &mut ["--format".to_string(), iter.next().unwrap_or_default()]
+                                    .into_iter(),
+                                "invoke",
+                            )?;
+                        }
                         "--args-json" => {
                             let text = require_value(&mut iter, "--args-json requires JSON")?;
                             args = Some(
@@ -1298,7 +1317,25 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
-                    output_format: None,
+                    output_format,
+                    output: None,
+                }));
+            }
+            "actions" => {
+                let verb =
+                    require_value(&mut iter, "actions requires a subcommand (expected `list`)")?;
+                if verb != "list" {
+                    return Err(format!(
+                        "unknown actions subcommand `{verb}`; expected `list`"
+                    ));
+                }
+                let output_format = parse_output_format(&mut iter, "actions list")?;
+                let command = control::ControlCommand::ActionsList;
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
                     output: None,
                 }));
             }
@@ -1307,9 +1344,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     &mut iter,
                     "invocation requires a subcommand (expected `list` or `cancel`)",
                 )?;
+                let mut output_format = None;
                 let command = match verb.as_str() {
                     "list" => {
-                        reject_trailing_control_args(&mut iter, "invocation list")?;
+                        output_format = parse_output_format(&mut iter, "invocation list")?;
                         control::ControlCommand::InvocationList
                     }
                     "cancel" => {
@@ -1330,7 +1368,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
-                    output_format: None,
+                    output_format,
                     output: None,
                 }));
             }
@@ -2123,6 +2161,15 @@ mod tests {
             parse_cli_args(vec!["api".into(), "schema".into()]).expect("parses"),
             ParsedCli::ApiSchema
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "commands".into()]).expect("parses"),
+            ParsedCli::ApiCommands
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "command".into(), "invoke".into()]).expect("parses"),
+            ParsedCli::ApiCommand(id) if id == "invoke"
+        ));
+        assert!(parse_cli_args(vec!["api".into(), "command".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "schema".into(), "extra".into()]).is_err());
         let args = |list: &[&str]| {
             list.iter()
@@ -2157,6 +2204,10 @@ mod tests {
             }
         );
         assert_eq!(
+            invoked(&["actions", "list", "--format", "json"]),
+            control::ControlCommand::ActionsList
+        );
+        assert_eq!(
             invoked(&["invocation", "cancel", "abc"]),
             control::ControlCommand::InvocationCancel {
                 invocation_id: "abc".into()
@@ -2169,6 +2220,8 @@ mod tests {
             &["invocation"],
             &["invocation", "cancel"],
             &["invocation", "other"],
+            &["actions"],
+            &["actions", "other"],
         ] {
             assert!(parse_cli_args(args(bad)).is_err(), "{bad:?}");
         }

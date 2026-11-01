@@ -34,6 +34,34 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
     runner_args: &[&str],
     request: &Request,
 ) -> Result<Reply, TransportError> {
+    forward_over(target, config, runner_args, request, Stdin::Close)
+}
+
+/// [`forward`] for a request that should end with its caller. The runner reads one line, and its
+/// standard input then stays open until this process has its answer or has died, however it died:
+/// that is how the far side finds out, where the caller's `ssh` would otherwise simply carry on.
+pub(crate) fn forward_watched<Request: Serialize, Reply: DeserializeOwned>(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    runner_args: &[&str],
+    request: &Request,
+) -> Result<Reply, TransportError> {
+    forward_over(target, config, runner_args, request, Stdin::Hold)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Stdin {
+    Close,
+    Hold,
+}
+
+fn forward_over<Request: Serialize, Reply: DeserializeOwned>(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    runner_args: &[&str],
+    request: &Request,
+    stdin: Stdin,
+) -> Result<Reply, TransportError> {
     validate_remote_target(target).map_err(TransportError::Preflight)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let binary = super::binary::resolve(target, config)
@@ -43,7 +71,7 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &binary.path, runner_args, binary.family);
-    let result = exchange(&mut command, &payload).and_then(|output| {
+    let result = exchange_over(&mut command, &payload, stdin).and_then(|output| {
         if !output.status.success() {
             return Err(TransportError::Failed(output));
         }
@@ -110,7 +138,16 @@ pub(crate) fn stream_forward<Request: Serialize>(
     Ok(())
 }
 
+#[cfg(all(test, unix))]
 fn exchange(command: &mut Command, payload: &[u8]) -> Result<Output, TransportError> {
+    exchange_over(command, payload, Stdin::Close)
+}
+
+fn exchange_over(
+    command: &mut Command,
+    payload: &[u8],
+    after_request: Stdin,
+) -> Result<Output, TransportError> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -121,12 +158,18 @@ fn exchange(command: &mut Command, payload: &[u8]) -> Result<Output, TransportEr
     // Drain stdout/stderr while sending too: even a login banner can fill a pipe. Closing stdin
     // ends the request. No transport deadline: forwarded waits and checkouts can take a long time.
     std::thread::scope(|scope| {
+        let (finished, wait_for_finish) = std::sync::mpsc::channel::<()>();
         let sender = scope.spawn(move || {
-            stdin
+            let sent = stdin
                 .write_all(payload)
-                .and_then(|()| stdin.write_all(b"\n"))
+                .and_then(|()| stdin.write_all(b"\n"));
+            if after_request == Stdin::Hold {
+                let _ = wait_for_finish.recv();
+            }
+            sent
         });
         let output = child.wait_with_output().map_err(TransportError::Ssh);
+        drop(finished);
         let sent = sender.join().expect("request writer panicked");
         let output = output?;
         // A rejecting runner may close stdin before reading. Preserve its status and diagnostics.
@@ -183,6 +226,29 @@ mod tests {
             assert_eq!(
                 parse_answer::<Reply>(malformed),
                 Err(AnswerError::Malformed)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_held_stdin_stays_open_after_the_request_and_never_outlives_the_answer() {
+        // Reads the request, then looks in the background for the end of file a closed stdin gives.
+        let probe = r#"IFS= read -r line; echo "$line"
+exec 3<&0
+(IFS= read -r more <&3; : > "$0") > /dev/null 2>&1 &
+sleep 0.3
+if [ -e "$0" ]; then echo closed; else echo held; fi"#;
+        for (mode, expected) in [(Stdin::Hold, "held"), (Stdin::Close, "closed")] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut command = Command::new("sh");
+            command
+                .args(["-c", probe])
+                .arg(directory.path().join("eof"));
+            let output = exchange_over(&mut command, b"request", mode).unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                format!("request\n{expected}\n")
             );
         }
     }

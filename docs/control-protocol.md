@@ -1295,7 +1295,8 @@ which forwards them to the session it is about:
 answer until the call ends: `data` is an `InvocationResult` with `invocation_id` and `result`.
 `invocation-list` answers an array of `InvocationInfo`, with `invocation_id`, `action`, `generation`,
 `depth`, and `deadline_unix_ms`. `invocation-cancel` answers the cancelled call's `InvocationInfo`;
-the call itself then answers `invocation-cancelled`. Closing the connection cancels its calls.
+the call itself then answers `invocation-cancelled`. Closing the connection cancels its calls, on
+either kind of endpoint.
 
 Each call's process holds its own `session-v1:` credential, valid until the call ends. A nested call
 made with it counts one deeper than its caller and inherits the time its caller has left. Requests

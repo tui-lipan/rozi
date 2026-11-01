@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -609,6 +610,34 @@ exec = ["sh", "-c", "cat"]
     );
     assert!(printed.contains("action-not-found"), "{printed}");
 
+    // Longer than a single command-line argument may be on Linux.
+    let long = "x".repeat(300 * 1024);
+    let mut piped = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    piped
+        .args([
+            "--session",
+            &lab.session,
+            "invoke",
+            "demo.add",
+            "--args-json",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    environment(&mut piped, &lab.root);
+    let mut child = piped.spawn().expect("rozi runs");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(json!({ "long": long }).to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let printed: Value = serde_json::from_slice(&output.stdout).expect("JSON");
+    assert_eq!(printed["data"]["result"]["long"], long);
+
     let output = run(&["invocation", "list"]);
     assert!(output.status.success(), "{output:?}");
 
@@ -652,7 +681,7 @@ fn attached_clients_learn_the_palette_and_read_only_ones_cannot_call() {
         });
         client
     };
-    let actions_from = |client: &mut common::TestConnection| {
+    let next_list = |client: &mut common::TestConnection| {
         let mut actions = None;
         read_until(client, |frame| {
             if let Frame::Control(ServerMessage::SessionActions { actions: listed }) = frame {
@@ -663,6 +692,13 @@ fn attached_clients_learn_the_palette_and_read_only_ones_cannot_call() {
             }
         });
         actions.unwrap()
+    };
+    // Attaching always sends a list, so the first one a client hears may predate the deployment.
+    let actions_from = |client: &mut common::TestConnection| loop {
+        let actions = next_list(client);
+        if !actions.is_empty() {
+            return actions;
+        }
     };
     let mut writable = attach(false);
     read_until(&mut writable, |frame| {
@@ -733,5 +769,276 @@ result_schema = {{}}
 
     let response = lab.ask(ControlCommand::ExtensionsUndeploy { id: "demo".into() });
     assert!(response.ok, "{response:?}");
-    assert!(actions_from(&mut writable).is_empty());
+    assert!(next_list(&mut writable).is_empty());
+    // A client coming back holds whatever it last heard, so it has to be told there is nothing.
+    assert!(next_list(&mut attach(false)).is_empty());
+}
+
+fn attached_request(command: ControlCommand) -> ControlRequest {
+    ControlRequest {
+        command,
+        source_pane: None,
+        source_session: None,
+        caller_context: None,
+        extension: None,
+        credential: None,
+    }
+}
+
+/// The server's half of a control-socket caller hanging up on a UI: the UI asks it to cancel.
+#[test]
+fn an_attached_client_cancels_only_the_call_it_names() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "wait"
+title = "Wait"
+exec = ["sh", "-c", "exec sleep 30"]
+{OPEN_SCHEMA}"#
+        ),
+        &[],
+    );
+    let endpoint = subprocess_endpoint(&lab.root, &lab.session);
+    let _ = lab.connection();
+    let mut client = common::TestConnection::connect(&endpoint);
+    client.write_control(&ClientMessage::Attach {
+        capabilities: None,
+        session: lab.session.clone(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        label: "test".into(),
+        read_only: false,
+        shares_filesystem: true,
+        expected_server_nonce: None,
+    });
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    for request_id in [1, 2] {
+        client.write_control(&ClientMessage::AttachedControl {
+            request_id,
+            request: attached_request(invocation("demo.wait", json!({}))),
+        });
+    }
+    wait_until("both calls", || lab.running().len() == 2);
+
+    client.write_control(&ClientMessage::CancelAttachedControl { request_id: 9 });
+    client.write_control(&ClientMessage::CancelAttachedControl { request_id: 1 });
+    let mut answered = None;
+    read_until(&mut client, |frame| match frame {
+        Frame::Control(ServerMessage::AttachedControlResult {
+            request_id,
+            response,
+        }) => {
+            answered = Some((*request_id, response.code));
+            true
+        }
+        _ => false,
+    });
+    assert_eq!(
+        answered,
+        Some((1, Some(ControlErrorCode::InvocationCancelled)))
+    );
+    assert_eq!(lab.running().len(), 1, "the other call keeps running");
+}
+
+#[test]
+fn a_cancelled_calls_credential_dies_before_the_call_finishes_ending() {
+    if Command::new("setsid").arg("--version").output().is_err() {
+        return;
+    }
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "escape"
+title = "Escape"
+exec = ["sh", "./escape.sh"]
+{OPEN_SCHEMA}
+[[actions]]
+id = "mark"
+title = "Mark"
+exec = ["sh", "-c", "touch \"$ROZI_EXTENSION_STATE_DIR/nested-ran\"; echo 1"]
+{OPEN_SCHEMA}"#
+        ),
+        &[(
+            "escape.sh",
+            // Holding stdout keeps the call ending for a while after its group is dead.
+            r#"state="$ROZI_EXTENSION_STATE_DIR"
+setsid sh -c '
+  until [ -e "$0/go" ]; do sleep 0.02; done
+  "$ROZI_BIN" invoke demo.mark > "$0/nested" 2>&1
+  touch "$0/done"
+  sleep 5
+' "$state" &
+touch "$state/ready"
+exec sleep 30
+"#,
+        )],
+    );
+    let mut caller = lab.send(invocation("demo.escape", json!({})));
+    wait_until("the call", || lab.state_file("ready").exists());
+    let id = lab.running()[0]["invocation_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        lab.ask(ControlCommand::InvocationCancel { invocation_id: id })
+            .ok
+    );
+    std::fs::write(lab.state_file("go"), "").unwrap();
+    wait_until("the nested attempt", || lab.state_file("done").exists());
+    let nested = std::fs::read_to_string(lab.state_file("nested")).unwrap();
+    assert!(nested.contains("retired"), "{nested}");
+    assert!(!lab.state_file("nested-ran").exists());
+    assert_eq!(
+        code(&answer(&mut caller)),
+        Some(ControlErrorCode::InvocationCancelled)
+    );
+}
+
+/// With no UI attached, a pane's `rozi` has no socket to ask, and its session is still there.
+#[test]
+fn a_pane_in_a_session_with_no_ui_calls_its_own_session() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "hello"
+title = "Hello"
+exec = ["sh", "-c", "cat > /dev/null; echo '\"hello\"'"]
+{OPEN_SCHEMA}"#
+        ),
+        &[],
+    );
+    let output = lab.root.join("from-pane");
+    let script = format!(
+        "{rozi} invoke demo.hello --format json > {out}.tmp 2>&1; mv {out}.tmp {out}",
+        rozi = env!("CARGO_BIN_EXE_rozi"),
+        out = output.display(),
+    );
+    let mut split = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    split.args(["--session", &lab.session, "split", &script]);
+    environment(&mut split, &lab.root);
+    let opened = split.output().expect("rozi runs");
+    assert!(opened.status.success(), "{opened:?}");
+    wait_until("the pane's call", || output.exists());
+    let printed = std::fs::read_to_string(&output).unwrap();
+    let answer: Value =
+        serde_json::from_str(&printed).unwrap_or_else(|error| panic!("{error}: {printed}"));
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["data"]["result"], "hello");
+}
+
+#[test]
+fn a_deployed_action_is_callable_again_after_the_server_restarts() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "wait"
+title = "Wait"
+exec = ["sh", "-c", "exec sleep 30"]
+{OPEN_SCHEMA}
+[[actions]]
+id = "ping"
+title = "Ping"
+exec = ["sh", "-c", "cat > /dev/null; echo \"$ROZI_EXTENSION_GENERATION\""]
+{OPEN_SCHEMA}"#
+        ),
+        &[],
+    );
+    let first = lab.invoke("demo.ping", json!({})).data.unwrap()["result"].clone();
+    let _caller = lab.send(invocation("demo.wait", json!({})));
+    wait_until("the call", || lab.running().len() == 1);
+
+    lab.server.kill_for_restart();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
+        .args(["--server", &lab.session])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    environment(&mut command, &lab.root);
+    lab.server.replace_child(command.spawn().expect("restart"));
+
+    assert!(
+        lab.running().is_empty(),
+        "a call does not survive a restart"
+    );
+    // The bundle is verified again off the server loop before its actions return.
+    wait_until("the action to return", || {
+        lab.invoke("demo.ping", json!({})).code != Some(ControlErrorCode::ActionNotFound)
+    });
+    let response = lab.invoke("demo.ping", json!({}));
+    assert!(response.ok, "{response:?}");
+    assert_eq!(
+        response.data.unwrap()["result"],
+        first.as_u64().unwrap() + 1,
+        "the action runs under the new generation"
+    );
+}
+
+/// The far side of `rozi --remote`: ssh carries the caller's death here as end of file on stdin.
+#[test]
+fn a_remote_call_runner_answers_and_ends_its_call_with_its_stdin() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "ping"
+title = "Ping"
+exec = ["sh", "-c", "cat > /dev/null; echo 1"]
+{OPEN_SCHEMA}
+[[actions]]
+id = "wait"
+title = "Wait"
+exec = ["sh", "./wait.sh"]
+{OPEN_SCHEMA}"#
+        ),
+        &[(
+            "wait.sh",
+            r#"echo $$ > "$ROZI_EXTENSION_STATE_DIR/pid"
+exec sleep 30
+"#,
+        )],
+    );
+    let session = lab.session.clone();
+    let runner = |action: &str, root: &Path| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        command
+            .args(["--remote-call", &session])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        environment(&mut command, root);
+        let mut child = command.spawn().expect("runner starts");
+        let request = attached_request(invocation(action, json!({})));
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+        (child, stdin)
+    };
+
+    // It answers with its stdin still open, which is what the forwarding side does.
+    let (child, stdin) = runner("demo.ping", &lab.root);
+    let output = child.wait_with_output().unwrap();
+    drop(stdin);
+    let answer: ControlResponse = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(answer.ok, "{answer:?}");
+
+    let (mut child, stdin) = runner("demo.wait", &lab.root);
+    wait_until("the call", || lab.running().len() == 1);
+    wait_until("the process", || lab.state_file("pid").exists());
+    let pid = pid_in(&lab, "pid");
+    assert!(alive(&pid));
+    drop(stdin);
+    wait_until("the process to die with its caller", || !alive(&pid));
+    wait_until("the call to end", || lab.running().is_empty());
+    let _ = child.wait();
 }

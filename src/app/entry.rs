@@ -257,6 +257,9 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::RemoteServe { name, autostart } => {
             return cli::run_remote_serve_cli(&name, autostart);
         }
+        cli::ParsedCli::RemoteCall { name } => {
+            return cli::run_remote_call_cli(&name);
+        }
         cli::ParsedCli::RemoteControl { name } => {
             return cli::run_remote_control_cli(&name);
         }

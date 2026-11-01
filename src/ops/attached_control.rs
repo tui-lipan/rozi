@@ -86,10 +86,13 @@ pub(crate) fn forward_agent(
 
 /// Forward an action request to the session it belongs to: the calling pane's own, or the session
 /// on screen for a caller outside rozi.
+///
+/// The call ends with its caller: `caller` names it in a later [`caller_gone`].
 pub(crate) fn forward_action(
     ctx: &mut Context<AppRoot>,
     mut request: ControlRequest,
     reply: Sender<ControlResponse>,
+    caller: Option<u64>,
 ) -> Update {
     let routed = if let Some(provenance) = &request.extension {
         Err(ControlResponse::error_with(
@@ -106,11 +109,28 @@ pub(crate) fn forward_action(
         Ok(epoch) => {
             request.source_pane = None;
             request.source_session = None;
-            send_to_epoch(ctx, epoch, request, AttachedReply::Control(reply));
+            send_watched(ctx, epoch, request, AttachedReply::Control(reply), caller);
         }
         Err(response) => {
             let _ = reply.send(response);
         }
+    }
+    Update::none()
+}
+
+/// A caller watched by [`forward_action`] hung up, so stop the call it started.
+pub(crate) fn caller_gone(ctx: &mut Context<AppRoot>, caller: u64) -> Update {
+    let state = &ctx.state;
+    let started = state
+        .pending_attached_controls
+        .iter()
+        .find(|(_, pending)| pending.caller == Some(caller));
+    if let Some((&request_id, pending)) = started
+        && let Some(client) = state
+            .attachment_for_epoch(pending.epoch)
+            .and_then(|attachment| attachment.session_client.as_ref())
+    {
+        client.cancel_attached_control(request_id);
     }
     Update::none()
 }
@@ -289,6 +309,16 @@ fn send_to_epoch(
     request: ControlRequest,
     reply: AttachedReply,
 ) {
+    send_watched(ctx, epoch, request, reply, None);
+}
+
+fn send_watched(
+    ctx: &mut Context<AppRoot>,
+    epoch: u64,
+    request: ControlRequest,
+    reply: AttachedReply,
+    caller: Option<u64>,
+) {
     let state = &mut ctx.state;
     forget_orphans(state);
     let Some(client) = state
@@ -308,9 +338,14 @@ fn send_to_epoch(
     };
     let request_id = state.next_attached_control_request_id;
     state.next_attached_control_request_id = request_id.wrapping_add(1).max(1);
-    state
-        .pending_attached_controls
-        .insert(request_id, PendingAttachedControl { epoch, reply });
+    state.pending_attached_controls.insert(
+        request_id,
+        PendingAttachedControl {
+            epoch,
+            reply,
+            caller,
+        },
+    );
     client.attached_control(request_id, request);
 }
 
@@ -462,6 +497,7 @@ mod tests {
                 },
                 reply,
                 worker: None,
+                caller: None,
             }))
             .expect("dispatch a record request");
         response
@@ -488,6 +524,75 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_watched_action_caller_hanging_up_cancels_only_its_own_call() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let (client, outbound) = SessionClient::test_channel();
+            attach(backend.state_mut().current_mut(), client, "current");
+            let epoch = backend.state().runtime_epoch;
+            let invoke = |caller| {
+                crate::Msg::ControlRequest(ControlEnvelope {
+                    request: ControlRequest {
+                        command: ControlCommand::Invoke {
+                            action: "demo.wait".into(),
+                            args: serde_json::json!({}),
+                            timeout_ms: None,
+                        },
+                        source_pane: None,
+                        source_session: None,
+                        extension: None,
+                        caller_context: None,
+                        credential: None,
+                    },
+                    reply: mpsc::channel().0,
+                    worker: None,
+                    caller: Some(caller),
+                })
+            };
+            backend.dispatch(invoke(1)).unwrap();
+            backend.dispatch(invoke(2)).unwrap();
+            let [(first, _), (second, _)] = forwarded(&outbound).try_into().unwrap();
+
+            backend
+                .dispatch(crate::Msg::ControlCallerGone { caller: 2 })
+                .unwrap();
+            let cancelled: Vec<_> = outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::CancelAttachedControl {
+                        request_id,
+                    }) => Some(request_id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(cancelled, [second]);
+            assert!(
+                backend
+                    .state()
+                    .pending_attached_controls
+                    .contains_key(&first),
+                "the other call keeps waiting"
+            );
+
+            backend
+                .dispatch(crate::Msg::SessionAttachedControlResult {
+                    epoch,
+                    request_id: second,
+                    response: ControlResponse::empty(),
+                })
+                .unwrap();
+            backend
+                .dispatch(crate::Msg::ControlCallerGone { caller: 2 })
+                .unwrap();
+            assert_eq!(
+                outbound.try_iter().count(),
+                0,
+                "a caller of a finished call has nothing left to cancel"
+            );
+        });
     }
 
     #[test]
@@ -745,6 +850,7 @@ mod tests {
                     },
                     reply: mpsc::channel().0,
                     worker: None,
+                    caller: None,
                 })
             };
             let commands = [
@@ -823,6 +929,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .unwrap();
             assert_eq!(
@@ -949,6 +1056,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .unwrap();
             let [(_, request)] = forwarded(&outbound).try_into().unwrap();

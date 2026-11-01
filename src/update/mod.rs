@@ -827,6 +827,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::session_notifications(ctx, epoch, session_instance, name, notifications),
         Msg::SessionEvent { epoch, event } => session::session_event(ctx, epoch, event),
         Msg::SessionActions { epoch, actions } => session::session_actions(ctx, epoch, actions),
+        Msg::ControlCallerGone { caller } => crate::ops::attached_control::caller_gone(ctx, caller),
         Msg::RunPaletteAction(id) => crate::ops::attached_control::run_palette_action(ctx, id),
         Msg::SessionInputMarked { epoch: _, token } => {
             crate::ops::capture_wait::input_marked(ctx, token)

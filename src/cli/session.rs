@@ -28,7 +28,18 @@ pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {
 /// non-zero exit means the session could not be reached at all, which the forwarding side reports
 /// as a failed command rather than a refused one.
 pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
-    match session::remote::control::run_remote_control(name) {
+    print_remote_answer(session::remote::control::run_remote_control(name))
+}
+
+/// `--remote-call <NAME>`: run one forwarded action call, for as long as its caller is there.
+pub(crate) fn run_remote_call_cli(name: &str) -> Result<()> {
+    print_remote_answer(session::remote::control::run_remote_call(name))
+}
+
+fn print_remote_answer(
+    answer: std::result::Result<crate::control::ControlResponse, String>,
+) -> Result<()> {
+    match answer {
         Ok(response) => {
             println!(
                 "{}",

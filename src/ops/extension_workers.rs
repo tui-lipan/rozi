@@ -522,6 +522,7 @@ mod tests {
                 request,
                 reply,
                 worker: Some(worker),
+                caller: None,
             }))
             .expect("dispatch");
         response

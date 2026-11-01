@@ -556,6 +556,14 @@ impl SessionServer {
                 self.reload_config_for(&request.command);
                 self.handle_attached_control(client_id, request_id, request)
             }
+            ClientMessage::CancelAttachedControl { request_id } => {
+                if let Some(automation) = &self.automation {
+                    automation
+                        .invocations()
+                        .cancel_attached(client_id, request_id);
+                }
+                Vec::new()
+            }
             ClientMessage::SetPaneLogging {
                 pane_id,
                 local,
@@ -1394,16 +1402,16 @@ impl SessionServer {
                 },
             );
         }
-        if let Some(automation) = &self.automation {
-            let actions = automation.palette_actions();
-            if !actions.is_empty() {
-                self.enqueue(
-                    client_id,
-                    Target::Sender,
-                    ServerMessage::SessionActions { actions },
-                );
-            }
-        }
+        // Even when there are none: a reconnecting client may still hold a list from before.
+        let actions = self
+            .automation
+            .as_ref()
+            .map_or_else(Vec::new, |automation| automation.palette_actions());
+        self.enqueue(
+            client_id,
+            Target::Sender,
+            ServerMessage::SessionActions { actions },
+        );
         if let Some(client_name) = joined_label {
             self.record_session_event(
                 events::EventKind::ClientJoined,

@@ -227,8 +227,8 @@ attached.
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png\|spans] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
-| `invoke <ACTION> [--args-json JSON] [--timeout DUR] [--format text\|json]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
-| `actions list [--format text\|json]` | List a session's deployed actions, with their schemas in JSON. | yes |
+| `invoke <ACTION> [--args-json JSON\|-] [--timeout DUR] [--format text\|json]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
+| `actions list [--json\|--format text\|json]` | List a session's deployed actions, with their schemas in JSON. | yes |
 | `invocation list [--format text\|json]` | List the action calls running in the session. | yes |
 | `invocation cancel <INVOCATION_ID>` | Stop a running action call. | yes |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, PNG, or styled runs. | yes |
@@ -346,7 +346,7 @@ binary refuses it.
 include a retained notification inbox.
 
 `session-actions` means a session server runs deployed [actions](writing-extensions.md#actions):
-it accepts `invoke`, `invocation list`, and `invocation cancel`.
+it accepts `invoke`, `actions list`, `invocation list`, and `invocation cancel`.
 
 `session-services` means explicitly deployed `placement = "session"` services run without a UI
 and use credentials issued by that session.
@@ -983,13 +983,15 @@ a command the way a person would and answers nothing; `invoke` is for a caller t
 rozi --session work invoke git-tools.run-tests --args-json '{"package":"rozi"}' --timeout 2m
 ```
 
-Without `--args-json` the arguments are `{}`. `--timeout` can shorten the action's deadline but not
-lengthen it. Inside a pane, or from a script on the UI's machine, `invoke` without `--session` goes to
-the calling pane's session, or else to the session on screen. Extension processes started by a UI
-cannot call actions through it: deploy the caller as a [session service](writing-extensions.md#run-a-service-without-a-ui).
+Without `--args-json` the arguments are `{}`, and `--args-json -` reads them from standard input,
+which suits arguments too long for a command line. `--timeout` can shorten the action's deadline but
+not lengthen it. Inside a session's pane, `invoke`, `actions list`, and `invocation` without `--session`
+go to that session, whether or not a UI is attached. From a script on the UI's machine they go to the
+session on screen. Extension processes started by a UI cannot call actions through it: deploy the
+caller as a [session service](writing-extensions.md#run-a-service-without-a-ui).
 
 A read-only client can list calls but cannot start or cancel them. Closing the connection cancels
-the call.
+the call, including a call made through a UI.
 
 | Error code | Meaning |
 | --- | --- |

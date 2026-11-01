@@ -502,9 +502,7 @@ pub enum ControlCommand {
     },
     /// Scroll a Scrollable strip so a pane is in view, without moving focus. The viewport is
     /// client-local, so only a UI answers; the shared layout and its revision do not change.
-    PaneReveal {
-        target: PaneId,
-    },
+    PaneReveal { target: PaneId },
     /// Close a pane, ending its process. The request is the confirmation; `[confirm]` does not
     /// apply.
     PaneClose {
@@ -518,12 +516,8 @@ pub enum ControlCommand {
     AgentsOverview,
     /// Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or
     /// attach its session first. Takes a `location` from `agents-overview`.
-    AgentGo {
-        location: AgentLocationSpec,
-    },
-    AgentGet {
-        target: AgentTarget,
-    },
+    AgentGo { location: AgentLocationSpec },
+    AgentGet { target: AgentTarget },
     AgentRead {
         target: AgentTarget,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -558,9 +552,7 @@ pub enum ControlCommand {
     /// List the extensions a session server holds, with the digest and generation each was
     /// deployed under and whether its files still verify.
     ExtensionsStatus,
-    Focus {
-        target: PaneId,
-    },
+    Focus { target: PaneId },
     /// Send literal text to a pane. `wait` holds the reply until the pane answers; see
     /// [`PaneWait`].
     SendText {
@@ -630,9 +622,7 @@ pub enum ControlCommand {
         size: Option<PaneSize>,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
-    RunAction {
-        action: String,
-    },
+    RunAction { action: String },
     /// Call a deployed action with JSON arguments and answer with its JSON result.
     Invoke {
         action: String,
@@ -645,9 +635,7 @@ pub enum ControlCommand {
     /// The action calls running in this session.
     InvocationList,
     /// Stop a running action call. The call itself answers `invocation-cancelled`.
-    InvocationCancel {
-        invocation_id: String,
-    },
+    InvocationCancel { invocation_id: String },
     /// Every action deployed in this session, with its schemas.
     ActionsList,
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
@@ -684,13 +672,9 @@ pub enum ControlCommand {
         image_pixels: bool,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
-    SwitchWorkspace {
-        index: usize,
-    },
+    SwitchWorkspace { index: usize },
     /// Move the focused pane to another workspace. `index` is 1-based (1-9).
-    MoveToWorkspace {
-        index: usize,
-    },
+    MoveToWorkspace { index: usize },
     Popup {
         command: String,
         cwd: Option<String>,
@@ -880,9 +864,7 @@ pub enum ControlCommand {
     /// Stop the UI's recording and answer once its file is complete.
     RecordUiStop,
     /// Add a labelled mark to the UI's recording.
-    RecordUiMark {
-        label: String,
-    },
+    RecordUiMark { label: String },
     Pick {
         #[serde(default)]
         title: Option<String>,
@@ -2587,6 +2569,8 @@ pub struct ControlEnvelope {
     /// The placed worker that sent this, as its credential established. Re-checked when the request
     /// is handled, so a worker revoked in between is refused.
     pub worker: Option<crate::state::WorkerId>,
+    /// Names this request in a later [`Msg::ControlCallerGone`], when it should end with its caller.
+    pub caller: Option<u64>,
 }
 
 impl ControlEnvelope {
@@ -2596,6 +2580,7 @@ impl ControlEnvelope {
             request,
             reply,
             worker: None,
+            caller: None,
         }
     }
 }
@@ -3202,16 +3187,7 @@ fn run_subscription(
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Subscribers send nothing after the request. Probe for EOF while idle.
-                let mut probe = [0u8; 8];
-                let _ = stream.set_nonblocking(true);
-                let disconnected = match std::io::Read::read(&mut stream, &mut probe) {
-                    Ok(0) => true,
-                    Ok(_) => false,
-                    Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
-                };
-                let _ = stream.set_nonblocking(false);
-                if disconnected {
+                if caller_hung_up(&mut stream) {
                     break;
                 }
             }
@@ -3442,19 +3418,70 @@ pub(crate) fn serve_connection(
         return;
     }
     let reply_timeout = control_reply_timeout(&request.command);
+    let caller = matches!(request.command, ControlCommand::Invoke { .. })
+        .then(|| NEXT_WATCHED_CALLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (tx, rx) = mpsc::channel();
     link.send(Msg::ControlRequest(ControlEnvelope {
         request,
         reply: tx,
         worker,
+        caller,
     }));
-    let response = rx.recv_timeout(reply_timeout).unwrap_or_else(|_| {
+    let response = if let Some(caller) = caller {
+        let Some(response) = reply_unless_hung_up(&mut stream, &rx, reply_timeout) else {
+            link.send(Msg::ControlCallerGone { caller });
+            return;
+        };
+        response
+    } else {
+        rx.recv_timeout(reply_timeout).ok()
+    };
+    let response = response.unwrap_or_else(|| {
         ControlResponse::error_with(
             ControlErrorCode::RequestTimeout,
             "control request timed out",
         )
     });
     write_control_response(&mut stream, &response);
+}
+
+static NEXT_WATCHED_CALLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Whether a caller that sends nothing after its request has closed the connection.
+fn caller_hung_up(stream: &mut IpcConnection) -> bool {
+    let mut probe = [0u8; 8];
+    let _ = stream.set_nonblocking(true);
+    let hung_up = match std::io::Read::read(stream, &mut probe) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
+    };
+    let _ = stream.set_nonblocking(false);
+    hung_up
+}
+
+/// Wait for a reply while watching the caller. `None` means it hung up first; `Some(None)` means no
+/// reply came in time.
+fn reply_unless_hung_up(
+    stream: &mut IpcConnection,
+    replies: &mpsc::Receiver<ControlResponse>,
+    timeout: Duration,
+) -> Option<Option<ControlResponse>> {
+    const PROBE_INTERVAL: Duration = Duration::from_millis(100);
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match replies.recv_timeout(left.min(PROBE_INTERVAL)) {
+            Ok(response) => return Some(Some(response)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(None),
+            Err(mpsc::RecvTimeoutError::Timeout) if left <= PROBE_INTERVAL => return Some(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if caller_hung_up(stream) {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

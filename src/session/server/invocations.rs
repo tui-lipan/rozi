@@ -225,10 +225,12 @@ impl Invocations {
         None
     }
 
+    /// The live call holding `credential`. A cancelled call's credential is already dead, however
+    /// long the call takes to finish ending.
     fn by_credential(&self, credential: &str) -> Option<&Running> {
-        self.running
-            .values()
-            .find(|running| running.credential == credential)
+        self.running.values().find(|running| {
+            running.credential == credential && !running.cancel.load(Ordering::Relaxed)
+        })
     }
 
     pub fn knows_credential(&self, credential: &str) -> bool {
@@ -249,6 +251,19 @@ impl Invocations {
         let running = self.running.get(invocation_id)?;
         running.cancel.store(true, Ordering::Relaxed);
         Some(running.info.clone())
+    }
+
+    /// Cancel the call a client started as attached request `request_id`, if it is still running.
+    pub fn cancel_attached(&self, client: ClientId, request_id: u64) {
+        let started_it = |running: &&Running| {
+            running.caller.as_ref().is_some_and(|(owner, reply)| {
+                *owner == client
+                    && matches!(reply, ReplyTo::Attached { request_id: id } if *id == request_id)
+            })
+        };
+        if let Some(running) = self.running.values().find(started_it) {
+            running.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Cancel a departed caller's calls. Nobody is left to answer.
@@ -364,12 +379,8 @@ fn run_call(
         ControlErrorCode::InvalidArguments,
         "arguments",
     )?;
-    let mut process = SupervisedProcess::spawn(spec).map_err(|failure| {
-        (
-            ControlErrorCode::ActionFailed,
-            format!("could not start: {failure:?}"),
-        )
-    })?;
+    let mut process = SupervisedProcess::spawn(spec)
+        .map_err(|failure| (ControlErrorCode::ActionFailed, failure.to_string()))?;
     // On its own thread: a process that never reads must still meet its deadline.
     if let Some(mut stdin) = process.take_stdin() {
         std::thread::spawn(move || {

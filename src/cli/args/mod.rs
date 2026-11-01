@@ -275,6 +275,9 @@ pub(crate) enum ParsedCli {
         autostart: bool,
     },
     /// Hidden remote-side control runner: one JSON request in, one JSON response out.
+    RemoteCall {
+        name: String,
+    },
     RemoteControl {
         name: String,
     },
@@ -399,6 +402,7 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
         | "--server"
         | "--remote-serve"
         | "--remote-control"
+        | "--remote-call"
         | "--remote-serve-existing" => 1,
         "--server-start" | "--fresh-server-start" => 2,
         "--remote" => usize::from(next.is_some_and(|value| {
@@ -584,6 +588,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     name,
                     autostart: true,
                 });
+            }
+            "--remote-call" => {
+                let name = require_value(&mut iter, "--remote-call requires a session name")?;
+                reject_trailing_control_args(&mut iter, "--remote-call")?;
+                return Ok(ParsedCli::RemoteCall { name });
             }
             "--remote-control" => {
                 let name = require_value(&mut iter, "--remote-control requires a session name")?;
@@ -1294,6 +1303,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                         "--args-json" => {
                             let text = require_value(&mut iter, "--args-json requires JSON")?;
+                            // A command line is too short for the largest arguments on some systems.
+                            let text = if text == "-" {
+                                std::io::read_to_string(std::io::stdin())
+                                    .map_err(|error| format!("--args-json: {error}"))?
+                            } else {
+                                text
+                            };
                             args = Some(
                                 serde_json::from_str(&text)
                                     .map_err(|error| format!("--args-json: {error}"))?,
@@ -1329,7 +1345,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "unknown actions subcommand `{verb}`; expected `list`"
                     ));
                 }
-                let output_format = parse_output_format(&mut iter, "actions list")?;
+                let rest: Vec<String> = iter.by_ref().collect();
+                let output_format = if rest == ["--json"] {
+                    Some(ListFormat::Json)
+                } else {
+                    parse_output_format(&mut rest.into_iter(), "actions list")?
+                };
                 let command = control::ControlCommand::ActionsList;
                 return Ok(ParsedCli::Control(ControlCli {
                     config_path: cli.config_path.clone(),
@@ -1996,6 +2017,9 @@ pub(super) fn reject_trailing_control_args(
 /// (`ui_socket_in_env` false). The pane's own id becomes the explicit target: it is meaningful here
 /// because the instance, which the server checks, proves which namespace it belongs to.
 ///
+/// A shared pane's action commands always go to its own server: deployed actions belong to the
+/// session, so they must not depend on a UI being attached.
+///
 /// Anything else keeps its endpoint, including discovery of the only live UI when nothing names
 /// one. A pane that does have `ROZI_SOCKET` keeps reporting through its UI.
 pub(super) fn own_session_endpoint(
@@ -2003,10 +2027,17 @@ pub(super) fn own_session_endpoint(
     request: &mut control::ControlRequest,
     ui_socket_in_env: bool,
 ) -> ControlEndpoint {
+    let session_only = request.credential.as_deref().is_some_and(|token| {
+        token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
+    }) || matches!(
+        request.command,
+        control::ControlCommand::Invoke { .. }
+            | control::ControlCommand::InvocationList
+            | control::ControlCommand::InvocationCancel { .. }
+            | control::ControlCommand::ActionsList
+    );
     if endpoint == ControlEndpoint::Ui(None)
-        && request.credential.as_deref().is_some_and(|token| {
-            token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
-        })
+        && session_only
         && let Some(instance) = request.source_session.clone()
     {
         return ControlEndpoint::OwnSession(instance);
@@ -2203,10 +2234,19 @@ mod tests {
                 timeout_ms: None,
             }
         );
-        assert_eq!(
-            invoked(&["actions", "list", "--format", "json"]),
-            control::ControlCommand::ActionsList
-        );
+        for list in [
+            &["actions", "list", "--format", "json"][..],
+            &["actions", "list", "--json"],
+        ] {
+            let ParsedCli::Control(control) = parse_cli_args(args(list)).expect("parses") else {
+                panic!("{list:?}");
+            };
+            assert_eq!(
+                control.request.command,
+                control::ControlCommand::ActionsList
+            );
+            assert_eq!(control.output_format, Some(ListFormat::Json));
+        }
         assert_eq!(
             invoked(&["invocation", "cancel", "abc"]),
             control::ControlCommand::InvocationCancel {
@@ -2323,6 +2363,53 @@ mod tests {
     /// A remote or restored pane has no `ROZI_SOCKET`, but its own server owns its agent state, so
     /// its reports go there - by instance, with the pane's own id as the explicit target. Anything
     /// that names an endpoint, or is not a report from a shared pane, stays where it was.
+    #[test]
+    fn a_panes_action_commands_go_to_its_own_session_with_or_without_a_ui() {
+        let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");
+        let commands = [
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({}),
+                timeout_ms: None,
+            },
+            control::ControlCommand::InvocationList,
+            control::ControlCommand::InvocationCancel {
+                invocation_id: "abc".into(),
+            },
+            control::ControlCommand::ActionsList,
+        ];
+        for command in commands {
+            let request = |source_session| control::ControlRequest {
+                command: command.clone(),
+                source_pane: Some(7),
+                source_session,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            };
+            for ui_socket_in_env in [false, true] {
+                assert_eq!(
+                    own_session_endpoint(
+                        ControlEndpoint::Ui(None),
+                        &mut request(Some(instance.clone())),
+                        ui_socket_in_env,
+                    ),
+                    ControlEndpoint::OwnSession(instance.clone())
+                );
+            }
+            // Outside every session, or with a UI named on purpose, the UI answers.
+            assert_eq!(
+                own_session_endpoint(ControlEndpoint::Ui(None), &mut request(None), true),
+                ControlEndpoint::Ui(None)
+            );
+            let named = ControlEndpoint::Ui(Some(PathBuf::from("/tmp/rozi.sock")));
+            assert_eq!(
+                own_session_endpoint(named.clone(), &mut request(Some(instance.clone())), true),
+                named
+            );
+        }
+    }
+
     #[test]
     fn a_report_from_a_pane_with_no_ui_goes_to_its_own_session_server() {
         let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");

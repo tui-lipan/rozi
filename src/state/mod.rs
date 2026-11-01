@@ -553,6 +553,8 @@ pub struct PendingAttachedControl {
     /// The attachment the request went out on. An answer arriving on any other is not this one's.
     pub epoch: u64,
     pub reply: AttachedReply,
+    /// The control-socket caller to watch, for a request that ends with it.
+    pub caller: Option<u64>,
 }
 
 /// Who is waiting on a request forwarded to a session server.

@@ -442,6 +442,7 @@ impl CaptureScrollback {
 pub enum ControlCommand {
     /// Verified caller identity on a server; attachment metadata on a UI.
     Context,
+    /// List the panes this endpoint can see.
     ListPanes,
     /// The panes of every session this UI has attached, on screen or not.
     ListAttachedPanes,
@@ -510,6 +511,7 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
     },
+    /// List the agents detected in panes.
     AgentsList,
     /// Every agent this UI knows about: the session on screen, its other local sessions, and every
     /// connected host, the ones that want attention first. Reached through `agents list --all`.
@@ -517,12 +519,15 @@ pub enum ControlCommand {
     /// Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or
     /// attach its session first. Takes a `location` from `agents-overview`.
     AgentGo { location: AgentLocationSpec },
+    /// Read one agent's record.
     AgentGet { target: AgentTarget },
+    /// Capture the text of an agent's pane.
     AgentRead {
         target: AgentTarget,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scrollback: Option<CaptureScrollback>,
     },
+    /// Report runtime metrics.
     Metrics,
     /// Report this client's extension runtimes and the placed extension processes running through
     /// them: where each runs, under which generation and bundle, and why one that is not running
@@ -552,6 +557,7 @@ pub enum ControlCommand {
     /// List the extensions a session server holds, with the digest and generation each was
     /// deployed under and whether its files still verify.
     ExtensionsStatus,
+    /// Move this client's focus to a pane.
     Focus { target: PaneId },
     /// Send literal text to a pane. `wait` holds the reply until the pane answers; see
     /// [`PaneWait`].
@@ -583,6 +589,7 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scale: Option<u8>,
     },
+    /// Open a pane.
     NewPane {
         /// Shell command line interpreted by the configured command runner.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -675,6 +682,7 @@ pub enum ControlCommand {
     SwitchWorkspace { index: usize },
     /// Move the focused pane to another workspace. `index` is 1-based (1-9).
     MoveToWorkspace { index: usize },
+    /// Open a command in this client's popup pane.
     Popup {
         command: String,
         cwd: Option<String>,
@@ -710,6 +718,7 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+    /// Stream events as line-delimited JSON until the endpoint closes.
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -718,12 +727,14 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<String>,
     },
+    /// Turn logging of a pane's output on or off.
     PaneLogging {
         #[serde(default)]
         target: Option<PaneId>,
         #[serde(default)]
         enabled: Option<bool>,
     },
+    /// Set or clear a pane's reported status.
     SetStatus {
         #[serde(default)]
         target: Option<PaneId>,
@@ -732,12 +743,14 @@ pub enum ControlCommand {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// Wait for an agent to reach a condition.
     AgentWait {
         target: AgentTarget,
         until: AgentWaitCondition,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u64>,
     },
+    /// Type a prompt into an agent, optionally waiting for it to reach a condition.
     AgentPrompt {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture: Option<CaptureRender>,
@@ -750,6 +763,7 @@ pub enum ControlCommand {
         #[serde(default)]
         allow_working: bool,
     },
+    /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default)]
         target: Option<PaneId>,
@@ -762,6 +776,7 @@ pub enum ControlCommand {
         native_session: Option<String>,
         seq: u64,
     },
+    /// Withdraw an integration's agent report from a pane.
     AgentRelease {
         #[serde(default)]
         target: Option<PaneId>,
@@ -865,6 +880,7 @@ pub enum ControlCommand {
     RecordUiStop,
     /// Add a labelled mark to the UI's recording.
     RecordUiMark { label: String },
+    /// Show a picker in this client and stream the selection back.
     Pick {
         #[serde(default)]
         title: Option<String>,

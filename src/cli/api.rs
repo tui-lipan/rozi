@@ -51,27 +51,62 @@ const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("actions-list", &["ActionInfo[]"]),
     ("agent-get", &["AgentInfo"]),
     ("agent-prompt", &["AgentPromptAccepted", "AgentWaitResult"]),
+    ("agent-read", &["PaneCapture"]),
     ("agent-wait", &["AgentWaitResult"]),
     ("agents-list", &["AgentListPayload"]),
     ("agents-overview", &["GlobalAgentListPayload"]),
     ("capture-pane", &["PaneCapture"]),
     ("capture-ui", &["UiCapture"]),
+    ("context", &["CallerContext", "UiContextMetadata"]),
     ("extension-runtime-status", &["ExtensionRuntimeReport"]),
+    ("extensions-deploy", &["ExtensionDeploymentUpload"]),
     ("extensions-status", &["ExtensionDeploymentReport"]),
+    ("extensions-undeploy", &["ExtensionUndeployReport"]),
     ("invocation-cancel", &["InvocationInfo"]),
     ("invocation-list", &["InvocationInfo[]"]),
     ("invoke", &["InvocationResult"]),
     ("layout-get", &["LayoutReport"]),
     ("layout-set", &["LayoutChange"]),
+    ("list-attached-panes", &["PaneListPayload"]),
     ("list-panes", &["PaneListPayload"]),
-    ("metrics", &["SessionMetricsReport"]),
+    ("metrics", &["SessionMetricsReport", "RuntimeMetrics"]),
     ("new-pane", &["NewPaneAccepted"]),
+    ("notify", &["SessionNotification"]),
     ("pane-close", &["PaneClosed"]),
+    ("pane-logging", &["PaneLoggingState"]),
     ("pane-move", &["LayoutChange"]),
     ("pane-reveal", &["PaneRevealed"]),
     ("pane-set", &["LayoutChange"]),
     ("pane-swap", &["LayoutChange"]),
+    ("popup", &["NewPaneAccepted"]),
     ("record-list", &["RecordingListPayload"]),
+    ("record-mark", &["RecordingMarked"]),
+    ("record-start", &["RecordingInfo"]),
+    ("record-stop", &["RecordingStopList"]),
+    ("record-ui-start", &["UiRecordingInfo"]),
+    ("record-ui-stop", &["UiRecordingStopped"]),
+    ("send-keys", &["PaneCapture"]),
+    ("send-text", &["PaneCapture"]),
+    ("subscribe", &["SessionSubscribeRecord", "WireEvent"]),
+];
+
+/// Commands that answer with no named payload. Listed so that a new command has to choose.
+#[cfg(test)]
+const NO_REPLY_PAYLOAD: &[&str] = &[
+    "agent-go",
+    "agent-release",
+    "agent-report",
+    "command-visibility",
+    "focus",
+    "move-to-workspace",
+    "pick",
+    "prompt",
+    "publish",
+    "record-ui-mark",
+    "run-action",
+    "set-status",
+    "sidebar-publish",
+    "switch-workspace",
 ];
 
 fn command_variants(schema: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
@@ -180,6 +215,24 @@ mod tests {
                     "{name} is not in the schema"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_command_is_described_and_chooses_its_reply() {
+        let schema = schema();
+        for variant in command_variants(&schema) {
+            let id = command_id(variant);
+            assert!(
+                variant["description"].is_string(),
+                "{id} has no description"
+            );
+            let named = REPLY_PAYLOADS.iter().any(|(command, _)| *command == id);
+            assert_ne!(
+                named,
+                NO_REPLY_PAYLOAD.contains(&id),
+                "{id} must be in exactly one of REPLY_PAYLOADS and NO_REPLY_PAYLOAD"
+            );
         }
     }
 

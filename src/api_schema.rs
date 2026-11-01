@@ -46,6 +46,8 @@ pub fn bundle() -> Value {
     add::<crate::control::ExtensionRuntimeReport>(&mut generator, &mut roots);
     add::<crate::control::SessionNotification>(&mut generator, &mut roots);
     add::<crate::control::ExtensionDeploymentReport>(&mut generator, &mut roots);
+    add::<crate::control::UiRecordingInfo>(&mut generator, &mut roots);
+    add::<crate::control::UiRecordingStopped>(&mut generator, &mut roots);
     add::<crate::control::ActionInfo>(&mut generator, &mut roots);
     add::<crate::control::InvocationInfo>(&mut generator, &mut roots);
     add::<crate::control::InvocationResult>(&mut generator, &mut roots);

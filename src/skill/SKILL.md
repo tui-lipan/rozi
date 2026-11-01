@@ -299,6 +299,7 @@ Other UI-only tools:
 ```bash
 rozi focus <PANE_ID>                         # only when the user asks
 rozi run-action <ACTION_ID>                  # never guess an id
+rozi invoke <EXT>.<ACTION> --args-json '{}'  # a deployed action's JSON result is in data.result
 rozi notify 'tests failed' --title Build --level error
 branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) || exit 0
 name=$(rozi prompt --title 'Branch name') || exit 0

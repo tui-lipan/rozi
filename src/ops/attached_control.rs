@@ -84,6 +84,56 @@ pub(crate) fn forward_agent(
     Update::none()
 }
 
+/// Forward an action request to the session it belongs to: the calling pane's own, or the session
+/// on screen for a caller outside rozi.
+pub(crate) fn forward_action(
+    ctx: &mut Context<AppRoot>,
+    mut request: ControlRequest,
+    reply: Sender<ControlResponse>,
+) -> Update {
+    let routed = if let Some(provenance) = &request.extension {
+        Err(ControlResponse::error_with(
+            ControlErrorCode::NotPermitted,
+            format!(
+                "a session server cannot check whether extension `{}` is still active, so it does not run actions on its behalf; deploy the caller as a session service",
+                provenance.id
+            ),
+        ))
+    } else {
+        route(&ctx.state, &request)
+    };
+    match routed {
+        Ok(epoch) => {
+            request.source_pane = None;
+            request.source_session = None;
+            send_to_epoch(ctx, epoch, request, AttachedReply::Control(reply));
+        }
+        Err(response) => {
+            let _ = reply.send(response);
+        }
+    }
+    Update::none()
+}
+
+/// Run a deployed action a person chose from the palette and tell them how it went.
+pub(crate) fn run_palette_action(ctx: &mut Context<AppRoot>, id: String) -> Update {
+    let epoch = ctx.state.runtime_epoch;
+    let request = ControlRequest {
+        command: ControlCommand::Invoke {
+            action: id.clone(),
+            args: serde_json::json!({}),
+            timeout_ms: None,
+        },
+        source_pane: None,
+        source_session: None,
+        extension: None,
+        caller_context: None,
+        credential: None,
+    };
+    send_to_epoch(ctx, epoch, request, AttachedReply::PaletteAction(id));
+    Update::none()
+}
+
 fn agent_epoch(
     state: &State,
     command: &ControlCommand,
@@ -296,6 +346,18 @@ fn answer(
         }
         AttachedReply::Action(action) => {
             crate::ops::recording::answered(ctx, epoch, action, response)
+        }
+        AttachedReply::PaletteAction(id) => {
+            if response.ok {
+                crate::pane::pty_events::notify_info(ctx, format!("{id} finished"));
+            } else {
+                crate::pane::pty_events::notify_error(
+                    ctx,
+                    id,
+                    response.error.unwrap_or_else(|| "the action failed".into()),
+                );
+            }
+            Update::full()
         }
     }
 }

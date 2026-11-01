@@ -130,6 +130,19 @@ fn notification_from_fields(
     })
 }
 
+pub(crate) fn session_actions(
+    ctx: &mut Context<crate::app::AppRoot>,
+    epoch: u64,
+    actions: Vec<crate::control::PaletteAction>,
+) -> Update {
+    let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {
+        return Update::none();
+    };
+    attachment.session_actions = actions;
+    ctx.state.commands_dirty = true;
+    Update::full()
+}
+
 pub(crate) fn session_notifications(
     ctx: &mut Context<crate::app::AppRoot>,
     epoch: u64,

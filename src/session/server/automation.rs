@@ -3,9 +3,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 
 use super::deployments::PreparedDeployment;
+use super::invocations::{CallCaller, CallRequest, CallTarget, Invocations, call_spec};
 use super::{ClientId, SessionServer};
+use crate::config::ExtensionAction;
 use crate::control::{
-    ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, SessionServiceStatus,
+    ActionInfo, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse,
+    SessionServiceStatus,
 };
 use crate::extension_runtime::protocol::{Launch, SpawnCwd};
 use crate::extension_runtime::supervisor::{ProcessSpec, ServiceSpec, Supervisor, SupervisorEvent};
@@ -14,6 +17,10 @@ struct ActiveExtension {
     generation: u64,
     credential: String,
     services: Vec<SessionServiceStatus>,
+    actions: Vec<ExtensionAction>,
+    directory: std::path::PathBuf,
+    platforms: Vec<String>,
+    settings: String,
 }
 
 pub(super) struct Automation {
@@ -21,6 +28,7 @@ pub(super) struct Automation {
     events: mpsc::Receiver<SupervisorEvent>,
     extensions: HashMap<String, ActiveExtension>,
     callers: HashMap<ClientId, String>,
+    invocations: Invocations,
 }
 
 impl Automation {
@@ -34,6 +42,7 @@ impl Automation {
             events,
             extensions: HashMap::new(),
             callers: HashMap::new(),
+            invocations: Invocations::new(),
         }
     }
 
@@ -54,6 +63,7 @@ impl Automation {
         for id in retired {
             let active = self.extensions.remove(&id).expect("active extension");
             revoked.insert(active.credential);
+            revoked.extend(self.invocations.retire_extension(&id, active.generation));
             for service in active.services {
                 let _ = self.supervisor.stop_service(service.name);
             }
@@ -138,6 +148,10 @@ impl Automation {
                 generation: definition.generation,
                 credential,
                 services,
+                actions: definition.actions,
+                directory: definition.directory,
+                platforms: definition.platforms,
+                settings: definition.settings,
             },
         );
     }
@@ -191,6 +205,7 @@ impl Automation {
             .extensions
             .values()
             .any(|extension| &extension.credential == credential)
+            && !self.invocations.knows_credential(credential)
         {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::ExtensionInactive,
@@ -210,13 +225,129 @@ impl Automation {
 
     pub fn forget_client(&mut self, client: ClientId) {
         self.callers.remove(&client);
+        self.invocations.abandon_client(client);
+    }
+
+    pub fn invocations(&self) -> &Invocations {
+        &self.invocations
+    }
+
+    pub fn action_infos(&self) -> Vec<ActionInfo> {
+        let mut actions: Vec<_> = self
+            .extensions
+            .values()
+            .flat_map(|extension| &extension.actions)
+            .map(|action| action.info.clone())
+            .collect();
+        actions.sort_by(|a, b| a.id.cmp(&b.id));
+        actions
+    }
+
+    /// The actions a person can run from a palette, which takes no arguments.
+    pub fn palette_actions(&self) -> Vec<crate::control::PaletteAction> {
+        let mut actions: Vec<_> = self
+            .extensions
+            .values()
+            .flat_map(|extension| &extension.actions)
+            .filter(|action| action.runs_without_arguments)
+            .map(|action| crate::control::PaletteAction {
+                id: action.info.id.clone(),
+                title: action.info.title.clone(),
+            })
+            .collect();
+        actions.sort_by(|a, b| a.id.cmp(&b.id));
+        actions
+    }
+
+    pub fn invoke(
+        &mut self,
+        id: &str,
+        request: CallRequest,
+        instance: &str,
+        session: &str,
+    ) -> Option<ControlResponse> {
+        let found = self.extensions.iter().find_map(|(extension, active)| {
+            active
+                .actions
+                .iter()
+                .find(|action| action.info.id == id)
+                .map(|action| (extension, active, action))
+        });
+        let Some((extension, active, action)) = found else {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::ActionNotFound,
+                format!("no deployed action `{id}`"),
+            ));
+        };
+        let env = vec![
+            ("ROZI_EXTENSION".to_string(), extension.clone()),
+            (
+                crate::config::GENERATION_ENV.to_string(),
+                active.generation.to_string(),
+            ),
+            (
+                crate::config::SETTINGS_ENV.to_string(),
+                active.settings.clone(),
+            ),
+            (
+                crate::config::SESSION_NAME_ENV.to_string(),
+                session.to_string(),
+            ),
+            (
+                crate::session::protocol::SESSION_INSTANCE_ENV.to_string(),
+                instance.to_string(),
+            ),
+        ];
+        let unit = format!(
+            "action.{}",
+            id.strip_prefix(extension.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+                .unwrap_or(id)
+        );
+        let target = CallTarget {
+            extension: extension.clone(),
+            generation: active.generation,
+            action: action.clone(),
+            spec: call_spec(
+                active.directory.clone(),
+                active.platforms.clone(),
+                &action.launch,
+                env,
+                unit,
+            ),
+        };
+        self.invocations.start(target, request, instance)
+    }
+
+    /// Calls that ended: each answer with its caller, and the clients whose connections ended with
+    /// the credential of a call they were made from.
+    pub fn drain_invocations(&mut self) -> (Vec<(CallCaller, ControlResponse)>, Vec<ClientId>) {
+        let mut answers = Vec::new();
+        let mut revoked = HashSet::new();
+        for (caller, credential, response) in self.invocations.drain() {
+            answers.push((caller, response));
+            revoked.insert(credential);
+        }
+        let departed = self
+            .callers
+            .iter()
+            .filter(|(_, credential)| revoked.contains(*credential))
+            .map(|(client, _)| *client)
+            .collect();
+        self.callers
+            .retain(|_, credential| !revoked.contains(credential));
+        (answers, departed)
     }
 }
 
 /// Every session-worker command also passes the session endpoint's exhaustive command gate.
 fn session_worker_permitted(command: &ControlCommand) -> bool {
     match command {
-        ControlCommand::Context
+        ControlCommand::Invoke { .. }
+        | ControlCommand::InvocationList
+        | ControlCommand::InvocationCancel { .. }
+        | ControlCommand::ActionsList
+        | ControlCommand::Context
         | ControlCommand::ListPanes
         | ControlCommand::LayoutGet { .. }
         | ControlCommand::LayoutSet { .. }
@@ -269,6 +400,12 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
     }
 }
 
+impl Drop for Automation {
+    fn drop(&mut self) {
+        self.invocations.shut_down();
+    }
+}
+
 impl SessionServer {
     pub(super) fn authorize_session_worker(
         &mut self,
@@ -291,10 +428,17 @@ impl SessionServer {
 
     pub(super) fn activate_deployments(&mut self, prepared: Vec<PreparedDeployment>) {
         let automation = self.automation.get_or_insert_with(Automation::new);
+        let before = automation.palette_actions();
         let retired =
             automation.reconcile(prepared, &self.instance_id.to_string(), &self.session_name);
+        let actions = automation.palette_actions();
         for client in retired {
             self.remove_client(client);
+        }
+        if actions != before {
+            self.broadcast_control(&crate::session::protocol::ServerMessage::SessionActions {
+                actions,
+            });
         }
     }
 }

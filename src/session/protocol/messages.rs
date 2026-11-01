@@ -550,6 +550,10 @@ pub enum ServerMessage {
         session: String,
         notifications: Vec<crate::control::SessionNotification>,
     },
+    /// The deployed actions a client can offer in its palette, sent on attach and when they change.
+    SessionActions {
+        actions: Vec<crate::control::PaletteAction>,
+    },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
         #[serde(default, skip_serializing_if = "Option::is_none")]

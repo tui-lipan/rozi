@@ -561,6 +561,8 @@ pub enum AttachedReply {
     Control(std::sync::mpsc::Sender<crate::control::ControlResponse>),
     /// One of this UI's own recording commands, answered on screen.
     Action(RecordingAction),
+    /// A deployed action run from the palette, answered on screen.
+    PaletteAction(String),
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed

@@ -393,6 +393,16 @@ pub(crate) fn handle_control_request(
                 held_sessions: held,
             })
         }
+        ControlCommand::Invoke { .. }
+        | ControlCommand::InvocationList
+        | ControlCommand::InvocationCancel { .. }
+        | ControlCommand::ActionsList => {
+            return crate::ops::attached_control::forward_action(
+                ctx,
+                envelope.request,
+                envelope.reply,
+            );
+        }
         ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
             return crate::ops::attached_control::forward_agent(
                 ctx,

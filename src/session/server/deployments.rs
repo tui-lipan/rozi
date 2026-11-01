@@ -108,6 +108,7 @@ pub(super) struct PreparedDeployment {
     pub platforms: Vec<String>,
     pub settings: String,
     pub services: Vec<crate::config::PlacedService>,
+    pub actions: Vec<crate::config::ExtensionAction>,
 }
 
 impl SessionDeployments {
@@ -166,6 +167,7 @@ impl SessionDeployments {
             }
             prepared.push(PreparedDeployment {
                 services: checked.session_services(),
+                actions: checked.actions.clone(),
                 id,
                 generation: record.generation,
                 directory,

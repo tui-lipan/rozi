@@ -316,6 +316,7 @@ impl SessionServer {
             && !self.capture_waits.contains_key(&id)
             && !self.holds_recording_reply(id)
             && !self.holds_deployment_reply(id)
+            && !self.holds_invocation_reply(id)
             && !self.is_session_subscriber(id)
         {
             self.set_close_after_flush(id);
@@ -1392,6 +1393,16 @@ impl SessionServer {
                     notifications: self.notifications.iter().cloned().collect(),
                 },
             );
+        }
+        if let Some(automation) = &self.automation {
+            let actions = automation.palette_actions();
+            if !actions.is_empty() {
+                self.enqueue(
+                    client_id,
+                    Target::Sender,
+                    ServerMessage::SessionActions { actions },
+                );
+            }
         }
         if let Some(client_name) = joined_label {
             self.record_session_event(

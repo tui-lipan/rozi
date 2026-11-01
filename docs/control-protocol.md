@@ -127,8 +127,10 @@ Branch on `code`; the message may gain context or change wording. The error code
 `pane-not-found`, `target-required`, `pane-not-running`, `session-not-attached`,
 `session-not-connected`, `input-locked`, `read-only`, `not-controller`, `unsupported`,
 `invalid-argument`, `spawn-failed`, `conflict`, `unavailable`, `agent-gone`, `agent-blocked`,
-`agent-replaced`, `stale-reference`, `timeout`, `request-failed`, `not-permitted`, and
-`out-of-scope`.
+`agent-replaced`, `stale-reference`, `timeout`, `request-failed`, `not-permitted`,
+`out-of-scope`, `action-not-found`, `action-busy`, `action-failed`, `invalid-arguments`,
+`invalid-result`, `invocation-cancelled`, `invocation-depth`, `invocation-limit`,
+`invocation-not-found`, and `invocation-timeout`.
 
 An error normally has no `data`. A failed [pane wait](#pane-waits) is the exception: `timeout` and
 `pane-not-running` carry the pane's capture in `data` when the pane still exists.
@@ -1277,6 +1279,28 @@ provenance. Retiring a generation revokes its credentials and closes its held co
 
 `extensions-status` includes each deployment's `services`, with `name`, `state`, optional `pid`,
 and optional `reason`. A state is `starting`, `running`, `restarting`, or `stopped`.
+
+### Session actions
+
+The `session-actions` capability allows these commands on a session endpoint, and on a UI endpoint,
+which forwards them to the session it is about:
+
+```json
+{"cmd":"invoke","action":"git-tools.run-tests","args":{"package":"rozi"},"timeout_ms":120000}
+{"cmd":"invocation-list"}
+{"cmd":"invocation-cancel","invocation_id":"7f3a..."}
+```
+
+`args` defaults to `{}`, and `timeout_ms` can only shorten the action's deadline. `invoke` holds its
+answer until the call ends: `data` is an `InvocationResult` with `invocation_id` and `result`.
+`invocation-list` answers an array of `InvocationInfo`, with `invocation_id`, `action`, `generation`,
+`depth`, and `deadline_unix_ms`. `invocation-cancel` answers the cancelled call's `InvocationInfo`;
+the call itself then answers `invocation-cancelled`. Closing the connection cancels its calls.
+
+Each call's process holds its own `session-v1:` credential, valid until the call ends. A nested call
+made with it counts one deeper than its caller and inherits the time its caller has left. Requests
+with client-issued provenance are refused. See [Actions](writing-extensions.md#actions) for the
+process contract and limits, and [Call an action](control.md#call-an-action) for the error codes.
 
 ### Session notifications
 

@@ -35,6 +35,9 @@ pub const MAX_FAILURES: u32 = 5;
 /// Default poll interval for checking running processes and pending service restarts.
 pub const DEFAULT_SUPERVISOR_TICK: Duration = Duration::from_millis(50);
 
+/// How long a finished process's captured output may take to reach end of file.
+const CAPTURE_DRAIN: Duration = Duration::from_secs(2);
+
 /// Environment the supervisor sets for every extension process it starts, and never takes from the
 /// caller.
 pub const OWNED_ENV: &[&str] = &[
@@ -57,6 +60,8 @@ pub const INHERITED_ENV_REMOVED: &[&str] = &[
     crate::config::STATE_DIR_ENV,
     crate::config::SESSION_NAME_ENV,
     "ROZI_SERVICE",
+    crate::config::ACTION_ENV,
+    crate::config::INVOCATION_ENV,
 ];
 
 /// The delay after `current`. Every restart path steps the ladder through here so a change to the
@@ -287,6 +292,7 @@ pub struct ExitOutcome {
     pub killed: bool,
     pub timed_out: bool,
     pub output: Option<String>,
+    pub output_bytes: Option<Vec<u8>>,
 }
 
 impl ExitOutcome {
@@ -477,6 +483,11 @@ impl SupervisedProcess {
         })
     }
 
+    /// Take the write end of the process's standard input, so it sees end of file once written.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self._stdin.take()
+    }
+
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
@@ -500,12 +511,16 @@ impl SupervisedProcess {
                 Err(_) => (None, false),
             }
         };
-        let output = self.capture.take().map(|(_, reader)| collect(reader));
+        let output_bytes = self.capture.take().and_then(|(_, reader)| collect(reader));
+        let output = output_bytes
+            .as_ref()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
         let outcome = ExitOutcome {
             code,
             killed: false,
             timed_out,
             output,
+            output_bytes,
         };
         if let Some(log) = &self.log {
             log.finish(&outcome.log_note());
@@ -516,18 +531,31 @@ impl SupervisedProcess {
     /// Terminate the process and its descendants immediately, recording `note` in its log.
     pub fn kill(mut self, note: &str) -> ExitOutcome {
         terminate_with_log(&mut self.child, &self.group, self.log.as_ref(), note);
-        let output = self.capture.take().map(|(_, reader)| collect(reader));
+        let output_bytes = self.capture.take().and_then(|(_, reader)| collect(reader));
+        let output = output_bytes
+            .as_ref()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
         ExitOutcome {
             code: None,
             killed: true,
             timed_out: false,
             output,
+            output_bytes,
         }
     }
 }
 
-fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> String {
-    String::from_utf8_lossy(&reader.join().unwrap_or_default()).into_owned()
+/// What a process captured. `None` when a process that escaped its group still holds the pipe
+/// open: the output never ends, and nothing may wait on it.
+fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> Option<Vec<u8>> {
+    let deadline = Instant::now() + CAPTURE_DRAIN;
+    while !reader.is_finished() {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Some(reader.join().unwrap_or_default())
 }
 
 pub fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {

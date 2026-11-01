@@ -1,5 +1,49 @@
 {
   "$defs": {
+    "ActionConcurrency": {
+      "oneOf": [
+        {
+          "const": "parallel",
+          "description": "Calls may overlap.",
+          "type": "string"
+        },
+        {
+          "const": "singleton",
+          "description": "A call while another runs answers `action-busy`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ActionInfo": {
+      "description": "A deployed action, callable with `invoke`. Separate from keybindable commands, which `run-action`\nruns and which answer nothing.",
+      "properties": {
+        "args_schema": true,
+        "concurrency": {
+          "$ref": "#/$defs/ActionConcurrency"
+        },
+        "deadline_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "result_schema": true,
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "args_schema",
+        "result_schema",
+        "deadline_ms",
+        "concurrency"
+      ],
+      "type": "object"
+    },
     "AgentAuthority": {
       "enum": [
         "reported",
@@ -1572,6 +1616,78 @@
           "type": "object"
         },
         {
+          "description": "Call a deployed action with JSON arguments and answer with its JSON result.",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "args": {
+              "default": {}
+            },
+            "cmd": {
+              "const": "invoke",
+              "type": "string"
+            },
+            "timeout_ms": {
+              "description": "Shortens the action's own deadline. It can never lengthen it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The action calls running in this session.",
+          "properties": {
+            "cmd": {
+              "const": "invocation-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop a running action call. The call itself answers `invocation-cancelled`.",
+          "properties": {
+            "cmd": {
+              "const": "invocation-cancel",
+              "type": "string"
+            },
+            "invocation_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "invocation_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every action deployed in this session, with its schemas.",
+          "properties": {
+            "cmd": {
+              "const": "actions-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Capture a pane. Without `scrollback`, returns the current visible snapshot grid.\nWith `scrollback`, returns scrollback history (`\"full\"` or a trailing line count).\n`render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the\nstyled forms capture the visible grid only. `scale` enlarges a PNG, from 1 (the default) to\n3. `image_pixels` adds each image's pixels to a `spans` capture. `wait` holds the capture\nuntil the visible screen shows some text or stops changing; see [`PaneWait`].",
           "properties": {
             "cmd": {
@@ -2448,7 +2564,17 @@
         "cursor-expired",
         "request-failed",
         "not-permitted",
-        "out-of-scope"
+        "out-of-scope",
+        "action-not-found",
+        "action-busy",
+        "action-failed",
+        "invalid-arguments",
+        "invalid-result",
+        "invocation-cancelled",
+        "invocation-depth",
+        "invocation-limit",
+        "invocation-not-found",
+        "invocation-timeout"
       ],
       "type": "string"
     },
@@ -3172,6 +3298,78 @@
           "required": [
             "cmd",
             "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Call a deployed action with JSON arguments and answer with its JSON result.",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "args": {
+              "default": {}
+            },
+            "cmd": {
+              "const": "invoke",
+              "type": "string"
+            },
+            "timeout_ms": {
+              "description": "Shortens the action's own deadline. It can never lengthen it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The action calls running in this session.",
+          "properties": {
+            "cmd": {
+              "const": "invocation-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stop a running action call. The call itself answers `invocation-cancelled`.",
+          "properties": {
+            "cmd": {
+              "const": "invocation-cancel",
+              "type": "string"
+            },
+            "invocation_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "invocation_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every action deployed in this session, with its schemas.",
+          "properties": {
+            "cmd": {
+              "const": "actions-list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
           ],
           "type": "object"
         },
@@ -4700,6 +4898,56 @@
         "presentation_ack_latency_samples",
         "presentation_ack_latency_us",
         "presentation_ack_latency_max_us"
+      ],
+      "type": "object"
+    },
+    "InvocationInfo": {
+      "description": "One running action call.",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "deadline_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "depth": {
+          "description": "1 for a call from outside an action, one more for each action calling another.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invocation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "action",
+        "generation",
+        "depth",
+        "deadline_unix_ms"
+      ],
+      "type": "object"
+    },
+    "InvocationResult": {
+      "description": "What a successful `invoke` answers with.",
+      "properties": {
+        "invocation_id": {
+          "type": "string"
+        },
+        "result": true
+      },
+      "required": [
+        "invocation_id",
+        "result"
       ],
       "type": "object"
     },
@@ -8083,5 +8331,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 7
+  "x-rozi-schema-version": 8
 }

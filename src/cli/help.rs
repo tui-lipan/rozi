@@ -283,6 +283,14 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Run a bindable action by its command id",
             ),
             row(
+                "invoke <ACTION> [--args-json JSON] [--timeout DUR]",
+                "Call a deployed action",
+            ),
+            row(
+                "invocation list | cancel <ID>",
+                "List or stop running action calls",
+            ),
+            row(
                 "notify <MESSAGE> [--title T] [--level info|error]",
                 "Raise a toast from a script",
             ),

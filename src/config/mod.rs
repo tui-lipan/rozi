@@ -24,15 +24,15 @@ pub use extensions::placement::{
 };
 pub use extensions::revision as extension_store_revision;
 pub use extensions::{
-    DiscoverReadiness, EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
+    ACTION_ENV, DiscoverReadiness, EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
     ExtensionCheckDocument, ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic,
     ExtensionLinkHandlerDiagnostic, ExtensionListDocument, ExtensionNavigationTargetDiagnostic,
     ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettings, ExtensionStatus,
     ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus, GENERATION_ENV,
-    SESSION_NAME_ENV, SETTINGS_ENV, STATE_DIR_ENV,
+    INVOCATION_ENV, SESSION_NAME_ENV, SETTINGS_ENV, STATE_DIR_ENV,
 };
 pub(crate) use extensions::{
-    ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig,
+    ExtensionAction, ReportKind, ReportRow, ReportSection, ReportTone, UserExtensionConfig,
     apply_suggested_keybinding_resolutions, authoring_hints, check_extension,
     create_extension_scaffold, discover_readiness, extensions_dir_path, is_extension_scoped_id,
     merge_extension_settings, prepare_state_dir, provenance_from_process, provenance_is_active,

@@ -1267,6 +1267,73 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output: None,
                 }));
             }
+            "invoke" => {
+                let action = require_value(&mut iter, "invoke requires an action id")?;
+                let mut args = None;
+                let mut timeout_ms = None;
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "--args-json" => {
+                            let text = require_value(&mut iter, "--args-json requires JSON")?;
+                            args = Some(
+                                serde_json::from_str(&text)
+                                    .map_err(|error| format!("--args-json: {error}"))?,
+                            );
+                        }
+                        "--timeout" => {
+                            let value = require_value(&mut iter, "--timeout requires a duration")?;
+                            timeout_ms = Some(parse_duration_ms(&value, "--timeout")?);
+                        }
+                        other => {
+                            return Err(format!("unexpected argument `{other}` after invoke"));
+                        }
+                    }
+                }
+                let command = control::ControlCommand::Invoke {
+                    action,
+                    args: args.unwrap_or_else(|| serde_json::json!({})),
+                    timeout_ms,
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format: None,
+                    output: None,
+                }));
+            }
+            "invocation" => {
+                let verb = require_value(
+                    &mut iter,
+                    "invocation requires a subcommand (expected `list` or `cancel`)",
+                )?;
+                let command = match verb.as_str() {
+                    "list" => {
+                        reject_trailing_control_args(&mut iter, "invocation list")?;
+                        control::ControlCommand::InvocationList
+                    }
+                    "cancel" => {
+                        let invocation_id = require_value(
+                            &mut iter,
+                            "invocation cancel requires an invocation id",
+                        )?;
+                        reject_trailing_control_args(&mut iter, "invocation cancel")?;
+                        control::ControlCommand::InvocationCancel { invocation_id }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unknown invocation subcommand `{other}`; expected `list` or `cancel`"
+                        ));
+                    }
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format: None,
+                    output: None,
+                }));
+            }
             "capture-pane" => {
                 let mut target = None;
                 let mut scrollback = None;
@@ -2057,6 +2124,54 @@ mod tests {
             ParsedCli::ApiSchema
         ));
         assert!(parse_cli_args(vec!["api".into(), "schema".into(), "extra".into()]).is_err());
+        let args = |list: &[&str]| {
+            list.iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>()
+        };
+        let invoked = |list: &[&str]| match parse_cli_args(args(list)).expect("parses") {
+            ParsedCli::Control(control) => control.request.command,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            invoked(&[
+                "invoke",
+                "demo.run",
+                "--args-json",
+                "{\"a\":1}",
+                "--timeout",
+                "2s"
+            ]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({"a": 1}),
+                timeout_ms: Some(2000),
+            }
+        );
+        assert_eq!(
+            invoked(&["invoke", "demo.run"]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({}),
+                timeout_ms: None,
+            }
+        );
+        assert_eq!(
+            invoked(&["invocation", "cancel", "abc"]),
+            control::ControlCommand::InvocationCancel {
+                invocation_id: "abc".into()
+            }
+        );
+        for bad in [
+            &["invoke"][..],
+            &["invoke", "x", "--args-json", "{"],
+            &["invoke", "x", "extra"],
+            &["invocation"],
+            &["invocation", "cancel"],
+            &["invocation", "other"],
+        ] {
+            assert!(parse_cli_args(args(bad)).is_err(), "{bad:?}");
+        }
         assert!(parse_cli_args(vec!["api".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
         assert!(matches!(

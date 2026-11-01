@@ -847,6 +847,12 @@ pub enum Msg {
         epoch: u64,
         event: crate::session::server::events::SessionEvent,
     },
+    SessionActions {
+        epoch: u64,
+        actions: Vec<crate::control::PaletteAction>,
+    },
+    /// A person chose a deployed action from the palette.
+    RunPaletteAction(String),
     SessionRuntimeMetrics {
         epoch: u64,
     },

@@ -140,6 +140,10 @@ settings = ["sort", "confirm"]
   `docs/configuration.md#links-handlers`, retaining settings, generation, and placement.
   User handlers precede extension declarations. Invalid handlers invalidate the whole extension.
   This requires the `extension-link-handlers` capability from `rozi api describe`.
+- `[[actions]]` run in the session they are deployed to, for `rozi invoke`: JSON arguments on stdin
+  and one JSON result on stdout, each checked against the required `args_schema` and `result_schema`.
+  Use one instead of a command when the caller needs an answer. Limits and the process contract are
+  in `docs/writing-extensions.md#actions`.
 - A service declares exactly one of `exec` or `shell`; restart is `on-failure` (default), `always`,
   or `never`.
 - `{extension_dir}` is the only substitution in direct argv, and it is also substituted into a

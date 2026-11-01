@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 7;
+pub const API_SCHEMA_VERSION: u32 = 8;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -112,6 +112,9 @@ pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 /// A session server stores, verifies, lists, and removes extension deployments of its own, so a
 /// client can hand it the files an extension will run when no UI is attached.
 pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
+/// A session server runs deployed actions: `invoke`, `invocation-list`, `invocation-cancel`, and
+/// `actions-list`.
+pub const SESSION_ACTIONS_CAPABILITY: &str = "session-actions";
 pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
 pub const SESSION_NOTIFICATIONS_CAPABILITY: &str = "session-notifications";
 
@@ -161,6 +164,7 @@ impl ApiDescription {
                 REMOTE_CONTROL_CAPABILITY,
                 crate::extension_runtime::protocol::CAPABILITY,
                 RUNTIME_EVENTS_CAPABILITY,
+                SESSION_ACTIONS_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SESSION_DEPLOYMENTS_CAPABILITY,
                 SESSION_NO_RESURRECT_CAPABILITY,
@@ -629,6 +633,23 @@ pub enum ControlCommand {
     RunAction {
         action: String,
     },
+    /// Call a deployed action with JSON arguments and answer with its JSON result.
+    Invoke {
+        action: String,
+        #[serde(default = "empty_action_args")]
+        args: serde_json::Value,
+        /// Shortens the action's own deadline. It can never lengthen it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+    },
+    /// The action calls running in this session.
+    InvocationList,
+    /// Stop a running action call. The call itself answers `invocation-cancelled`.
+    InvocationCancel {
+        invocation_id: String,
+    },
+    /// Every action deployed in this session, with its schemas.
+    ActionsList,
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
     /// `render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the
@@ -2344,6 +2365,66 @@ pub struct SessionMetricsReport {
     pub server: crate::runtime_metrics::CachedServerRuntimeMetrics,
 }
 
+/// Largest action arguments and result, as encoded JSON.
+pub const ACTION_PAYLOAD_BYTES: usize = 512 * 1024;
+/// Longest deadline an action may declare.
+pub const ACTION_DEADLINE_MAX_MS: u64 = 600_000;
+
+fn empty_action_args() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
+/// What a successful `invoke` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct InvocationResult {
+    pub invocation_id: String,
+    pub result: serde_json::Value,
+}
+
+/// One running action call.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct InvocationInfo {
+    pub invocation_id: String,
+    pub action: String,
+    pub generation: u64,
+    /// 1 for a call from outside an action, one more for each action calling another.
+    pub depth: u8,
+    pub deadline_unix_ms: u64,
+}
+
+/// An action a client may offer in its palette: it needs no arguments.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaletteAction {
+    pub id: String,
+    pub title: String,
+}
+
+/// A deployed action, callable with `invoke`. Separate from keybindable commands, which `run-action`
+/// runs and which answer nothing.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ActionInfo {
+    pub id: String,
+    pub title: String,
+    pub args_schema: serde_json::Value,
+    pub result_schema: serde_json::Value,
+    pub deadline_ms: u64,
+    pub concurrency: ActionConcurrency,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ActionConcurrency {
+    /// Calls may overlap.
+    #[default]
+    Parallel,
+    /// A call while another runs answers `action-busy`.
+    Singleton,
+}
+
 /// A notification retained by its session and presented independently by each client.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2467,6 +2548,16 @@ pub enum ControlErrorCode {
     // A placed extension process asked about a session outside the host or session it was placed
     // for.
     OutOfScope,
+    ActionNotFound,
+    ActionBusy,
+    ActionFailed,
+    InvalidArguments,
+    InvalidResult,
+    InvocationCancelled,
+    InvocationDepth,
+    InvocationLimit,
+    InvocationNotFound,
+    InvocationTimeout,
 }
 
 /// Where a control request came from. Never part of the wire format: it is what the UI knows about
@@ -3169,6 +3260,12 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
         ControlCommand::RecordStop { .. } | ControlCommand::RecordUiStop
     ) {
         return crate::session::headless::RECORDING_STOP_TIMEOUT;
+    }
+    if let ControlCommand::Invoke { timeout_ms, .. } = command {
+        return Duration::from_millis(
+            timeout_ms.map_or(ACTION_DEADLINE_MAX_MS, |ms| ms.min(ACTION_DEADLINE_MAX_MS)),
+        )
+        .saturating_add(REPLY_TIMEOUT);
     }
     if let ControlCommand::AgentWait {
         timeout_ms: Some(timeout_ms),

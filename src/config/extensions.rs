@@ -8,7 +8,9 @@ use super::schema::{
 };
 use tui_lipan::prelude::KeyBinding;
 
+mod actions;
 mod advice;
+pub(crate) use actions::ExtensionAction;
 mod authoring;
 mod contributions;
 mod diagnostics;
@@ -75,6 +77,10 @@ pub const STATE_DIR_ENV: &str = "ROZI_EXTENSION_STATE_DIR";
 /// command tab, the bound one for a session-placed service. A name rather than the session's
 /// instance, which changes every time its server starts, so state keyed by it lasts.
 pub const SESSION_NAME_ENV: &str = "ROZI_SESSION_NAME";
+/// The action an action's process was started for.
+pub const ACTION_ENV: &str = "ROZI_ACTION";
+/// The call an action's process is answering, as `invocation cancel` names it.
+pub const INVOCATION_ENV: &str = "ROZI_INVOCATION_ID";
 
 /// Create the state directory an extension process is about to be given, before it starts.
 ///
@@ -274,6 +280,7 @@ impl ExtensionInfo {
 pub(crate) struct DiscoveredExtension {
     pub(crate) info: ExtensionInfo,
     commands: Vec<NamedCommand>,
+    pub(crate) actions: Vec<ExtensionAction>,
     link_handlers: Vec<super::LinkHandler>,
     services: Vec<ServiceConfig>,
     agents: Vec<crate::agent_detection::AgentDefinition>,
@@ -492,6 +499,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                actions: Vec::new(),
                 link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
@@ -513,6 +521,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                actions: Vec::new(),
                 link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
@@ -535,6 +544,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             return DiscoveredExtension {
                 info,
                 commands: Vec::new(),
+                actions: Vec::new(),
                 link_handlers: Vec::new(),
                 services: Vec::new(),
                 agents: Vec::new(),
@@ -631,6 +641,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
             &mut placed,
         );
     }
+    let actions = actions::validate_actions(manifest.actions, &validation_id, &mut info.errors);
     let mut link_handlers = Vec::new();
     for raw in manifest.link_handlers {
         let schemes: Vec<_> = raw
@@ -829,7 +840,8 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     // A placed contribution runs from a snapshot of exactly these files. Taking it now, with the
     // manifest, is what makes it the generation that loaded rather than whatever is on disk later.
     let mut bundle = None;
-    if api_error.is_none() && info.errors.is_empty() && !placed.is_empty() {
+    let runs_elsewhere = !placed.is_empty() || !actions.is_empty();
+    if api_error.is_none() && info.errors.is_empty() && runs_elsewhere {
         match crate::extension_runtime::bundle::snapshot(&directory) {
             Ok(snapshot) => {
                 info.bundle = Some(snapshot.digest().to_string());
@@ -846,7 +858,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         Some((ExtensionStatus::Invalid, None))
     } else if let Some(error) = version_error {
         Some((ExtensionStatus::Incompatible, Some(error)))
-    } else if placed.is_empty() {
+    } else if !runs_elsewhere {
         platform_error
             .clone()
             .map(|error| (ExtensionStatus::Incompatible, Some(error)))
@@ -908,6 +920,7 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
     DiscoveredExtension {
         info,
         commands,
+        actions,
         link_handlers,
         services,
         agents,
@@ -2406,6 +2419,7 @@ mod tests {
         assert_eq!(
             keys(properties),
             [
+                "actions",
                 "agents",
                 "commands",
                 "extension",
@@ -2598,6 +2612,90 @@ mod tests {
 
     fn placed_manifest(id: &str, body: &str) -> String {
         format!("{}{body}", manifest(id, "1"))
+    }
+
+    #[test]
+    fn actions_are_validated_and_load_on_a_client_they_cannot_run_on() {
+        let temp = tempfile::tempdir().unwrap();
+        let action = |fields: &str| {
+            format!(
+                "[[actions]]\nid = \"run\"\ntitle = \"Run\"\nexec = [\"sh\"]\n\
+                 args_schema = {{}}\nresult_schema = {{}}\n{fields}"
+            )
+        };
+        let load = |id: &str, head: &str, body: String| {
+            write_manifest(temp.path(), id, &format!("{head}{body}"));
+            scan_extensions_in(temp.path())
+                .extensions
+                .into_iter()
+                .find(|extension| extension.info.id.as_deref() == Some(id))
+                .unwrap()
+        };
+        let good = load(
+            "good",
+            &manifest("good", "1"),
+            action("concurrency = \"singleton\"\n"),
+        );
+        assert_eq!(good.info.errors, Vec::<String>::new());
+        assert_eq!(good.actions[0].info.id, "good.run");
+        assert!(good.actions[0].runs_without_arguments);
+
+        let required = load(
+            "required",
+            &manifest("required", "1"),
+            "[[actions]]\nid = \"run\"\ntitle = \"Run\"\nexec = [\"sh\"]\n\
+             args_schema = { type = \"object\", required = [\"a\"] }\nresult_schema = {}\n"
+                .to_string(),
+        );
+        assert!(!required.actions[0].runs_without_arguments);
+
+        for (id, body, expected) in [
+            ("client", action("placement = \"client\"\n"), "reserved"),
+            ("deadline", action("deadline_ms = 600001\n"), "deadline_ms"),
+            (
+                "absolute",
+                action("").replace("\"sh\"", "\"/bin/sh\""),
+                "run",
+            ),
+            (
+                "remote-ref",
+                action("").replace(
+                    "args_schema = {}",
+                    "args_schema = { \"$ref\" = \"https://example.com/s.json\" }",
+                ),
+                "schema",
+            ),
+            (
+                "twice",
+                format!("{}{}", action(""), action("")),
+                "duplicate",
+            ),
+        ] {
+            let bad = load(id, &manifest(id, "1"), body);
+            assert_eq!(bad.info.status, ExtensionStatus::Invalid, "{id}");
+            assert!(
+                bad.info.errors.iter().any(|error| error.contains(expected)),
+                "{id}: {:?}",
+                bad.info.errors
+            );
+        }
+
+        let foreign_os = if cfg!(windows) { "linux" } else { "windows" };
+        let elsewhere = load(
+            "elsewhere",
+            &format!(
+                "{}platforms = [\"{foreign_os}\"]\n",
+                manifest("elsewhere", "1")
+            ),
+            action(""),
+        );
+        assert_eq!(
+            elsewhere.info.status,
+            ExtensionStatus::Loaded,
+            "{:?}",
+            elsewhere.info.errors
+        );
+        assert!(elsewhere.info.bundle.is_some());
     }
 
     fn contributions_in(root: &Path) -> contributions::ExtensionContributions {

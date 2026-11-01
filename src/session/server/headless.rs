@@ -1570,17 +1570,8 @@ impl SessionServer {
             );
         };
         match self.apply_pane_status(None, id, generation, status, reason) {
-            Ok(Some(state)) => {
-                broadcasts.push((
-                    Target::Broadcast,
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id: id,
-                        local: false,
-                        generation,
-                        agents: self.agent_records(None, id),
-                        state,
-                    },
-                ));
+            Ok(Some(message)) => {
+                broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),
@@ -1623,17 +1614,8 @@ impl SessionServer {
                 seq,
             },
         ) {
-            Ok(Some(state)) => {
-                broadcasts.push((
-                    Target::Broadcast,
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id: id,
-                        local: false,
-                        generation,
-                        agents: self.agent_records(None, id),
-                        state,
-                    },
-                ));
+            Ok(Some(message)) => {
+                broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),

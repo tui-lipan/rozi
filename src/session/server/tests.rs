@@ -8320,6 +8320,32 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
             let mut zero = EventParityHarness::new(0);
             run_session_event_parity_mutations(&mut zero);
             assert!(zero.drain_client_events().is_empty());
+            let server_kinds: Vec<crate::events::EventKind> = zero
+                .server
+                .session_events()
+                .iter()
+                .map(|event| event.kind)
+                .collect();
+            assert_eq!(
+                server_kinds,
+                vec![
+                    crate::events::EventKind::PaneStatusChanged,
+                    crate::events::EventKind::AgentStateChanged,
+                    crate::events::EventKind::PaneStatusChanged,
+                    crate::events::EventKind::AgentStateChanged,
+                    crate::events::EventKind::AgentStateChanged,
+                    crate::events::EventKind::AgentStateChanged,
+                    crate::events::EventKind::AgentStateChanged,
+                    crate::events::EventKind::ForegroundChanged,
+                    crate::events::EventKind::ForegroundChanged,
+                    crate::events::EventKind::ClientJoined,
+                    crate::events::EventKind::ClientLeft,
+                    crate::events::EventKind::PaneSpawned,
+                    crate::events::EventKind::LayoutChanged,
+                    crate::events::EventKind::SessionRenamed,
+                    crate::events::EventKind::PaneExited,
+                ]
+            );
         }
 
         // With 1 client attached: the single client observes all session state transitions.

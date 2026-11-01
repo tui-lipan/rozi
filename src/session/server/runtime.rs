@@ -635,6 +635,30 @@ impl SessionServer {
         })
     }
 
+    /// Build a [`ServerMessage::PaneRuntimeChanged`] after a pane's runtime state has changed,
+    /// recording any resulting session events (`pane-status-changed`, `agent-state-changed`,
+    /// `foreground-changed`) against `baseline`.
+    pub(super) fn finish_pane_runtime_change(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        state: PaneRuntimeState,
+        baseline: Option<events::PaneRuntimeBaseline>,
+    ) -> ServerMessage {
+        let agents = self.agent_records(owner, pane_id);
+        if let Some(baseline) = baseline {
+            baseline.record_changes(&mut self.session_events, &state, &agents);
+        }
+        ServerMessage::PaneRuntimeChanged {
+            pane_id,
+            local: wire_local(owner),
+            generation,
+            agents,
+            state,
+        }
+    }
+
     pub(super) fn set_pane_status(
         &mut self,
         client_id: ClientId,
@@ -643,7 +667,7 @@ impl SessionServer {
         local: bool,
         status: Option<String>,
         reason: Option<String>,
-    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+    ) -> std::result::Result<Option<ServerMessage>, (&'static str, String)> {
         if !self.client_attached(client_id) {
             return Err(("attach-required", "client is not attached".to_string()));
         }
@@ -672,7 +696,8 @@ impl SessionServer {
         generation: u64,
         status: Option<String>,
         reason: Option<String>,
-    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+    ) -> std::result::Result<Option<ServerMessage>, (&'static str, String)> {
+        let session_instance = self.instance_id.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
@@ -719,6 +744,9 @@ impl SessionServer {
             return Ok(None);
         }
 
+        let baseline = owner
+            .is_none()
+            .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let previous_runtime = pane.runtime.clone();
         let before = pane.agent.agent_states(&pane.runtime);
         let set_at = SystemTime::now()
@@ -739,8 +767,9 @@ impl SessionServer {
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
+        let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         self.resolve_agent_waits();
-        Ok(Some(state))
+        Ok(Some(message))
     }
 
     /// Replace one publisher's rows in a pane, leaving every other publisher's rows alone. An
@@ -757,7 +786,7 @@ impl SessionServer {
         local: bool,
         publisher: PanePublisher,
         rows: Vec<protocol::PublishedRow>,
-    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+    ) -> std::result::Result<Option<ServerMessage>, (&'static str, String)> {
         if !self.client_attached(client_id) {
             return Err(("attach-required", "client is not attached".to_string()));
         }
@@ -778,6 +807,7 @@ impl SessionServer {
             kind: publisher.kind,
         };
         let owner = local.then_some(client_id);
+        let session_instance = self.instance_id.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
         };
@@ -861,11 +891,15 @@ impl SessionServer {
         if next == pane.runtime.rows {
             return Ok(None);
         }
+        let baseline = owner
+            .is_none()
+            .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let resume_before = super::resurrect::resume_target(pane);
         replace_pane_rows(pane, next);
         retire_orphaned_row_reports(pane);
         let resume_changed = super::resurrect::resume_target(pane) != resume_before;
         let state = pane.runtime.clone();
+        let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         // The snapshot names the conversation a restore reopens. A publisher switching it is a
         // change the snapshot has to catch even if the pane prints nothing afterwards; an activity
         // update, or a row change that leaves the conversation as it was, is not.
@@ -873,7 +907,7 @@ impl SessionServer {
             self.mark_dirty();
         }
         self.resolve_agent_waits();
-        Ok(Some(state))
+        Ok(Some(message))
     }
 
     /// Withdraw every row a departing client published into a shared pane, and say so to the
@@ -884,10 +918,15 @@ impl SessionServer {
     /// sent on closing never arrives. Its own local panes go with it anyway.
     pub(super) fn withdraw_client_rows(&mut self, client: ClientId) -> Vec<ServerMessage> {
         let session_instance = self.instance_id.clone();
-        let mut messages = Vec::new();
+        let mut changed_panes = Vec::new();
         let mut resume_changed = false;
         let now = unix_now_secs();
-        for (&pane_id, pane) in &mut self.panes {
+        let mut pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
+        pane_ids.sort_unstable();
+        for pane_id in pane_ids {
+            let Some(pane) = self.panes.get_mut(&pane_id) else {
+                continue;
+            };
             let departs = |publisher: &str| {
                 protocol::publisher_owner(publisher).is_some_and(|(owner, _)| owner == client)
             };
@@ -904,6 +943,7 @@ impl SessionServer {
             if next.len() == pane.runtime.rows.len() {
                 continue;
             }
+            let baseline = events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane);
             let withdrawn: Vec<_> = protocol::rows_with_integration(&pane.runtime)
                 .into_iter()
                 .filter(|row| departs(&row.publisher))
@@ -936,17 +976,17 @@ impl SessionServer {
                 pane.agent.retained_resume = Some(before);
             }
             resume_changed |= super::resurrect::resume_target(pane) != target_before;
-            messages.push(ServerMessage::PaneRuntimeChanged {
+            changed_panes.push((pane_id, pane.generation, pane.runtime.clone(), baseline));
+        }
+        let mut messages = Vec::with_capacity(changed_panes.len());
+        for (pane_id, generation, state, baseline) in changed_panes {
+            messages.push(self.finish_pane_runtime_change(
+                None,
                 pane_id,
-                local: wire_local(None),
-                generation: pane.generation,
-                agents: pane.agent.records(protocol::PaneRef {
-                    session_instance: session_instance.clone(),
-                    pane_id,
-                    generation: pane.generation,
-                }),
-                state: pane.runtime.clone(),
-            });
+                generation,
+                state,
+                Some(baseline),
+            ));
         }
         if resume_changed {
             self.mark_dirty();
@@ -963,7 +1003,7 @@ impl SessionServer {
         pane_id: PaneId,
         generation: u64,
         update: AgentIntegrationUpdate,
-    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+    ) -> std::result::Result<Option<ServerMessage>, (&'static str, String)> {
         let session_instance = self.instance_id.clone();
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return Err(("pane-not-found", format!("pane {pane_id} not found")));
@@ -989,6 +1029,9 @@ impl SessionServer {
         if !to_row {
             validate_integration_update(pane, &integration, report.as_ref(), seq, pane_id)?;
         }
+        let baseline = owner
+            .is_none()
+            .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let before = pane.agent.agent_states(&previous_runtime);
 
         if to_row {
@@ -1053,9 +1096,10 @@ impl SessionServer {
         pane.agent.observe(before, &pane.runtime);
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
+        let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
         self.resolve_agent_waits();
         self.mark_dirty();
-        Ok(Some(state))
+        Ok(Some(message))
     }
 
     /// Re-read agent definitions from this server's config and re-detect every pane against them.
@@ -1273,24 +1317,16 @@ impl SessionServer {
             }
             return;
         }
-        let pane_ref = protocol::PaneRef {
-            session_instance,
-            pane_id,
-            generation,
-        };
+        let baseline = owner
+            .is_none()
+            .then(|| events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane));
         let before = pane.agent.agent_states(&pane.runtime);
         let snapshot_foreground_changed = tracks_snapshot_foreground
             && pane.launch.is_none()
             && resurrection_foreground_changed(&pane.runtime, &next);
         pane.agent.observe(before, &next);
         pane.runtime = next.clone();
-        let message = ServerMessage::PaneRuntimeChanged {
-            pane_id,
-            local: wire_local(owner),
-            generation,
-            agents: pane.agent.records(pane_ref),
-            state: next,
-        };
+        let message = self.finish_pane_runtime_change(owner, pane_id, generation, next, baseline);
         if let Some(owner) = owner {
             self.enqueue(owner, Target::Client(owner), message);
         } else {

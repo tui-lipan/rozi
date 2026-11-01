@@ -588,19 +588,13 @@ impl SessionServer {
                 reason,
             } => {
                 match self.set_pane_status(client_id, pane_id, generation, local, status, reason) {
-                    Ok(Some(state)) => vec![(
+                    Ok(Some(message)) => vec![(
                         if local {
                             Target::Client(client_id)
                         } else {
                             Target::Broadcast
                         },
-                        ServerMessage::PaneRuntimeChanged {
-                            pane_id,
-                            local,
-                            generation,
-                            agents: self.agent_records(local.then_some(client_id), pane_id),
-                            state,
-                        },
+                        message,
                     )],
                     Ok(None) => Vec::new(),
                     Err((code, message)) => vec![(
@@ -650,17 +644,8 @@ impl SessionServer {
                         seq,
                     },
                 ) {
-                    Ok(Some(state)) => vec![
-                        (
-                            owner.map_or(Target::Broadcast, Target::Client),
-                            ServerMessage::PaneRuntimeChanged {
-                                pane_id,
-                                local,
-                                generation,
-                                agents: self.agent_records(owner, pane_id),
-                                state,
-                            },
-                        ),
+                    Ok(Some(message)) => vec![
+                        (owner.map_or(Target::Broadcast, Target::Client), message),
                         (
                             Target::Sender,
                             ServerMessage::AgentReportResult {
@@ -724,19 +709,13 @@ impl SessionServer {
                 },
                 rows,
             ) {
-                Ok(Some(state)) => vec![(
+                Ok(Some(message)) => vec![(
                     if local {
                         Target::Client(client_id)
                     } else {
                         Target::Broadcast
                     },
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id,
-                        local,
-                        generation,
-                        agents: self.agent_records(local.then_some(client_id), pane_id),
-                        state,
-                    },
+                    message,
                 )],
                 Ok(None) => Vec::new(),
                 Err((code, message)) => vec![(
@@ -1360,7 +1339,9 @@ impl SessionServer {
             self.emit_media_batch();
         }
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
+        let mut joined_label = None;
         if let Some(client) = self.client_mut(client_id) {
+            let was_attached = client.attached;
             client.capabilities = capabilities.clone();
             client.attached = true;
             client.label = Some(label);
@@ -1368,6 +1349,9 @@ impl SessionServer {
             client.shares_filesystem = shares_filesystem;
             client.last_pong = Instant::now();
             client.effective_protocol = effective;
+            if !was_attached {
+                joined_label = client.label.clone();
+            }
         }
         self.sync_image_media_policy();
         // First attacher is auto-granted the layout-control lease.
@@ -1378,6 +1362,7 @@ impl SessionServer {
             false
         };
         let clients = self.client_roster();
+        let count = clients.len().to_string();
         let attached = ServerMessage::Attached {
             capabilities: Some(capabilities),
             session_instance: self.instance_id.clone(),
@@ -1395,14 +1380,21 @@ impl SessionServer {
             origin: self.origin.clone(),
         };
         let mut responses = vec![(Target::Sender, attached)];
+        if let Some(client_name) = joined_label {
+            self.record_session_event(
+                events::EventKind::ClientJoined,
+                vec![
+                    ("client_id", client_id.to_string()),
+                    ("client_name", client_name),
+                    ("count", count),
+                ],
+            );
+        }
         responses.push((Target::Broadcast, self.clients_changed()));
         if granted {
             responses.push((
                 Target::Broadcast,
-                ServerMessage::ControllerChanged {
-                    controller: self.controller,
-                    reason: ControllerChangeReason::Granted,
-                },
+                self.controller_changed_message(self.controller, ControllerChangeReason::Granted),
             ));
         }
         responses

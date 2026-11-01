@@ -29,6 +29,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
+pub mod events;
 mod graphics;
 mod graphics_pacer;
 mod headless;
@@ -178,6 +179,7 @@ pub struct SessionServer {
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
+    session_events: events::SessionEventBuffer,
     /// Aggregate high-water across every client outbox for this server process's lifetime.
     outbox_high_water_bytes: usize,
     departed_coalesced_frames: u64,
@@ -1697,10 +1699,12 @@ impl SessionServer {
     ) -> Self {
         let session_name = session_name.into();
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
+        let instance_id = protocol::SessionInstanceId::generate();
+        let session_events = events::SessionEventBuffer::new(instance_id.clone());
         Self {
             retired_media: VecDeque::new(),
             acquisition_reaper_cursor: 0,
-            instance_id: protocol::SessionInstanceId::generate(),
+            instance_id,
             panes: HashMap::new(),
             local_panes: HashMap::new(),
             next_generation: 1,
@@ -1722,6 +1726,7 @@ impl SessionServer {
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
+            session_events,
             outbox_high_water_bytes: 0,
             departed_coalesced_frames: 0,
             departed_coalesced_bytes: 0,
@@ -1754,6 +1759,18 @@ impl SessionServer {
 
     pub fn instance_id(&self) -> &protocol::SessionInstanceId {
         &self.instance_id
+    }
+
+    pub fn session_events(&self) -> &events::SessionEventBuffer {
+        &self.session_events
+    }
+
+    pub(super) fn record_session_event(
+        &mut self,
+        kind: events::EventKind,
+        fields: Vec<(&'static str, String)>,
+    ) {
+        self.session_events.record(kind, fields);
     }
 
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {

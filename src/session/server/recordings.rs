@@ -682,22 +682,19 @@ impl SessionServer {
             .recordings
             .values()
             .any(|recording| recording.pane_id == pane_id);
+        let session_instance = self.instance_id.clone();
         let Some(pane) = self.panes.get_mut(&pane_id) else {
             return;
         };
         if pane.runtime.recording == recording {
             return;
         }
+        let baseline = events::PaneRuntimeBaseline::capture(&session_instance, pane_id, pane);
         pane.runtime.recording = recording;
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let (generation, state) = (pane.generation, pane.runtime.clone());
-        let message = ServerMessage::PaneRuntimeChanged {
-            pane_id,
-            local: false,
-            generation,
-            agents: self.agent_records(None, pane_id),
-            state,
-        };
+        let message =
+            self.finish_pane_runtime_change(None, pane_id, generation, state, Some(baseline));
         self.broadcast_outbound(&ServerOutbound::control(message));
     }
 

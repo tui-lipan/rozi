@@ -62,7 +62,11 @@ impl SessionServer {
         }
         let retired = self.endpoint.replace(new_endpoint);
         self.pending_listener = Some((listener, retired));
-        self.session_name = name.clone();
+        let previous = std::mem::replace(&mut self.session_name, name.clone());
+        self.record_session_event(
+            events::EventKind::SessionRenamed,
+            vec![("session", name.clone()), ("previous", previous)],
+        );
         ServerMessage::Renamed { session: name }
     }
 
@@ -574,6 +578,10 @@ impl SessionServer {
                         }
                         if owner.is_none() {
                             self.mark_dirty();
+                            self.record_session_event(
+                                events::EventKind::PaneExited,
+                                vec![("pane", id.to_string()), ("code", code.to_string())],
+                            );
                         }
                         self.sync_pane_runtime(owner, id, generation);
                         self.resolve_agent_waits();
@@ -827,6 +835,12 @@ impl SessionServer {
         }
         self.sync_pane_runtime(owner, id, generation);
         if died.is_some() {
+            if owner.is_none() {
+                self.record_session_event(
+                    events::EventKind::PaneExited,
+                    vec![("pane", id.to_string()), ("code", code.to_string())],
+                );
+            }
             self.send_outbound(
                 owner,
                 &ServerOutbound::PaneOutput {

@@ -168,14 +168,13 @@ impl Automation {
     pub fn poll(&mut self) {
         for event in self.events.try_iter() {
             let (name, state, pid, reason) = match event {
-                SupervisorEvent::ServiceSpawned { name, pid } => (name, "running", Some(pid), None),
-                SupervisorEvent::ServiceRestartScheduled { name, detail, .. } => {
+                SupervisorEvent::Spawned { name, pid } => (name, "running", Some(pid), None),
+                SupervisorEvent::RestartScheduled { name, detail, .. } => {
                     (name, "restarting", None, Some(detail))
                 }
-                SupervisorEvent::ServiceStopped { name, detail, .. } => {
+                SupervisorEvent::Stopped { name, detail, .. } => {
                     (name, "stopped", None, Some(detail))
                 }
-                _ => continue,
             };
             if let Some(service) = self
                 .extensions

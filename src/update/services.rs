@@ -1,5 +1,5 @@
 use crate::extension_runtime::supervisor::{
-    MAX_FAILURES, RestartOutcome, StopReason, evaluate_exit,
+    BackoffPolicy, MAX_FAILURES, RestartOutcome, StopReason,
 };
 use crate::ops::services::{record_spawn_failure, spawn_service_child};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService};
@@ -53,7 +53,7 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         }
         let hint = crate::ops::services::log_hint(&config);
 
-        match evaluate_exit(
+        match BackoffPolicy::default().evaluate_exit(
             config.restart,
             is_success,
             Some(running.started_at),

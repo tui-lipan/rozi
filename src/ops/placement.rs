@@ -24,7 +24,7 @@ use crate::config::{
 use crate::extension_runtime::client::{RuntimeConnection, RuntimeEvent};
 use crate::extension_runtime::protocol::{Capture, Message, SpawnCwd, SpawnFailure};
 use crate::extension_runtime::supervisor::{
-    INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason, evaluate_exit,
+    BackoffPolicy, INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason,
 };
 use crate::state::{
     HostKey, HostRuntime, HostRuntimeStatus, InstanceKey, InstanceStatus, PendingLaunch,
@@ -1158,7 +1158,7 @@ fn service_exited(
         |code| format!("exited with status {code}"),
     );
     let restart = restart.unwrap_or(ServiceRestart::OnFailure);
-    match evaluate_exit(
+    match BackoffPolicy::default().evaluate_exit(
         restart,
         clean,
         instance.started_at,

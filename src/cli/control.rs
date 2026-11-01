@@ -592,6 +592,18 @@ fn ask_ui_endpoint(
     }
 }
 
+/// Drop the calling pane's source from a request aimed at a named session or another machine.
+///
+/// `ROZI_PANE` is a bare pane id with no session attached to it, and `--session` names a different
+/// namespace than the one the caller is sitting in. Sending it would let a script in pane 3 of one
+/// session address pane 3 of another, and a `source_session` that names the caller's server makes
+/// the addressed server refuse the request outright. A pane addressing its own session passes
+/// `--target "$ROZI_PANE"` instead.
+pub(super) fn drop_caller_pane(request: &mut control::ControlRequest) {
+    request.source_pane = None;
+    request.source_session = None;
+}
+
 /// Ask a named session server directly, with no UI in the picture.
 ///
 /// A failure to *reach* the session exits 2 like an unreachable UI endpoint; a command the server
@@ -601,12 +613,7 @@ fn ask_session_endpoint(
     session: &str,
     mut request: control::ControlRequest,
 ) -> Result<serde_json::Value> {
-    // `ROZI_PANE` is a bare pane id with no session attached to it, and `--session` names a
-    // different namespace than the one the caller is sitting in. Sending it would let a script in
-    // pane 3 of one session address pane 3 of another, so the field is dropped rather than left
-    // for the server to ignore. A pane addressing its own session passes `--target "$ROZI_PANE"`.
-    request.source_pane = None;
-    request.source_session = None;
+    drop_caller_pane(&mut request);
     match crate::session::headless::run_session_control(session, request) {
         Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
         Err(err) => {
@@ -677,8 +684,7 @@ fn ask_remote_endpoint(
     // Same reason as the local session endpoint: `ROZI_PANE` names a pane in the namespace the
     // caller is sitting in, which is not the one being addressed - and here it is not even the
     // same machine.
-    request.source_pane = None;
-    request.source_session = None;
+    drop_caller_pane(&mut request);
     let parsed = match crate::session::remote::parse_remote_target(target) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -825,7 +831,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     if !matches!(endpoint, ControlEndpoint::Remote { .. }) {
         resolve_split_cwd(&mut request.command)?;
     }
-    let value = match endpoint {
+    let mut value = match endpoint {
         ControlEndpoint::CallerContext => serde_json::to_value(control::ControlResponse::ok(
             super::context::caller_context(&request)?,
         ))
@@ -855,6 +861,12 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
         }
         ControlEndpoint::OwnSession(instance) => ask_own_session_endpoint(&instance, request)?,
     };
+    if matches!(
+        command.request.command,
+        control::ControlCommand::ExtensionsStatus
+    ) {
+        super::extension::compare_deployments_with_local(&mut value);
+    }
     // A wait that failed still answers with what the pane showed at the end, which is the first
     // thing anyone debugging it wants; it is delivered where a capture would go, then the failure.
     let failed_wait_capture = command.request.command.pane_wait().is_some()

@@ -60,6 +60,23 @@ impl SessionServer {
                 message: err.to_string(),
             };
         }
+        if self
+            .deployment_worker
+            .as_ref()
+            .is_some_and(|worker| worker.pending != 0)
+        {
+            return ServerMessage::Error {
+                code: "rename-failed".into(),
+                message: "a deployment request is in progress; retry the rename".into(),
+            };
+        }
+        self.deployment_worker.take();
+        if let Err(error) = self.deployments.rename(&name) {
+            return ServerMessage::Error {
+                code: "rename-failed".into(),
+                message: error.to_string(),
+            };
+        }
         let retired = self.endpoint.replace(new_endpoint);
         self.pending_listener = Some((listener, retired));
         let previous = std::mem::replace(&mut self.session_name, name.clone());

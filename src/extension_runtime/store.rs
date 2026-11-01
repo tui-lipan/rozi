@@ -164,6 +164,25 @@ impl BundleStore {
         &self.root
     }
 
+    /// Remove one stored bundle, whatever its sealed modes. A missing bundle is not an error.
+    pub fn remove(&self, digest: &str) {
+        if !bundle::is_digest(digest) {
+            return;
+        }
+        discard(&self.root.join(digest));
+    }
+
+    /// Remove every bundle this store holds. Used when the owner of the store itself goes away, as
+    /// a deleted session's deployments do; a client cache is pruned, never emptied.
+    pub fn remove_all(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            discard(&entry.path());
+        }
+    }
+
     fn path_for(&self, digest: &str) -> Result<PathBuf, StoreError> {
         if !bundle::is_digest(digest) {
             return Err(StoreError::Io(format!("`{digest}` is not a bundle digest")));

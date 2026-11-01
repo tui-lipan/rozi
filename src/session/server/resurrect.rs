@@ -1014,7 +1014,11 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
             ..ServerSettings::default()
         },
     );
-    server.delete_snapshot()
+    // A deployment belongs to the session as completely as its snapshot does. Forced cleanup can
+    // reach here without the server's own shutdown path, so both go together.
+    let deployments = server.deployments.remove_all();
+    let snapshot = server.delete_snapshot();
+    deployments.and(snapshot)
 }
 
 #[cfg(unix)]

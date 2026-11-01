@@ -116,6 +116,9 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
         | ControlCommand::RecordMark { .. }
+        | ControlCommand::ExtensionsDeploy { .. }
+        | ControlCommand::ExtensionsUndeploy { .. }
+        | ControlCommand::ExtensionsStatus
         | ControlCommand::Subscribe { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
@@ -170,6 +173,17 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
     }
 }
 
+/// How a deployment failure reaches a control caller: an argument it can fix, a store it cannot
+/// reach, or a bundle the sender has to look at again.
+fn deployment_error(error: super::deployments::DeployError) -> ControlResponse {
+    use super::deployments::DeployError;
+    let code = match error {
+        DeployError::Invalid(_) | DeployError::Mismatch(_) => ControlErrorCode::InvalidArgument,
+        DeployError::Unavailable(_) => ControlErrorCode::Unavailable,
+    };
+    ControlResponse::error_with(code, error.to_string())
+}
+
 /// Why an attached client may not have its session server run `command` for it, or `None` when it
 /// may.
 ///
@@ -188,7 +202,18 @@ pub fn attached_control_refusal(
     read_only: bool,
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
-        ControlCommand::RecordList | ControlCommand::AgentWait { .. } => None,
+        ControlCommand::RecordList
+        | ControlCommand::AgentWait { .. }
+        | ControlCommand::ExtensionsStatus => None,
+        ControlCommand::ExtensionsDeploy { .. } | ControlCommand::ExtensionsUndeploy { .. }
+            if read_only =>
+        {
+            Some((
+                ControlErrorCode::ReadOnly,
+                "read-only clients cannot change deployments",
+            ))
+        }
+        ControlCommand::ExtensionsDeploy { .. } | ControlCommand::ExtensionsUndeploy { .. } => None,
         ControlCommand::AgentPrompt { .. } if read_only => Some((
             ControlErrorCode::ReadOnly,
             "this client is attached read-only and cannot prompt an agent",
@@ -491,6 +516,11 @@ impl SessionServer {
                     request.command.clone(),
                     reply.clone(),
                 )),
+                command @ (ControlCommand::ExtensionsDeploy { .. }
+                | ControlCommand::ExtensionsUndeploy { .. }
+                | ControlCommand::ExtensionsStatus) => {
+                    Some(self.submit_deployment(client_id, reply.clone(), command.clone()))
+                }
                 ControlCommand::Subscribe {
                     events,
                     snapshot,
@@ -837,6 +867,11 @@ impl SessionServer {
                 integration,
                 seq,
             } => self.session_agent_report_update(target, None, integration, None, seq, broadcasts),
+            command @ (ControlCommand::ExtensionsDeploy { .. }
+            | ControlCommand::ExtensionsUndeploy { .. }
+            | ControlCommand::ExtensionsStatus) => {
+                deployment_response(&self.deployments, &self.session_name, command)
+            }
             // Every remaining variant was refused above by `session_control_unsupported`.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
@@ -2142,6 +2177,182 @@ struct SessionSpawn {
     size: Option<crate::control::PaneSize>,
 }
 
+fn deployment_response(
+    store: &super::deployments::SessionDeployments,
+    session: &str,
+    command: ControlCommand,
+) -> ControlResponse {
+    match command {
+        ControlCommand::ExtensionsDeploy {
+            id,
+            digest,
+            size,
+            offset,
+            data,
+            last,
+        } => {
+            use base64::Engine as _;
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(data) {
+                Ok(bytes) if bytes.len() <= super::DEPLOY_CHUNK_BYTES => bytes,
+                _ => {
+                    return ControlResponse::error_with(
+                        ControlErrorCode::InvalidArgument,
+                        "invalid or oversized deployment chunk",
+                    );
+                }
+            };
+            match store.append(&id, &digest, size, offset, &bytes, last) {
+                Ok(upload) => ControlResponse::ok(upload),
+                Err(error) => deployment_error(error),
+            }
+        }
+        ControlCommand::ExtensionsUndeploy { id } => match store.undeploy(&id) {
+            Ok(removed) => ControlResponse::ok(crate::control::ExtensionUndeployReport {
+                extension: id,
+                removed,
+            }),
+            Err(error) => deployment_error(error),
+        },
+        ControlCommand::ExtensionsStatus => match store.status() {
+            Ok(deployments) => ControlResponse::ok(crate::control::ExtensionDeploymentReport {
+                session: session.to_string(),
+                deployments,
+            }),
+            Err(error) => deployment_error(error),
+        },
+        _ => unreachable!("deployment worker accepts deployment commands only"),
+    }
+}
+
+struct DeploymentJob {
+    client_id: ClientId,
+    reply: ReplyTo,
+    command: ControlCommand,
+}
+
+pub(super) struct DeploymentWorker {
+    sender: Option<std::sync::mpsc::SyncSender<DeploymentJob>>,
+    results: std::sync::mpsc::Receiver<(ClientId, ReplyTo, ControlResponse)>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    pub(super) pending: usize,
+    pending_clients: std::collections::HashMap<ClientId, usize>,
+}
+
+impl DeploymentWorker {
+    fn start(
+        store: super::deployments::SessionDeployments,
+        session: String,
+    ) -> std::io::Result<Self> {
+        let (sender, requests) = std::sync::mpsc::sync_channel::<DeploymentJob>(8);
+        let (results, receiver) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("session-deployments".into())
+            .spawn(move || {
+                while let Ok(job) = requests.recv() {
+                    let response = deployment_response(&store, &session, job.command);
+                    if results.send((job.client_id, job.reply, response)).is_err() {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            sender: Some(sender),
+            results: receiver,
+            thread: Some(thread),
+            pending: 0,
+            pending_clients: Default::default(),
+        })
+    }
+}
+
+impl Drop for DeploymentWorker {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl SessionServer {
+    fn submit_deployment(
+        &mut self,
+        client_id: ClientId,
+        reply: ReplyTo,
+        command: ControlCommand,
+    ) -> Option<ControlResponse> {
+        if crate::state::is_ephemeral_session_name(&self.session_name) {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::NotPermitted,
+                "temporary sessions cannot hold deployments",
+            ));
+        }
+        if self.client_attached(client_id)
+            && self.client_read_only(client_id)
+            && !matches!(command, ControlCommand::ExtensionsStatus)
+        {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::ReadOnly,
+                "read-only clients cannot change deployments",
+            ));
+        }
+        if self.deployment_worker.is_none() {
+            match DeploymentWorker::start(self.deployments.clone(), self.session_name.clone()) {
+                Ok(worker) => self.deployment_worker = Some(worker),
+                Err(error) => {
+                    return Some(ControlResponse::error(format!(
+                        "cannot start deployment worker: {error}"
+                    )));
+                }
+            }
+        }
+        let worker = self.deployment_worker.as_mut().expect("worker started");
+        if worker.pending >= 8 {
+            return Some(ControlResponse::error(
+                "deployment worker is busy; retry later",
+            ));
+        }
+        match worker
+            .sender
+            .as_ref()
+            .expect("worker alive")
+            .try_send(DeploymentJob {
+                client_id,
+                reply,
+                command,
+            }) {
+            Ok(()) => {
+                worker.pending += 1;
+                *worker.pending_clients.entry(client_id).or_default() += 1;
+                None
+            }
+            Err(_) => Some(ControlResponse::error(
+                "deployment worker unavailable; retry later",
+            )),
+        }
+    }
+
+    pub(super) fn holds_deployment_reply(&self, client_id: ClientId) -> bool {
+        self.deployment_worker
+            .as_ref()
+            .is_some_and(|worker| worker.pending_clients.contains_key(&client_id))
+    }
+
+    pub(super) fn drain_deployment_results(&mut self) {
+        let responses: Vec<_> = self
+            .deployment_worker
+            .as_mut()
+            .map_or_else(Vec::new, |worker| {
+                let responses: Vec<_> = worker.results.try_iter().collect();
+                worker.pending -= responses.len();
+                responses
+            });
+        for (client_id, reply, response) in responses {
+            self.answer_held(client_id, &reply, response);
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -2250,19 +2461,179 @@ mod tests {
         server: &mut SessionServer,
         command: ControlCommand,
     ) -> (ControlResponse, Vec<(Target, ServerMessage)>) {
+        let deployment = matches!(
+            command,
+            ControlCommand::ExtensionsDeploy { .. }
+                | ControlCommand::ExtensionsUndeploy { .. }
+                | ControlCommand::ExtensionsStatus
+        );
+        let connection = deployment.then(|| super::super::tests::add_client(server));
+        let client_id = connection.as_ref().map_or(1, |(id, _)| *id);
         let mut messages = server.handle_session_control(
-            1,
+            client_id,
             server.session_name.clone(),
             PROTOCOL_VERSION,
             protocol::MIN_SUPPORTED_PROTOCOL,
             None,
             request(command),
         );
+        if deployment && messages.is_empty() {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                server.drain_deployment_results();
+                let frames =
+                    super::super::tests::decode_outbox_frames(server.client(client_id).unwrap());
+                if let Some(response) = frames.into_iter().find_map(|frame| match frame {
+                    super::super::tests::DecodedOutboxFrame::Control(message) => Some(*message),
+                    _ => None,
+                }) {
+                    messages.push((Target::Sender, response));
+                    break;
+                }
+                assert!(Instant::now() < deadline, "deployment response timed out");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
         let response = match messages.remove(0) {
             (Target::Sender, ServerMessage::SessionControlResult { response, .. }) => response,
             other => panic!("expected a control result, got {other:?}"),
         };
         (response, messages)
+    }
+
+    #[test]
+    fn deployment_writes_require_a_writable_named_session() {
+        let mut temporary = SessionServer::new_named("eph-deployment");
+        let reply = ReplyTo::Attached { request_id: 1 };
+        let response = temporary
+            .submit_deployment(1, reply, ControlCommand::ExtensionsStatus)
+            .unwrap();
+        assert_eq!(response.code, Some(ControlErrorCode::NotPermitted));
+        for command in [
+            ControlCommand::ExtensionsUndeploy { id: "demo".into() },
+            ControlCommand::ExtensionsDeploy {
+                id: "demo".into(),
+                digest: "a".repeat(64),
+                size: 1,
+                offset: 0,
+                data: "YQ==".into(),
+                last: true,
+            },
+        ] {
+            assert_eq!(
+                attached_control_refusal(&command, true).map(|(code, _)| code),
+                Some(ControlErrorCode::ReadOnly)
+            );
+            assert!(attached_control_refusal(&command, false).is_none());
+        }
+        assert!(attached_control_refusal(&ControlCommand::ExtensionsStatus, true).is_none());
+    }
+
+    /// A deployable extension bundle: a manifest naming `demo` and one executable file.
+    fn demo_bundle(body: &str) -> crate::extension_runtime::bundle::Bundle {
+        use crate::extension_runtime::bundle::BundleFile;
+
+        crate::extension_runtime::bundle::Bundle::from_files(vec![
+            BundleFile {
+                path: "extension.toml".to_string(),
+                executable: false,
+                contents:
+                    b"[extension]\nid = \"demo\"\ntitle = \"Demo\"\nversion = \"0.1.0\"\napi = 1\n"
+                        .to_vec(),
+            },
+            BundleFile {
+                path: "bin/run".to_string(),
+                executable: true,
+                contents: body.as_bytes().to_vec(),
+            },
+        ])
+        .expect("a valid bundle")
+    }
+
+    /// A deployment reaches the session's own store and is reported back by its own status.
+    #[test]
+    fn a_deployment_is_stored_by_the_session_and_can_be_removed() {
+        use base64::Engine as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut server = SessionServer::new_named("deploy");
+        server.set_deployment_root(temp.path().join("deployments"));
+        let bundle = demo_bundle("#!/bin/sh\necho hello\n");
+        let archive = bundle.archive();
+        let split = archive.len() / 2;
+        let chunk = |start: usize, end: usize, offset: usize| ControlCommand::ExtensionsDeploy {
+            id: "demo".to_string(),
+            digest: bundle.digest().to_string(),
+            size: archive.len() as u64,
+            offset: offset as u64,
+            data: base64::engine::general_purpose::STANDARD.encode(&archive[start..end]),
+            last: end == archive.len(),
+        };
+
+        let (first, _) = control(&mut server, chunk(0, split, 0));
+        assert!(first.ok, "{:?}", first.error);
+        let upload: crate::control::ExtensionDeploymentUpload =
+            serde_json::from_value(first.data.expect("an upload report")).unwrap();
+        assert!(!upload.complete);
+        assert_eq!(upload.generation, None);
+
+        let (second, _) = control(&mut server, chunk(split, archive.len(), split));
+        assert!(second.ok, "{:?}", second.error);
+        let upload: crate::control::ExtensionDeploymentUpload =
+            serde_json::from_value(second.data.expect("an upload report")).unwrap();
+        assert!(upload.complete);
+        assert!(upload.generation.is_some());
+
+        let (status, _) = control(&mut server, ControlCommand::ExtensionsStatus);
+        let report: crate::control::ExtensionDeploymentReport =
+            serde_json::from_value(status.data.expect("a report")).unwrap();
+        assert_eq!(report.session, "deploy");
+        assert_eq!(report.deployments.len(), 1);
+        assert_eq!(report.deployments[0].extension, "demo");
+        assert_eq!(
+            report.deployments[0].status,
+            crate::control::ExtensionDeploymentStatus::Deployed
+        );
+        assert_eq!(report.deployments[0].title.as_deref(), Some("Demo"));
+
+        let (removed, _) = control(
+            &mut server,
+            ControlCommand::ExtensionsUndeploy {
+                id: "demo".to_string(),
+            },
+        );
+        let report: crate::control::ExtensionUndeployReport =
+            serde_json::from_value(removed.data.expect("a report")).unwrap();
+        assert!(report.removed);
+        let (status, _) = control(&mut server, ControlCommand::ExtensionsStatus);
+        let report: crate::control::ExtensionDeploymentReport =
+            serde_json::from_value(status.data.expect("a report")).unwrap();
+        assert!(report.deployments.is_empty());
+    }
+
+    /// A chunk that does not continue the upload is refused with the argument code, not stored.
+    #[test]
+    fn a_chunk_out_of_order_is_refused() {
+        use base64::Engine as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut server = SessionServer::new_named("deploy");
+        server.set_deployment_root(temp.path().join("deployments"));
+        let bundle = demo_bundle("#!/bin/sh\necho hello\n");
+        let archive = bundle.archive();
+        let (refused, _) = control(
+            &mut server,
+            ControlCommand::ExtensionsDeploy {
+                id: "demo".to_string(),
+                digest: bundle.digest().to_string(),
+                size: archive.len() as u64,
+                offset: 4,
+                data: base64::engine::general_purpose::STANDARD.encode(&archive[..4]),
+                last: false,
+            },
+        );
+        assert!(!refused.ok);
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
     }
 
     fn pane_with_screen(server: &mut SessionServer, id: PaneId, bytes: &[u8]) {

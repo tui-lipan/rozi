@@ -694,8 +694,8 @@ A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `
 `pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
-and `record-mark`. It refuses every other `cmd` with
-`ok: false` and a reason naming what the request needs a UI for.
+`record-mark`, `extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses
+every other `cmd` with `ok: false` and a reason naming what the request needs a UI for.
 
 These requests behave differently than against a UI:
 
@@ -710,6 +710,44 @@ These requests behave differently than against a UI:
 | `new-pane` | `focus` must be `false`. Refused with `not-controller` while any client holds layout control. The server reads `[[rules]]` and the shell from its own config, picks the pane id, appends the pane to the resolved workspace (default 1) in the shared layout, and broadcasts the new revision as client `0`. `pty_ready` reports whether the pane's process started. |
 | `send-text`, `send-keys` | Refused while the session's input lock is on, which only an attached client can release. |
 | Any request with `extension` provenance | Refused. The generation is minted per UI process, so a server cannot check it. |
+
+### Extension deployments
+
+A session server can keep an extension for itself, so the files outlive the client that sent them.
+An extension installed on the client is not in the session's store until it is deployed there; the
+`session-deployments` capability says a server accepts these requests.
+
+`extensions-deploy` carries one chunk of a bundle:
+
+```json
+{"cmd":"extensions-deploy","id":"git-tools","digest":"3f2a…","size":262144,
+ "offset":0,"data":"<base64>","last":false}
+```
+
+`digest` names the whole bundle, `size` is its length in bytes, and `offset` is where this chunk
+starts. A chunk that does not continue the previous one is refused, so a client starts at `0` and
+sends the chunks in order; `last` marks the one that completes the announced size. The server
+verifies the assembled bundle against `digest` and its manifest against `extension` before it keeps
+anything. The reply is `{extension, digest, received, size, complete}`, with `generation` once
+`complete` is true:
+
+```json
+{"ok":true,"data":{"extension":"git-tools","digest":"3f2a…","received":262144,
+ "size":262144,"complete":true,"generation":3}}
+```
+
+`extensions-status` lists what the session holds, verified at request time:
+
+```json
+{"ok":true,"data":{"session":"dev","deployments":[{"extension":"git-tools","digest":"3f2a…",
+ "generation":3,"deployed_at_unix_ms":1767225600000,"title":"Git tools","version":"0.2.1",
+ "files":14,"size":262144,"status":"deployed"}]}}
+```
+
+A deployment whose files no longer verify reports `"status":"unavailable"` and a `reason` instead
+of disappearing. `extensions-undeploy` takes `{id}` and answers `{extension, removed}`,
+`removed` being `false` when the session held nothing by that name. Deployments are kept across
+restarts and resurrection, and removed when the session is deleted.
 
 ## Subscription stream
 

@@ -1267,6 +1267,80 @@
           "type": "object"
         },
         {
+          "description": "Upload a chunk of an extension bundle to a session server. `offset` is the byte in the\ncanonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk\nthat does not continue where the stored upload ended is refused rather than guessed at.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-deploy",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64 of the archive bytes in this chunk.",
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID the bundle must declare. Named `id`, not `extension`, because that name\nbelongs to the caller's provenance on the request around this command.",
+              "type": "string"
+            },
+            "last": {
+              "default": false,
+              "type": "boolean"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "digest",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Forget a session's deployment of one extension. The files stay if another deployment uses\nthe same digest.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-undeploy",
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID to forget; see [`Self::ExtensionsDeploy`] for why it is not `extension`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the extensions a session server holds, with the digest and generation each was\ndeployed under and whether its files still verify.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "focus",
@@ -2788,6 +2862,80 @@
           "properties": {
             "cmd": {
               "const": "extension-runtime-status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Upload a chunk of an extension bundle to a session server. `offset` is the byte in the\ncanonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk\nthat does not continue where the stored upload ended is refused rather than guessed at.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-deploy",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64 of the archive bytes in this chunk.",
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID the bundle must declare. Named `id`, not `extension`, because that name\nbelongs to the caller's provenance on the request around this command.",
+              "type": "string"
+            },
+            "last": {
+              "default": false,
+              "type": "boolean"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "digest",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Forget a session's deployment of one extension. The files stay if another deployment uses\nthe same digest.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-undeploy",
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID to forget; see [`Self::ExtensionsDeploy`] for why it is not `extension`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the extensions a session server holds, with the digest and generation each was\ndeployed under and whether its files still verify.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-status",
               "type": "string"
             }
           },
@@ -7700,5 +7848,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 4
+  "x-rozi-schema-version": 5
 }

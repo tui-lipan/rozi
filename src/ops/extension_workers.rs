@@ -176,6 +176,11 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         ControlCommand::ExtensionRuntimeStatus => {
             Gate::Denied("the runtime status describes every placed process of this client")
         }
+        ControlCommand::ExtensionsDeploy { .. }
+        | ControlCommand::ExtensionsUndeploy { .. }
+        | ControlCommand::ExtensionsStatus => Gate::Denied(
+            "deploying an extension changes what a session keeps, which a placed worker may not do",
+        ),
         ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. } => {
             Gate::Denied("agent reports come from the pane an agent runs in")
         }

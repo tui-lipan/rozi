@@ -709,6 +709,128 @@ pub(super) fn format_extension_runtime_text(
     out
 }
 
+/// `extensions status --session`: what a session server keeps for itself.
+pub(super) fn format_extension_deployments_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let report: control::ExtensionDeploymentReport = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok())
+        .unwrap_or(control::ExtensionDeploymentReport {
+            session: String::new(),
+            deployments: Vec::new(),
+        });
+    if report.deployments.is_empty() {
+        return format!(
+            "{}\n",
+            styles.paint(
+                &format!("No extension deployments in session `{}`.", report.session),
+                OutputTone::Muted
+            )
+        );
+    }
+    let mut out = format!(
+        "{}  {}\n\n",
+        styles.paint("Session", OutputTone::Muted),
+        styles.paint(&report.session, OutputTone::Accent)
+    );
+    for deployment in &report.deployments {
+        let (tone, status) = match deployment.status {
+            control::ExtensionDeploymentStatus::Deployed => {
+                (OutputTone::Success, "deployed".to_string())
+            }
+            control::ExtensionDeploymentStatus::Unavailable => (
+                OutputTone::Error,
+                deployment
+                    .reason
+                    .clone()
+                    .map(|reason| format!("unavailable: {reason}"))
+                    .unwrap_or_else(|| "unavailable".to_string()),
+            ),
+        };
+        let title = deployment
+            .title
+            .as_deref()
+            .filter(|title| *title != deployment.extension)
+            .map(|title| format!(" · {title}"))
+            .unwrap_or_default();
+        let version = deployment
+            .version
+            .as_deref()
+            .map(|version| format!(" · {version}"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "  {} {}{title}{version} · generation {} · bundle {} · {} files · {} bytes\n",
+            styles.paint(&deployment.extension, OutputTone::Key),
+            styles.paint(&status, tone),
+            deployment.generation,
+            deployment.digest.chars().take(12).collect::<String>(),
+            deployment.files,
+            deployment.size,
+        ));
+        if let Some(local) = &deployment.local_copy {
+            out.push_str(&format!("    local copy: {local}\n"));
+        }
+    }
+    out
+}
+
+pub(super) fn format_extension_deploy_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let upload: Option<control::ExtensionDeploymentUpload> = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok());
+    let Some(upload) = upload else {
+        return format!("{}\n", styles.paint("OK", OutputTone::Success));
+    };
+    if upload.complete {
+        let generation = upload
+            .generation
+            .map(|generation| format!(" · generation {generation}"))
+            .unwrap_or_default();
+        format!(
+            "{} {} · bundle {} · {} bytes{generation}\n",
+            styles.paint("Deployed", OutputTone::Success),
+            styles.paint(&upload.extension, OutputTone::Accent),
+            upload.digest.chars().take(12).collect::<String>(),
+            upload.size,
+        )
+    } else {
+        format!(
+            "{} {} · {} of {} bytes\n",
+            styles.paint("Uploading", OutputTone::Muted),
+            styles.paint(&upload.extension, OutputTone::Accent),
+            upload.received,
+            upload.size,
+        )
+    }
+}
+
+pub(super) fn format_extension_undeploy_text(
+    data: Option<&serde_json::Value>,
+    styles: OutputStyles,
+) -> String {
+    let report: Option<control::ExtensionUndeployReport> = data
+        .cloned()
+        .and_then(|data| serde_json::from_value(data).ok());
+    match report {
+        Some(report) if report.removed => format!(
+            "{} {} from the session\n",
+            styles.paint("Undeployed", OutputTone::Success),
+            styles.paint(&report.extension, OutputTone::Accent),
+        ),
+        Some(report) => format!(
+            "{} {} was not deployed\n",
+            styles.paint("Nothing to remove:", OutputTone::Muted),
+            styles.paint(&report.extension, OutputTone::Accent),
+        ),
+        None => format!("{}\n", styles.paint("OK", OutputTone::Success)),
+    }
+}
+
 pub(super) fn format_metrics_text(
     data: Option<&serde_json::Value>,
     styles: OutputStyles,
@@ -956,6 +1078,15 @@ pub(super) fn format_control_text(
         control::ControlCommand::Metrics => format_metrics_text(data, styles),
         control::ControlCommand::ExtensionRuntimeStatus => {
             format_extension_runtime_text(data, styles)
+        }
+        control::ControlCommand::ExtensionsStatus => {
+            format_extension_deployments_text(data, styles)
+        }
+        control::ControlCommand::ExtensionsDeploy { .. } => {
+            format_extension_deploy_text(data, styles)
+        }
+        control::ControlCommand::ExtensionsUndeploy { .. } => {
+            format_extension_undeploy_text(data, styles)
         }
         control::ControlCommand::CapturePane { .. }
         | control::ControlCommand::CaptureUi { .. }

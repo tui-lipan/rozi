@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 4;
+pub const API_SCHEMA_VERSION: u32 = 5;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -109,6 +109,9 @@ pub const SESSION_SUBSCRIBE_CAPABILITY: &str = "session-subscribe";
 /// A UI answers `agents-overview`, every agent it knows about in every session and on every
 /// connected host, and `agent-go`, which goes to one of them.
 pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
+/// A session server stores, verifies, lists, and removes extension deployments of its own, so a
+/// client can hand it the files an extension will run when no UI is attached.
+pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -157,6 +160,7 @@ impl ApiDescription {
                 crate::extension_runtime::protocol::CAPABILITY,
                 RUNTIME_EVENTS_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
+                SESSION_DEPLOYMENTS_CAPABILITY,
                 SESSION_NO_RESURRECT_CAPABILITY,
                 SESSION_SUBSCRIBE_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
@@ -522,6 +526,30 @@ pub enum ControlCommand {
     /// them: where each runs, under which generation and bundle, and why one that is not running
     /// is unavailable.
     ExtensionRuntimeStatus,
+    /// Upload a chunk of an extension bundle to a session server. `offset` is the byte in the
+    /// canonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk
+    /// that does not continue where the stored upload ended is refused rather than guessed at.
+    ExtensionsDeploy {
+        /// The extension ID the bundle must declare. Named `id`, not `extension`, because that name
+        /// belongs to the caller's provenance on the request around this command.
+        id: String,
+        digest: String,
+        size: u64,
+        offset: u64,
+        /// Base64 of the archive bytes in this chunk.
+        data: String,
+        #[serde(default)]
+        last: bool,
+    },
+    /// Forget a session's deployment of one extension. The files stay if another deployment uses
+    /// the same digest.
+    ExtensionsUndeploy {
+        /// The extension ID to forget; see [`Self::ExtensionsDeploy`] for why it is not `extension`.
+        id: String,
+    },
+    /// List the extensions a session server holds, with the digest and generation each was
+    /// deployed under and whether its files still verify.
+    ExtensionsStatus,
     Focus {
         target: PaneId,
     },
@@ -1673,6 +1701,69 @@ pub struct GlobalAgentInfo {
 #[serde(transparent)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct GlobalAgentListPayload(pub Vec<GlobalAgentInfo>);
+
+/// `extensions-status` on a session endpoint: the extensions that session holds itself.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionDeploymentReport {
+    pub session: String,
+    pub deployments: Vec<ExtensionDeploymentInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionDeploymentInfo {
+    pub extension: String,
+    /// Content digest of the files the deployment runs from.
+    pub digest: String,
+    /// Increases with every deployment this session records.
+    pub generation: u64,
+    pub deployed_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub files: usize,
+    pub size: u64,
+    pub status: ExtensionDeploymentStatus,
+    /// Comparison made by the CLI against its installed copy, absent on the session endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_copy: Option<String>,
+    /// Why the deployment cannot run, when it cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ExtensionDeploymentStatus {
+    /// Stored, verified, and ready for the session to run.
+    Deployed,
+    /// Recorded, but its files no longer verify. The reason says what changed.
+    Unavailable,
+}
+
+/// One chunk's answer to `extensions-deploy`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionDeploymentUpload {
+    pub extension: String,
+    pub digest: String,
+    pub received: u64,
+    pub size: u64,
+    pub complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+}
+
+/// `extensions-undeploy`: whether anything was removed.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ExtensionUndeployReport {
+    pub extension: String,
+    pub removed: bool,
+}
 
 /// `extension-runtime-status`: what this client runs where.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -3360,6 +3451,53 @@ mod tests {
         );
         let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(round_tripped, request);
+    }
+
+    /// The deployment commands carry their extension ID as `id`, never `extension`: the request
+    /// around them already uses `extension` for the caller's provenance, and a command field of that
+    /// name is swallowed by it, so the server cannot decode the command at all.
+    #[test]
+    fn deployment_commands_round_trip_through_json_without_the_provenance_field() {
+        let request = ControlRequest {
+            command: ControlCommand::ExtensionsUndeploy {
+                id: "git-tools".to_string(),
+            },
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"extensions-undeploy","id":"git-tools","source_pane":null}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            request
+        );
+
+        let deploy = ControlRequest {
+            command: ControlCommand::ExtensionsDeploy {
+                id: "git-tools".to_string(),
+                digest: "0".repeat(64),
+                size: 1024,
+                offset: 0,
+                data: "aGVsbG8=".to_string(),
+                last: true,
+            },
+            source_pane: None,
+            source_session: None,
+            extension: None,
+            caller_context: None,
+            credential: None,
+        };
+        let json = serde_json::to_string(&deploy).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            deploy
+        );
     }
 
     #[test]

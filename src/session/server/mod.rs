@@ -29,6 +29,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
+mod deployments;
 pub mod events;
 mod graphics;
 mod graphics_pacer;
@@ -53,6 +54,7 @@ mod shutdown;
 mod waits;
 mod worktree;
 pub(crate) use create::create_detached_session;
+pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
 pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
 use worktree::{WorktreeJob, WorktreeWorker};
 
@@ -228,6 +230,10 @@ pub struct SessionServer {
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
     session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
+    /// Extensions this session was asked to run itself. Kept across restarts and removed only when
+    /// the session is explicitly deleted.
+    deployments: deployments::SessionDeployments,
+    deployment_worker: Option<headless::DeploymentWorker>,
 }
 
 #[derive(Clone, Debug)]
@@ -1707,6 +1713,7 @@ impl SessionServer {
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
         let instance_id = protocol::SessionInstanceId::generate();
         let session_events = events::SessionEventBuffer::new(instance_id.clone());
+        let deployments = deployments::SessionDeployments::new(session_name.clone(), None);
         Self {
             retired_media: VecDeque::new(),
             acquisition_reaper_cursor: 0,
@@ -1760,12 +1767,22 @@ impl SessionServer {
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
             session_subscribers: HashMap::new(),
+            deployments,
+            deployment_worker: None,
             settings,
         }
     }
 
     pub fn instance_id(&self) -> &protocol::SessionInstanceId {
         &self.instance_id
+    }
+
+    /// Point deployment storage at a scratch directory. Production resolves it from state; tests
+    /// call this so a deployment case never touches the developer's own store.
+    #[cfg(all(test, unix))]
+    pub(crate) fn set_deployment_root(&mut self, root: PathBuf) {
+        self.deployments =
+            deployments::SessionDeployments::new(self.session_name.clone(), Some(root));
     }
 
     pub fn session_events(&self) -> &events::SessionEventBuffer {
@@ -1926,6 +1943,7 @@ impl SessionServer {
         activity |= self.drain_pty_events_phase(MAX_PTY_EVENTS_PER_TICK / 2, true);
         self.retry_browse_requests();
         self.drain_worktree_results();
+        self.drain_deployment_results();
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.resolve_capture_waits();
@@ -1949,6 +1967,7 @@ impl SessionServer {
     }
 
     fn shutdown_listener(&mut self) -> io::Result<()> {
+        self.deployment_worker.take();
         self.finish_pending_media();
         // A signal-driven stop must capture the final screen generation before killing PTYs. An
         // explicit session deletion only waits for an already-started write, then removes it.
@@ -1956,6 +1975,9 @@ impl SessionServer {
             self.finish_snapshots();
             if let Err(err) = self.delete_snapshot() {
                 eprintln!("rozi: could not delete session snapshot: {err}");
+            }
+            if let Err(err) = self.deployments.remove_all() {
+                eprintln!("rozi: could not delete session deployments: {err}");
             }
         } else if let Err(err) = self.snapshot_before_shutdown() {
             eprintln!("rozi: final session snapshot failed: {err}");

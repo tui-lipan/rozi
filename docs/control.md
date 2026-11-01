@@ -250,7 +250,9 @@ attached.
 | `prompt --title TEXT [--placeholder TEXT] [--value TEXT] [--masked] [--json]` | Ask for a line of text in a modal prompt. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
 | `sidebar publish --tab TAB [--name NAME]` | Publish rows to a sidebar [stream tab](sidebar.md#stream-tabs) over stdin and receive what the user does with them on stdout. | no |
-| `extensions status [--json]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host). | no |
+| `extensions status [--json] [--session <NAME>]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host); with `--session`, report the extensions that session holds. | no |
+| `extensions deploy <ID> --session <NAME> [--remote HOST]` | Store a verified copy of an installed extension in a session, which keeps it across detach and restart. | — |
+| `extensions undeploy <ID> --session <NAME> [--remote HOST]` | Remove a session's copy of an extension. | — |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
 
@@ -314,6 +316,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "remote-extension-runtime",
     "runtime-events",
     "session-control",
+    "session-deployments",
     "session-no-resurrect",
     "sidebar-streams",
     "sidebar-tab-settings",
@@ -330,6 +333,11 @@ background without opening a UI. An older binary refuses `--detach`.
 
 `session-no-resurrect` means `sessions new <NAME> --detach` accepts `--no-resurrect`. An older
 binary refuses it.
+
+`session-deployments` means a session server accepts `extensions deploy`, `extensions undeploy`,
+and `extensions status --session`: it keeps its own verified copy of an extension. An older
+session server refuses them, and `rozi extensions deploy` reports that the session cannot hold
+deployments.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](writing-extensions.md#link-handlers) through their manifest.
@@ -369,6 +377,7 @@ manifest that uses either.
 `list-panes`, `layout get`, `metrics`, `capture-pane`, `capture-ui`, `record list`, and
 `extensions status` print human-readable output to a terminal and stable JSON when redirected. Use
 `--format text` or `--format json` to choose explicitly, or `--json` for `extensions status`.
+`extensions deploy` prints its last chunk's report the same way.
 
 Other successful one-shot commands print a short acknowledgement on a terminal and the JSON
 response when redirected. A failure prints its error to stderr; with JSON output, the failure

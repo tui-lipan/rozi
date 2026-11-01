@@ -7850,3 +7850,673 @@ fn media_fences_are_per_client_and_match_the_screen_owner_and_generation() {
     assert_eq!(server.panes[&7].cols, 40);
     assert!(!server.media.client_fenced(controller));
 }
+
+struct ParityClient {
+    id: ClientId,
+    _stream: UnixStream,
+    epoch: u64,
+    backend: tui_lipan::TestBackend<crate::AppRoot>,
+    outbound: std::sync::mpsc::Receiver<crate::session::client::ClientOutbound>,
+    events: std::sync::mpsc::Receiver<String>,
+}
+
+struct EventParityHarness {
+    server: SessionServer,
+    clients: Vec<ParityClient>,
+}
+
+impl EventParityHarness {
+    fn new(client_count: usize) -> Self {
+        crate::test_support::isolate_user_dirs();
+        let mut server = SessionServer::new_named_with_settings(
+            "parity",
+            ServerSettings {
+                shell: test_shell(),
+                command_shell: test_command_shell(),
+                resurrect: false,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = test_pane(1);
+        pane.cwd = Some("/work".to_string());
+        pane.runtime.cwd = Some("/work".to_string());
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.agent.sync_references(&pane.runtime);
+        server.panes.insert(1, pane);
+        server.next_generation = 2;
+        server.layout_rev = 1;
+        server.layout = Some(SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            pane_geometry: Default::default(),
+            canvas_cols: 80,
+            canvas_rows: 24,
+            workspaces: vec![crate::layout::shared::SharedWorkspace {
+                index: 0,
+                name: None,
+                synchronized: false,
+                layout: crate::layout::shared::SharedLayoutKind::default(),
+                start_axis: crate::layout::shared::SharedSplitAxis::default(),
+                split_ratios: Vec::new(),
+                tree: Some(crate::layout::shared::SharedTree::Leaf { pane: 1 }),
+                panes: vec![crate::layout::shared::SharedPane {
+                    pane_id: 1,
+                    generation: 1,
+                    title: None,
+                    profile_name: None,
+                    cwd: Some("/work".to_string()),
+                    launch: None,
+                    replay: false,
+                    keep_open: false,
+                    floating: false,
+                    pinned: false,
+                    fullscreen: false,
+                    rect: None,
+                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                }],
+            }],
+        });
+
+        let mut harness = Self {
+            server,
+            clients: Vec::new(),
+        };
+        for index in 0..client_count {
+            harness.attach_ui_client(&format!("client-{}", index + 1));
+        }
+        // Clear initial attach-time events so the scenario records post-attach session transitions.
+        let _ = harness.drain_client_events();
+        harness
+    }
+
+    fn attach_ui_client(&mut self, label: &str) -> ClientId {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let (session_client, outbound) = crate::session::client::SessionClient::test_channel();
+        let session_name = self.server.session_name.clone();
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch,
+                request: crate::state::AttachRequest::new(
+                    &session_name,
+                    crate::state::AttachMode::Join,
+                )
+                .with_access(crate::state::AttachAccess::Writable {
+                    on_attach: Some(crate::config::SessionOnAttach::Follow),
+                }),
+                client: Some(session_client),
+                left: None,
+                parked_epoch: None,
+            });
+        let events = backend.state().event_hub.subscribe(None);
+        let (id, stream) = add_client(&mut self.server);
+        self.clients.push(ParityClient {
+            id,
+            _stream: stream,
+            epoch,
+            backend,
+            outbound,
+            events,
+        });
+        self.server.process_client_frame(
+            id,
+            Frame::Control(ClientMessage::Attach {
+                capabilities: Some(protocol::Capabilities::current()),
+                session: session_name,
+                protocol_version: PROTOCOL_VERSION,
+                min_protocol_version: PROTOCOL_VERSION,
+                label: label.to_string(),
+                read_only: false,
+                shares_filesystem: true,
+                expected_server_nonce: None,
+            }),
+        );
+        self.deliver();
+        id
+    }
+
+    fn deliver(&mut self) {
+        for _ in 0..64 {
+            let mut progressed = false;
+
+            for index in 0..self.clients.len() {
+                let id = self.clients[index].id;
+                while let Ok(outbound) = self.clients[index].outbound.try_recv() {
+                    progressed = true;
+                    let frame = match outbound {
+                        crate::session::client::ClientOutbound::Control(msg) => Frame::Control(msg),
+                        crate::session::client::ClientOutbound::PresentationAcks(acks) => {
+                            Frame::PresentationAcks(acks)
+                        }
+                        crate::session::client::ClientOutbound::AcquisitionAcks(acks) => {
+                            Frame::AcquisitionAcks(acks)
+                        }
+                        crate::session::client::ClientOutbound::PresentationInterest(interest) => {
+                            Frame::PresentationInterest(interest)
+                        }
+                        crate::session::client::ClientOutbound::PaneInput {
+                            latency_sensitive,
+                            pane_id,
+                            local,
+                            generation,
+                            bytes,
+                        } => Frame::PaneBytes {
+                            latency_sensitive,
+                            pane_id,
+                            local,
+                            generation,
+                            bytes,
+                        },
+                    };
+                    self.server.process_client_frame(id, frame);
+                }
+            }
+
+            if self.server.drain_pty_events() {
+                progressed = true;
+            }
+            while self.server.pump_attach_seeds() {
+                progressed = true;
+            }
+
+            for index in 0..self.clients.len() {
+                let id = self.clients[index].id;
+                let epoch = self.clients[index].epoch;
+                let frames: Vec<Frame<ServerMessage>> = {
+                    let Some(conn) = self.server.client_mut(id) else {
+                        continue;
+                    };
+                    let mut decoded = Vec::new();
+                    while let Some(front) = conn.outbox.front() {
+                        let len = front.bytes.len();
+                        let class = front.class;
+                        let bytes = Arc::clone(&front.bytes);
+                        conn.outbox_bytes = conn.outbox_bytes.saturating_sub(len);
+                        match class {
+                            OutboxClass::Normal => {}
+                            OutboxClass::SeedReplay => {
+                                conn.seed_queued_bytes = conn.seed_queued_bytes.saturating_sub(len);
+                            }
+                            OutboxClass::SeedCatchUp => {
+                                conn.seed_catch_up_queued_bytes =
+                                    conn.seed_catch_up_queued_bytes.saturating_sub(len);
+                            }
+                        }
+                        conn.pop_outbox_front();
+                        conn.front_offset = 0;
+                        let mut decoder = protocol::FrameDecoder::default();
+                        let mut input = &bytes[..];
+                        while !input.is_empty() {
+                            decoder.read_from_status(&mut input).unwrap();
+                        }
+                        while let Some(frame) = decoder.next_frame::<ServerMessage>().unwrap() {
+                            decoded.push(frame);
+                        }
+                    }
+                    if conn.seed.as_ref().is_some_and(|seed| {
+                        seed.baseline_queued
+                            && conn.seed_queued_bytes == 0
+                            && conn.seed_catch_up_queued_bytes == 0
+                    }) {
+                        conn.seed = None;
+                    }
+                    decoded
+                };
+                if !frames.is_empty() {
+                    progressed = true;
+                }
+                for frame in frames {
+                    let msg = crate::session::bootstrap::server_message_to_msg(epoch, frame);
+                    self.clients[index]
+                        .backend
+                        .dispatch(msg)
+                        .expect("dispatch server message to client");
+                }
+                if self.clients[index]
+                    .backend
+                    .state()
+                    .current()
+                    .shared
+                    .as_ref()
+                    .is_some_and(|shared| shared.layout_commit_scheduled)
+                {
+                    progressed = true;
+                    self.clients[index]
+                        .backend
+                        .dispatch(crate::Msg::FlushLayoutCommit { epoch })
+                        .expect("flush layout commit");
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+    }
+
+    fn headless_control(
+        &mut self,
+        command: crate::control::ControlCommand,
+    ) -> crate::control::ControlResponse {
+        let mut messages = self.server.handle_session_control(
+            0,
+            self.server.session_name.clone(),
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+            None,
+            crate::control::ControlRequest {
+                command,
+                source_pane: None,
+                source_session: None,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            },
+        );
+        let response = match messages.remove(0) {
+            (Target::Sender, ServerMessage::SessionControlResult { response, .. }) => response,
+            other => panic!("expected SessionControlResult, got {other:?}"),
+        };
+        for (target, message) in messages {
+            self.server.enqueue(0, target, message);
+        }
+        self.deliver();
+        response
+    }
+
+    fn drain_client_events(&self) -> Vec<Vec<crate::events::WireEvent>> {
+        self.clients
+            .iter()
+            .map(|client| {
+                client
+                    .events
+                    .try_iter()
+                    .map(|line| {
+                        serde_json::from_str::<crate::events::WireEvent>(&line)
+                            .expect("valid wire event JSON")
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+impl Drop for EventParityHarness {
+    fn drop(&mut self) {
+        self.server.pending_listener = None;
+        if let Some(endpoint) = self.server.endpoint.take() {
+            endpoint.remove_stale();
+        }
+    }
+}
+
+/// Whether `kind` is a session-level event (as opposed to client-local UI presentation such as
+/// `FocusChanged` or `SessionAttached`).
+fn is_session_parity_event(kind: crate::events::EventKind) -> bool {
+    use crate::events::EventKind;
+    matches!(
+        kind,
+        EventKind::PaneSpawned
+            | EventKind::PaneExited
+            | EventKind::PaneStatusChanged
+            | EventKind::AgentStateChanged
+            | EventKind::ForegroundChanged
+            | EventKind::LayoutChanged
+            | EventKind::ClientJoined
+            | EventKind::ClientLeft
+            | EventKind::ControllerChanged
+            | EventKind::SessionRenamed
+    )
+}
+
+/// Strip client-local presentation fields (`focused`, `self_controller`) and normalize `"self"`
+/// layout authorship to `"client"` so events from different attached clients (and, in Milestone 3,
+/// the server event stream) can be compared directly.
+fn normalize_session_wire_event(mut event: crate::events::WireEvent) -> crate::events::WireEvent {
+    event.data.remove("focused");
+    event.data.remove("self_controller");
+    if event.event == crate::events::EventKind::LayoutChanged
+        && event.data.get("author").map(String::as_str) == Some("self")
+    {
+        event
+            .data
+            .insert("author".to_string(), "client".to_string());
+    }
+    event
+}
+
+fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
+    use crate::control::ControlCommand;
+    use crate::session::protocol::AgentState;
+
+    // 1. Pane status change and clear.
+    let res = harness.headless_control(ControlCommand::SetStatus {
+        target: Some(1),
+        status: Some("blocked".to_string()),
+        reason: Some("needs approval".to_string()),
+    });
+    assert!(res.ok, "{:?}", res.error);
+    let res = harness.headless_control(ControlCommand::SetStatus {
+        target: Some(1),
+        status: None,
+        reason: None,
+    });
+    assert!(res.ok, "{:?}", res.error);
+
+    // 2. Agent state transitions (appear -> transition -> release).
+    for (state, reason, seq) in [
+        (AgentState::Working, Some("thinking".to_string()), 1),
+        (AgentState::Blocked, Some("approval".to_string()), 2),
+    ] {
+        let res = harness.headless_control(ControlCommand::AgentReport {
+            target: Some(1),
+            agent: "claude".to_string(),
+            integration: "claude-hook".to_string(),
+            state,
+            reason,
+            native_session: Some("sess-1".to_string()),
+            seq,
+        });
+        assert!(res.ok, "{:?}", res.error);
+    }
+    let res = harness.headless_control(ControlCommand::AgentRelease {
+        target: Some(1),
+        integration: "claude-hook".to_string(),
+        seq: 3,
+    });
+    assert!(res.ok, "{:?}", res.error);
+
+    // 3. Foreground program start and return to prompt via OSC 133 semantic events.
+    harness.server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]133;C;rozi_exe=cargo\x1b\\".to_vec().into()),
+    ));
+    harness.deliver();
+    harness.server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]133;D;0\x1b\\\x1b]133;A\x1b\\".to_vec().into()),
+    ));
+    harness.deliver();
+
+    // 4. Client roster join and leave.
+    let (observer_id, _observer_stream) = add_client(&mut harness.server);
+    harness.server.process_client_frame(
+        observer_id,
+        Frame::Control(ClientMessage::Attach {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: harness.server.session_name.clone(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: "observer".to_string(),
+            read_only: true,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        }),
+    );
+    harness.deliver();
+    harness
+        .server
+        .process_client_frame(observer_id, Frame::Control(ClientMessage::Detach));
+    harness.deliver();
+
+    // 5. Controller release, headless pane spawn (commits a server-authored layout), and re-grant.
+    let had_controller = harness.clients.first().map(|client| client.id);
+    if let Some(controller_id) = had_controller {
+        harness.server.process_client_frame(
+            controller_id,
+            Frame::Control(ClientMessage::SetParked { parked: true }),
+        );
+        harness.deliver();
+    }
+    let res = harness.headless_control(ControlCommand::NewPane {
+        command: Some("true".to_string()),
+        argv: None,
+        local_cwd: None,
+        cwd: Some("/tmp".to_string()),
+        title: Some("worker".to_string()),
+        keep_open: true,
+        focus: false,
+        workspace: Some(1),
+        size: None,
+    });
+    assert!(res.ok, "{:?}", res.error);
+    if let Some(controller_id) = had_controller {
+        harness.server.process_client_frame(
+            controller_id,
+            Frame::Control(ClientMessage::SetParked { parked: false }),
+        );
+        harness.deliver();
+    }
+
+    // 6. Session rename.
+    let renamed = harness.server.rename_session("parity-renamed".to_string());
+    harness.server.enqueue(0, Target::Broadcast, renamed);
+    harness.deliver();
+
+    // 7. Shared pane exit.
+    if let Some(outbound) =
+        harness
+            .server
+            .handle_event(ServerEvent::Pty(None, 1, 1, TerminalPtyEvent::Exited(0)))
+    {
+        harness.server.send_outbound(None, &outbound);
+    }
+    harness.deliver();
+}
+
+#[test]
+fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
+    crate::test_support::on_large_stack(|| {
+        // Baseline with 0 clients attached: today events are detected client-side, so a headless
+        // session with no UI clients attached emits no subscriber events at all. Milestone 3 moves
+        // emission to the session server so detached sessions produce the same event stream.
+        {
+            let mut zero = EventParityHarness::new(0);
+            run_session_event_parity_mutations(&mut zero);
+            assert!(zero.drain_client_events().is_empty());
+        }
+
+        // With 1 client attached: the single client observes all session state transitions.
+        let one_events = {
+            let mut one = EventParityHarness::new(1);
+            run_session_event_parity_mutations(&mut one);
+            one.drain_client_events()
+                .remove(0)
+                .into_iter()
+                .filter(|event| is_session_parity_event(event.event))
+                .collect::<Vec<_>>()
+        };
+        let one_kinds: Vec<crate::events::EventKind> =
+            one_events.iter().map(|event| event.event).collect();
+        use crate::events::EventKind;
+        assert_eq!(
+            one_kinds,
+            vec![
+                EventKind::PaneStatusChanged,
+                EventKind::AgentStateChanged,
+                EventKind::PaneStatusChanged,
+                EventKind::AgentStateChanged,
+                EventKind::AgentStateChanged,
+                EventKind::AgentStateChanged,
+                EventKind::AgentStateChanged,
+                EventKind::ForegroundChanged,
+                EventKind::ForegroundChanged,
+                EventKind::ClientJoined,
+                EventKind::ClientLeft,
+                EventKind::ControllerChanged,
+                EventKind::LayoutChanged,
+                EventKind::ControllerChanged,
+                EventKind::LayoutChanged,
+                EventKind::SessionRenamed,
+                EventKind::PaneExited,
+                EventKind::LayoutChanged,
+            ]
+        );
+        assert_eq!(one_events[0].data["status"], "blocked");
+        assert_eq!(one_events[0].data["reason"], "needs approval");
+        assert_eq!(one_events[0].data["previous_status"], "");
+        assert_eq!(one_events[0].data["focused"], "true");
+        assert_eq!(one_events[1].data["agent"], "claude");
+        assert_eq!(one_events[1].data["state"], "blocked");
+        assert_eq!(one_events[1].data["previous_state"], "idle");
+        assert_eq!(one_events[1].data["reason"], "needs approval");
+
+        assert_eq!(one_events[2].data["status"], "");
+        assert_eq!(one_events[2].data["previous_status"], "blocked");
+        assert_eq!(one_events[2].data["previous_reason"], "needs approval");
+        assert_eq!(one_events[3].data["agent"], "claude");
+        assert_eq!(one_events[3].data["state"], "idle");
+        assert_eq!(one_events[3].data["previous_state"], "blocked");
+        assert_eq!(one_events[3].data["reason"], "");
+
+        assert_eq!(one_events[4].data["agent"], "claude");
+        assert_eq!(one_events[4].data["label"], "Claude Code");
+        assert_eq!(one_events[4].data["state"], "working");
+        assert_eq!(one_events[4].data["previous_state"], "idle");
+        assert_eq!(one_events[4].data["reason"], "thinking");
+        assert_eq!(one_events[5].data["state"], "blocked");
+        assert_eq!(one_events[5].data["previous_state"], "working");
+        assert_eq!(one_events[5].data["reason"], "approval");
+        assert_eq!(one_events[6].data["state"], "idle");
+        assert_eq!(one_events[6].data["previous_state"], "blocked");
+        assert_eq!(one_events[6].data["reason"], "");
+
+        assert_eq!(one_events[7].data["program"], "cargo");
+        assert_eq!(one_events[7].data["previous_program"], "");
+        assert_eq!(one_events[8].data["program"], "");
+        assert_eq!(one_events[8].data["previous_program"], "cargo");
+
+        assert_eq!(one_events[9].data["client_name"], "observer");
+        assert_eq!(one_events[9].data["count"], "2");
+        assert_eq!(one_events[10].data["client_name"], "observer");
+        assert_eq!(one_events[10].data["count"], "1");
+
+        assert_eq!(one_events[11].data["controller"], "");
+        assert_eq!(one_events[11].data["self_controller"], "false");
+        assert_eq!(one_events[11].data["reason"], "released");
+
+        assert_eq!(one_events[12].data["revision"], "4");
+        assert_eq!(one_events[12].data["author"], "server");
+
+        assert_eq!(one_events[13].data["controller"], "1");
+        assert_eq!(one_events[13].data["self_controller"], "true");
+        assert_eq!(one_events[13].data["reason"], "granted");
+
+        assert_eq!(one_events[14].data["revision"], "5");
+        assert_eq!(one_events[14].data["author"], "self");
+
+        assert_eq!(one_events[15].data["session"], "parity-renamed");
+        assert_eq!(one_events[15].data["previous"], "parity");
+
+        assert_eq!(one_events[16].data["pane"], "1");
+        assert_eq!(one_events[16].data["code"], "0");
+
+        assert_eq!(one_events[17].data["revision"], "6");
+        assert_eq!(one_events[17].data["author"], "self");
+
+        // With 2 clients attached: when client 1 parks, client 2 is promoted immediately (`granted`)
+        // instead of leaving the session without a controller, so park both before the headless
+        // `NewPane` to exercise the same sequence across both clients.
+        let mut two = EventParityHarness::new(2);
+        // Park client 2 first so parking client 1 releases control cleanly, matching the 1-client
+        // sequence, then unpark client 2 at the end.
+        let second_id = two.clients[1].id;
+        two.server.process_client_frame(
+            second_id,
+            Frame::Control(ClientMessage::SetParked { parked: true }),
+        );
+        two.deliver();
+        let _ = two.drain_client_events();
+
+        run_session_event_parity_mutations(&mut two);
+        let mut two_events: Vec<Vec<_>> = two
+            .drain_client_events()
+            .into_iter()
+            .map(|events| {
+                events
+                    .into_iter()
+                    .filter(|event| is_session_parity_event(event.event))
+                    .collect()
+            })
+            .collect();
+        let first_client_events = two_events.remove(0);
+        let second_client_events = two_events.remove(0);
+
+        // Both attached clients emit the exact same sequence of session events, differing only in
+        // client-local presentation (`self_controller`) and the attached client count when the
+        // observer joins/leaves (3 and 2 with two clients vs 2 and 1 with one client).
+        assert_eq!(first_client_events.len(), second_client_events.len());
+        let first_normalized: Vec<_> = first_client_events
+            .iter()
+            .cloned()
+            .map(normalize_session_wire_event)
+            .collect();
+        let second_normalized: Vec<_> = second_client_events
+            .iter()
+            .cloned()
+            .map(normalize_session_wire_event)
+            .collect();
+        assert_eq!(first_normalized, second_normalized);
+        assert_eq!(first_client_events[9].data["count"], "3");
+        assert_eq!(first_client_events[10].data["count"], "2");
+        assert_eq!(first_client_events[13].data["self_controller"], "true");
+        assert_eq!(second_client_events[13].data["self_controller"], "false");
+    });
+}
+
+#[test]
+fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clients() {
+    crate::test_support::on_large_stack(|| {
+        let mut harness = EventParityHarness::new(2);
+        harness.clients[0]
+            .backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::Spawn))
+            .expect("controller split");
+        harness.deliver();
+
+        let mut events = harness.drain_client_events();
+        let controller_events = events.remove(0);
+        let follower_events = events.remove(0);
+
+        // Today, `pane-spawned` is emitted locally by the client that initiates the split, while
+        // the follower only hears `layout-changed` when the server commits the placement.
+        // Milestone 3 moves `pane-spawned` to the server so followers and headless splits emit it too.
+        let controller_kinds: Vec<_> = controller_events.iter().map(|e| e.event).collect();
+        let follower_kinds: Vec<_> = follower_events.iter().map(|e| e.event).collect();
+        assert!(controller_kinds.contains(&crate::events::EventKind::PaneSpawned));
+        assert!(controller_kinds.contains(&crate::events::EventKind::LayoutChanged));
+        assert!(!follower_kinds.contains(&crate::events::EventKind::PaneSpawned));
+        assert!(follower_kinds.contains(&crate::events::EventKind::LayoutChanged));
+
+        let spawned = controller_events
+            .iter()
+            .find(|e| e.event == crate::events::EventKind::PaneSpawned)
+            .unwrap();
+        assert_eq!(spawned.data["pane"], "2");
+        assert_eq!(spawned.data["workspace"], "1");
+        assert_eq!(spawned.data["cwd"], "/work");
+
+        let controller_layout = controller_events
+            .iter()
+            .find(|e| e.event == crate::events::EventKind::LayoutChanged)
+            .unwrap();
+        let follower_layout = follower_events
+            .iter()
+            .find(|e| e.event == crate::events::EventKind::LayoutChanged)
+            .unwrap();
+        assert_eq!(controller_layout.data["revision"], "4");
+        assert_eq!(controller_layout.data["author"], "self");
+        assert_eq!(follower_layout.data["revision"], "4");
+        assert_eq!(follower_layout.data["author"], "client");
+        assert_eq!(
+            normalize_session_wire_event(controller_layout.clone()),
+            normalize_session_wire_event(follower_layout.clone()),
+        );
+    });
+}

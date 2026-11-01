@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 6;
+pub const API_SCHEMA_VERSION: u32 = 7;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -113,6 +113,7 @@ pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 /// client can hand it the files an extension will run when no UI is attached.
 pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
 pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
+pub const SESSION_NOTIFICATIONS_CAPABILITY: &str = "session-notifications";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -163,6 +164,7 @@ impl ApiDescription {
                 SESSION_CONTROL_CAPABILITY,
                 SESSION_DEPLOYMENTS_CAPABILITY,
                 SESSION_NO_RESURRECT_CAPABILITY,
+                SESSION_NOTIFICATIONS_CAPABILITY,
                 SESSION_SERVICES_CAPABILITY,
                 SESSION_SUBSCRIBE_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
@@ -2340,6 +2342,17 @@ pub struct UiContextMetadata {
 pub struct SessionMetricsReport {
     pub sampled_at_unix_ms: u64,
     pub server: crate::runtime_metrics::CachedServerRuntimeMetrics,
+}
+
+/// A notification retained by its session and presented independently by each client.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SessionNotification {
+    pub id: String,
+    pub level: NotifyLevel,
+    pub title: Option<String>,
+    pub message: String,
+    pub seq: u64,
 }
 
 /// How prominent a [`ControlCommand::Notify`] toast is.

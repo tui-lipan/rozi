@@ -119,6 +119,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::ExtensionsDeploy { .. }
         | ControlCommand::ExtensionsUndeploy { .. }
         | ControlCommand::ExtensionsStatus
+        | ControlCommand::Notify { .. }
         | ControlCommand::Subscribe { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
@@ -146,9 +147,6 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::RecordUiMark { .. } => Some(
             "record ui records a UI; a session server draws nothing (record one pane with `record start pane`)",
         ),
-        ControlCommand::Notify { .. } => {
-            Some("toasts are drawn by a UI; a session server has nowhere to show one")
-        }
         ControlCommand::CommandVisibility { .. } => {
             Some("the command palette belongs to a UI; a session server has no palette to change")
         }
@@ -642,6 +640,7 @@ impl SessionServer {
                     layout_rev: self.layout_rev,
                     layout,
                     panes: self.session_pane_report(),
+                    notifications: self.notifications.iter().cloned().collect(),
                 },
             ))
         } else {
@@ -870,6 +869,11 @@ impl SessionServer {
                 integration,
                 seq,
             } => self.session_agent_report_update(target, None, integration, None, seq, broadcasts),
+            ControlCommand::Notify {
+                message,
+                title,
+                level,
+            } => self.session_notify(message, title, level),
             command @ (ControlCommand::ExtensionsDeploy { .. }
             | ControlCommand::ExtensionsUndeploy { .. }
             | ControlCommand::ExtensionsStatus) => {
@@ -4801,11 +4805,6 @@ mod tests {
                 height: None,
                 title: None,
                 keep_open: None,
-            },
-            ControlCommand::Notify {
-                message: "hi".to_string(),
-                title: None,
-                level: crate::control::NotifyLevel::Info,
             },
             ControlCommand::Pick {
                 title: None,

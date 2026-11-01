@@ -1382,6 +1382,17 @@ impl SessionServer {
             origin: self.origin.clone(),
         };
         self.enqueue(client_id, Target::Sender, attached);
+        if !self.notifications.is_empty() {
+            self.enqueue(
+                client_id,
+                Target::Sender,
+                ServerMessage::SessionNotifications {
+                    session_instance: self.instance_id.clone(),
+                    session: self.session_name.clone(),
+                    notifications: self.notifications.iter().cloned().collect(),
+                },
+            );
+        }
         if let Some(client_name) = joined_label {
             self.record_session_event(
                 events::EventKind::ClientJoined,

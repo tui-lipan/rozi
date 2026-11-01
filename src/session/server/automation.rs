@@ -235,6 +235,7 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::CapturePane { .. }
         | ControlCommand::Subscribe { .. }
         | ControlCommand::PaneLogging { .. }
+        | ControlCommand::Notify { .. }
         | ControlCommand::SetStatus { .. }
         | ControlCommand::AgentWait { .. }
         | ControlCommand::AgentPrompt { .. }
@@ -259,7 +260,6 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::Popup { .. }
         | ControlCommand::Publish { .. }
         | ControlCommand::SidebarPublish { .. }
-        | ControlCommand::Notify { .. }
         | ControlCommand::CommandVisibility { .. }
         | ControlCommand::RecordUiStart { .. }
         | ControlCommand::RecordUiStop

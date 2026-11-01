@@ -345,6 +345,9 @@ for commands and subscriptions. They can use commands supported by a session end
 `extensions deploy` and `extensions undeploy`. Commands needing a UI, including `pick` and
 `run-action`, are refused. There is no focused pane, so pane commands must name a target.
 
+Use `rozi notify` for a session notification. Every attached UI receives it, and a late UI receives
+the retained inbox. Subscribing to `session-notification` also works without a UI.
+
 Their `ROZI_EXTENSION_CREDENTIAL` comes from the session and is valid only there. Client-issued
 credentials and client generation claims are refused. Redeploying, undeploying, or restarting
 retires old credentials and closes their open subscriptions and pending requests. Do not copy or

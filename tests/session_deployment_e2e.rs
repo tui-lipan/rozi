@@ -187,7 +187,8 @@ fn session_services_subscribe_without_clients_and_retire_their_credentials() {
         BundleFile { path: "watch.sh".into(), executable: false, contents: br#"printf '%s' "$ROZI_EXTENSION_CREDENTIAL" > "$ROZI_EXTENSION_STATE_DIR/credential"
 printf '%s' "$ROZI_EXTENSION_GENERATION" > "$ROZI_EXTENSION_STATE_DIR/generation"
 printf '%s' "$ROZI_EXTENSION_CONFIG" > "$ROZI_EXTENSION_STATE_DIR/settings"
-exec "$ROZI_BIN" subscribe --snapshot pane-spawned > "$ROZI_EXTENSION_STATE_DIR/events"
+"$ROZI_BIN" notify "service started"
+exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI_EXTENSION_STATE_DIR/events"
 "#.to_vec() },
     ]).unwrap();
     let archive = bundle.archive();
@@ -202,6 +203,18 @@ exec "$ROZI_BIN" subscribe --snapshot pane-spawned > "$ROZI_EXTENSION_STATE_DIR/
     ask(&mut server, &root, &session, deploy());
     let state = root.join("data/rozi/extension-state/demo");
     wait_for_text(&state.join("events"), "snapshot");
+    wait_for_text(&state.join("events"), "service started");
+    ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::Notify {
+            message: "headless notification".into(),
+            title: None,
+            level: rozi::control::NotifyLevel::Info,
+        },
+    );
+    wait_for_text(&state.join("events"), "headless notification");
     let credential = std::fs::read_to_string(state.join("credential")).unwrap();
     assert!(credential.starts_with(rozi::extension_runtime::SESSION_CREDENTIAL_PREFIX));
     assert!(

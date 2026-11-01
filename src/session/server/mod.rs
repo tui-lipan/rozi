@@ -36,6 +36,7 @@ mod graphics;
 mod graphics_pacer;
 mod headless;
 mod media;
+mod notifications;
 pub use headless::{attached_control_refusal, session_control_unsupported};
 mod lease;
 mod pane_log;
@@ -236,6 +237,7 @@ pub struct SessionServer {
     deployments: deployments::SessionDeployments,
     deployment_worker: Option<headless::DeploymentWorker>,
     automation: Option<automation::Automation>,
+    notifications: VecDeque<crate::control::SessionNotification>,
 }
 
 #[derive(Clone, Debug)]
@@ -1772,6 +1774,7 @@ impl SessionServer {
             deployments,
             deployment_worker: None,
             automation: None,
+            notifications: VecDeque::new(),
             settings,
         }
     }

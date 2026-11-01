@@ -1277,3 +1277,16 @@ provenance. Retiring a generation revokes its credentials and closes its held co
 
 `extensions-status` includes each deployment's `services`, with `name`, `state`, optional `pid`,
 and optional `reason`. A state is `starting`, `running`, `restarting`, or `stopped`.
+
+### Session notifications
+
+`notify` accepts a session endpoint and returns a `SessionNotification` in `data`, with `id`,
+`level`, nullable `title`, `message`, and `seq`. It raises `session-notification` with flat string
+fields `id`, `level`, `title`, `message`, and `session`. The event envelope's `seq` equals the
+notification's sequence. All attached UIs receive the event; headless subscribers receive it too.
+
+Session subscription snapshots include a `notifications` array. Attaching a UI receives the same
+retained inbox before subsequent live events. The inbox retains up to 64 notifications and 256 KiB
+of message and title text for this server instance. The combined message and title limit is 8192
+bytes. The inbox clears when the server restarts. Read state is per UI and does not change the
+server's inbox or another client's presentation.

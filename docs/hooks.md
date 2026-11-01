@@ -40,6 +40,7 @@ event's fields in the [environment](#environment).
 | `pane-cwd-changed` | A pane's working directory changes. | `pane`, `cwd`, `previous_cwd`, `focused` |
 | `agent-state-changed` | An agent's state changes, including when it appears in a pane and when it goes. Seeding agents on attach does not fire it. | `pane`, `agent`, `label`, `ref`, `state`, `previous_state`, `reason`, `focused` |
 | `foreground-changed` | The program running in a pane changes, including when the pane returns to its shell prompt. | `pane`, `program`, `previous_program`, `pid`, `focused` |
+| `session-notification` | A notification is sent to the session. Replaying the retained inbox does not raise it again. | `id`, `level`, `title`, `message`, `session` |
 | `bell` | A pane rings the terminal bell. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
@@ -129,7 +130,7 @@ skip hooks once 32 jobs are already running. For state, retries, or long-lived e
 Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks.
 Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
 `pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
-`client-joined`, `client-left`, `controller-changed`, `session-renamed`) run only on the controller
+`client-joined`, `client-left`, `controller-changed`, `session-renamed`, `session-notification`) run only on the controller
 client holding layout control, while client-local hooks
 (`focus-changed`, `workspace-switched`, `session-attached`, `session-detached`) run on the client
 where the event occurred.

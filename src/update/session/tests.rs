@@ -4267,3 +4267,38 @@ fn background_session_events_keep_their_scope_and_reject_stale_sources() {
         assert!(events.try_recv().is_err());
     });
 }
+
+#[test]
+fn notification_read_state_is_local_to_each_ui_and_session_instance() {
+    crate::test_support::on_large_stack(|| {
+        let mut first = TestBackend::new(crate::AppRoot::default());
+        let mut second = TestBackend::new(crate::AppRoot::default());
+        let instance = crate::session::protocol::SessionInstanceId::for_test("notifications");
+        for backend in [&mut first, &mut second] {
+            backend.state_mut().current_mut().session_instance = Some(instance.clone());
+            for _ in 0..2 {
+                backend
+                    .update_level(Msg::SessionNotifications {
+                        epoch: backend.state().runtime_epoch,
+                        session_instance: instance.clone(),
+                        session: "work".into(),
+                        notifications: vec![crate::control::SessionNotification {
+                            id: "notification-5".into(),
+                            seq: 5,
+                            level: crate::control::NotifyLevel::Info,
+                            title: None,
+                            message: "finished".into(),
+                        }],
+                    })
+                    .unwrap();
+                assert_eq!(backend.state().session_notification_cursors[&instance], 5);
+                assert_eq!(backend.state().replaceable_toasts.len(), 1);
+            }
+        }
+        first
+            .state_mut()
+            .session_notification_cursors
+            .insert(instance.clone(), 8);
+        assert_eq!(second.state().session_notification_cursors[&instance], 5);
+    });
+}

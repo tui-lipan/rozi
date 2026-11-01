@@ -4197,6 +4197,7 @@
         "agent-state-changed",
         "foreground-changed",
         "bell",
+        "session-notification",
         "focus-changed",
         "workspace-switched",
         "layout-changed",
@@ -6863,6 +6864,38 @@
       ],
       "type": "object"
     },
+    "SessionNotification": {
+      "description": "A notification retained by its session and presented independently by each client.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "level": {
+          "$ref": "#/$defs/NotifyLevel"
+        },
+        "message": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "level",
+        "message",
+        "seq"
+      ],
+      "type": "object"
+    },
     "SessionServiceStatus": {
       "properties": {
         "name": {
@@ -6987,6 +7020,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "notifications": {
+          "items": {
+            "$ref": "#/$defs/SessionNotification"
+          },
+          "type": "array"
+        },
         "panes": {
           "items": {
             "$ref": "#/$defs/PaneInfo"
@@ -7011,7 +7050,8 @@
         "seq",
         "client_count",
         "layout_rev",
-        "panes"
+        "panes",
+        "notifications"
       ],
       "type": "object"
     },
@@ -8043,5 +8083,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 6
+  "x-rozi-schema-version": 7
 }

@@ -44,6 +44,7 @@ pub fn bundle() -> Value {
     add::<crate::control::GlobalAgentInfo>(&mut generator, &mut roots);
     add::<crate::control::AgentLocationSpec>(&mut generator, &mut roots);
     add::<crate::control::ExtensionRuntimeReport>(&mut generator, &mut roots);
+    add::<crate::control::SessionNotification>(&mut generator, &mut roots);
     add::<crate::control::ExtensionDeploymentReport>(&mut generator, &mut roots);
     add::<crate::control::ExtensionDeploymentUpload>(&mut generator, &mut roots);
     add::<crate::control::ExtensionUndeployReport>(&mut generator, &mut roots);

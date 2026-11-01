@@ -75,6 +75,7 @@ pub enum EventKind {
     AgentStateChanged,
     ForegroundChanged,
     Bell,
+    SessionNotification,
     FocusChanged,
     WorkspaceSwitched,
     LayoutChanged,
@@ -92,7 +93,7 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::PaneStatusChanged,
@@ -101,6 +102,7 @@ impl EventKind {
         Self::AgentStateChanged,
         Self::ForegroundChanged,
         Self::Bell,
+        Self::SessionNotification,
         Self::FocusChanged,
         Self::WorkspaceSwitched,
         Self::LayoutChanged,
@@ -127,6 +129,7 @@ impl EventKind {
             Self::AgentStateChanged => "agent-state-changed",
             Self::ForegroundChanged => "foreground-changed",
             Self::Bell => "bell",
+            Self::SessionNotification => "session-notification",
             Self::FocusChanged => "focus-changed",
             Self::WorkspaceSwitched => "workspace-switched",
             Self::LayoutChanged => "layout-changed",
@@ -226,6 +229,7 @@ pub struct SessionSubscribeSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<crate::control::LayoutReport>,
     pub panes: Vec<crate::control::PaneInfo>,
+    pub notifications: Vec<crate::control::SessionNotification>,
 }
 
 /// Typed records streamed by a session subscription.

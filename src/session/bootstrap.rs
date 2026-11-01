@@ -977,6 +977,16 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 agents,
                 state,
             },
+            ServerMessage::SessionNotifications {
+                session_instance,
+                session,
+                notifications,
+            } => Msg::SessionNotifications {
+                epoch,
+                session_instance,
+                session,
+                notifications,
+            },
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
             ServerMessage::SessionSubscribeRecord { .. } => Msg::RefreshPaintLayers,
         },

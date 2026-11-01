@@ -243,7 +243,7 @@ attached.
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
 | `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
-| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
+| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Notify a UI or a named session. | yes |
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
 | `subscribe [EVENT...] [--snapshot] [--after INSTANCE:SEQ]` | Stream events as NDJSON. An empty list subscribes to all events. Supported on both UI and session endpoints (`--snapshot` and `--after` require a session endpoint). | yes |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
@@ -285,8 +285,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 2,
-  "session_protocol": 37,
+  "schema": 7,
+  "session_protocol": 46,
   "capabilities": [
     "agent-prompt-results",
     "agent-waits",
@@ -319,6 +319,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "session-deployments",
     "session-services",
     "session-no-resurrect",
+    "session-notifications",
     "sidebar-streams",
     "sidebar-tab-settings",
     "split-size"
@@ -334,6 +335,9 @@ background without opening a UI. An older binary refuses `--detach`.
 
 `session-no-resurrect` means `sessions new <NAME> --detach` accepts `--no-resurrect`. An older
 binary refuses it.
+
+`session-notifications` means `notify` accepts a session endpoint and its subscription snapshots
+include a retained notification inbox.
 
 `session-services` means explicitly deployed `placement = "session"` services run without a UI
 and use credentials issued by that session.
@@ -939,7 +943,18 @@ Use `notify` for failures, and for successful results that would otherwise go un
 
 ```sh
 rozi notify "tests failed" --title Build --level error
+rozi --session work notify "background build finished"
 ```
+
+A notification sent to a session is stored there and raises `session-notification`. Every attached
+UI presents live notifications. A late attachment receives the retained inbox, which holds at most
+64 notifications and 256 KiB of message and title text while that server runs. A single message
+and title together may contain at most 8192 bytes. Restarting the server clears this inbox.
+
+Read state belongs to each UI. Displaying a notification in one UI does not hide it from another.
+Reconnecting to the same session instance avoids repeating notifications already displayed by that
+UI; starting a new UI presents the retained inbox again. Session subscription snapshots include
+`notifications`, with each item's `id`, `level`, `title`, `message`, and event `seq`.
 
 `show-command` and `hide-command` work only from an extension's own command or service, for a
 command its manifest declares. See

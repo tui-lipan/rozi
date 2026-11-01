@@ -647,7 +647,9 @@ impl SessionServer {
         baseline: Option<events::PaneRuntimeBaseline>,
     ) -> ServerMessage {
         let agents = self.agent_records(owner, pane_id);
-        if let Some(baseline) = baseline {
+        // A pane being spawned has not been announced, and `pane-spawned` already carries what its
+        // first runtime state would report. Nothing about a pane may reach a subscriber before it.
+        if let Some(baseline) = baseline.filter(|_| self.spawning_pane != Some(pane_id)) {
             for (kind, fields) in baseline.into_events(&state, &agents) {
                 self.record_session_event(kind, fields);
             }

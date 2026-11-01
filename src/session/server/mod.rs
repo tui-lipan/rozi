@@ -228,6 +228,8 @@ pub struct SessionServer {
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
     session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
+    /// The pane mid-spawn, which raises no runtime events until it has been announced.
+    spawning_pane: Option<PaneId>,
 }
 
 #[derive(Clone, Debug)]
@@ -1760,6 +1762,7 @@ impl SessionServer {
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
             session_subscribers: HashMap::new(),
+            spawning_pane: None,
             settings,
         }
     }

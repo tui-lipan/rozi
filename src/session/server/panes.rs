@@ -76,6 +76,19 @@ impl SessionServer {
 
     pub(super) fn spawn_pane_inner(
         &mut self,
+        request: SpawnRequest,
+        seed: Option<&[u8]>,
+        retain_on_failure: bool,
+        restored_scrollback: Option<usize>,
+    ) -> ServerMessage {
+        self.spawning_pane = Some(request.pane_id);
+        let result = self.install_pane(request, seed, retain_on_failure, restored_scrollback);
+        self.spawning_pane = None;
+        result
+    }
+
+    fn install_pane(
+        &mut self,
         mut request: SpawnRequest,
         seed: Option<&[u8]>,
         retain_on_failure: bool,

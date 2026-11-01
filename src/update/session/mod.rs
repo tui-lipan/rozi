@@ -43,6 +43,12 @@ pub(crate) fn session_event(
             .is_some_and(|id| ctx.state.current().focused_pane == Some(id));
         fields.insert("focused".to_string(), is_focused.to_string());
     }
+    if event.kind == crate::events::EventKind::ControllerChanged {
+        fields.insert(
+            "self_controller".to_string(),
+            ctx.state.is_controller().to_string(),
+        );
+    }
 
     let client_event = crate::events::Event::from_map(event.kind, fields);
     let (scope, remote_host) = if let Some(attachment) = ctx.state.attachment_for_epoch(epoch) {

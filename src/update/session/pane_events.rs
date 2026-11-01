@@ -491,20 +491,22 @@ pub(crate) fn exited(
     let already_closing = pane.closing;
     crate::ops::capture_wait::pane_exited(ctx, pane_id, local);
     let should_close = local || !should_hold_on_exit(hold_on_exit, already_closing);
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::PaneExited,
-            vec![
-                ("pane", pane_id.to_string()),
-                ("code", code.to_string()),
-                (
-                    "focused",
-                    (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
-                ),
-            ],
-        ),
-    );
+    if local {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::PaneExited,
+                vec![
+                    ("pane", pane_id.to_string()),
+                    ("code", code.to_string()),
+                    (
+                        "focused",
+                        (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
+                    ),
+                ],
+            ),
+        );
+    }
     ctx.state.commands_dirty = true;
     // A user-initiated close already tore this pane down; the exit is expected, so skip the exit
     // notification/toast and the redundant close call.

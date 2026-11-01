@@ -44,10 +44,21 @@ pub(crate) fn session_event(
         fields.insert("focused".to_string(), is_focused.to_string());
     }
     if event.kind == crate::events::EventKind::ControllerChanged {
-        fields.insert(
-            "self_controller".to_string(),
-            ctx.state.is_controller().to_string(),
-        );
+        let client_id = if let Some(attachment) = ctx.state.attachment_for_epoch(epoch) {
+            attachment.shared.as_ref().map(|s| s.client_id.to_string())
+        } else {
+            ctx.state
+                .current()
+                .shared
+                .as_ref()
+                .map(|s| s.client_id.to_string())
+        };
+        let is_self = client_id.as_deref().is_some_and(|id| {
+            fields
+                .get("controller")
+                .is_some_and(|c| !c.is_empty() && c == id)
+        });
+        fields.insert("self_controller".to_string(), is_self.to_string());
     }
     if event.kind == crate::events::EventKind::LayoutChanged
         && let Some(author_client) = fields.remove("author_client")

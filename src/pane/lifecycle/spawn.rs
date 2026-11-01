@@ -523,18 +523,20 @@ pub(crate) fn spawn_pane_in_workspace(
             palette,
         },
     );
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::PaneSpawned,
-            vec![
-                ("pane", id.to_string()),
-                ("workspace", (workspace_index + 1).to_string()),
-                ("command", command.unwrap_or_default()),
-                ("cwd", cwd.unwrap_or_default()),
-            ],
-        ),
-    );
+    if super::pane_is_local(&ctx.state, id) {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::PaneSpawned,
+                vec![
+                    ("pane", id.to_string()),
+                    ("workspace", (workspace_index + 1).to_string()),
+                    ("command", command.unwrap_or_default()),
+                    ("cwd", cwd.unwrap_or_default()),
+                ],
+            ),
+        );
+    }
     let update = Update::with_command(open_timers_command(
         ctx.state.runtime_epoch,
         id,

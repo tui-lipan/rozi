@@ -8376,6 +8376,7 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
                 EventKind::ClientJoined,
                 EventKind::ClientLeft,
                 EventKind::ControllerChanged,
+                EventKind::PaneSpawned,
                 EventKind::LayoutChanged,
                 EventKind::ControllerChanged,
                 EventKind::LayoutChanged,
@@ -8427,24 +8428,29 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
         assert_eq!(one_events[11].data["self_controller"], "false");
         assert_eq!(one_events[11].data["reason"], "released");
 
-        assert_eq!(one_events[12].data["revision"], "4");
-        assert_eq!(one_events[12].data["author"], "server");
+        assert_eq!(one_events[12].data["pane"], "2");
+        assert_eq!(one_events[12].data["workspace"], "1");
+        assert_eq!(one_events[12].data["command"], "true");
+        assert_eq!(one_events[12].data["cwd"], "/tmp");
 
-        assert_eq!(one_events[13].data["controller"], "1");
-        assert_eq!(one_events[13].data["self_controller"], "true");
-        assert_eq!(one_events[13].data["reason"], "granted");
+        assert_eq!(one_events[13].data["revision"], "4");
+        assert_eq!(one_events[13].data["author"], "server");
 
-        assert_eq!(one_events[14].data["revision"], "5");
-        assert_eq!(one_events[14].data["author"], "self");
+        assert_eq!(one_events[14].data["controller"], "1");
+        assert_eq!(one_events[14].data["self_controller"], "true");
+        assert_eq!(one_events[14].data["reason"], "granted");
 
-        assert_eq!(one_events[15].data["session"], "parity-renamed");
-        assert_eq!(one_events[15].data["previous"], "parity");
+        assert_eq!(one_events[15].data["revision"], "5");
+        assert_eq!(one_events[15].data["author"], "self");
 
-        assert_eq!(one_events[16].data["pane"], "1");
-        assert_eq!(one_events[16].data["code"], "0");
+        assert_eq!(one_events[16].data["session"], "parity-renamed");
+        assert_eq!(one_events[16].data["previous"], "parity");
 
-        assert_eq!(one_events[17].data["revision"], "6");
-        assert_eq!(one_events[17].data["author"], "self");
+        assert_eq!(one_events[17].data["pane"], "1");
+        assert_eq!(one_events[17].data["code"], "0");
+
+        assert_eq!(one_events[18].data["revision"], "6");
+        assert_eq!(one_events[18].data["author"], "self");
 
         // With 2 clients attached: when client 1 parks, client 2 is promoted immediately (`granted`)
         // instead of leaving the session without a controller, so park both before the headless
@@ -8491,8 +8497,8 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
         assert_eq!(first_normalized, second_normalized);
         assert_eq!(first_client_events[9].data["count"], "3");
         assert_eq!(first_client_events[10].data["count"], "2");
-        assert_eq!(first_client_events[13].data["self_controller"], "true");
-        assert_eq!(second_client_events[13].data["self_controller"], "false");
+        assert_eq!(first_client_events[14].data["self_controller"], "true");
+        assert_eq!(second_client_events[14].data["self_controller"], "false");
     });
 }
 
@@ -8517,7 +8523,7 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
         let follower_kinds: Vec<_> = follower_events.iter().map(|e| e.event).collect();
         assert!(controller_kinds.contains(&crate::events::EventKind::PaneSpawned));
         assert!(controller_kinds.contains(&crate::events::EventKind::LayoutChanged));
-        assert!(!follower_kinds.contains(&crate::events::EventKind::PaneSpawned));
+        assert!(follower_kinds.contains(&crate::events::EventKind::PaneSpawned));
         assert!(follower_kinds.contains(&crate::events::EventKind::LayoutChanged));
 
         let spawned = controller_events
@@ -8527,6 +8533,14 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
         assert_eq!(spawned.data["pane"], "2");
         assert_eq!(spawned.data["workspace"], "1");
         assert_eq!(spawned.data["cwd"], "/work");
+
+        let follower_spawned = follower_events
+            .iter()
+            .find(|e| e.event == crate::events::EventKind::PaneSpawned)
+            .unwrap();
+        assert_eq!(follower_spawned.data["pane"], "2");
+        assert_eq!(follower_spawned.data["workspace"], "1");
+        assert_eq!(follower_spawned.data["cwd"], "/work");
 
         let controller_layout = controller_events
             .iter()

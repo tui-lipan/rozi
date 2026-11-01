@@ -648,7 +648,9 @@ impl SessionServer {
     ) -> ServerMessage {
         let agents = self.agent_records(owner, pane_id);
         if let Some(baseline) = baseline {
-            baseline.record_changes(&mut self.session_events, &state, &agents);
+            for (kind, fields) in baseline.into_events(&state, &agents) {
+                self.record_session_event(kind, fields);
+            }
         }
         ServerMessage::PaneRuntimeChanged {
             pane_id,

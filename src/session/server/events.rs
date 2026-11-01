@@ -337,14 +337,14 @@ impl PaneRuntimeBaseline {
         }
     }
 
-    pub(super) fn record_changes(
+    pub(super) fn into_events(
         self,
-        buffer: &mut SessionEventBuffer,
         after_state: &PaneRuntimeState,
         after_records: &[AgentRecord],
-    ) {
+    ) -> Vec<(EventKind, Vec<(&'static str, String)>)> {
+        let mut events = Vec::new();
         if self.status != after_state.status {
-            buffer.record(
+            events.push((
                 EventKind::PaneStatusChanged,
                 vec![
                     ("pane", self.pane_id.to_string()),
@@ -379,18 +379,18 @@ impl PaneRuntimeBaseline {
                             .unwrap_or_default(),
                     ),
                 ],
-            );
+            ));
         }
 
         let after_agents =
             crate::session::protocol::effective_agent_runtimes(after_state, after_records);
         for fields in diff_agent_events(self.pane_id, &self.agents, &after_agents) {
-            buffer.record(EventKind::AgentStateChanged, fields);
+            events.push((EventKind::AgentStateChanged, fields));
         }
 
         let after_foreground = PaneForeground::of(after_state);
         if after_foreground != self.foreground {
-            buffer.record(
+            events.push((
                 EventKind::ForegroundChanged,
                 vec![
                     ("pane", self.pane_id.to_string()),
@@ -407,8 +407,9 @@ impl PaneRuntimeBaseline {
                             .unwrap_or_default(),
                     ),
                 ],
-            );
+            ));
         }
+        events
     }
 }
 

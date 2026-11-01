@@ -1379,7 +1379,7 @@ impl SessionServer {
             allow_takeover: self.allow_takeover,
             origin: self.origin.clone(),
         };
-        let mut responses = vec![(Target::Sender, attached)];
+        self.enqueue(client_id, Target::Sender, attached);
         if let Some(client_name) = joined_label {
             self.record_session_event(
                 events::EventKind::ClientJoined,
@@ -1390,7 +1390,7 @@ impl SessionServer {
                 ],
             );
         }
-        responses.push((Target::Broadcast, self.clients_changed()));
+        let mut responses = vec![(Target::Broadcast, self.clients_changed())];
         if granted {
             responses.push((
                 Target::Broadcast,

@@ -1,110 +1,35 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, mpsc};
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub enum EventKind {
-    PaneSpawned,
-    PaneExited,
-    PaneStatusChanged,
-    AgentStateChanged,
-    ForegroundChanged,
-    Bell,
-    FocusChanged,
-    WorkspaceSwitched,
-    LayoutChanged,
-    SessionAttached,
-    SessionDetached,
-    SessionRenamed,
-    SessionCreated,
-    ControllerChanged,
-    ClientJoined,
-    ClientLeft,
-    ProfileLoaded,
-    ProfileApplied,
-    ProfileSaved,
-    ConfigReloaded,
-}
-
-impl EventKind {
-    pub const ALL: [Self; 20] = [
-        Self::PaneSpawned,
-        Self::PaneExited,
-        Self::PaneStatusChanged,
-        Self::AgentStateChanged,
-        Self::ForegroundChanged,
-        Self::Bell,
-        Self::FocusChanged,
-        Self::WorkspaceSwitched,
-        Self::LayoutChanged,
-        Self::SessionAttached,
-        Self::SessionDetached,
-        Self::SessionRenamed,
-        Self::SessionCreated,
-        Self::ControllerChanged,
-        Self::ClientJoined,
-        Self::ClientLeft,
-        Self::ProfileLoaded,
-        Self::ProfileApplied,
-        Self::ProfileSaved,
-        Self::ConfigReloaded,
-    ];
-
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::PaneSpawned => "pane-spawned",
-            Self::PaneExited => "pane-exited",
-            Self::PaneStatusChanged => "pane-status-changed",
-            Self::AgentStateChanged => "agent-state-changed",
-            Self::ForegroundChanged => "foreground-changed",
-            Self::Bell => "bell",
-            Self::FocusChanged => "focus-changed",
-            Self::WorkspaceSwitched => "workspace-switched",
-            Self::LayoutChanged => "layout-changed",
-            Self::SessionAttached => "session-attached",
-            Self::SessionDetached => "session-detached",
-            Self::SessionRenamed => "session-renamed",
-            Self::SessionCreated => "session-created",
-            Self::ControllerChanged => "controller-changed",
-            Self::ClientJoined => "client-joined",
-            Self::ClientLeft => "client-left",
-            Self::ProfileLoaded => "profile-loaded",
-            Self::ProfileApplied => "profile-applied",
-            Self::ProfileSaved => "profile-saved",
-            Self::ConfigReloaded => "config-reloaded",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.id() == value)
-    }
-}
-
-/// One `subscribe` event as it goes out on the wire.
-///
-/// `data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an
-/// event carries grow over time and a subscriber is expected to read the ones it knows and ignore
-/// the rest, so the schema describes the envelope and the closed vocabulary of event names without
-/// freezing each kind's field list.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct WireEvent {
-    pub event: EventKind,
-    pub data: std::collections::BTreeMap<String, String>,
-}
+pub use crate::session::protocol::{EventKind, WireEvent};
 
 #[derive(Clone, Debug)]
 pub struct Event {
     pub kind: EventKind,
-    pub fields: Vec<(&'static str, String)>,
+    pub fields: Vec<(Cow<'static, str>, String)>,
 }
 
 impl Event {
     pub fn new(kind: EventKind, fields: Vec<(&'static str, String)>) -> Self {
-        Self { kind, fields }
+        Self {
+            kind,
+            fields: fields
+                .into_iter()
+                .map(|(key, value)| (Cow::Borrowed(key), value))
+                .collect(),
+        }
+    }
+
+    /// An event as it arrived from a session server, whose field names are not known here.
+    pub fn from_map(kind: EventKind, fields: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self {
+            kind,
+            fields: fields
+                .into_iter()
+                .map(|(key, value)| (Cow::Owned(key), value))
+                .collect(),
+        }
     }
 
     fn json(&self) -> String {
@@ -113,7 +38,7 @@ impl Event {
             data: self
                 .fields
                 .iter()
-                .map(|(key, value)| ((*key).to_string(), value.clone()))
+                .map(|(key, value)| (key.to_string(), value.clone()))
                 .collect(),
         })
         .expect("event fields serialize")
@@ -232,19 +157,11 @@ pub fn emit(state: &crate::state::State, event: Event) {
     run_hooks(state, &event);
 }
 
-/// Publish an event to this client's subscribers, but run its hooks only on the current layout
-/// controller. Server-owned transitions reach every client, so this prevents duplicate external
-/// side effects while preserving each client's local `subscribe` stream.
-pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
-    state
-        .event_hub
-        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
-    if state.is_controller() {
-        run_hooks(state, &event);
-    }
-}
-
-fn run_hooks(state: &crate::state::State, event: &Event) {
+pub(crate) fn run_hooks_for_scope(
+    state: &crate::state::State,
+    event: &Event,
+    remote_host: Option<&str>,
+) {
     let commands: Vec<_> = state
         .config
         .hooks
@@ -255,7 +172,7 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     if commands.is_empty() {
         return;
     }
-    let env = hook_env_for_state(event, state);
+    let env = hook_env_for_scope(event, state.control_socket_path.as_deref(), remote_host);
     let runner = crate::platform::command::resolve_command_shell(
         state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -279,6 +196,10 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     }
 }
 
+fn run_hooks(state: &crate::state::State, event: &Event) {
+    run_hooks_for_scope(state, event, state.current().remote_host.as_deref());
+}
+
 fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec<(String, String)> {
     let mut env = vec![("ROZI_EVENT".to_string(), event.kind.id().to_string())];
     if let Some(path) = control_socket_path {
@@ -298,14 +219,14 @@ fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec
     env
 }
 
-/// Build hook environment, including the remote host when the client is `--remote` attached.
-pub(crate) fn hook_env_for_state(
+pub(crate) fn hook_env_for_scope(
     event: &Event,
-    state: &crate::state::State,
+    control_socket_path: Option<&std::path::Path>,
+    remote_host: Option<&str>,
 ) -> Vec<(String, String)> {
-    let mut env = hook_env(event, state.control_socket_path.as_deref());
-    if let Some(host) = &state.current().remote_host {
-        env.push(("ROZI_REMOTE_HOST".to_string(), host.clone()));
+    let mut env = hook_env(event, control_socket_path);
+    if let Some(host) = remote_host {
+        env.push(("ROZI_REMOTE_HOST".to_string(), host.to_string()));
     }
     env
 }
@@ -349,7 +270,7 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
-        assert_eq!(EventKind::ALL.len(), 20);
+        assert_eq!(EventKind::ALL.len(), 22);
         let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));

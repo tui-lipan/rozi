@@ -713,7 +713,7 @@ These requests behave differently than against a UI:
 
 ## Subscription stream
 
-Open with:
+Open a UI event subscription with:
 
 ```json
 {"cmd":"subscribe","events":["pane-exited","pane-status-changed"]}
@@ -738,6 +738,30 @@ CLI bridge:
 ```sh
 rozi subscribe pane-exited pane-status-changed
 ```
+
+### Session subscriptions
+
+A session server serves `subscribe` itself, through `rozi --session <NAME> subscribe` or
+`rozi --remote <HOST> --session <NAME> subscribe`. It accepts `snapshot` or `after`, but not both. A
+UI refuses either one.
+
+```json
+{"cmd":"subscribe","events":["pane-spawned","pane-exited"],"snapshot":true}
+{"cmd":"subscribe","events":["layout-changed"],"after":"4a2b:42"}
+```
+
+The CLI prints one typed record per line:
+
+```json
+{"type":"snapshot","session_instance":"4a2b","session":"dev","seq":42,"controller":1,"client_count":2,"layout_rev":3,"panes":[]}
+{"type":"event","session_instance":"4a2b","seq":43,"kind":"pane-spawned","data":{"pane":"2"}}
+{"type":"lagged"}
+```
+
+A cursor the session cannot honour fails with error code `cursor-expired`, whose `data` holds
+`current_instance`, `oldest_seq`, and `latest_seq`. A subscriber that falls behind receives a
+`lagged` record and the connection closes. See
+[Session subscriptions](control.md#session-subscriptions) for the events and retention.
 
 ## Picker stream
 

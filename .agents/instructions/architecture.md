@@ -46,6 +46,9 @@ claiming a new domain, so say why in the change that introduces it.
 
 ## Runtime invariants
 
+- The session server is the sole authority for session event ordering, deployed automation
+  generations and session action execution. A client may present or request those things, but
+  must never become their durable owner.
 - Every PTY is server-owned. There is no in-process PTY mode.
 - A client displaying panes parses raw server output into its own `TerminalScreen`.
 - The startup launcher may have no attachment while the user chooses a session.

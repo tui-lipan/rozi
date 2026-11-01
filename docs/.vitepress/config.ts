@@ -88,7 +88,7 @@ const ROZI_FACTS = (() => {
       "BUILTIN_COMMANDS entries",
     ),
     hookEvents: one(
-      read("../../src/events.rs"),
+      read("../../src/session/protocol/events.rs"),
       /pub const ALL: \[Self; (\d+)\]/,
       "the EventKind::ALL length",
     ),

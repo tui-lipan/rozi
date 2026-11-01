@@ -750,12 +750,12 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             // answer their own short-lived connection. Arriving here means the server answered
             // something this client never asked, which is a broken attach rather than a message
             // to act on.
-            ServerMessage::SessionInfo { .. } | ServerMessage::SessionControlResult { .. } => {
-                Msg::SessionError {
-                    epoch,
-                    message: String::new(),
-                }
-            }
+            ServerMessage::SessionInfo { .. }
+            | ServerMessage::SessionControlResult { .. }
+            | ServerMessage::SessionSubscribeRecord { .. } => Msg::SessionError {
+                epoch,
+                message: String::new(),
+            },
             ServerMessage::AgentReportResult {
                 request_id,
                 response,
@@ -977,6 +977,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 agents,
                 state,
             },
+            ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
         },
     }
 }

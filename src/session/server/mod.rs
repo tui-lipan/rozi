@@ -29,6 +29,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
+mod events;
 mod graphics;
 mod graphics_pacer;
 mod headless;
@@ -49,6 +50,7 @@ pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
 mod runtime;
 mod shutdown;
+mod subscriptions;
 mod waits;
 mod worktree;
 pub(crate) use create::create_detached_session;
@@ -178,6 +180,7 @@ pub struct SessionServer {
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
+    session_events: events::SessionEventBuffer,
     /// Aggregate high-water across every client outbox for this server process's lifetime.
     outbox_high_water_bytes: usize,
     departed_coalesced_frames: u64,
@@ -225,6 +228,11 @@ pub struct SessionServer {
     pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
+    session_subscribers: HashMap<ClientId, subscriptions::SessionSubscriber>,
+    /// Events recorded but not yet sent to attached UIs. See [`Self::flush_session_events`].
+    undelivered_ui_events: VecDeque<events::SessionEvent>,
+    /// The pane mid-spawn, which raises no runtime events until it has been announced.
+    spawning_pane: Option<PaneId>,
 }
 
 #[derive(Clone, Debug)]
@@ -331,6 +339,8 @@ pub struct ServerPane {
     output_bytes_sent: u64,
     pub generation: u64,
     pub title: Option<String>,
+    /// What this pane's `bell` and `pane-title-changed` events compare against.
+    event_watch: events::PaneEventWatch,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
@@ -1697,10 +1707,12 @@ impl SessionServer {
     ) -> Self {
         let session_name = session_name.into();
         let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
+        let instance_id = protocol::SessionInstanceId::generate();
+        let session_events = events::SessionEventBuffer::new(instance_id.clone());
         Self {
             retired_media: VecDeque::new(),
             acquisition_reaper_cursor: 0,
-            instance_id: protocol::SessionInstanceId::generate(),
+            instance_id,
             panes: HashMap::new(),
             local_panes: HashMap::new(),
             next_generation: 1,
@@ -1722,6 +1734,7 @@ impl SessionServer {
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
+            session_events,
             outbox_high_water_bytes: 0,
             departed_coalesced_frames: 0,
             departed_coalesced_bytes: 0,
@@ -1748,6 +1761,9 @@ impl SessionServer {
             endpoint: None,
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
+            session_subscribers: HashMap::new(),
+            undelivered_ui_events: VecDeque::new(),
+            spawning_pane: None,
             settings,
         }
     }
@@ -2163,6 +2179,16 @@ impl ServerPane {
             .title()
             .and_then(crate::pane::sanitize_terminal_title)
             .or_else(|| self.title.clone())
+    }
+
+    /// Note what a chunk of output did to this pane's watched state. `true` means it rang a bell
+    /// worth an event.
+    fn watch_output(&mut self) -> bool {
+        let now = Instant::now();
+        let bell_count = self.screen_without_change().bell_count();
+        let title = self.effective_title();
+        self.event_watch.title.observe(title, now);
+        self.event_watch.ring(bell_count, now)
     }
 
     /// The best *local* cwd known for this pane, suitable for `Command::current_dir` on a

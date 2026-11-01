@@ -341,6 +341,17 @@ fn only_the_exact_version_negotiates() {
         "a server with the old worktree reply shape is rejected at attach"
     );
 
+    assert!(
+        negotiate_protocol(
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL,
+            PROTOCOL_VERSION - 1,
+            PROTOCOL_VERSION - 1,
+        )
+        .is_err(),
+        "previous protocol version must be rejected without a shim"
+    );
+
     assert_eq!(
         negotiate_protocol(
             PROTOCOL_VERSION,

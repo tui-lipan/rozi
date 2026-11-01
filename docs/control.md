@@ -245,7 +245,7 @@ attached.
 | `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
 | `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
-| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
+| `subscribe [EVENT...] [--snapshot] [--after INSTANCE:SEQ]` | Stream events as NDJSON. An empty list subscribes to all events. `--snapshot` and `--after` need a session endpoint. | yes |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `prompt --title TEXT [--placeholder TEXT] [--value TEXT] [--masked] [--json]` | Ask for a line of text in a modal prompt. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
@@ -704,9 +704,10 @@ this UI has received it:
 
 `author` is `self` for this UI's own change, `client` for another client's, and `server` for a
 change made through a session endpoint. The event fires only for accepted revisions: not for a
-change the server rejects, not for animation frames, and not before the server confirms. A session
-endpoint cannot `subscribe`, so a script driving a detached session reads `revision` from
-`layout get` instead.
+change the server rejects, not for animation frames, and not before the server confirms. A script
+driving a detached session subscribes to the session itself (see
+[Session subscriptions](#session-subscriptions)); there `author` is `client` or `server`, with the
+writing client's ID in `author_client` (`0` for the server).
 
 ## Sending keys and capturing output
 
@@ -933,15 +934,50 @@ command its manifest declares. See
 
 ## Subscriptions
 
-`subscribe` prints one JSON object per line until the endpoint closes:
+`subscribe` streams events as line-delimited JSON (NDJSON) until the endpoint closes:
 
 ```sh
 rozi subscribe pane-exited pane-status-changed |
   jq -r 'select(.event == "pane-status-changed") | [.data.pane, .data.status] | @tsv'
 ```
 
-Every event has `event` and `data`; event fields are under `data`. See
-[Hooks](hooks.md#events-and-fields) for the event names and fields.
+When run against a UI endpoint, every event has `event` and `data`; event fields are under `data`.
+See [Hooks](hooks.md#events-and-fields) for the event names and fields.
+
+### Session subscriptions
+
+A script or service can subscribe to a session, local or remote, with no UI attached:
+
+```sh
+rozi --session dev subscribe pane-spawned pane-exited
+rozi --remote host --session dev subscribe --snapshot
+rozi --session dev subscribe --after 4a2b:42
+```
+
+Every line has a `type`:
+
+| `type` | Meaning |
+| --- | --- |
+| `snapshot` | The session's current state, sent first with `--snapshot`: `session_instance`, `session`, `seq`, `controller`, `client_count`, `layout_rev`, `layout`, and `panes`. The next event has the sequence number after its `seq`. Nothing is lost or repeated between them. |
+| `event` | One event: `session_instance`, `seq`, `kind`, and `data`, with the [same fields](hooks.md#events-and-fields) except the client's own `focused` and `self_controller`. |
+| `lagged` | The subscriber fell too far behind. The stream ends here; resume from the last `seq` you read. |
+
+A session raises `pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
+`pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
+`session-renamed`, `controller-changed`, `client-joined`, and `client-left`. Naming any other event
+is refused, because it describes one UI and only that UI can raise it. A pane's `pane-spawned` comes
+before any other event about it. Panes a session restores when it starts are in `--snapshot`, and
+raise no `pane-spawned`.
+
+`--after INSTANCE:SEQ` replays the retained events after that point and carries on live. The session
+keeps its most recent 1024 events, up to 1 MiB. A cursor it cannot honour, because the event after
+it is gone, the sequence number is ahead of the session, or the session has restarted under a new
+instance, fails with `cursor-expired` and never falls back to a snapshot. As with other commands,
+the failure is on stderr, and redirected stdout also gets the failure document, whose `data` holds
+`current_instance`, `oldest_seq`, and `latest_seq`. Start again with `--snapshot`.
+
+The command exits `0` when the stream ends, whether the session stopped or it sent `lagged`. Over
+`--remote`, losing the SSH connection exits `2`.
 
 ## Pickers
 
@@ -1076,9 +1112,9 @@ rozi --session dev capture-pane --target "$pane" --scrollback full --format text
 The session must already exist. Start one in the background with
 `rozi sessions new dev --detach`, or leave a detached `rozi dev` running.
 
-There is no general event stream from a session endpoint: `subscribe` reports UI events, which a
-server does not raise. Agent state is the exception: `agents wait` waits inside the server, without
-polling and without an attached UI.
+`rozi --session dev subscribe` streams the session's events with no UI attached (see
+[Session subscriptions](#session-subscriptions)). Focus and workspace events describe one UI, so
+only that UI's own `subscribe` reports them. `agents wait` waits inside the server, without polling.
 
 ## Extensions and detached sessions
 

@@ -62,7 +62,11 @@ impl SessionServer {
         }
         let retired = self.endpoint.replace(new_endpoint);
         self.pending_listener = Some((listener, retired));
-        self.session_name = name.clone();
+        let previous = std::mem::replace(&mut self.session_name, name.clone());
+        self.record_session_event(
+            events::EventKind::SessionRenamed,
+            vec![("session", name.clone()), ("previous", previous)],
+        );
         ServerMessage::Renamed { session: name }
     }
 
@@ -71,6 +75,19 @@ impl SessionServer {
     }
 
     pub(super) fn spawn_pane_inner(
+        &mut self,
+        request: SpawnRequest,
+        seed: Option<&[u8]>,
+        retain_on_failure: bool,
+        restored_scrollback: Option<usize>,
+    ) -> ServerMessage {
+        self.spawning_pane = Some(request.pane_id);
+        let result = self.install_pane(request, seed, retain_on_failure, restored_scrollback);
+        self.spawning_pane = None;
+        result
+    }
+
+    fn install_pane(
         &mut self,
         mut request: SpawnRequest,
         seed: Option<&[u8]>,
@@ -220,6 +237,13 @@ impl SessionServer {
                 request.launch = None;
             }
         }
+        let event_watch = events::PaneEventWatch::new(
+            screen.bell_count(),
+            screen
+                .title()
+                .and_then(crate::pane::sanitize_terminal_title)
+                .or_else(|| request.title.clone()),
+        );
         match spawned {
             Ok(pty) => {
                 let pid = pty.pid();
@@ -231,6 +255,7 @@ impl SessionServer {
                         scrollback,
                         generation,
                         title: request.title,
+                        event_watch,
                         cwd: effective_cwd,
                         launch: request.launch,
                         agent_resume,
@@ -286,6 +311,7 @@ impl SessionServer {
                             scrollback,
                             generation,
                             title: request.title,
+                            event_watch,
                             cwd: request.cwd,
                             launch: request.launch,
                             // Reached only when the interactive shell could not start either, so
@@ -457,6 +483,7 @@ impl SessionServer {
                 }
                 match event {
                     TerminalPtyEvent::Output(bytes) => {
+                        let mut bell_rang = false;
                         let logging_error =
                             pane.log.as_mut().and_then(|log| log.write(&bytes).err());
                         if logging_error.is_some() {
@@ -495,6 +522,9 @@ impl SessionServer {
                             }
                         }
                         if owner.is_none() {
+                            bell_rang = pane.watch_output();
+                        }
+                        if owner.is_none() {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);
                         }
                         let output = ServerOutbound::PaneOutput {
@@ -506,6 +536,12 @@ impl SessionServer {
                             bytes: bytes.to_vec(),
                         };
                         self.send_outbound(owner, &output);
+                        if bell_rang {
+                            self.record_session_event(
+                                events::EventKind::Bell,
+                                vec![("pane", id.to_string())],
+                            );
+                        }
                         if let Some(error) = logging_error {
                             self.send_outbound(
                                 owner,
@@ -574,6 +610,10 @@ impl SessionServer {
                         }
                         if owner.is_none() {
                             self.mark_dirty();
+                            self.record_session_event(
+                                events::EventKind::PaneExited,
+                                vec![("pane", id.to_string()), ("code", code.to_string())],
+                            );
                         }
                         self.sync_pane_runtime(owner, id, generation);
                         self.resolve_agent_waits();
@@ -827,6 +867,12 @@ impl SessionServer {
         }
         self.sync_pane_runtime(owner, id, generation);
         if died.is_some() {
+            if owner.is_none() {
+                self.record_session_event(
+                    events::EventKind::PaneExited,
+                    vec![("pane", id.to_string()), ("code", code.to_string())],
+                );
+            }
             self.send_outbound(
                 owner,
                 &ServerOutbound::PaneOutput {

@@ -293,47 +293,19 @@ pub(crate) fn pane_runtime_changed(
         // Start/Stop pane recording reads as the focused pane's flag, and Mark needs it set.
         ctx.state.commands_dirty = true;
     }
-    if let Some((previous, current, _title)) = transition {
-        crate::events::emit_with_controller_hooks(
+    if local && let Some((previous, current, _title)) = transition {
+        let mut fields = crate::session::protocol::pane_status_fields(
+            pane_id,
+            previous.as_ref(),
+            current.as_ref(),
+        );
+        fields.push((
+            "focused",
+            (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
+        ));
+        crate::events::emit(
             &ctx.state,
-            crate::events::Event::new(
-                crate::events::EventKind::PaneStatusChanged,
-                vec![
-                    ("pane", pane_id.to_string()),
-                    (
-                        "status",
-                        current
-                            .as_ref()
-                            .map(|status| status.value.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "focused",
-                        (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
-                    ),
-                    (
-                        "reason",
-                        current
-                            .as_ref()
-                            .and_then(|status| status.reason.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "previous_status",
-                        previous
-                            .as_ref()
-                            .map(|status| status.value.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "previous_reason",
-                        previous
-                            .as_ref()
-                            .and_then(|status| status.reason.clone())
-                            .unwrap_or_default(),
-                    ),
-                ],
-            ),
+            crate::events::Event::new(crate::events::EventKind::PaneStatusChanged, fields),
         );
     }
     if let Some(baseline) = baseline

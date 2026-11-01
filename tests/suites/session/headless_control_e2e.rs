@@ -709,7 +709,6 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
             title: None,
             level: rozi::control::NotifyLevel::Info,
         }),
-        ui_only(ControlCommand::Subscribe { events: Vec::new() }),
         // The CLI attaches extension provenance from the environment. A session server cannot check
         // the fencing token, so it declines to act on the extension's behalf at all.
         (

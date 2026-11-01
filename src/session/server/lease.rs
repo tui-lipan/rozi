@@ -78,12 +78,34 @@ impl SessionServer {
             return refused("stale or invalid shared spawn placement");
         }
         let id = request.pane_id;
+        let command = request
+            .launch
+            .as_ref()
+            .map(crate::pane::launch::PaneLaunch::display)
+            .unwrap_or_default();
+        let cwd = request.cwd.clone().unwrap_or_default();
+        let workspace = placement
+            .layout
+            .workspaces
+            .iter()
+            .position(|ws| ws.panes.iter().any(|pane| pane.pane_id == id))
+            .map(|idx| idx + 1)
+            .unwrap_or(1);
         let result = self.spawn_pane(request);
         if matches!(result, ServerMessage::SpawnResult { ok: true, .. }) {
             let metadata = self
                 .pane_metadata_message(None, id)
                 .expect("successful spawn installs its pane");
             messages.push((Target::Broadcast, metadata));
+            self.record_session_event(
+                events::EventKind::PaneSpawned,
+                vec![
+                    ("pane", id.to_string()),
+                    ("workspace", workspace.to_string()),
+                    ("command", command),
+                    ("cwd", cwd),
+                ],
+            );
             messages.extend(self.publish_shared_layout(placement.layout, author, false));
         }
         result
@@ -159,6 +181,17 @@ impl SessionServer {
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
         self.mark_dirty();
+        self.record_session_event(
+            events::EventKind::LayoutChanged,
+            vec![
+                ("revision", self.layout_rev.to_string()),
+                (
+                    "author",
+                    if author == 0 { "server" } else { "client" }.to_string(),
+                ),
+                ("author_client", author.to_string()),
+            ],
+        );
         let mut messages = vec![(
             Target::Broadcast,
             ServerMessage::LayoutCommitted {
@@ -250,6 +283,29 @@ impl SessionServer {
         vec![(Target::Broadcast, self.clients_changed())]
     }
 
+    pub(super) fn controller_changed_message(
+        &mut self,
+        controller: Option<ClientId>,
+        reason: ControllerChangeReason,
+    ) -> ServerMessage {
+        let reason_id = match reason {
+            ControllerChangeReason::Released => "released",
+            ControllerChangeReason::Expired => "expired",
+            ControllerChangeReason::Granted => "granted",
+        };
+        self.record_session_event(
+            events::EventKind::ControllerChanged,
+            vec![
+                (
+                    "controller",
+                    controller.map(|id| id.to_string()).unwrap_or_default(),
+                ),
+                ("reason", reason_id.to_string()),
+            ],
+        );
+        ServerMessage::ControllerChanged { controller, reason }
+    }
+
     /// Hand the lease to the next client entitled to it, or leave the session uncontrolled when
     /// there is none. Used when the controller gives it up rather than leaves.
     fn release_controller(&mut self) -> Vec<(Target, ServerMessage)> {
@@ -260,17 +316,15 @@ impl SessionServer {
             client.requesting_control = false;
             client.last_request_notify = None;
         }
+        let reason = if self.controller.is_some() {
+            ControllerChangeReason::Granted
+        } else {
+            ControllerChangeReason::Released
+        };
         vec![
             (
                 Target::Broadcast,
-                ServerMessage::ControllerChanged {
-                    controller: self.controller,
-                    reason: if self.controller.is_some() {
-                        ControllerChangeReason::Granted
-                    } else {
-                        ControllerChangeReason::Released
-                    },
-                },
+                self.controller_changed_message(self.controller, reason),
             ),
             (Target::Broadcast, self.clients_changed()),
         ]
@@ -389,10 +443,7 @@ impl SessionServer {
         vec![
             (
                 Target::Broadcast,
-                ServerMessage::ControllerChanged {
-                    controller: self.controller,
-                    reason,
-                },
+                self.controller_changed_message(self.controller, reason),
             ),
             (Target::Broadcast, self.clients_changed()),
         ]
@@ -400,6 +451,11 @@ impl SessionServer {
 
     pub(super) fn is_controller(&self, client_id: ClientId) -> bool {
         self.controller == Some(client_id)
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn client(&self, id: ClientId) -> Option<&ClientConn> {
+        self.clients.iter().find(|client| client.id == id)
     }
 
     pub(super) fn client_mut(&mut self, id: ClientId) -> Option<&mut ClientConn> {
@@ -481,6 +537,7 @@ impl SessionServer {
         self.capture_waits.remove(&id);
         self.cancel_client_attachments(id);
         self.release_recording_replies(id);
+        self.session_subscribers.remove(&id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }
@@ -515,6 +572,16 @@ impl SessionServer {
         // The client that could not reach the filesystem may have just left, which puts naming a
         // file back on the table for the panes.
         self.sync_image_media_policy();
+        let client_name = removed.label.unwrap_or_default();
+        let count = self.client_roster().len().to_string();
+        self.record_session_event(
+            events::EventKind::ClientLeft,
+            vec![
+                ("client_id", id.to_string()),
+                ("client_name", client_name),
+                ("count", count),
+            ],
+        );
         let mut messages: Vec<ServerMessage> = self.withdraw_client_rows(id);
         if self.controller == Some(id) {
             self.controller = self.promotion_candidate();
@@ -525,16 +592,14 @@ impl SessionServer {
                 client.requesting_control = false;
                 client.last_request_notify = None;
             }
-            messages.push(ServerMessage::ControllerChanged {
-                controller: self.controller,
-                reason: if promotion_reason == ControllerChangeReason::Expired {
-                    ControllerChangeReason::Expired
-                } else if self.controller.is_some() {
-                    promotion_reason
-                } else {
-                    ControllerChangeReason::Released
-                },
-            });
+            let reason = if promotion_reason == ControllerChangeReason::Expired {
+                ControllerChangeReason::Expired
+            } else if self.controller.is_some() {
+                promotion_reason
+            } else {
+                ControllerChangeReason::Released
+            };
+            messages.push(self.controller_changed_message(self.controller, reason));
         }
         messages.push(self.clients_changed());
         for message in messages {
@@ -649,6 +714,7 @@ impl SessionServer {
     }
 
     pub(super) fn flush_clients(&mut self) -> bool {
+        self.flush_session_events();
         let mut activity = self.reap_acquisitions();
         let mut dead: Vec<ClientId> = Vec::new();
         let mut completed_seeds = Vec::new();

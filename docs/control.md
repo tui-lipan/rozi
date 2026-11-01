@@ -252,6 +252,7 @@ attached.
 | `sidebar publish --tab TAB [--name NAME]` | Publish rows to a sidebar [stream tab](sidebar.md#stream-tabs) over stdin and receive what the user does with them on stdout. | no |
 | `extensions status [--json]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host). | no |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
+| `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
 
 `layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
 `[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
@@ -404,7 +405,8 @@ requests, the response envelope, error codes, each command's `data` payload, pub
 rows, agent records and references, and the event envelope.
 
 The schema is generated from the source, so it always matches the binary it ships with.
-Contributors regenerate it with:
+`rozi api schema` prints that binary's copy, without connecting to a UI or session. Contributors
+regenerate it with:
 
 ```bash
 cargo run --features schema-gen --bin rozi-api-schema

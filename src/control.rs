@@ -30,6 +30,11 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
 pub const API_SCHEMA_VERSION: u32 = 2;
 
+/// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
+/// differs from what the wire types generate, so embedding the file gives every build the schema
+/// of its own API without compiling the generator into it.
+pub const API_SCHEMA_DOCUMENT: &str = include_str!("../docs/schema/rozi-control-v1.schema.json");
+
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
 pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";

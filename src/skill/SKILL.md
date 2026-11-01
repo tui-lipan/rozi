@@ -34,6 +34,7 @@ relying on a newer feature:
 rozi --help
 rozi agents --help
 rozi api describe    # JSON: API, schema, and session protocol versions, plus capabilities
+rozi api schema      # JSON Schema of every control command, response, and event
 ```
 
 Do not run bare `rozi` for discovery. It launches or attaches the TUI. Likewise, `rozi dev` launches

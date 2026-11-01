@@ -319,6 +319,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "api describe",
                 "Describe API versions and capabilities as JSON",
             ),
+            row("api schema", "Print the control API's JSON Schema"),
         ],
     },
     HelpSection {

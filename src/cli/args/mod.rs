@@ -222,6 +222,7 @@ pub(crate) enum ParsedCli {
     /// Print the release notes this binary embeds, byte for byte (`--release-notes`).
     ReleaseNotes,
     ApiDescribe,
+    ApiSchema,
     Skill(SkillCommand),
     SkillHelp,
     AgentsHelp,
@@ -437,15 +438,23 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         match arg.as_str() {
             "--version" | "-V" => return Ok(ParsedCli::Version),
             "api" => {
-                let subcommand =
-                    require_value(&mut iter, "api requires a subcommand (expected `describe`)")?;
-                if subcommand != "describe" {
-                    return Err(format!(
-                        "unknown api subcommand `{subcommand}`; expected `describe`"
-                    ));
-                }
-                reject_trailing_control_args(&mut iter, "api describe")?;
-                return Ok(ParsedCli::ApiDescribe);
+                let subcommand = require_value(
+                    &mut iter,
+                    "api requires a subcommand (expected `describe` or `schema`)",
+                )?;
+                return match subcommand.as_str() {
+                    "describe" => {
+                        reject_trailing_control_args(&mut iter, "api describe")?;
+                        Ok(ParsedCli::ApiDescribe)
+                    }
+                    "schema" => {
+                        reject_trailing_control_args(&mut iter, "api schema")?;
+                        Ok(ParsedCli::ApiSchema)
+                    }
+                    other => Err(format!(
+                        "unknown api subcommand `{other}`; expected `describe` or `schema`"
+                    )),
+                };
             }
             "install" => {
                 reject_trailing_control_args(&mut iter, "install")?;
@@ -1995,6 +2004,11 @@ mod tests {
             parse_cli_args(vec!["api".into(), "describe".into()]).expect("parses"),
             ParsedCli::ApiDescribe
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "schema".into()]).expect("parses"),
+            ParsedCli::ApiSchema
+        ));
+        assert!(parse_cli_args(vec!["api".into(), "schema".into(), "extra".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
         assert!(matches!(

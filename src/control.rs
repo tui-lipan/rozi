@@ -112,7 +112,11 @@ pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 /// A session server stores, verifies, lists, and removes extension deployments of its own, so a
 /// client can hand it the files an extension will run when no UI is attached.
 pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
+/// A session server runs the `placement = "session"` services of what is deployed to it, with no UI
+/// attached, under credentials it issues itself.
 pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
+/// A session server accepts `notify`, keeps a bounded inbox, and includes it in subscription
+/// snapshots.
 pub const SESSION_NOTIFICATIONS_CAPABILITY: &str = "session-notifications";
 
 /// Features this binary exposes to control clients and extension authors.
@@ -1734,7 +1738,7 @@ pub struct ExtensionDeploymentInfo {
     pub services: Vec<SessionServiceStatus>,
     /// Comparison made by the CLI against its installed copy, absent on the session endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_copy: Option<String>,
+    pub local_copy: Option<ExtensionLocalCopy>,
     /// Why the deployment cannot run, when it cannot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -1744,11 +1748,58 @@ pub struct ExtensionDeploymentInfo {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionServiceStatus {
     pub name: String,
-    pub state: String,
+    pub state: SessionServiceState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SessionServiceState {
+    /// Asked to start; no process has been reported yet.
+    Starting,
+    Running,
+    /// Exited, and waiting out its backoff before the next start.
+    Restarting,
+    /// Not running and not due to start again. `reason` says why.
+    Stopped,
+}
+
+impl SessionServiceState {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Restarting => "restarting",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+/// How a deployment compares with the copy installed where the CLI runs.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ExtensionLocalCopy {
+    Matches,
+    Differs,
+    NotInstalled,
+    /// Installed, but its files could not be read to compare them.
+    Unavailable,
+}
+
+impl ExtensionLocalCopy {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Matches => "matches",
+            Self::Differs => "differs",
+            Self::NotInstalled => "not-installed",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -461,7 +461,7 @@ fn undeploying_stops_services_even_when_the_hosts_config_cannot_be_read() {
     );
     let report: ExtensionDeploymentReport = serde_json::from_value(report.data.unwrap()).unwrap();
     let service = &report.deployments[0].services[0];
-    assert_eq!(service.state, "stopped");
+    assert_eq!(service.state, rozi::control::SessionServiceState::Stopped);
     assert!(
         service
             .reason

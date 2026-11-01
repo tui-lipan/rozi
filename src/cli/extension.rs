@@ -832,18 +832,21 @@ pub(super) fn compare_deployments_with_local(response: &mut serde_json::Value) {
     };
     let entries = crate::config::scan_extensions_for_cli().entries();
     for deployment in &mut report.deployments {
+        use crate::control::ExtensionLocalCopy;
         deployment.local_copy = Some(
             match entries
                 .iter()
                 .find(|entry| entry.id.as_deref() == Some(&deployment.extension))
             {
-                None => "not-installed".to_string(),
+                None => ExtensionLocalCopy::NotInstalled,
                 Some(entry) => match crate::extension_runtime::bundle::snapshot(
                     std::path::Path::new(&entry.path),
                 ) {
-                    Ok(bundle) if bundle.digest() == deployment.digest => "matches".to_string(),
-                    Ok(_) => "differs".to_string(),
-                    Err(_) => "unavailable".to_string(),
+                    Ok(bundle) if bundle.digest() == deployment.digest => {
+                        ExtensionLocalCopy::Matches
+                    }
+                    Ok(_) => ExtensionLocalCopy::Differs,
+                    Err(_) => ExtensionLocalCopy::Unavailable,
                 },
             },
         );

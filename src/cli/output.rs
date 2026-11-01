@@ -769,8 +769,8 @@ pub(super) fn format_extension_deployments_text(
             deployment.files,
             deployment.size,
         ));
-        if let Some(local) = &deployment.local_copy {
-            out.push_str(&format!("    local copy: {local}\n"));
+        if let Some(local) = deployment.local_copy {
+            out.push_str(&format!("    local copy: {}\n", local.id()));
         }
         for service in &deployment.services {
             let pid = service
@@ -784,7 +784,8 @@ pub(super) fn format_extension_deployments_text(
                 .unwrap_or_default();
             out.push_str(&format!(
                 "    {}: {}{pid}{reason}\n",
-                service.name, service.state
+                service.name,
+                service.state.id()
             ));
         }
     }

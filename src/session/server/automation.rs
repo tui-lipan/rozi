@@ -5,7 +5,8 @@ use std::sync::mpsc;
 use super::deployments::PreparedDeployment;
 use super::{ClientId, SessionServer};
 use crate::control::{
-    ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, SessionServiceStatus,
+    ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, SessionServiceState,
+    SessionServiceStatus,
 };
 use crate::extension_runtime::protocol::{Launch, SpawnCwd};
 use crate::extension_runtime::supervisor::{ProcessSpec, ServiceSpec, Supervisor, SupervisorEvent};
@@ -102,7 +103,7 @@ impl Automation {
                             .into_iter()
                             .map(|service| SessionServiceStatus {
                                 name: service.name,
-                                state: "stopped".into(),
+                                state: SessionServiceState::Stopped,
                                 pid: None,
                                 reason: Some(reason.clone()),
                             })
@@ -146,11 +147,10 @@ impl Automation {
             services.push(SessionServiceStatus {
                 name: service.name,
                 state: if result.is_ok() {
-                    "starting"
+                    SessionServiceState::Starting
                 } else {
-                    "stopped"
-                }
-                .into(),
+                    SessionServiceState::Stopped
+                },
                 pid: None,
                 reason: result.err().map(|error| error.to_string()),
             });
@@ -168,12 +168,14 @@ impl Automation {
     pub fn poll(&mut self) {
         for event in self.events.try_iter() {
             let (name, state, pid, reason) = match event {
-                SupervisorEvent::Spawned { name, pid } => (name, "running", Some(pid), None),
+                SupervisorEvent::Spawned { name, pid } => {
+                    (name, SessionServiceState::Running, Some(pid), None)
+                }
                 SupervisorEvent::RestartScheduled { name, detail, .. } => {
-                    (name, "restarting", None, Some(detail))
+                    (name, SessionServiceState::Restarting, None, Some(detail))
                 }
                 SupervisorEvent::Stopped { name, detail, .. } => {
-                    (name, "stopped", None, Some(detail))
+                    (name, SessionServiceState::Stopped, None, Some(detail))
                 }
             };
             if let Some(service) = self
@@ -182,7 +184,7 @@ impl Automation {
                 .flat_map(|extension| &mut extension.services)
                 .find(|service| service.name == name)
             {
-                service.state = state.into();
+                service.state = state;
                 service.pid = pid;
                 service.reason = reason;
             }

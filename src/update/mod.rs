@@ -819,6 +819,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::SessionControlDeclined { epoch } => session::control_declined(ctx, epoch),
         Msg::SessionPing { epoch, seq } => session::ping(ctx, epoch, seq),
+        Msg::SessionEvent { epoch, event } => session::session_event(ctx, epoch, event),
         Msg::SessionInputMarked { epoch: _, token } => {
             crate::ops::capture_wait::input_marked(ctx, token)
         }

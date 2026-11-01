@@ -1770,7 +1770,12 @@ impl SessionServer {
         kind: events::EventKind,
         fields: Vec<(&'static str, String)>,
     ) {
-        self.session_events.record(kind, fields);
+        if let Some(event) = self.session_events.record(kind, fields) {
+            let message = ServerMessage::SessionEvent {
+                event: event.clone(),
+            };
+            self.broadcast_control(&message);
+        }
     }
 
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {

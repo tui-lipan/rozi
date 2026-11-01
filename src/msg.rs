@@ -837,6 +837,10 @@ pub enum Msg {
     },
     /// Look again at every pending pane wait.
     CaptureWaitTick,
+    SessionEvent {
+        epoch: u64,
+        event: crate::session::server::events::SessionEvent,
+    },
     SessionRuntimeMetrics {
         epoch: u64,
     },

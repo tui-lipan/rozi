@@ -977,6 +977,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 agents,
                 state,
             },
+            ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
         },
     }
 }

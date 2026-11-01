@@ -9,9 +9,52 @@ pub struct Event {
     pub fields: Vec<(&'static str, String)>,
 }
 
+fn intern_key(key: &str) -> &'static str {
+    match key {
+        "pane" => "pane",
+        "workspace" => "workspace",
+        "command" => "command",
+        "cwd" => "cwd",
+        "code" => "code",
+        "status" => "status",
+        "reason" => "reason",
+        "previous_status" => "previous_status",
+        "previous_reason" => "previous_reason",
+        "agent" => "agent",
+        "label" => "label",
+        "ref" => "ref",
+        "state" => "state",
+        "previous_state" => "previous_state",
+        "program" => "program",
+        "previous_program" => "previous_program",
+        "pid" => "pid",
+        "client_id" => "client_id",
+        "client_name" => "client_name",
+        "count" => "count",
+        "controller" => "controller",
+        "session" => "session",
+        "previous" => "previous",
+        "revision" => "revision",
+        "author" => "author",
+        "focused" => "focused",
+        "self_controller" => "self_controller",
+        other => Box::leak(other.to_string().into_boxed_str()),
+    }
+}
+
 impl Event {
     pub fn new(kind: EventKind, fields: Vec<(&'static str, String)>) -> Self {
         Self { kind, fields }
+    }
+
+    pub fn from_map(kind: EventKind, fields: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self {
+            kind,
+            fields: fields
+                .into_iter()
+                .map(|(k, v)| (intern_key(&k), v))
+                .collect(),
+        }
     }
 
     fn json(&self) -> String {
@@ -151,7 +194,11 @@ pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
     }
 }
 
-fn run_hooks(state: &crate::state::State, event: &Event) {
+pub(crate) fn run_hooks_for_scope(
+    state: &crate::state::State,
+    event: &Event,
+    remote_host: Option<&str>,
+) {
     let commands: Vec<_> = state
         .config
         .hooks
@@ -162,7 +209,7 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     if commands.is_empty() {
         return;
     }
-    let env = hook_env_for_state(event, state);
+    let env = hook_env_for_scope(event, state.control_socket_path.as_deref(), remote_host);
     let runner = crate::platform::command::resolve_command_shell(
         state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -186,6 +233,10 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     }
 }
 
+fn run_hooks(state: &crate::state::State, event: &Event) {
+    run_hooks_for_scope(state, event, state.current().remote_host.as_deref());
+}
+
 fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec<(String, String)> {
     let mut env = vec![("ROZI_EVENT".to_string(), event.kind.id().to_string())];
     if let Some(path) = control_socket_path {
@@ -205,14 +256,14 @@ fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec
     env
 }
 
-/// Build hook environment, including the remote host when the client is `--remote` attached.
-pub(crate) fn hook_env_for_state(
+pub(crate) fn hook_env_for_scope(
     event: &Event,
-    state: &crate::state::State,
+    control_socket_path: Option<&std::path::Path>,
+    remote_host: Option<&str>,
 ) -> Vec<(String, String)> {
-    let mut env = hook_env(event, state.control_socket_path.as_deref());
-    if let Some(host) = &state.current().remote_host {
-        env.push(("ROZI_REMOTE_HOST".to_string(), host.clone()));
+    let mut env = hook_env(event, control_socket_path);
+    if let Some(host) = remote_host {
+        env.push(("ROZI_REMOTE_HOST".to_string(), host.to_string()));
     }
     env
 }

@@ -752,11 +752,11 @@ pub enum ServerMessage {
     },
     /// Authoritative session event emitted by the session server.
     SessionEvent {
-        event: crate::session::server::events::SessionEvent,
+        event: crate::session::protocol::SessionEvent,
     },
     /// Typed record streamed to a session subscriber.
     SessionSubscribeRecord {
-        record: crate::session::server::events::SessionSubscribeRecord,
+        record: crate::session::protocol::SessionSubscribeRecord,
     },
 }
 

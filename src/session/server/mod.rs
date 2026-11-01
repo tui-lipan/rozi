@@ -29,7 +29,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
-pub mod events;
+mod events;
 mod graphics;
 mod graphics_pacer;
 mod headless;

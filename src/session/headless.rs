@@ -180,7 +180,7 @@ pub fn pump_session_records(
             Ok(ServerMessage::SessionSubscribeRecord { record }) => {
                 let lagged = matches!(
                     record,
-                    crate::session::server::events::SessionSubscribeRecord::Lagged
+                    crate::session::protocol::SessionSubscribeRecord::Lagged
                 );
                 let line = serde_json::to_string(&record)
                     .map_err(|err| format!("could not encode a record: {err}"))?;

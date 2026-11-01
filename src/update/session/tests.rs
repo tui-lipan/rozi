@@ -599,7 +599,7 @@ fn bell_events_include_focused_for_current_panes() {
         let bell = |pane_id: crate::state::PaneId| {
             let mut data = std::collections::BTreeMap::new();
             data.insert("pane".to_string(), pane_id.to_string());
-            crate::session::server::events::SessionEvent {
+            crate::session::protocol::SessionEvent {
                 session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
                 seq: 1,
                 kind: crate::events::EventKind::Bell,
@@ -2036,7 +2036,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
         backend
             .update_level(Msg::SessionEvent {
                 epoch,
-                event: crate::session::server::events::SessionEvent {
+                event: crate::session::protocol::SessionEvent {
                     session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
                     seq: 1,
                     kind: crate::events::EventKind::PaneStatusChanged,
@@ -3581,7 +3581,7 @@ fn layout_revisions_do_not_duplicate_server_events() {
             backend
                 .update_level(Msg::SessionEvent {
                     epoch,
-                    event: crate::session::server::events::SessionEvent {
+                    event: crate::session::protocol::SessionEvent {
                         session_instance: crate::session::protocol::SessionInstanceId::for_test(
                             "test",
                         ),
@@ -4157,7 +4157,7 @@ fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
                 backend
                     .update_level(Msg::SessionEvent {
                         epoch,
-                        event: crate::session::server::events::SessionEvent {
+                        event: crate::session::protocol::SessionEvent {
                             session_instance: crate::session::protocol::SessionInstanceId::for_test(
                                 "test",
                             ),
@@ -4200,7 +4200,7 @@ fn background_session_events_keep_their_scope_and_reject_stale_sources() {
                 session: Some(instance.clone()),
             }),
         );
-        let event = crate::session::server::events::SessionEvent {
+        let event = crate::session::protocol::SessionEvent {
             session_instance: instance,
             seq: 1,
             kind: crate::events::EventKind::ForegroundChanged,

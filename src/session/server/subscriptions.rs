@@ -78,7 +78,7 @@ impl SessionServer {
     pub(super) fn record_session_event(
         &mut self,
         kind: events::EventKind,
-        fields: Vec<(&'static str, String)>,
+        fields: events::EventFields,
     ) {
         debug_assert!(kind.is_session_owned(), "{} is a UI event", kind.id());
         let event = self.session_events.record(kind, fields);

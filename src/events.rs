@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, mpsc};
 
-pub use crate::session::server::events::{EventKind, WireEvent};
+pub use crate::session::protocol::{EventKind, WireEvent};
 
 #[derive(Clone, Debug)]
 pub struct Event {

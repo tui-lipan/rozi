@@ -1055,6 +1055,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     after: after.clone(),
                 };
                 let endpoint = control_endpoint(&cli, socket, &command)?;
+                let endpoint = own_session_endpoint(
+                    endpoint,
+                    &mut control_request(command),
+                    std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
+                );
                 if !endpoint.is_session() && (snapshot || after.is_some()) {
                     return Err(
                         "--snapshot and --after require a session endpoint (--session)".to_string(),
@@ -1893,6 +1898,14 @@ pub(super) fn own_session_endpoint(
     request: &mut control::ControlRequest,
     ui_socket_in_env: bool,
 ) -> ControlEndpoint {
+    if endpoint == ControlEndpoint::Ui(None)
+        && request.credential.as_deref().is_some_and(|token| {
+            token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
+        })
+        && let Some(instance) = request.source_session.clone()
+    {
+        return ControlEndpoint::OwnSession(instance);
+    }
     if endpoint != ControlEndpoint::Ui(None) || ui_socket_in_env {
         return endpoint;
     }

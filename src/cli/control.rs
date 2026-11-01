@@ -115,7 +115,17 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
 
 /// Print matching application events as newline-delimited JSON until the connection closes.
 pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
-    match command.endpoint {
+    let mut request = control_request(control::ControlCommand::Subscribe {
+        events: command.events.clone(),
+        snapshot: command.snapshot,
+        after: command.after.clone(),
+    });
+    let endpoint = super::args::own_session_endpoint(
+        command.endpoint,
+        &mut request,
+        std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
+    );
+    match endpoint {
         ControlEndpoint::Ui(socket) => run_ui_subscribe_cli(socket, command.events),
         ControlEndpoint::Session(session) => {
             run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)

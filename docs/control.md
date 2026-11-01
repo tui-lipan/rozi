@@ -317,6 +317,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "runtime-events",
     "session-control",
     "session-deployments",
+    "session-services",
     "session-no-resurrect",
     "sidebar-streams",
     "sidebar-tab-settings",
@@ -333,6 +334,9 @@ background without opening a UI. An older binary refuses `--detach`.
 
 `session-no-resurrect` means `sessions new <NAME> --detach` accepts `--no-resurrect`. An older
 binary refuses it.
+
+`session-services` means explicitly deployed `placement = "session"` services run without a UI
+and use credentials issued by that session.
 
 `session-deployments` means a session server accepts `extensions deploy`, `extensions undeploy`,
 and `extensions status --session`: it keeps its own verified copy of an extension. An older

@@ -100,6 +100,16 @@ pub struct SessionDeployments {
     root: Option<PathBuf>,
 }
 
+/// A verified generation prepared off the session loop for activation by its server.
+pub(super) struct PreparedDeployment {
+    pub id: String,
+    pub generation: u64,
+    pub directory: PathBuf,
+    pub platforms: Vec<String>,
+    pub settings: String,
+    pub services: Vec<crate::config::PlacedService>,
+}
+
 impl SessionDeployments {
     /// Open the store for `session`. `root` is the deployment root itself, not a parent, and is
     /// only named by tests; production resolves the session's directory in state.
@@ -112,6 +122,59 @@ impl SessionDeployments {
             .map(|dir| default_root(&dir, &session))
         });
         Self { root }
+    }
+
+    /// Fence every previous server's processes before starting the restored deployments.
+    pub(super) fn restart_generations(&self) -> Result<(), DeployError> {
+        let root = self.root()?;
+        let mut metadata = self.metadata(&root)?;
+        for record in metadata.deployments.values_mut() {
+            metadata.last_generation =
+                metadata.last_generation.checked_add(1).ok_or_else(|| {
+                    DeployError::Unavailable("deployment generation exhausted".into())
+                })?;
+            record.generation = metadata.last_generation;
+        }
+        self.write_metadata(&root, &metadata)
+    }
+
+    /// Read definitions only from verified bundles. Corrupt records remain listed as unavailable.
+    pub(super) fn prepare(&self) -> Result<Vec<PreparedDeployment>, DeployError> {
+        let root = self.root()?;
+        let metadata = self.metadata(&root)?;
+        let bundles = BundleStore::open(root.join(BUNDLES))
+            .map_err(|error| DeployError::Unavailable(error.to_string()))?;
+        let user = crate::config::read_user_extension_config().map_err(DeployError::Unavailable)?;
+        let mut prepared = Vec::new();
+        for (id, record) in metadata.deployments {
+            let Ok(directory) = bundles.verified(&record.digest) else {
+                continue;
+            };
+            let checked = crate::config::check_extension(&directory);
+            if !checked.info.errors.is_empty() {
+                continue;
+            }
+            let mut warnings = Vec::new();
+            let settings = crate::config::merge_extension_settings(
+                &checked.info.setting_specs,
+                &id,
+                user.settings.get(&id),
+                &mut warnings,
+            );
+            for warning in warnings {
+                eprintln!("rozi: {warning}");
+            }
+            prepared.push(PreparedDeployment {
+                services: checked.session_services(),
+                id,
+                generation: record.generation,
+                directory,
+                platforms: checked.info.platforms,
+                settings: serde_json::to_string(&settings)
+                    .map_err(|error| DeployError::Unavailable(error.to_string()))?,
+            });
+        }
+        Ok(prepared)
     }
 
     /// Move the session-owned store with a session rename. The worker must be stopped first.
@@ -316,6 +379,7 @@ impl SessionDeployments {
                 size: record.size,
                 status,
                 local_copy: None,
+                services: Vec::new(),
                 reason,
             });
         }

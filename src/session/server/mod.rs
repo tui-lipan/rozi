@@ -25,6 +25,7 @@ use crate::state::PaneId;
 mod acquisition;
 mod agent_summary;
 mod attachments;
+mod automation;
 mod browse;
 mod capture_waits;
 mod connection;
@@ -234,6 +235,7 @@ pub struct SessionServer {
     /// the session is explicitly deleted.
     deployments: deployments::SessionDeployments,
     deployment_worker: Option<headless::DeploymentWorker>,
+    automation: Option<automation::Automation>,
 }
 
 #[derive(Clone, Debug)]
@@ -1769,6 +1771,7 @@ impl SessionServer {
             session_subscribers: HashMap::new(),
             deployments,
             deployment_worker: None,
+            automation: None,
             settings,
         }
     }
@@ -1854,6 +1857,9 @@ impl SessionServer {
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
         let mut listener = listener;
+        if !crate::state::is_ephemeral_session_name(&self.session_name) {
+            self.ensure_deployment_worker(true)?;
+        }
         // Tracks how long an ephemeral session has had no *attached* client. A named session
         // ignores this timer and is durable until explicitly shut down.
         let mut no_client_since: Option<Instant> = None;
@@ -1968,6 +1974,7 @@ impl SessionServer {
 
     fn shutdown_listener(&mut self) -> io::Result<()> {
         self.deployment_worker.take();
+        self.automation.take();
         self.finish_pending_media();
         // A signal-driven stop must capture the final screen generation before killing PTYs. An
         // explicit session deletion only waits for an already-started write, then removes it.

@@ -468,8 +468,11 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
         reply: &ReplyTo,
-        request: ControlRequest,
+        mut request: ControlRequest,
     ) -> Vec<(Target, ServerMessage)> {
+        if let Err(response) = self.authorize_session_worker(client_id, &mut request) {
+            return vec![(Target::Sender, reply.message(response))];
+        }
         let held = if let Some(provenance) = &request.extension {
             Some(Some(ControlResponse::error(
                 unverifiable_extension_provenance(provenance),
@@ -2230,9 +2233,14 @@ struct DeploymentJob {
     command: ControlCommand,
 }
 
+struct DeploymentResult {
+    reply: Option<(ClientId, ReplyTo, ControlResponse)>,
+    prepared: std::result::Result<Vec<super::deployments::PreparedDeployment>, String>,
+}
+
 pub(super) struct DeploymentWorker {
     sender: Option<std::sync::mpsc::SyncSender<DeploymentJob>>,
-    results: std::sync::mpsc::Receiver<(ClientId, ReplyTo, ControlResponse)>,
+    results: std::sync::mpsc::Receiver<DeploymentResult>,
     thread: Option<std::thread::JoinHandle<()>>,
     pub(super) pending: usize,
     pending_clients: std::collections::HashMap<ClientId, usize>,
@@ -2242,15 +2250,39 @@ impl DeploymentWorker {
     fn start(
         store: super::deployments::SessionDeployments,
         session: String,
+        restart: bool,
     ) -> std::io::Result<Self> {
         let (sender, requests) = std::sync::mpsc::sync_channel::<DeploymentJob>(8);
         let (results, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("session-deployments".into())
             .spawn(move || {
+                let initial = (if restart {
+                    store.restart_generations()
+                } else {
+                    Ok(())
+                })
+                .and_then(|()| store.prepare())
+                .map_err(|error| error.to_string());
+                if results
+                    .send(DeploymentResult {
+                        reply: None,
+                        prepared: initial,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
                 while let Ok(job) = requests.recv() {
                     let response = deployment_response(&store, &session, job.command);
-                    if results.send((job.client_id, job.reply, response)).is_err() {
+                    let prepared = store.prepare().map_err(|error| error.to_string());
+                    if results
+                        .send(DeploymentResult {
+                            reply: Some((job.client_id, job.reply, response)),
+                            prepared,
+                        })
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -2275,6 +2307,17 @@ impl Drop for DeploymentWorker {
 }
 
 impl SessionServer {
+    pub(super) fn ensure_deployment_worker(&mut self, restart: bool) -> std::io::Result<()> {
+        if self.deployment_worker.is_none() {
+            self.deployment_worker = Some(DeploymentWorker::start(
+                self.deployments.clone(),
+                self.session_name.clone(),
+                restart,
+            )?);
+        }
+        Ok(())
+    }
+
     fn submit_deployment(
         &mut self,
         client_id: ClientId,
@@ -2296,15 +2339,10 @@ impl SessionServer {
                 "read-only clients cannot change deployments",
             ));
         }
-        if self.deployment_worker.is_none() {
-            match DeploymentWorker::start(self.deployments.clone(), self.session_name.clone()) {
-                Ok(worker) => self.deployment_worker = Some(worker),
-                Err(error) => {
-                    return Some(ControlResponse::error(format!(
-                        "cannot start deployment worker: {error}"
-                    )));
-                }
-            }
+        if let Err(error) = self.ensure_deployment_worker(false) {
+            return Some(ControlResponse::error(format!(
+                "cannot start deployment worker: {error}"
+            )));
         }
         let worker = self.deployment_worker.as_mut().expect("worker started");
         if worker.pending >= 8 {
@@ -2344,12 +2382,51 @@ impl SessionServer {
             .as_mut()
             .map_or_else(Vec::new, |worker| {
                 let responses: Vec<_> = worker.results.try_iter().collect();
-                worker.pending -= responses.len();
+                for result in &responses {
+                    if let Some((client_id, _, _)) = &result.reply {
+                        worker.pending -= 1;
+                        if let Some(count) = worker.pending_clients.get_mut(client_id) {
+                            *count -= 1;
+                            if *count == 0 {
+                                worker.pending_clients.remove(client_id);
+                            }
+                        }
+                    }
+                }
                 responses
             });
-        for (client_id, reply, response) in responses {
-            self.answer_held(client_id, &reply, response);
+        for result in responses {
+            match result.prepared {
+                Ok(prepared) => self.activate_deployments(prepared),
+                Err(error) => eprintln!("rozi: session automation unavailable: {error}"),
+            }
+            if let Some((client_id, reply, mut response)) = result.reply {
+                self.add_service_status(&mut response);
+                self.answer_held(client_id, &reply, response);
+            }
         }
+        if let Some(automation) = &mut self.automation {
+            automation.poll();
+        }
+    }
+
+    fn add_service_status(&mut self, response: &mut ControlResponse) {
+        let Some(automation) = &mut self.automation else {
+            return;
+        };
+        automation.poll();
+        let Some(data) = response.data.as_mut() else {
+            return;
+        };
+        let Ok(mut report) =
+            serde_json::from_value::<crate::control::ExtensionDeploymentReport>(data.clone())
+        else {
+            return;
+        };
+        for deployment in &mut report.deployments {
+            deployment.services = automation.services(&deployment.extension);
+        }
+        *data = serde_json::to_value(report).expect("deployment status serializes");
     }
 }
 

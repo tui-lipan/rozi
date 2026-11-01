@@ -237,6 +237,28 @@ pub fn evaluate_exit(
     BackoffPolicy::default().evaluate_exit(restart, is_success, started_at, failures, backoff, now)
 }
 
+fn verify_process_bundle(directory: &Path) -> Result<(), SpawnFailure> {
+    use super::store::{BundleStore, StoreError};
+    let digest = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| super::bundle::is_digest(name))
+        .ok_or(SpawnFailure::BundleMissing)?;
+    let parent = directory.parent().ok_or(SpawnFailure::BundleMissing)?;
+    let store =
+        BundleStore::open(parent.to_path_buf()).map_err(|error| SpawnFailure::SpawnFailed {
+            detail: error.to_string(),
+        })?;
+    store
+        .verified(digest)
+        .map(|_| ())
+        .map_err(|error| match error {
+            StoreError::Missing => SpawnFailure::BundleMissing,
+            StoreError::Corrupt(detail) => SpawnFailure::BundleCorrupt { detail },
+            StoreError::Io(detail) => SpawnFailure::SpawnFailed { detail },
+        })
+}
+
 /// Launch specification for one supervised extension process.
 #[derive(Clone, Debug)]
 pub struct ProcessSpec {
@@ -376,6 +398,7 @@ impl SupervisedProcess {
             .ok_or_else(|| SpawnFailure::SpawnFailed {
                 detail: "the launch names no extension".to_string(),
             })?;
+        verify_process_bundle(&spec.bundle_dir)?;
         let state_dir = crate::platform::paths::ensure_extension_state_dir(
             &crate::platform::paths::PlatformEnv::from_process(),
             &extension,
@@ -1031,6 +1054,36 @@ mod tests {
                 failures: 1,
             }
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_supervised_process_refuses_bundle_tampering_before_its_next_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(temp.path().join("bundles")).unwrap();
+        let directory = stage_script(&store, "exit 0");
+        let spec = spec_for(
+            directory.clone(),
+            "supverify",
+            "service.watch",
+            vec!["./bin/probe".into()],
+        );
+        let mut process = SupervisedProcess::spawn(spec.clone()).expect("verified launch");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process.poll().is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let file = directory.join("bin/probe");
+        let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        // Simulate tampering in this scratch bundle.
+        permissions.set_readonly(false);
+        std::fs::set_permissions(file, permissions).unwrap();
+        assert!(matches!(
+            SupervisedProcess::spawn(spec),
+            Err(SpawnFailure::BundleCorrupt { .. })
+        ));
     }
 
     #[cfg(unix)]

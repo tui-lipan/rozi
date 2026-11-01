@@ -1265,3 +1265,15 @@ a placed process's `credential`.
 Picker, publisher, and subscription streams owned by an extension close when its generation
 retires, and its sidebar streams' rows are withdrawn: when the extension is disabled, removed, or has a change that affects its processes.
 Changes to metadata only keep the generation.
+
+### Session service credentials
+
+The `session-services` capability allows deployed services with `placement = "session"`.
+Session-issued credentials use the `session-v1:` namespace and bind requests to one session
+instance and deployment generation. They are accepted directly by that session endpoint, and
+refused by UI endpoints. Client-issued worker credentials and client generation provenance are
+refused directly by session endpoints. A credential takes precedence over caller-supplied extension
+provenance. Retiring a generation revokes its credentials and closes its held connections.
+
+`extensions-status` includes each deployment's `services`, with `name`, `state`, optional `pid`,
+and optional `reason`. A state is `starting`, `running`, `restarting`, or `stopped`.

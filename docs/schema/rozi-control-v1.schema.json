@@ -4214,6 +4214,156 @@
       ],
       "type": "string"
     },
+    "ExtensionDeploymentInfo": {
+      "properties": {
+        "deployed_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "digest": {
+          "description": "Content digest of the files the deployment runs from.",
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "files": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "Increases with every deployment this session records.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "local_copy": {
+          "description": "Comparison made by the CLI against its installed copy, absent on the session endpoint.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why the deployment cannot run, when it cannot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/SessionServiceStatus"
+          },
+          "type": "array"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtensionDeploymentStatus"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "extension",
+        "digest",
+        "generation",
+        "deployed_at_unix_ms",
+        "files",
+        "size",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ExtensionDeploymentReport": {
+      "description": "`extensions-status` on a session endpoint: the extensions that session holds itself.",
+      "properties": {
+        "deployments": {
+          "items": {
+            "$ref": "#/$defs/ExtensionDeploymentInfo"
+          },
+          "type": "array"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "deployments"
+      ],
+      "type": "object"
+    },
+    "ExtensionDeploymentStatus": {
+      "oneOf": [
+        {
+          "const": "deployed",
+          "description": "Stored, verified, and ready for the session to run.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Recorded, but its files no longer verify. The reason says what changed.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExtensionDeploymentUpload": {
+      "description": "One chunk's answer to `extensions-deploy`.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "received": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "extension",
+        "digest",
+        "received",
+        "size",
+        "complete"
+      ],
+      "type": "object"
+    },
     "ExtensionProvenance": {
       "description": "Provenance carried automatically by the CLI for a process launched by an extension.\n\nThe opaque generation is a fencing token, not authentication: it rejects processes from a\nretired runtime definition, but another process running as the same user is inside Rozi's trust\nboundary and may be able to observe it.",
       "properties": {
@@ -4305,6 +4455,22 @@
         "runtimes",
         "instances",
         "processes"
+      ],
+      "type": "object"
+    },
+    "ExtensionUndeployReport": {
+      "description": "`extensions-undeploy`: whether anything was removed.",
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "extension",
+        "removed"
       ],
       "type": "object"
     },
@@ -6697,6 +6863,35 @@
       ],
       "type": "object"
     },
+    "SessionServiceStatus": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
     "SessionSubscribeRecord": {
       "description": "Typed records streamed by a session subscription.",
       "oneOf": [
@@ -7848,5 +8043,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 5
+  "x-rozi-schema-version": 6
 }

@@ -96,7 +96,7 @@ fn desired(state: &State) -> Vec<(InstanceKey, SharedPlacements, PlacedService)>
     for placements in state.config.extension_placements.values() {
         for service in &placements.services {
             let bindings: Vec<WorkerBinding> = match service.placement {
-                Placement::Client => Vec::new(),
+                Placement::Client | Placement::Session => Vec::new(),
                 Placement::ActiveSession => active.iter().cloned().collect(),
                 Placement::EachHost => hosts
                     .iter()

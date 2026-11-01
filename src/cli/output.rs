@@ -772,6 +772,21 @@ pub(super) fn format_extension_deployments_text(
         if let Some(local) = &deployment.local_copy {
             out.push_str(&format!("    local copy: {local}\n"));
         }
+        for service in &deployment.services {
+            let pid = service
+                .pid
+                .map(|pid| format!(" · pid {pid}"))
+                .unwrap_or_default();
+            let reason = service
+                .reason
+                .as_ref()
+                .map(|reason| format!(" · {reason}"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "    {}: {}{pid}{reason}\n",
+                service.name, service.state
+            ));
+        }
     }
     out
 }

@@ -63,6 +63,12 @@ pub(crate) fn authorize(
             Some(_) => Err(inactive()),
         };
     };
+    if credential.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX) {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::NotPermitted,
+            "session-issued credentials are valid only at their session endpoint",
+        ));
+    }
     // Identity comes from the credential alone. Whatever extension and generation the request
     // names are discarded: a process on another machine may write anything there. A credential is
     // only ever valid over the bridge of the runtime it was issued for.

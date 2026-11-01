@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 5;
+pub const API_SCHEMA_VERSION: u32 = 6;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -112,6 +112,7 @@ pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 /// A session server stores, verifies, lists, and removes extension deployments of its own, so a
 /// client can hand it the files an extension will run when no UI is attached.
 pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
+pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
 
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -162,6 +163,7 @@ impl ApiDescription {
                 SESSION_CONTROL_CAPABILITY,
                 SESSION_DEPLOYMENTS_CAPABILITY,
                 SESSION_NO_RESURRECT_CAPABILITY,
+                SESSION_SERVICES_CAPABILITY,
                 SESSION_SUBSCRIBE_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
                 SIDEBAR_TAB_SETTINGS_CAPABILITY,
@@ -1726,10 +1728,23 @@ pub struct ExtensionDeploymentInfo {
     pub files: usize,
     pub size: u64,
     pub status: ExtensionDeploymentStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<SessionServiceStatus>,
     /// Comparison made by the CLI against its installed copy, absent on the session endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_copy: Option<String>,
     /// Why the deployment cannot run, when it cannot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SessionServiceStatus {
+    pub name: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

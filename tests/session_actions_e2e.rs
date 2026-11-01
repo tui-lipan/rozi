@@ -1042,3 +1042,86 @@ exec sleep 30
     wait_until("the call to end", || lab.running().is_empty());
     let _ = child.wait();
 }
+
+/// A rename stops everything the deployment store runs. A call must not be left waiting for an
+/// answer from a process that is gone.
+#[test]
+fn renaming_a_session_answers_its_calls_and_brings_its_actions_back() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "wait"
+title = "Wait"
+exec = ["sh", "./wait.sh"]
+{OPEN_SCHEMA}
+[[actions]]
+id = "ping"
+title = "Ping"
+exec = ["sh", "-c", "cat > /dev/null; echo 1"]
+{OPEN_SCHEMA}"#
+        ),
+        &[(
+            "wait.sh",
+            r#"echo $$ > "$ROZI_EXTENSION_STATE_DIR/pid"
+exec sleep 30
+"#,
+        )],
+    );
+    let mut caller = lab.send(invocation("demo.wait", json!({})));
+    wait_until("the process", || lab.state_file("pid").exists());
+    let pid = pid_in(&lab, "pid");
+
+    let mut client = common::TestConnection::connect(&subprocess_endpoint(&lab.root, &lab.session));
+    client.write_control(&common::attach_message(&lab.session, "renamer"));
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    let renamed = format!("{}-b", lab.session);
+    client.write_control(&ClientMessage::Rename {
+        name: renamed.clone(),
+    });
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Renamed { .. }))
+    });
+    assert_eq!(
+        code(&answer(&mut caller)),
+        Some(ControlErrorCode::InvocationCancelled)
+    );
+    assert!(!alive(&pid));
+
+    lab.session = renamed;
+    wait_until("the action to return", || {
+        lab.invoke("demo.ping", json!({})).code != Some(ControlErrorCode::ActionNotFound)
+    });
+    assert!(lab.invoke("demo.ping", json!({})).ok);
+}
+
+/// Without its settings an action must not run, as a service must not: it would be told the wrong
+/// ones. It is still listed, and says why it cannot run.
+#[test]
+fn an_action_refuses_to_run_when_the_hosts_config_cannot_supply_its_settings() {
+    let mut lab = Lab::new();
+    std::fs::write(lab.root.join("config.toml"), "not [valid toml").unwrap();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "ping"
+title = "Ping"
+exec = ["sh", "-c", "touch \"$ROZI_EXTENSION_STATE_DIR/ran\"; echo 1"]
+{OPEN_SCHEMA}"#
+        ),
+        &[],
+    );
+    let response = lab.invoke("demo.ping", json!({}));
+    assert_eq!(code(&response), Some(ControlErrorCode::ActionFailed));
+    assert!(
+        response.error.unwrap().contains("config cannot be read"),
+        "says why"
+    );
+    assert!(!lab.state_file("ran").exists());
+    let listed = lab.ask(ControlCommand::ActionsList);
+    assert_eq!(listed.data.unwrap()[0]["id"], "demo.ping");
+}

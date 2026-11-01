@@ -322,6 +322,17 @@ impl Invocations {
             .collect()
     }
 
+    /// Stop every call, as [`Self::shut_down`] does, and return who is waiting to hear about them.
+    pub fn stop_all(&mut self) -> Vec<(ClientId, ReplyTo)> {
+        let callers = self
+            .running
+            .values_mut()
+            .filter_map(|running| running.caller.take())
+            .collect();
+        self.shut_down();
+        callers
+    }
+
     /// Stop every call and give them a moment to kill their processes. A call stuck past that is
     /// left behind: shutting a session down must not depend on what an extension started.
     pub fn shut_down(&mut self) {

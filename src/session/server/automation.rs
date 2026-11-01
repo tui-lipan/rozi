@@ -20,7 +20,8 @@ struct ActiveExtension {
     actions: Vec<ExtensionAction>,
     directory: std::path::PathBuf,
     platforms: Vec<String>,
-    settings: String,
+    /// What its processes start with, or why the host's config could not supply it.
+    settings: Result<String, String>,
 }
 
 pub(super) struct Automation {
@@ -117,6 +118,10 @@ impl Automation {
                                 reason: Some(reason.clone()),
                             })
                             .collect(),
+                        actions: definition.actions,
+                        directory: definition.directory,
+                        platforms: definition.platforms,
+                        settings: Err(reason),
                     },
                 );
                 return;
@@ -174,7 +179,7 @@ impl Automation {
                 actions: definition.actions,
                 directory: definition.directory,
                 platforms: definition.platforms,
-                settings: definition.settings,
+                settings: Ok(settings),
             },
         );
     }
@@ -302,16 +307,22 @@ impl Automation {
                 format!("no deployed action `{id}`"),
             ));
         };
+        let settings = match &active.settings {
+            Ok(settings) => settings.clone(),
+            Err(reason) => {
+                return Some(ControlResponse::error_with(
+                    ControlErrorCode::ActionFailed,
+                    reason.clone(),
+                ));
+            }
+        };
         let env = vec![
             ("ROZI_EXTENSION".to_string(), extension.clone()),
             (
                 crate::config::GENERATION_ENV.to_string(),
                 active.generation.to_string(),
             ),
-            (
-                crate::config::SETTINGS_ENV.to_string(),
-                active.settings.clone(),
-            ),
+            (crate::config::SETTINGS_ENV.to_string(), settings),
             (
                 crate::config::SESSION_NAME_ENV.to_string(),
                 session.to_string(),
@@ -470,15 +481,33 @@ impl SessionServer {
         }
     }
 
-    /// Stop every session process before returning, and close the connections they hold.
+    /// Stop every session process before returning, answer the calls that ended with them, and
+    /// close the connections they held.
     pub(super) fn stop_automation(&mut self) {
-        let Some(automation) = self.automation.take() else {
+        let Some(mut automation) = self.automation.take() else {
             return;
         };
         let clients: Vec<ClientId> = automation.callers.keys().copied().collect();
+        let callers = automation.invocations.stop_all();
+        let offered_actions = !automation.palette_actions().is_empty();
         drop(automation);
+        for (client, reply) in callers {
+            self.answer_held(
+                client,
+                &reply,
+                ControlResponse::error_with(
+                    ControlErrorCode::InvocationCancelled,
+                    "the session's deployments restarted",
+                ),
+            );
+        }
         for client in clients {
             self.remove_client(client);
+        }
+        if offered_actions {
+            self.broadcast_control(&crate::session::protocol::ServerMessage::SessionActions {
+                actions: Vec::new(),
+            });
         }
     }
 

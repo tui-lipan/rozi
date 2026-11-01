@@ -396,6 +396,8 @@ impl SupervisedProcess {
         if !spec.platforms.is_empty() && !spec.platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
         }
+        // Verified now, immediately before the launch, not when it was staged.
+        verify_process_bundle(&spec.bundle_dir)?;
         let extension = spec
             .env
             .iter()
@@ -404,7 +406,6 @@ impl SupervisedProcess {
             .ok_or_else(|| SpawnFailure::SpawnFailed {
                 detail: "the launch names no extension".to_string(),
             })?;
-        verify_process_bundle(&spec.bundle_dir)?;
         let state_dir = crate::platform::paths::ensure_extension_state_dir(
             &crate::platform::paths::PlatformEnv::from_process(),
             &extension,

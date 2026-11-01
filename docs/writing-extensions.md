@@ -338,7 +338,8 @@ restart = "on-failure"
 Deploy it with `rozi extensions deploy <ID> --session <NAME>`. Use
 `rozi extensions status --session <NAME>` for service states and process IDs. Session services read
 settings from `[extensions.<ID>]` in the host's config, combined with their deployed manifest's
-defaults. Redeploy or restart the session to apply host setting changes.
+defaults. Redeploy or restart the session to apply host setting changes. While the host's config
+cannot be read, a service that is due to start stays stopped, and `status` gives the reason.
 
 These processes receive `ROZI_SESSION_INSTANCE` and find their session directly. Use `ROZI_BIN`
 for commands and subscriptions. They can use commands supported by a session endpoint, except
@@ -349,9 +350,9 @@ Use `rozi notify` for a session notification. Every attached UI receives it, and
 the retained inbox. Subscribing to `session-notification` also works without a UI.
 
 Their `ROZI_EXTENSION_CREDENTIAL` comes from the session and is valid only there. Client-issued
-credentials and client generation claims are refused. Redeploying, undeploying, or restarting
-retires old credentials and closes their open subscriptions and pending requests. Do not copy or
-log credentials.
+credentials and client generation claims are refused. Redeploying, undeploying, renaming the
+session, or restarting retires old credentials and closes their open subscriptions and pending
+requests. Do not copy or log credentials.
 
 ### Availability
 
@@ -382,8 +383,10 @@ exits, or loses the connection. Two clients attached to the same host each run t
 
 Session services belong to an explicitly deployed extension. They start when deployed and return
 when the session restarts or is resurrected. Client reloads, attaching, and detaching do not change
-them. Redeploying replaces their generation, and undeploying or deleting the session stops them.
-Services do not change the session's lifetime policy.
+them. Redeploying or renaming the session restarts them under a new generation, and undeploying or
+deleting the session stops them. Services do not change the session's lifetime policy. If the session
+server is killed outright, a process a service started may outlive it, so a service that starts
+helpers should have them exit when it does.
 
 A placed service follows its `restart` policy like a client one. Disabling, removing, or changing the
 extension stops its placed processes on every host.

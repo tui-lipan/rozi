@@ -112,16 +112,19 @@ Hooks run on the client machine, even when the session lives on a remote host.
 
 rozi discards a hook's stdin, stdout, stderr, and exit status; redirect output in the command if
 you need it. rozi does not wait for, retry, or supervise hook processes, and a burst of events can
-skip hooks once 32 jobs are already running. For state, retries, or long-lived event handling, run
-`rozi subscribe` from a [`[[services]]`](configuration.md#services) entry instead.
+skip hooks once 32 jobs are already running. For state, retries, or long-lived event handling, run `rozi subscribe` or `rozi --session <NAME> subscribe` from a [`[[services]]`](configuration.md#services) entry instead.
 
 ### Shared sessions
 
-Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks, so
-most events in a [shared session](shared-sessions.md) run matching hooks on every client.
-`pane-status-changed`, `agent-state-changed`, and `foreground-changed` are the exceptions: every
-client delivers them to its own subscribers, but only the client holding layout control runs their
-hooks.
+Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks.
+Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `agent-state-changed`,
+`foreground-changed`, `bell`, `layout-changed`, `client-joined`, `client-left`, `controller-changed`,
+`session-renamed`) run only on the controller client holding layout control, while client-local hooks
+(`focus-changed`, `workspace-switched`, `session-attached`, `session-detached`) run on the client
+where the event occurred.
+
+For automation that must receive session events even when no UI is attached, subscribe directly
+to the session endpoint with `rozi --session <NAME> subscribe` (see [Session subscriptions](control.md#session-subscriptions)).
 
 No hooks run while every client is detached, and a client that crashes cannot run a final
 `session-detached` hook.

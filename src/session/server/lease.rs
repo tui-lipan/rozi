@@ -453,6 +453,11 @@ impl SessionServer {
         self.controller == Some(client_id)
     }
 
+    #[cfg(all(test, unix))]
+    pub(super) fn client(&self, id: ClientId) -> Option<&ClientConn> {
+        self.clients.iter().find(|client| client.id == id)
+    }
+
     pub(super) fn client_mut(&mut self, id: ClientId) -> Option<&mut ClientConn> {
         self.clients.iter_mut().find(|client| client.id == id)
     }
@@ -532,6 +537,7 @@ impl SessionServer {
         self.capture_waits.remove(&id);
         self.cancel_client_attachments(id);
         self.release_recording_replies(id);
+        self.session_subscribers.remove(&id);
         if self.origin_seed_client == Some(id) {
             self.origin_seed_client = None;
         }

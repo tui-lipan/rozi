@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::shared::ClientId;
 use crate::session::protocol::{
     AgentRecord, AgentRuntime, AgentState, PaneRuntimeState, PaneStatus, SessionInstanceId,
 };
@@ -105,6 +106,7 @@ pub struct WireEvent {
 
 /// One sequenced event recorded by a [`SessionServer`](super::SessionServer).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionEvent {
     pub session_instance: SessionInstanceId,
     pub seq: u64,
@@ -145,10 +147,40 @@ impl SessionEvent {
 /// Reported when a resume cursor names a different session instance, a sequence number that has
 /// already been evicted from the ring buffer, or a sequence ahead of the server's latest event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct CursorExpired {
     pub current_instance: SessionInstanceId,
     pub oldest_seq: Option<u64>,
     pub latest_seq: u64,
+}
+
+/// Current snapshot of a session as streamed at subscription start when `--snapshot` is requested.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct SessionSubscribeSnapshot {
+    pub session_instance: SessionInstanceId,
+    pub session: String,
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller: Option<ClientId>,
+    pub client_count: u32,
+    pub layout_rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<crate::control::LayoutReport>,
+    pub panes: Vec<crate::control::PaneInfo>,
+}
+
+/// Typed records streamed by a session subscription.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SessionSubscribeRecord {
+    Snapshot(SessionSubscribeSnapshot),
+    Event {
+        #[serde(flatten)]
+        event: SessionEvent,
+    },
+    Lagged,
 }
 
 /// Ring buffer of recent session events bounded by both event count and total retained bytes.

@@ -115,7 +115,8 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
-        | ControlCommand::RecordMark { .. } => None,
+        | ControlCommand::RecordMark { .. }
+        | ControlCommand::Subscribe { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -162,9 +163,6 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         }
         ControlCommand::AgentsOverview | ControlCommand::AgentGo { .. } => Some(
             "only a UI knows other sessions and hosts; a session server knows its own agents (`agents list`)",
-        ),
-        ControlCommand::Subscribe { .. } => Some(
-            "subscribe streams UI events; a session server does not raise them (poll `list-panes` for pane state)",
         ),
         ControlCommand::ExtensionRuntimeStatus => {
             Some("extension runtimes belong to a UI; a session server runs no extension processes")
@@ -230,6 +228,12 @@ pub(super) enum ReplyTo {
         capabilities: Capabilities,
         effective_protocol: u32,
     },
+    /// A streaming headless connection (such as [`ControlCommand::Subscribe`]), kept open across
+    /// multiple frames.
+    StreamingHeadless {
+        capabilities: Capabilities,
+        effective_protocol: u32,
+    },
     /// An attached client's [`ClientMessage::AttachedControl`]; the connection carries on.
     Attached { request_id: u64 },
 }
@@ -264,6 +268,10 @@ impl ReplyTo {
             Self::Headless {
                 capabilities,
                 effective_protocol,
+            }
+            | Self::StreamingHeadless {
+                capabilities,
+                effective_protocol,
             } => ServerMessage::SessionControlResult {
                 capabilities: Some(capabilities.clone()),
                 effective_protocol: *effective_protocol,
@@ -280,7 +288,7 @@ impl ReplyTo {
     /// connection, which holds one answer at most.
     pub(super) fn hold_id(&self) -> u64 {
         match self {
-            Self::Headless { .. } => 0,
+            Self::Headless { .. } | Self::StreamingHeadless { .. } => 0,
             Self::Attached { request_id } => *request_id,
         }
     }
@@ -289,6 +297,11 @@ impl ReplyTo {
     pub(super) fn closes(&self) -> bool {
         matches!(self, Self::Headless { .. })
     }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct SessionSubscriber {
+    pub(super) filter: Option<HashSet<events::EventKind>>,
 }
 
 /// Why a session server cannot accept a request carrying extension provenance.
@@ -371,9 +384,16 @@ impl SessionServer {
                 },
             )];
         }
-        let reply = ReplyTo::Headless {
-            capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
-            effective_protocol: effective,
+        let reply = if matches!(request.command, ControlCommand::Subscribe { .. }) {
+            ReplyTo::StreamingHeadless {
+                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                effective_protocol: effective,
+            }
+        } else {
+            ReplyTo::Headless {
+                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                effective_protocol: effective,
+            }
         };
         self.serve_control(client_id, &reply, request)
     }
@@ -471,6 +491,17 @@ impl SessionServer {
                     request.command.clone(),
                     reply.clone(),
                 )),
+                ControlCommand::Subscribe {
+                    events,
+                    snapshot,
+                    after,
+                } => Some(self.handle_subscribe_command(
+                    client_id,
+                    events.clone(),
+                    *snapshot,
+                    after.clone(),
+                    reply.clone(),
+                )),
                 _ if request.command.pane_wait().is_some() => {
                     Some(self.register_capture_wait(client_id, request.clone(), reply.clone()))
                 }
@@ -500,6 +531,122 @@ impl SessionServer {
         if reply.closes() {
             self.set_close_after_flush(client_id);
         }
+    }
+
+    pub(super) fn handle_subscribe_command(
+        &mut self,
+        client_id: ClientId,
+        events: Vec<String>,
+        snapshot: bool,
+        after: Option<String>,
+        reply: ReplyTo,
+    ) -> Option<ControlResponse> {
+        let filter = if events.is_empty() {
+            None
+        } else {
+            let mut set = HashSet::new();
+            for name in &events {
+                match events::EventKind::parse(name) {
+                    Some(kind) => {
+                        set.insert(kind);
+                    }
+                    None => {
+                        return Some(ControlResponse::error_with(
+                            ControlErrorCode::UnknownEvent,
+                            format!("unknown event `{name}`"),
+                        ));
+                    }
+                }
+            }
+            Some(set)
+        };
+
+        let retained_events = if let Some(after_cursor) = after {
+            let Some((inst_str, seq_str)) = after_cursor.split_once(':') else {
+                return Some(ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    format!("cursor must be INSTANCE:SEQ, got `{after_cursor}`"),
+                ));
+            };
+            let Ok(seq) = seq_str.parse::<u64>() else {
+                return Some(ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    format!("invalid sequence in cursor `{seq_str}`"),
+                ));
+            };
+            let inst = protocol::SessionInstanceId::from(inst_str);
+            match self.session_events.after(&inst, seq) {
+                Ok(events) => Some(events),
+                Err(expired) => {
+                    let mut resp = ControlResponse::error_with(
+                        ControlErrorCode::CursorExpired,
+                        format!(
+                            "cursor expired: current instance is {}, oldest seq is {:?}, latest seq is {}",
+                            expired.current_instance, expired.oldest_seq, expired.latest_seq
+                        ),
+                    );
+                    resp.data = Some(serde_json::to_value(&expired).unwrap_or_default());
+                    return Some(resp);
+                }
+            }
+        } else {
+            None
+        };
+
+        let snapshot_record = if snapshot {
+            let layout_report = self.session_layout_report(None);
+            let layout = match layout_report.data {
+                Some(data) => serde_json::from_value(data).ok(),
+                None => None,
+            };
+            Some(events::SessionSubscribeRecord::Snapshot(
+                events::SessionSubscribeSnapshot {
+                    session_instance: self.instance_id.clone(),
+                    session: self.session_name.clone(),
+                    seq: self.session_events.latest_seq(),
+                    controller: self.controller,
+                    client_count: self.attached_count(),
+                    layout_rev: self.layout_rev,
+                    layout,
+                    panes: self.session_pane_report(),
+                },
+            ))
+        } else {
+            None
+        };
+
+        self.enqueue(
+            client_id,
+            Target::Sender,
+            reply.message(ControlResponse::empty()),
+        );
+
+        if let Some(record) = snapshot_record {
+            self.enqueue(
+                client_id,
+                Target::Sender,
+                ServerMessage::SessionSubscribeRecord { record },
+            );
+        }
+
+        if let Some(retained) = retained_events {
+            for event in retained {
+                if filter.as_ref().is_none_or(|f| f.contains(&event.kind)) {
+                    self.enqueue(
+                        client_id,
+                        Target::Sender,
+                        ServerMessage::SessionSubscribeRecord {
+                            record: events::SessionSubscribeRecord::Event { event },
+                        },
+                    );
+                }
+            }
+        }
+
+        self.session_subscribers
+            .insert(client_id, SessionSubscriber { filter });
+
+        None
     }
 
     fn run_session_control(
@@ -2000,6 +2147,7 @@ mod tests {
     use super::*;
     use crate::control::ControlRequest;
     use crate::layout::shared::{SharedSplitAxis, SharedTree};
+    use crate::session::server::tests::{add_client, decode_outbox_controls};
 
     fn request(command: ControlCommand) -> ControlRequest {
         ControlRequest {
@@ -4233,7 +4381,6 @@ mod tests {
                 kind: Default::default(),
                 name: None,
             },
-            ControlCommand::Subscribe { events: Vec::new() },
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,
                 scale: None,
@@ -4247,5 +4394,242 @@ mod tests {
                 "{command:?} needs a sentence, not a code: {reason}"
             );
         }
+    }
+
+    #[test]
+    fn test_session_subscribe_live_events_with_monotonic_seq() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+        let response = server.handle_subscribe_command(client, vec![], false, None, reply);
+        assert!(response.is_none());
+        assert!(server.session_subscribers.contains_key(&client));
+
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "1".to_string())],
+        );
+        server.record_session_event(
+            events::EventKind::LayoutChanged,
+            vec![("revision", "1".to_string())],
+        );
+
+        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+        assert!(matches!(
+            &controls[0],
+            ServerMessage::SessionControlResult { response, .. } if response.ok
+        ));
+
+        match &controls[1] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => {
+                assert_eq!(event.kind, events::EventKind::PaneSpawned);
+                assert_eq!(event.seq, 1);
+                assert_eq!(event.data.get("pane").unwrap(), "1");
+            }
+            other => panic!("expected record 1, got {other:?}"),
+        }
+        match &controls[2] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => {
+                assert_eq!(event.kind, events::EventKind::LayoutChanged);
+                assert_eq!(event.seq, 2);
+                assert_eq!(event.data.get("revision").unwrap(), "1");
+            }
+            other => panic!("expected record 2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_session_subscribe_snapshot_followed_by_live_events() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 1, b"hello");
+
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+        let response = server.handle_subscribe_command(client, vec![], true, None, reply);
+        assert!(response.is_none());
+
+        server.record_session_event(
+            events::EventKind::PaneExited,
+            vec![("pane", "1".to_string())],
+        );
+
+        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+        assert!(matches!(
+            &controls[0],
+            ServerMessage::SessionControlResult { response, .. } if response.ok
+        ));
+
+        match &controls[1] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Snapshot(snap),
+            } => {
+                assert_eq!(snap.session, "dev");
+                assert_eq!(snap.seq, 0);
+                assert_eq!(snap.panes.len(), 1);
+                assert_eq!(snap.panes[0].id, 1);
+            }
+            other => panic!("expected snapshot record, got {other:?}"),
+        }
+
+        match &controls[2] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => {
+                assert_eq!(event.kind, events::EventKind::PaneExited);
+                assert_eq!(event.seq, 1);
+            }
+            other => panic!("expected live event record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_session_subscribe_after_replay_and_expired_cursor() {
+        let mut server = SessionServer::new_named("dev");
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "1".to_string())],
+        );
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "2".to_string())],
+        );
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "3".to_string())],
+        );
+
+        // Replay after seq 1
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+        let cursor = format!("{}:1", server.instance_id);
+        let response =
+            server.handle_subscribe_command(client, vec![], false, Some(cursor), reply.clone());
+        assert!(response.is_none());
+
+        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+        assert_eq!(controls.len(), 3);
+        match &controls[1] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => assert_eq!(event.seq, 2),
+            other => panic!("expected event 2, got {other:?}"),
+        }
+        match &controls[2] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => assert_eq!(event.seq, 3),
+            other => panic!("expected event 3, got {other:?}"),
+        }
+
+        // Expired cursor (different session instance)
+        let (client2, _stream2) = add_client(&mut server);
+        let wrong_cursor = "different-instance:1".to_string();
+        let response = server.handle_subscribe_command(
+            client2,
+            vec![],
+            false,
+            Some(wrong_cursor),
+            reply.clone(),
+        );
+        let err = response.expect("must return error for expired cursor");
+        assert!(!err.ok);
+        assert_eq!(err.code, Some(ControlErrorCode::CursorExpired));
+        assert!(!server.session_subscribers.contains_key(&client2));
+    }
+
+    #[test]
+    fn test_session_subscribe_event_filtering() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+        let response = server.handle_subscribe_command(
+            client,
+            vec!["pane-spawned".to_string()],
+            false,
+            None,
+            reply,
+        );
+        assert!(response.is_none());
+
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "1".to_string())],
+        );
+        server.record_session_event(
+            events::EventKind::LayoutChanged,
+            vec![("revision", "1".to_string())],
+        );
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "2".to_string())],
+        );
+
+        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+        assert_eq!(controls.len(), 3);
+        match &controls[1] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => {
+                assert_eq!(event.kind, events::EventKind::PaneSpawned);
+                assert_eq!(event.seq, 1);
+            }
+            other => panic!("expected event 1, got {other:?}"),
+        }
+        match &controls[2] {
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Event { event },
+            } => {
+                assert_eq!(event.kind, events::EventKind::PaneSpawned);
+                assert_eq!(event.seq, 3);
+            }
+            other => panic!("expected event 3, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_session_subscribe_slow_subscriber_lagged() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+        let response = server.handle_subscribe_command(client, vec![], false, None, reply);
+        assert!(response.is_none());
+        assert!(server.session_subscribers.contains_key(&client));
+
+        // Make client overflow by setting max_backlog to 0
+        server.max_backlog = 0;
+        server.record_session_event(
+            events::EventKind::PaneSpawned,
+            vec![("pane", "1".to_string())],
+        );
+
+        assert!(!server.session_subscribers.contains_key(&client));
+        assert!(server.client(client).unwrap().close_after_flush);
+
+        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
+        assert!(controls.iter().any(|msg| matches!(
+            msg,
+            ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Lagged,
+            }
+        )));
     }
 }

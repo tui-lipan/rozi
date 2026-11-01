@@ -55,6 +55,61 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
     result
 }
 
+pub(crate) fn stream_forward<Request: Serialize>(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    runner_args: &[&str],
+    request: &Request,
+    handle_stream: impl FnOnce(
+        &str,
+        io::Lines<io::BufReader<std::process::ChildStdout>>,
+    ) -> Result<(), String>,
+) -> Result<(), TransportError> {
+    validate_remote_target(target).map_err(TransportError::Preflight)?;
+    let resolved = ResolvedRemote::resolve(target, config);
+    let binary = super::binary::resolve(target, config)
+        .map_err(|error| TransportError::Preflight(error.message))?;
+    validate_remote_executable_token(&binary.path).map_err(TransportError::Preflight)?;
+    let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
+    let mut command = ssh_base_command(&resolved, config);
+    append_ssh_destination(&mut command, &resolved);
+    append_remote_rozi_command(&mut command, &binary.path, runner_args, binary.family);
+
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(TransportError::Ssh)?;
+
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    stdin.write_all(&payload).map_err(TransportError::Send)?;
+    stdin.write_all(b"\n").map_err(TransportError::Send)?;
+    drop(stdin);
+
+    let stdout = child.stdout.take().expect("piped stdout");
+    use std::io::BufRead;
+    let mut reader = io::BufReader::new(stdout);
+    let mut first_line = String::new();
+    reader
+        .read_line(&mut first_line)
+        .map_err(TransportError::Ssh)?;
+    if first_line.is_empty() {
+        let output = child.wait_with_output().map_err(TransportError::Ssh)?;
+        if !output.status.success() {
+            return Err(TransportError::Failed(output));
+        }
+        return Err(TransportError::Answer(AnswerError::Empty));
+    }
+
+    if let Err(err) = handle_stream(first_line.trim(), reader.lines()) {
+        return Err(TransportError::Preflight(err));
+    }
+
+    let _ = child.wait();
+    Ok(())
+}
+
 fn exchange(command: &mut Command, payload: &[u8]) -> Result<Output, TransportError> {
     let mut child = command
         .stdin(Stdio::piped())

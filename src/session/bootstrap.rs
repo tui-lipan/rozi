@@ -978,6 +978,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 state,
             },
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
+            ServerMessage::SessionSubscribeRecord { .. } => Msg::RefreshPaintLayers,
         },
     }
 }

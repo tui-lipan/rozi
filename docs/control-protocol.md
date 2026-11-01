@@ -713,7 +713,7 @@ These requests behave differently than against a UI:
 
 ## Subscription stream
 
-Open with:
+Open a UI event subscription with:
 
 ```json
 {"cmd":"subscribe","events":["pane-exited","pane-status-changed"]}
@@ -738,6 +738,29 @@ CLI bridge:
 ```sh
 rozi subscribe pane-exited pane-status-changed
 ```
+
+### Session subscriptions
+
+A session server serves `subscribe` directly (via `rozi --session <NAME> subscribe` or remote SSH
+bridge `rozi --remote <HOST> --session <NAME> subscribe`). Session subscriptions accept `snapshot`
+and `after`:
+
+```json
+{"cmd":"subscribe","events":["pane-spawned","pane-exited"],"snapshot":true}
+{"cmd":"subscribe","events":["layout-changed"],"after":"4a2b:42"}
+```
+
+Session subscriptions stream typed records:
+
+```json
+{"type":"snapshot","session_instance":"4a2b","session":"dev","seq":42,"controller":1,"client_count":2,"layout_rev":3,"panes":[...]}
+{"type":"event","session_instance":"4a2b","seq":43,"kind":"pane-spawned","data":{"pane":"2"}}
+{"type":"lagged"}
+```
+
+If an expired or invalid cursor is provided in `after` (from an older pruned sequence or mismatched
+session instance ID), the server returns error code `cursor-expired` rather than degrading to a
+snapshot. Slow subscribers that fall behind receive a `lagged` record and the connection is closed.
 
 ## Picker stream
 

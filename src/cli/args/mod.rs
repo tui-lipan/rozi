@@ -186,8 +186,10 @@ pub(crate) struct PublishCli {
 
 #[derive(Debug)]
 pub(crate) struct SubscribeCli {
-    pub(super) socket: Option<PathBuf>,
+    pub(super) endpoint: ControlEndpoint,
     pub(super) events: Vec<String>,
+    pub(super) snapshot: bool,
+    pub(super) after: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1011,25 +1013,47 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "subscribe" => {
                 let mut events = Vec::new();
+                let mut snapshot = false;
+                let mut after = None;
                 let mut passthrough = false;
-                for arg in iter.by_ref() {
+                while let Some(arg) = iter.next() {
                     if arg == "--" && !passthrough {
                         passthrough = true;
+                    } else if !passthrough && arg == "--snapshot" {
+                        snapshot = true;
+                    } else if !passthrough && arg == "--after" {
+                        let val = iter.next().ok_or_else(|| {
+                            "--after requires an INSTANCE:SEQ argument".to_string()
+                        })?;
+                        after = Some(val);
+                    } else if !passthrough && arg.starts_with("--after=") {
+                        let val = arg.strip_prefix("--after=").unwrap().to_string();
+                        after = Some(val);
                     } else if !passthrough && arg.starts_with('-') {
                         return Err(format!("unexpected subscribe flag `{arg}`"));
                     } else {
                         events.push(arg);
                     }
                 }
+                if snapshot && after.is_some() {
+                    return Err("--snapshot and --after cannot be combined".to_string());
+                }
+                let command = control::ControlCommand::Subscribe {
+                    events: events.clone(),
+                    snapshot,
+                    after: after.clone(),
+                };
+                let endpoint = control_endpoint(&cli, socket, &command)?;
+                if !endpoint.is_session() && (snapshot || after.is_some()) {
+                    return Err(
+                        "--snapshot and --after require a session endpoint (--session)".to_string(),
+                    );
+                }
                 return Ok(ParsedCli::Subscribe(SubscribeCli {
-                    socket: ui_stream_socket(
-                        &cli,
-                        socket,
-                        &control::ControlCommand::Subscribe {
-                            events: events.clone(),
-                        },
-                    )?,
+                    endpoint,
                     events,
+                    snapshot,
+                    after,
                 }));
             }
             "prompt" => {
@@ -3676,6 +3700,53 @@ mod tests {
         };
         assert_eq!(command.events, ["pane-exited", "workspace-switched"]);
         assert!(parse_cli_args(vec!["subscribe".into(), "--unknown".into()]).is_err());
+    }
+
+    #[test]
+    fn subscribe_session_snapshot_and_after_args() {
+        let ParsedCli::Subscribe(cmd) = parse_cli_args(vec![
+            "--session".into(),
+            "dev".into(),
+            "subscribe".into(),
+            "--snapshot".into(),
+        ])
+        .expect("subscribe --snapshot parses") else {
+            panic!("expected subscribe");
+        };
+        assert!(cmd.snapshot);
+        assert_eq!(cmd.after, None);
+
+        let ParsedCli::Subscribe(cmd) = parse_cli_args(vec![
+            "--session".into(),
+            "dev".into(),
+            "subscribe".into(),
+            "--after".into(),
+            "abc:42".into(),
+        ])
+        .expect("subscribe --after parses") else {
+            panic!("expected subscribe");
+        };
+        assert!(!cmd.snapshot);
+        assert_eq!(cmd.after.as_deref(), Some("abc:42"));
+
+        // Mutual exclusivity
+        assert!(
+            parse_cli_args(vec![
+                "--session".into(),
+                "dev".into(),
+                "subscribe".into(),
+                "--snapshot".into(),
+                "--after".into(),
+                "abc:42".into(),
+            ])
+            .is_err()
+        );
+
+        // Requires session endpoint
+        assert!(parse_cli_args(vec!["subscribe".into(), "--snapshot".into()]).is_err());
+        assert!(
+            parse_cli_args(vec!["subscribe".into(), "--after".into(), "abc:42".into(),]).is_err()
+        );
     }
 
     /// `notify` is how a script reports an off-screen result, so its parsing has to survive

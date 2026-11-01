@@ -754,6 +754,10 @@ pub enum ServerMessage {
     SessionEvent {
         event: crate::session::server::events::SessionEvent,
     },
+    /// Typed record streamed to a session subscriber.
+    SessionSubscribeRecord {
+        record: crate::session::server::events::SessionSubscribeRecord,
+    },
 }
 
 /// One acknowledged step of a bounded attachment upload.

@@ -115,7 +115,67 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
 
 /// Print matching application events as newline-delimited JSON until the connection closes.
 pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
-    let path = match discover_socket(command.socket) {
+    match command.endpoint {
+        ControlEndpoint::Ui(socket) => run_ui_subscribe_cli(socket, command.events),
+        ControlEndpoint::Session(session) => {
+            run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
+        }
+        ControlEndpoint::Remote { target, session } => run_remote_subscribe_cli(
+            &target,
+            &session,
+            command.events,
+            command.snapshot,
+            command.after,
+        ),
+        ControlEndpoint::Here => {
+            let request = control_request(control::ControlCommand::Subscribe {
+                events: command.events.clone(),
+                snapshot: command.snapshot,
+                after: command.after.clone(),
+            });
+            let context = super::context::verified_caller_context(&request)?;
+            if !context.inside_rozi {
+                eprintln!(
+                    "--here requires a verified caller pane (context: {})",
+                    context.status
+                );
+                std::process::exit(2);
+            }
+            let caller = context.pane.expect("verified pane");
+            if let Some(socket) = super::context::authority_ui(&request, &caller) {
+                run_ui_subscribe_cli(Some(socket), command.events)
+            } else {
+                let session = match crate::session::discovery::session_with_instance(
+                    &caller.session_instance,
+                ) {
+                    Ok(crate::session::discovery::InstanceLookup::Found(name)) => name,
+                    _ => {
+                        eprintln!("could not find caller session");
+                        std::process::exit(2);
+                    }
+                };
+                run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
+            }
+        }
+        ControlEndpoint::OwnSession(instance) => {
+            let session = match crate::session::discovery::session_with_instance(&instance) {
+                Ok(crate::session::discovery::InstanceLookup::Found(name)) => name,
+                _ => {
+                    eprintln!("could not find session with instance {instance}");
+                    std::process::exit(2);
+                }
+            };
+            run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
+        }
+        ControlEndpoint::CallerContext => {
+            eprintln!("subscribe does not support caller context");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run_ui_subscribe_cli(socket: Option<PathBuf>, events: Vec<String>) -> Result<()> {
+    let path = match discover_socket(socket) {
         Ok(path) => path,
         Err(err) => {
             eprintln!("{err}");
@@ -130,7 +190,9 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
         }
     };
     let request = control_request(control::ControlCommand::Subscribe {
-        events: command.events,
+        events,
+        snapshot: false,
+        after: None,
     });
     writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
 
@@ -148,6 +210,94 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
     while let Some(line) = crate::control::read_control_reply_line(&mut reader)? {
         writeln!(stdout, "{line}")?;
         stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn run_session_subscribe_cli(
+    session: &str,
+    events: Vec<String>,
+    snapshot: bool,
+    after: Option<String>,
+) -> Result<()> {
+    let request = control_request(control::ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    });
+    let (mut stream, response) =
+        match crate::session::headless::run_session_subscribe(session, request) {
+            Ok(res) => res,
+            Err(err) => {
+                eprintln!("{err}");
+                std::process::exit(2);
+            }
+        };
+    if !response.ok {
+        if let Some(error) = response.error {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+
+    let mut stdout = std::io::stdout().lock();
+    loop {
+        match crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
+            &mut stream,
+        ) {
+            Ok(crate::session::protocol::ServerMessage::SessionSubscribeRecord { record }) => {
+                let is_lagged = matches!(
+                    record,
+                    crate::session::server::events::SessionSubscribeRecord::Lagged
+                );
+                writeln!(stdout, "{}", serde_json::to_string(&record).unwrap())?;
+                stdout.flush()?;
+                if is_lagged {
+                    break;
+                }
+            }
+            Ok(crate::session::protocol::ServerMessage::Error { code, message }) => {
+                eprintln!("{code}: {message}");
+                std::process::exit(1);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                break;
+            }
+            Err(err) => {
+                eprintln!("subscribe error: {err}");
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn run_remote_subscribe_cli(
+    target: &str,
+    session: &str,
+    events: Vec<String>,
+    snapshot: bool,
+    after: Option<String>,
+) -> Result<()> {
+    let parsed = match crate::session::remote::parse_remote_target(target) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let config = crate::config::load_config().config.remote;
+    let request = control_request(control::ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    });
+    if let Err(err) =
+        crate::session::remote::control::forward_control_stream(&parsed, session, &request, &config)
+    {
+        eprintln!("{err}");
+        std::process::exit(2);
     }
     Ok(())
 }

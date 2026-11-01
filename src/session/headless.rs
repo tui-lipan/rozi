@@ -96,6 +96,58 @@ pub fn run_session_control(
     exchange(name, &mut stream, request)
 }
 
+/// Open a subscription against the named session server and return the open connection and initial response.
+pub fn run_session_subscribe(
+    name: &str,
+    request: ControlRequest,
+) -> std::result::Result<(IpcConnection, ControlResponse), SessionControlError> {
+    if !crate::session::discovery::valid_attach_target(name) {
+        return Err(SessionControlError::Transport(
+            "invalid session name".to_string(),
+        ));
+    }
+    let endpoint = crate::session::server::session_endpoint(name)
+        .map_err(|err| SessionControlError::Transport(err.to_string()))?;
+    if !endpoint.is_live() {
+        return Err(SessionControlError::NoSuchSession(name.to_string()));
+    }
+    let mut stream = connect_patiently(&endpoint).map_err(|err| {
+        if matches!(
+            err.kind(),
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+        ) {
+            SessionControlError::NoSuchSession(name.to_string())
+        } else {
+            SessionControlError::Transport(format!("could not reach session `{name}`: {err}"))
+        }
+    })?;
+    let _ = stream.set_read_timeout(None);
+    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+    protocol::write_frame(
+        &mut stream,
+        &ClientMessage::SessionControl {
+            capabilities: Some(protocol::Capabilities::current()),
+            session: name.to_string(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            request,
+        },
+    )
+    .map_err(|err| SessionControlError::Transport(format!("could not send request: {err}")))?;
+    match protocol::read_frame::<_, ServerMessage>(&mut stream)
+        .map_err(|err| SessionControlError::Transport(format!("no answer from `{name}`: {err}")))?
+    {
+        ServerMessage::SessionControlResult { response, .. } => Ok((stream, response)),
+        ServerMessage::Error { code, message } => {
+            Err(SessionControlError::Refused { code, message })
+        }
+        other => Err(SessionControlError::Transport(format!(
+            "session `{name}` answered with an unexpected {} message",
+            message_kind(&other)
+        ))),
+    }
+}
+
 /// How long a busy endpoint is retried before the request gives up on it.
 const BUSY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
 

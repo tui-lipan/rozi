@@ -245,7 +245,7 @@ attached.
 | `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
 | `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
-| `subscribe [EVENT...]` | Stream events as NDJSON. An empty list subscribes to all events. | no |
+| `subscribe [EVENT...] [--snapshot] [--after INSTANCE:SEQ]` | Stream events as NDJSON. An empty list subscribes to all events. Supported on both UI and session endpoints (`--snapshot` and `--after` require a session endpoint). | yes |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `prompt --title TEXT [--placeholder TEXT] [--value TEXT] [--masked] [--json]` | Ask for a line of text in a modal prompt. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
@@ -933,15 +933,42 @@ command its manifest declares. See
 
 ## Subscriptions
 
-`subscribe` prints one JSON object per line until the endpoint closes:
+`subscribe` streams events as line-delimited JSON (NDJSON) until the endpoint closes:
 
 ```sh
 rozi subscribe pane-exited pane-status-changed |
   jq -r 'select(.event == "pane-status-changed") | [.data.pane, .data.status] | @tsv'
 ```
 
-Every event has `event` and `data`; event fields are under `data`. See
-[Hooks](hooks.md#events-and-fields) for the event names and fields.
+When run against a UI endpoint, every event has `event` and `data`; event fields are under `data`.
+See [Hooks](hooks.md#events-and-fields) for the event names and fields.
+
+### Session subscriptions
+
+A script or service can subscribe directly to a session server — local or remote — without requiring
+an attached UI:
+
+```sh
+rozi --session dev subscribe pane-spawned pane-exited
+rozi --remote host --session dev subscribe --snapshot
+rozi --session dev subscribe --after 4a2b:42
+```
+
+Session subscriptions emit typed JSON records:
+
+- `{"type":"snapshot", ...}`: emitted at stream start when `--snapshot` is specified. Built and
+  registered in the same server-loop transaction so no events fall between the snapshot and live
+  stream. Contains `session_instance`, `session`, `seq`, `controller`, `client_count`, `layout_rev`,
+  `layout`, and `panes`.
+- `{"type":"event", "session_instance":"...", "seq":N, "kind":"...", "data":{...}}`: sequenced
+  session event records.
+- `{"type":"lagged"}`: emitted if a slow subscriber's queue fills up. The connection is then closed
+  cleanly without blocking the server loop.
+
+The `--after INSTANCE:SEQ` cursor replays retained events from the server's ring buffer following
+the given sequence. If the cursor is expired (the sequence was pruned from the ring buffer or the
+session instance has restarted), the command returns a `cursor-expired` error code rather than
+silently degrading to a snapshot.
 
 ## Pickers
 
@@ -1076,9 +1103,9 @@ rozi --session dev capture-pane --target "$pane" --scrollback full --format text
 The session must already exist. Start one in the background with
 `rozi sessions new dev --detach`, or leave a detached `rozi dev` running.
 
-There is no general event stream from a session endpoint: `subscribe` reports UI events, which a
-server does not raise. Agent state is the exception: `agents wait` waits inside the server, without
-polling and without an attached UI.
+Session-owned events — pane lifecycles, statuses, agent states, and layout commits — can be
+streamed directly with `rozi --session dev subscribe` (see [Session subscriptions](#session-subscriptions)).
+Client-local presentation events like window focus and workspace navigation remain with the UI.
 
 ## Extensions and detached sessions
 

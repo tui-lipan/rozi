@@ -315,6 +315,7 @@ impl SessionServer {
             && !self.holds_agent_wait(id)
             && !self.capture_waits.contains_key(&id)
             && !self.holds_recording_reply(id)
+            && !self.is_session_subscriber(id)
         {
             self.set_close_after_flush(id);
         }

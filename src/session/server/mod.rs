@@ -227,6 +227,7 @@ pub struct SessionServer {
     pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
+    session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
 }
 
 #[derive(Clone, Debug)]
@@ -1753,6 +1754,7 @@ impl SessionServer {
             endpoint: None,
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
+            session_subscribers: HashMap::new(),
             settings,
         }
     }
@@ -1770,11 +1772,60 @@ impl SessionServer {
         kind: events::EventKind,
         fields: Vec<(&'static str, String)>,
     ) {
-        if let Some(event) = self.session_events.record(kind, fields) {
+        if let Some(event) = self.session_events.record(kind, fields).cloned() {
             let message = ServerMessage::SessionEvent {
                 event: event.clone(),
             };
             self.broadcast_control(&message);
+            self.dispatch_session_subscribers(&event);
+        }
+    }
+
+    pub(super) fn is_session_subscriber(&self, client_id: ClientId) -> bool {
+        self.session_subscribers.contains_key(&client_id)
+    }
+
+    fn dispatch_session_subscribers(&mut self, event: &events::SessionEvent) {
+        let max_backlog = self.max_backlog;
+        let targets: Vec<ClientId> = self
+            .session_subscribers
+            .iter()
+            .filter(|(_, sub)| sub.filter.as_ref().is_none_or(|f| f.contains(&event.kind)))
+            .map(|(&id, _)| id)
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+
+        let msg = ServerMessage::SessionSubscribeRecord {
+            record: events::SessionSubscribeRecord::Event {
+                event: event.clone(),
+            },
+        };
+        let Some(bytes) = encode_control(&msg) else {
+            return;
+        };
+
+        let mut slow = Vec::new();
+        for client_id in targets {
+            let result = self.client_mut(client_id).map(|client| {
+                client.push_delta(Arc::clone(&bytes), SeedDelta::Control, max_backlog, None)
+            });
+            if matches!(result, Some(ClientFrameResult::Overflow)) {
+                slow.push(client_id);
+            }
+        }
+        for client_id in slow {
+            self.session_subscribers.remove(&client_id);
+            let lagged = ServerMessage::SessionSubscribeRecord {
+                record: events::SessionSubscribeRecord::Lagged,
+            };
+            if let Some(bytes) = encode_control(&lagged) {
+                let _ = self
+                    .client_mut(client_id)
+                    .map(|client| client.push_delta(bytes, SeedDelta::Control, usize::MAX, None));
+            }
+            self.set_close_after_flush(client_id);
         }
     }
 

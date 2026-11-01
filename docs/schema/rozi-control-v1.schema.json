@@ -1727,6 +1727,12 @@
         },
         {
           "properties": {
+            "after": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "cmd": {
               "const": "subscribe",
               "type": "string"
@@ -1737,6 +1743,9 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "snapshot": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -2362,6 +2371,7 @@
         "agent-replaced",
         "stale-reference",
         "timeout",
+        "cursor-expired",
         "request-failed",
         "not-permitted",
         "out-of-scope"
@@ -3247,6 +3257,12 @@
         },
         {
           "properties": {
+            "after": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "cmd": {
               "const": "subscribe",
               "type": "string"
@@ -3257,6 +3273,9 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "snapshot": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -3935,6 +3954,32 @@
       },
       "required": [
         "ok"
+      ],
+      "type": "object"
+    },
+    "CursorExpired": {
+      "description": "Reported when a resume cursor names a different session instance, a sequence number that has\nalready been evicted from the ring buffer, or a sequence ahead of the server's latest event.",
+      "properties": {
+        "current_instance": {
+          "$ref": "#/$defs/SessionInstanceId"
+        },
+        "latest_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "oldest_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "current_instance",
+        "latest_seq"
       ],
       "type": "object"
     },
@@ -6502,6 +6547,129 @@
       ],
       "type": "object"
     },
+    "SessionSubscribeRecord": {
+      "description": "Typed records streamed by a session subscription.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SessionSubscribeSnapshot",
+          "properties": {
+            "type": {
+              "const": "snapshot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One sequenced event recorded by a [`SessionServer`](super::SessionServer).",
+          "properties": {
+            "data": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "$ref": "#/$defs/EventKind"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_instance": {
+              "$ref": "#/$defs/SessionInstanceId"
+            },
+            "type": {
+              "const": "event",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session_instance",
+            "seq",
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "lagged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionSubscribeSnapshot": {
+      "description": "Current snapshot of a session as streamed at subscription start when `--snapshot` is requested.",
+      "properties": {
+        "client_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "controller": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "layout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LayoutReport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layout_rev": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneInfo"
+          },
+          "type": "array"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "type": "string"
+        },
+        "session_instance": {
+          "$ref": "#/$defs/SessionInstanceId"
+        }
+      },
+      "required": [
+        "session_instance",
+        "session",
+        "seq",
+        "client_count",
+        "layout_rev",
+        "panes"
+      ],
+      "type": "object"
+    },
     "SidebarActionSpec": {
       "description": "A key a stream producer offers on its rows.",
       "properties": {
@@ -7530,5 +7698,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 2
+  "x-rozi-schema-version": 3
 }

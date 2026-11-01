@@ -111,7 +111,100 @@ pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
     if let Ok(cwd) = std::env::current_dir() {
         request.command.resolve_output_against(&cwd);
     }
+    if matches!(
+        request.command,
+        crate::control::ControlCommand::Subscribe { .. }
+    ) {
+        let (mut stream, response) =
+            crate::session::headless::run_session_subscribe(session, request)
+                .map_err(|err| err.to_string())?;
+        println!("{}", serde_json::to_string(&response).unwrap());
+        use std::io::Write;
+        std::io::stdout().flush().map_err(|e| e.to_string())?;
+        if !response.ok {
+            return Ok(response);
+        }
+        let mut stdout = std::io::stdout().lock();
+        loop {
+            match crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
+                &mut stream,
+            ) {
+                Ok(crate::session::protocol::ServerMessage::SessionSubscribeRecord { record }) => {
+                    let is_lagged = matches!(
+                        record,
+                        crate::session::server::events::SessionSubscribeRecord::Lagged
+                    );
+                    writeln!(stdout, "{}", serde_json::to_string(&record).unwrap())
+                        .map_err(|e| e.to_string())?;
+                    stdout.flush().map_err(|e| e.to_string())?;
+                    if is_lagged {
+                        break;
+                    }
+                }
+                Ok(crate::session::protocol::ServerMessage::Error { code, message }) => {
+                    eprintln!("{code}: {message}");
+                    break;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    break;
+                }
+                Err(err) => {
+                    return Err(format!("remote subscribe connection error: {err}"));
+                }
+                _ => {}
+            }
+        }
+        return Ok(ControlResponse::empty());
+    }
     crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
+}
+
+pub fn forward_control_stream(
+    target: &RemoteTarget,
+    session: &str,
+    request: &ControlRequest,
+    config: &RemoteConfig,
+) -> Result<(), String> {
+    if !crate::session::discovery::valid_attach_target(session) {
+        return Err("invalid session name".to_string());
+    }
+    json_transport::stream_forward(
+        target,
+        config,
+        &["--remote-control", session],
+        request,
+        |first_line, lines| {
+            let response: ControlResponse = serde_json::from_str(first_line)
+                .map_err(|e| format!("could not parse initial remote response: {e}"))?;
+            if !response.ok {
+                if let Some(err) = response.error {
+                    eprintln!("{err}");
+                }
+                std::process::exit(1);
+            }
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            for line in lines {
+                let line = line.map_err(|e| format!("stream read error: {e}"))?;
+                writeln!(stdout, "{line}").map_err(|e| e.to_string())?;
+                stdout.flush().map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        },
+    )
+    .map_err(|error| match error {
+        TransportError::Preflight(message) => message,
+        TransportError::Encode(error) => format!("could not encode request: {error}"),
+        TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
+        TransportError::Send(error) => format!("could not send request: {error}"),
+        TransportError::Failed(output) => control_forward_failure(
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+            session,
+            &target.display_label(),
+        ),
+        TransportError::Answer(_) => "no response from remote rozi".to_string(),
+    })
 }
 
 #[cfg(test)]

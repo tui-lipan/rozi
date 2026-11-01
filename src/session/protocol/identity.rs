@@ -39,6 +39,24 @@ impl SessionInstanceId {
     }
 }
 
+impl std::fmt::Display for SessionInstanceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for SessionInstanceId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for SessionInstanceId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Names the session server a shared pane runs in, beside `ROZI_PANE`.
 ///
 /// A bare pane id is only meaningful inside one session's shared namespace, and a UI holds several

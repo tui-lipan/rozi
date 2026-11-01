@@ -55,22 +55,31 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
     result
 }
 
-pub(crate) fn stream_forward<Request: Serialize>(
+/// Send one request, read its JSON answer, and hand that answer and the lines after it to
+/// `handle_stream`.
+///
+/// Stdin stays open until `handle_stream` returns: its closing is how the far side learns nobody
+/// wants the stream any more. Lines before the answer that are not one are skipped, since a login
+/// shell can print a banner ahead of it.
+pub(crate) fn stream_forward<Request: Serialize, Reply: DeserializeOwned, T>(
     target: &RemoteTarget,
     config: &RemoteConfig,
     runner_args: &[&str],
     request: &Request,
     handle_stream: impl FnOnce(
-        &str,
+        Reply,
         io::Lines<io::BufReader<std::process::ChildStdout>>,
-    ) -> Result<(), String>,
-) -> Result<(), TransportError> {
+    ) -> Result<T, String>,
+) -> Result<T, TransportError> {
+    use std::io::{BufRead, Read};
+
     validate_remote_target(target).map_err(TransportError::Preflight)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let binary = super::binary::resolve(target, config)
         .map_err(|error| TransportError::Preflight(error.message))?;
     validate_remote_executable_token(&binary.path).map_err(TransportError::Preflight)?;
-    let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
+    let mut payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
+    payload.push(b'\n');
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &binary.path, runner_args, binary.family);
@@ -81,33 +90,80 @@ pub(crate) fn stream_forward<Request: Serialize>(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(TransportError::Ssh)?;
-
     let mut stdin = child.stdin.take().expect("piped stdin");
-    stdin.write_all(&payload).map_err(TransportError::Send)?;
-    stdin.write_all(b"\n").map_err(TransportError::Send)?;
-    drop(stdin);
-
     let stdout = child.stdout.take().expect("piped stdout");
-    use std::io::BufRead;
-    let mut reader = io::BufReader::new(stdout);
-    let mut first_line = String::new();
-    reader
-        .read_line(&mut first_line)
-        .map_err(TransportError::Ssh)?;
-    if first_line.is_empty() {
-        let output = child.wait_with_output().map_err(TransportError::Ssh)?;
-        if !output.status.success() {
-            return Err(TransportError::Failed(output));
+    let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+    // Read throughout, so a chatty far side can never block on a pipe nobody is draining.
+    let (stderr_tx, stderr) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut captured = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut captured);
+        let _ = stderr_tx.send(captured);
+    });
+    let finish = |child: &mut std::process::Child, stderr: std::sync::mpsc::Receiver<Vec<u8>>| {
+        let status = child.wait().map_err(TransportError::Ssh)?;
+        Ok::<_, TransportError>(Output {
+            status,
+            stdout: Vec::new(),
+            // A connection master this ssh left behind can hold the pipe open for minutes.
+            stderr: stderr
+                .recv_timeout(std::time::Duration::from_millis(500))
+                .unwrap_or_default(),
+        })
+    };
+    if let Err(error) = stdin.write_all(&payload).and_then(|()| stdin.flush()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(TransportError::Send(error));
+    }
+
+    let mut lines = io::BufReader::new(stdout).lines();
+    let mut skipped = false;
+    let reply = loop {
+        match lines.next() {
+            Some(Ok(line)) => match serde_json::from_str::<Reply>(line.trim()) {
+                Ok(reply) => break reply,
+                Err(_) => skipped = true,
+            },
+            Some(Err(error)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(TransportError::Ssh(error));
+            }
+            None => {
+                drop(stdin);
+                let output = finish(&mut child, stderr)?;
+                return Err(if !output.status.success() {
+                    TransportError::Failed(output)
+                } else if skipped {
+                    TransportError::Answer(AnswerError::Malformed)
+                } else {
+                    TransportError::Answer(AnswerError::Empty)
+                });
+            }
         }
-        return Err(TransportError::Answer(AnswerError::Empty));
-    }
+    };
 
-    if let Err(err) = handle_stream(first_line.trim(), reader.lines()) {
-        return Err(TransportError::Preflight(err));
+    let result = handle_stream(reply, lines);
+    drop(stdin);
+    match result {
+        Ok(value) => {
+            // The far side is told to stop by stdin closing, and ssh by the far side leaving. Being
+            // told is enough when this end stopped reading; only a stream ssh itself cut short ends
+            // with a failure status on its own.
+            let output = finish(&mut child, stderr)?;
+            if output.status.success() {
+                Ok(value)
+            } else {
+                Err(TransportError::Failed(output))
+            }
+        }
+        Err(message) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(TransportError::Preflight(message))
+        }
     }
-
-    let _ = child.wait();
-    Ok(())
 }
 
 fn exchange(command: &mut Command, payload: &[u8]) -> Result<Output, TransportError> {

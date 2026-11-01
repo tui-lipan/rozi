@@ -561,14 +561,34 @@ impl SessionServer {
         after: Option<String>,
         reply: ReplyTo,
     ) -> Option<ControlResponse> {
+        if !matches!(reply, ReplyTo::StreamingHeadless { .. }) {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::InvalidRequest,
+                "an attached client hears session events on its own connection",
+            ));
+        }
+        if snapshot && after.is_some() {
+            return Some(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "snapshot and after cannot be combined",
+            ));
+        }
         let filter = if events.is_empty() {
             None
         } else {
             let mut set = HashSet::new();
             for name in &events {
                 match events::EventKind::parse(name) {
-                    Some(kind) => {
+                    Some(kind) if kind.is_session_owned() => {
                         set.insert(kind);
+                    }
+                    Some(_) => {
+                        return Some(ControlResponse::error_with(
+                            ControlErrorCode::InvalidArgument,
+                            format!(
+                                "`{name}` is a UI event; a session server does not raise it (subscribe to the UI instead)"
+                            ),
+                        ));
                     }
                     None => {
                         return Some(ControlResponse::error_with(
@@ -600,10 +620,7 @@ impl SessionServer {
                 Err(expired) => {
                     let mut resp = ControlResponse::error_with(
                         ControlErrorCode::CursorExpired,
-                        format!(
-                            "cursor expired: current instance is {}, oldest seq is {:?}, latest seq is {}",
-                            expired.current_instance, expired.oldest_seq, expired.latest_seq
-                        ),
+                        expired.to_string(),
                     );
                     resp.data = Some(serde_json::to_value(&expired).unwrap_or_default());
                     return Some(resp);
@@ -636,6 +653,23 @@ impl SessionServer {
             None
         };
 
+        // Refused now, while it can still be said: a record too large for its frame would vanish on
+        // the way out, leaving a stream that looks healthy and never sent the state it promised.
+        if let Some(record) = &snapshot_record {
+            let encoded = serde_json::to_vec(record).map_or(usize::MAX, |body| body.len());
+            // Leave room for the frame's own envelope around the record.
+            if encoded.saturating_add(64) >= MAX_FRAME_SIZE {
+                return Some(ControlResponse::error_with(
+                    ControlErrorCode::MessageTooLarge,
+                    format!(
+                        "the session's snapshot is {} KiB, over the {} KiB one record can carry; subscribe without --snapshot and read `list-panes --format json` and `layout get` instead",
+                        encoded / 1024,
+                        MAX_FRAME_SIZE / 1024
+                    ),
+                ));
+            }
+        }
+
         self.enqueue(
             client_id,
             Target::Sender,
@@ -664,8 +698,11 @@ impl SessionServer {
             }
         }
 
-        self.session_subscribers
-            .insert(client_id, SessionSubscriber { filter });
+        // Queuing the replay can overflow and drop the connection, which leaves nothing to stream to.
+        if self.client_mut(client_id).is_some() {
+            self.session_subscribers
+                .insert(client_id, SessionSubscriber { filter });
+        }
 
         None
     }
@@ -4829,6 +4866,87 @@ mod tests {
             }
             other => panic!("expected event 3, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_session_subscribe_refuses_what_it_could_never_honour() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = add_client(&mut server);
+        let streaming = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+
+        // A UI event would otherwise leave the subscriber waiting forever for nothing.
+        let refused = server
+            .handle_subscribe_command(
+                client,
+                vec!["focus-changed".to_string()],
+                false,
+                None,
+                streaming.clone(),
+            )
+            .expect("a UI event is refused");
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+
+        let cursor = format!("{}:0", server.instance_id);
+        let refused = server
+            .handle_subscribe_command(client, vec![], true, Some(cursor), streaming)
+            .expect("snapshot and a cursor are two different starting points");
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidArgument));
+
+        // An attached client has no separate stream to give over to records.
+        let refused = server
+            .handle_subscribe_command(
+                client,
+                vec![],
+                false,
+                None,
+                ReplyTo::Attached { request_id: 1 },
+            )
+            .expect("an attached connection cannot become a stream");
+        assert_eq!(refused.code, Some(ControlErrorCode::InvalidRequest));
+
+        assert!(server.session_subscribers.is_empty());
+    }
+
+    #[test]
+    fn test_session_subscribe_refuses_a_snapshot_too_large_to_send() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_screen(&mut server, 1, b"hello");
+        server.panes.get_mut(&1).unwrap().runtime.cwd = Some("x".repeat(MAX_FRAME_SIZE));
+        let (client, _stream) = add_client(&mut server);
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+
+        let refused = server
+            .handle_subscribe_command(client, vec![], true, None, reply)
+            .expect("a snapshot that cannot be sent is refused");
+
+        assert_eq!(refused.code, Some(ControlErrorCode::MessageTooLarge));
+        assert!(server.session_subscribers.is_empty());
+    }
+
+    #[test]
+    fn test_session_subscribe_that_overflows_opening_leaves_no_subscriber() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = add_client(&mut server);
+        server.max_backlog = 0;
+        let reply = ReplyTo::StreamingHeadless {
+            capabilities: Capabilities::current(),
+            effective_protocol: PROTOCOL_VERSION,
+        };
+
+        assert!(
+            server
+                .handle_subscribe_command(client, vec![], true, None, reply)
+                .is_none()
+        );
+
+        assert!(server.client(client).is_none(), "the connection is dropped");
+        assert!(server.session_subscribers.is_empty());
     }
 
     #[test]

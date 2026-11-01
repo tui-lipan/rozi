@@ -85,6 +85,7 @@ mod tests {
             NotifyLevel::Error,
         );
         assert!(response.ok);
+        server.flush_session_events();
         let (subscriber, _stream) = add_client(&mut server);
         assert!(
             server
@@ -132,6 +133,7 @@ mod tests {
         assert_eq!(inbox.expect("the retained inbox").len(), 1);
         let (other, _other_stream) = attach_client(&mut server);
         server.session_notify("live message".into(), None, NotifyLevel::Info);
+        server.flush_session_events();
         let mut sequences = Vec::new();
         for client in [late, other] {
             let events = decode_outbox_controls(server.client(client).unwrap());

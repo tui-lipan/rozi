@@ -34,14 +34,14 @@ event's fields in the [environment](#environment).
 | Event | When it fires | Fields |
 | --- | --- | --- |
 | `pane-spawned` | A workspace pane is created. | `pane`, `workspace`, `command`, `cwd` |
-| `pane-exited` | A pane's process exit reaches the client. | `pane`, `code`, `focused` |
+| `pane-exited` | A pane's process exits by itself. Closing a pane does not fire it; the close shows as `layout-changed`. | `pane`, `code`, `focused` |
 | `pane-status-changed` | A pane's reported status changes or clears. Seeding status on attach does not fire it. | `pane`, `status`, `reason`, `previous_status`, `previous_reason`, `focused` |
 | `pane-title-changed` | A pane's terminal title settles on a new value. A title that changes several times a second is coalesced, so only the value it comes to rest at fires. | `pane`, `title`, `previous_title`, `focused` |
 | `pane-cwd-changed` | A pane's working directory changes. | `pane`, `cwd`, `previous_cwd`, `focused` |
 | `agent-state-changed` | An agent's state changes, including when it appears in a pane and when it goes. Seeding agents on attach does not fire it. | `pane`, `agent`, `label`, `ref`, `state`, `previous_state`, `reason`, `focused` |
 | `foreground-changed` | The program running in a pane changes, including when the pane returns to its shell prompt. | `pane`, `program`, `previous_program`, `pid`, `focused` |
 | `session-notification` | A notification is sent to the session. Replaying the retained inbox does not raise it again. | `id`, `level`, `title`, `message`, `session` |
-| `bell` | A pane rings the terminal bell. | `pane`, `focused` |
+| `bell` | A pane rings the terminal bell. Bells within 250 ms of the one reported are coalesced into it. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
 | `layout-changed` | The attached session's layout reaches a new accepted revision. | `revision`, `author` |
@@ -123,20 +123,21 @@ Hooks run on the client machine, even when the session lives on a remote host.
 
 rozi discards a hook's stdin, stdout, stderr, and exit status; redirect output in the command if
 you need it. rozi does not wait for, retry, or supervise hook processes, and a burst of events can
-skip hooks once 32 jobs are already running. For state, retries, or long-lived event handling, run `rozi subscribe` or `rozi --session <NAME> subscribe` from a [`[[services]]`](configuration.md#services) entry instead.
+skip hooks once 32 jobs are already running. For state, retries, or long-lived event handling, run
+`rozi subscribe` from a [`[[services]]`](configuration.md#services) entry instead.
 
 ### Shared sessions
 
 Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks.
-Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
-`pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
-`client-joined`, `client-left`, `controller-changed`, `session-renamed`, `session-notification`) run
-only on the controller client holding layout control, while client-local hooks
-(`focus-changed`, `workspace-switched`, `session-attached`, `session-detached`) run on the client
-where the event occurred.
+Hooks for events the session raises run only on the client holding layout control, so one change
+runs one hook however many clients are attached: `pane-spawned`, `pane-exited`,
+`pane-status-changed`, `pane-title-changed`, `pane-cwd-changed`, `agent-state-changed`,
+`foreground-changed`, `bell`, `layout-changed`, `client-joined`, `client-left`,
+`controller-changed`, `session-renamed`, and `session-notification`. While a session has no
+controller, these hooks do not run. Hooks for every other event run on the client where it happened.
 
-For automation that must receive session events even when no UI is attached, subscribe directly
-to the session endpoint with `rozi --session <NAME> subscribe` (see [Session subscriptions](control.md#session-subscriptions)).
+Automation that must hear session events with no UI attached subscribes to the session with
+[`rozi --session <NAME> subscribe`](control.md#session-subscriptions).
 
 No hooks run while every client is detached, and a client that crashes cannot run a final
 `session-detached` hook.

@@ -3296,7 +3296,22 @@ pub(crate) fn serve_connection(
         // The credential, not the request, says which extension and generation this is.
         request.extension = Some(grant.provenance);
     }
-    if let ControlCommand::Subscribe { events, .. } = &request.command {
+    if let ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    } = &request.command
+    {
+        if *snapshot || after.is_some() {
+            write_control_response(
+                &mut stream,
+                &ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    "snapshot and after need a session endpoint; a UI keeps no event history",
+                ),
+            );
+            return;
+        }
         run_subscription(
             stream,
             link,

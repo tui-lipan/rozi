@@ -19,6 +19,12 @@ pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
 /// frame of the animation, so a change is held until it survives this window.
 pub const TITLE_SETTLE: Duration = Duration::from_millis(400);
 
+/// The shortest gap between two `bell` events from one pane.
+///
+/// A program stuck printing BEL rings on every chunk of output. One event says what a subscriber
+/// needs to know, and the rest would only push the events around it out of the buffer.
+pub const BELL_COALESCE: Duration = Duration::from_millis(250);
+
 /// Debounced title tracking for one pane, so a chatty title cannot flood the event buffer.
 #[derive(Clone, Debug, Default)]
 pub(super) struct PaneTitleWatch {
@@ -150,6 +156,35 @@ impl EventKind {
     pub fn parse(value: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.id() == value)
     }
+
+    /// Whether a session server raises this event, rather than one UI about itself.
+    pub fn is_session_owned(self) -> bool {
+        match self {
+            Self::PaneSpawned
+            | Self::PaneExited
+            | Self::PaneStatusChanged
+            | Self::PaneTitleChanged
+            | Self::PaneCwdChanged
+            | Self::AgentStateChanged
+            | Self::ForegroundChanged
+            | Self::Bell
+            | Self::SessionNotification
+            | Self::LayoutChanged
+            | Self::SessionRenamed
+            | Self::ControllerChanged
+            | Self::ClientJoined
+            | Self::ClientLeft => true,
+            Self::FocusChanged
+            | Self::WorkspaceSwitched
+            | Self::SessionAttached
+            | Self::SessionDetached
+            | Self::SessionCreated
+            | Self::ProfileLoaded
+            | Self::ProfileApplied
+            | Self::ProfileSaved
+            | Self::ConfigReloaded => false,
+        }
+    }
 }
 
 /// One `subscribe` event as it goes out on the wire.
@@ -213,6 +248,21 @@ pub struct CursorExpired {
     pub current_instance: SessionInstanceId,
     pub oldest_seq: Option<u64>,
     pub latest_seq: u64,
+}
+
+impl std::fmt::Display for CursorExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cursor expired: current instance is {}, ",
+            self.current_instance
+        )?;
+        match self.oldest_seq {
+            Some(oldest) => write!(f, "oldest retained seq is {oldest}, ")?,
+            None => write!(f, "no events are retained, ")?,
+        }
+        write!(f, "latest seq is {}", self.latest_seq)
+    }
 }
 
 /// Current snapshot of a session as streamed at subscription start when `--snapshot` is requested.
@@ -322,11 +372,10 @@ impl SessionEventBuffer {
 
     /// Record a new session event at the next monotonic sequence number, evicting the oldest
     /// buffered events as needed to stay within both the count and byte limits.
-    pub fn record(
-        &mut self,
-        kind: EventKind,
-        fields: Vec<(&'static str, String)>,
-    ) -> Option<&SessionEvent> {
+    ///
+    /// The event is returned for live delivery even when it is too large to retain: only a later
+    /// resume has to do without it, and that resume finds the gap and reports its cursor expired.
+    pub fn record(&mut self, kind: EventKind, fields: Vec<(&'static str, String)>) -> SessionEvent {
         self.latest_seq = self.latest_seq.saturating_add(1);
         let data = fields
             .into_iter()
@@ -342,7 +391,7 @@ impl SessionEventBuffer {
         if self.max_events == 0 || entry_bytes > self.max_bytes {
             self.events.clear();
             self.total_bytes = 0;
-            return None;
+            return event;
         }
         while self.events.len() >= self.max_events
             || self.total_bytes.saturating_add(entry_bytes) > self.max_bytes
@@ -353,8 +402,8 @@ impl SessionEventBuffer {
             self.total_bytes = self.total_bytes.saturating_sub(evicted.byte_len());
         }
         self.total_bytes = self.total_bytes.saturating_add(entry_bytes);
-        self.events.push_back(event);
-        self.events.back()
+        self.events.push_back(event.clone());
+        event
     }
 
     /// Return every buffered event with `event.seq > seq` for `instance`, or [`CursorExpired`]
@@ -613,6 +662,25 @@ mod tests {
         );
     }
 
+    /// A live subscriber still has to hear an event too large to keep, and a resume across it has
+    /// to find out it is missing rather than read straight past the gap.
+    #[test]
+    fn an_event_too_large_to_retain_is_delivered_and_expires_cursors_across_it() {
+        let inst = instance("inst-oversized");
+        let mut buffer = SessionEventBuffer::with_limits(inst.clone(), 8, 256);
+        buffer.record(EventKind::Bell, vec![("pane", "1".to_string())]);
+
+        let oversized = buffer.record(
+            EventKind::PaneStatusChanged,
+            vec![("reason", "x".repeat(1024))],
+        );
+
+        assert_eq!(oversized.seq, 2);
+        assert_eq!(buffer.len(), 0);
+        assert!(buffer.after(&inst, 1).is_err());
+        assert_eq!(buffer.after(&inst, 2), Ok(Vec::new()));
+    }
+
     #[test]
     fn buffer_evicts_oldest_events_when_count_limit_is_reached() {
         let inst = instance("inst-count");
@@ -657,7 +725,6 @@ mod tests {
                     ("previous", "beta".to_string()),
                 ],
             )
-            .unwrap()
             .byte_len();
 
         // Allow at most 2 events worth of bytes despite a higher event-count ceiling.

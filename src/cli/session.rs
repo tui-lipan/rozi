@@ -29,13 +29,14 @@ pub(crate) fn run_remote_serve_cli(name: &str, autostart: bool) -> Result<()> {
 /// as a failed command rather than a refused one.
 pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
     match session::remote::control::run_remote_control(name) {
-        Ok(response) => {
+        Ok(Some(response)) => {
             println!(
                 "{}",
                 serde_json::to_string(&response).map_err(std::io::Error::other)?
             );
             Ok(())
         }
+        Ok(None) => Ok(()),
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(session::remote::control::UNREACHABLE_EXIT);

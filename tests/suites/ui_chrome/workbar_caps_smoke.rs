@@ -217,7 +217,6 @@ fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
             (source, MouseKind::Down(MouseButton::Left)),
             (source + 2, MouseKind::Drag(MouseButton::Left)),
             (target, MouseKind::Drag(MouseButton::Left)),
-            (target, MouseKind::Up(MouseButton::Left)),
         ] {
             backend
                 .send_mouse(MouseEvent {
@@ -228,6 +227,30 @@ fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
                 })
                 .expect("workbar drag");
         }
+
+        // Before mouse release, workspaces are not yet swapped in state, but the workbar previews
+        // the dragged tab in the target slot.
+        assert_eq!(
+            backend.state().current().workspaces[0].name.as_deref(),
+            Some("code")
+        );
+        let preview = row(&mut backend);
+        let preview_two = find_run(&preview, "2").expect("second tab in preview");
+        let preview_docs = find_run(&preview, "3:docs").expect("third tab in preview");
+        let preview_code = find_run(&preview, "1:code").expect("dragged tab in previewed slot");
+        assert!(
+            preview_two < preview_docs && preview_docs < preview_code,
+            "OnDrop drag previews the moved tab before mouse release"
+        );
+
+        backend
+            .send_mouse(MouseEvent {
+                x: target,
+                y: 0,
+                kind: MouseKind::Up(MouseButton::Left),
+                mods: KeyMods::NONE,
+            })
+            .expect("workbar drop");
 
         let workspaces = &backend.state().current().workspaces;
         assert_eq!(workspaces[2].name.as_deref(), Some("code"));

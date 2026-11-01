@@ -54,19 +54,19 @@ impl RuntimeBaseline {
     /// `local` says which namespace `pane` is in: a scratch pane can share its id with a session
     /// pane, and only the one actually focused is.
     pub(crate) fn emit_changes(self, state: &State, pane: &Pane, local: bool) {
+        if !local {
+            return;
+        }
         let focused = (state.focused_pane_target() == Some((pane.id, local))).to_string();
         if let Some(before) = self.agents {
             for event in agent_events(pane.id, &before, &pane.agent_runtimes(), &focused) {
-                crate::events::emit_with_controller_hooks(state, event);
+                crate::events::emit(state, event);
             }
         }
         if let Some(before) = self.foreground {
             let after = Foreground::of(pane);
             if after != before {
-                crate::events::emit_with_controller_hooks(
-                    state,
-                    foreground_event(pane.id, &before, &after, focused),
-                );
+                crate::events::emit(state, foreground_event(pane.id, &before, &after, focused));
             }
         }
     }

@@ -293,8 +293,8 @@ pub(crate) fn pane_runtime_changed(
         // Start/Stop pane recording reads as the focused pane's flag, and Mark needs it set.
         ctx.state.commands_dirty = true;
     }
-    if let Some((previous, current, _title)) = transition {
-        crate::events::emit_with_controller_hooks(
+    if local && let Some((previous, current, _title)) = transition {
+        crate::events::emit(
             &ctx.state,
             crate::events::Event::new(
                 crate::events::EventKind::PaneStatusChanged,

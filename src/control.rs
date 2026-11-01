@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 7;
+pub const API_SCHEMA_VERSION: u32 = 3;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema

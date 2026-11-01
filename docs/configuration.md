@@ -527,8 +527,8 @@ host, or when rozi was installed from a distribution package or in a way it does
 ### Release notes
 
 The first time rozi starts after an update, a `What's new · rozi vX.Y.Z` dialog shows that release's
-notes. It waits until a session is on screen and no other dialog is open, and only one client shows
-it. A first install skips it, and so does going back to an older version.
+notes at startup, and only one client shows it. A first install skips it, and so does going back to
+an older version.
 
 Press `Enter` to close the dialog or `Ctrl+L` to open the release page on GitHub. **What's new in
 rozi vX.Y.Z** (`release-notes`) in the command palette shows the notes again at any time.

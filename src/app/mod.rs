@@ -355,6 +355,8 @@ impl Component for AppRoot {
             }
         }
         let start = self.prepare_session_start(ctx);
+        ops::release_notes::show_if_due(ctx);
+        commands::sync_if_needed(ctx);
         // Set here, not through `App::title`, so the first frame already carries the configured
         // title rather than a placeholder the first update replaces.
         crate::update::host_title::sync(ctx);

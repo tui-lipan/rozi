@@ -544,6 +544,7 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         "yes / no / fingerprint"
     };
+    let (parent_reserve_percent, layers) = askpass_stack(ctx);
     prompt_overlay(
         ctx,
         PromptChrome {
@@ -552,7 +553,8 @@ pub(crate) fn askpass_overlay(ctx: &Context<AppRoot>) -> Element {
             mask: secret.then_some('•'),
             dim_behind: true,
             caption,
-            parent_reserve_percent: askpass_parent_reserve(ctx),
+            parent_reserve_percent,
+            layers,
             ..PromptChrome::new(&title, placeholder, &[("send", "enter")])
         },
         &askpass.input,
@@ -599,6 +601,7 @@ fn askpass_choice_overlay(
     // The install offer arrives as `Label: value` lines. Shown as rows, so the host it is about to
     // write to reads at a glance instead of drowning in one grey paragraph.
     let facts = install.then(|| install_facts(question)).flatten();
+    let (parent_reserve_percent, layers) = askpass_stack(ctx);
     dialog_overlay(
         ctx,
         DialogChrome {
@@ -608,19 +611,23 @@ fn askpass_choice_overlay(
             highlight: fingerprint,
             caption,
             dim_behind: true,
-            parent_reserve_percent: askpass_parent_reserve(ctx),
+            parent_reserve_percent,
+            layers,
         },
         Msg::CancelRemoteAskpass,
         &buttons,
     )
 }
 
-/// An SSH prompt arrives over whatever is open. Over another dialog it is a stacked card and drops
-/// one row below that dialog's top; over the panes it is centred like any other.
-fn askpass_parent_reserve(ctx: &Context<AppRoot>) -> Option<u16> {
-    ctx.state
-        .askpass_is_stacked()
-        .then_some(ACTION_PALETTE_MAX_HEIGHT_PERCENT)
+/// An SSH prompt arrives over whatever is open. Over other dialogs it is a stacked card and drops
+/// one row per dialog below the bottom dialog's top; over the panes it is centred like any other.
+fn askpass_stack(ctx: &Context<AppRoot>) -> (Option<u16>, u16) {
+    let depth = ctx.state.askpass_stack_depth();
+    if depth > 0 {
+        (Some(ACTION_PALETTE_MAX_HEIGHT_PERCENT), depth)
+    } else {
+        (None, 1)
+    }
 }
 
 /// The `Label: value` lines of rozi's install offer, or `None` when any line is not one.

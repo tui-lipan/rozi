@@ -149,14 +149,17 @@ fn claim(version: &Version) -> bool {
         .is_some_and(|state_dir| record(&state_dir.join(NOTES_DIR).join(SHOWN_DIR), version))
 }
 
-/// Open the notes the startup decision held back, once the client has a session on screen and no
-/// other dialog: whatever the user opened first keeps the keyboard, and the notes wait their turn.
+/// Open the notes at startup (including over the startup session or remote-host picker) or once an
+/// interrupting dialog closes.
 ///
-/// Checked after every update, so it costs one flag test until it fires, and fires once.
+/// Checked at startup and after every update, so it costs one flag test until it fires, and fires
+/// once.
 pub(crate) fn show_if_due(ctx: &mut Context<AppRoot>) -> bool {
     if !ctx.state.release_notes_due
-        || ctx.state.has_modal_overlay()
-        || !ctx.state.current().session_attached
+        || ctx
+            .state
+            .modal_overlays()
+            .any(|name| !matches!(name, "session-picker" | "remote-picker"))
     {
         return false;
     }
@@ -207,7 +210,19 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     }
     ctx.state.show_release_notes = false;
     ctx.state.commands_dirty = true;
-    request_current_pane_focus(ctx);
+    if ctx.state.follow_prompt.is_some() {
+        ctx.request_focus(crate::view::follow_prompt_key());
+    } else if let Some(picker) = ctx.state.remote_picker.as_ref() {
+        if picker.host_form.is_some() {
+            crate::ops::focus::request_host_form_focus(ctx);
+        } else {
+            crate::ops::focus::request_remote_picker_focus(ctx);
+        }
+    } else if ctx.state.show_session_picker {
+        crate::ops::focus::request_session_picker_focus(ctx);
+    } else {
+        request_current_pane_focus(ctx);
+    }
     Update::full()
 }
 
@@ -396,6 +411,14 @@ mod app_tests {
             assert!(!shown.contains("](https://"), "{shown}");
             assert!(shown.contains("open release page"), "{shown}");
             assert_eq!(backend.state().modal_overlay(), Some("release-notes"));
+            let doc_rect = backend
+                .rect_of_key(&crate::view::release_notes_key().into())
+                .expect("release notes document rect");
+            assert!(
+                doc_rect.h <= 8,
+                "short release notes should size to content rather than the 65% cap, got {}",
+                doc_rect.h
+            );
 
             press(&mut backend, KeyCode::Enter);
             assert!(!backend.state().show_release_notes);
@@ -426,6 +449,10 @@ mod app_tests {
             assert!(top.contains("Change number 1 "), "{top}");
             assert!(!top.contains("Change number 60 "), "{top}");
             assert!(top.contains("close Enter"), "{top}");
+            let doc_rect = backend
+                .rect_of_key(&crate::view::release_notes_key().into())
+                .expect("release notes document rect");
+            assert_eq!(doc_rect.h, 19);
 
             press(&mut backend, KeyCode::End);
             let bottom = frame(&mut backend);
@@ -449,49 +476,126 @@ mod app_tests {
             press(&mut backend, KeyCode::Enter);
             assert!(!backend.state().show_release_notes);
 
-            backend.state_mut().current_mut().session_attached = true;
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(!backend.state().show_release_notes);
 
             let mut other = backend_with("9.9.4");
             other.state_mut().release_notes_due = true;
-            other.state_mut().current_mut().session_attached = true;
             other.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(!other.state().show_release_notes);
         });
     }
 
     #[test]
-    fn due_notes_wait_for_a_session_and_a_free_screen_then_show_once() {
+    fn due_notes_show_at_startup_and_over_startup_picker_then_claim_once() {
         crate::test_support::on_large_stack(|| {
             let mut backend = backend_with("9.9.2");
             backend.state_mut().release_notes_due = true;
-            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
-            assert!(
-                !backend.state().show_release_notes,
-                "nothing shows before a session is on screen"
-            );
-
-            backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().show_palette = true;
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(
                 !backend.state().show_release_notes,
-                "an open dialog keeps the screen"
+                "an open non-startup dialog keeps the screen"
             );
             assert!(backend.state().release_notes_due);
 
-            backend.dispatch(Msg::ClosePalette).unwrap();
+            // Over the startup session picker, due notes show immediately on top and return focus
+            // to the picker when dismissed.
+            backend.state_mut().show_palette = false;
+            backend.state_mut().session_picker =
+                Some(crate::state::SessionPickerState::new(Vec::new()));
+            backend.state_mut().show_session_picker = true;
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(backend.state().show_release_notes);
             assert!(!backend.state().release_notes_due);
+            assert!(backend.state().release_notes_is_stacked());
+            assert_eq!(backend.state().modal_overlay(), Some("release-notes"));
+            backend.render();
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::release_notes_key())
+            );
+
+            press(&mut backend, KeyCode::Enter);
+            assert!(!backend.state().show_release_notes);
+            assert!(backend.state().show_session_picker);
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::session_picker_key())
+            );
 
             // A second client starting on the same version finds the notes already claimed.
             let mut other = backend_with("9.9.2");
             other.state_mut().release_notes_due = true;
-            other.state_mut().current_mut().session_attached = true;
             other.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(!other.state().show_release_notes);
             assert!(!other.state().release_notes_due);
+        });
+    }
+
+    fn row_of(frame: &str, needle: &str) -> usize {
+        frame
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("`{needle}` is on screen:\n{frame}"))
+    }
+
+    #[test]
+    fn askpass_over_release_notes_and_startup_picker_staggers_modal_tops() {
+        crate::test_support::on_large_stack(|| {
+            // Case 1: release notes -> askpass (no picker beneath).
+            let mut backend = backend_with("9.9.5");
+            backend
+                .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
+                .unwrap();
+            let base_top = row_of(&frame(&mut backend), "What's new · rozi v9.9.5");
+            assert!(!backend.state().release_notes_is_stacked());
+
+            backend
+                .dispatch(Msg::RemoteAskpassPrompt {
+                    id: 1,
+                    session: "ssh-1".into(),
+                    attach_epoch: None,
+                    kind: crate::session::remote::AskpassKind::Secret,
+                    prompt: "dev@workbox's password: ".into(),
+                })
+                .unwrap();
+            assert!(!backend.state().release_notes_is_stacked());
+            assert_eq!(backend.state().askpass_stack_depth(), 1);
+            let stacked_two = frame(&mut backend);
+            assert_eq!(
+                row_of(&stacked_two, "What's new · rozi v9.9.5"),
+                base_top,
+                "{stacked_two}"
+            );
+            assert_eq!(
+                row_of(&stacked_two, "SSH · dev@workbox's password"),
+                base_top + 1,
+                "{stacked_two}"
+            );
+
+            // Case 2: session picker -> release notes -> askpass.
+            backend.state_mut().session_picker =
+                Some(crate::state::SessionPickerState::new(Vec::new()));
+            backend.state_mut().show_session_picker = true;
+            assert!(backend.state().release_notes_is_stacked());
+            assert_eq!(backend.state().askpass_stack_depth(), 2);
+            let stacked_three = frame(&mut backend);
+            assert_eq!(
+                row_of(&stacked_three, "Sessions"),
+                base_top,
+                "{stacked_three}"
+            );
+            assert_eq!(
+                row_of(&stacked_three, "What's new · rozi v9.9.5"),
+                base_top + 1,
+                "{stacked_three}"
+            );
+            assert_eq!(
+                row_of(&stacked_three, "SSH · dev@workbox's password"),
+                base_top + 2,
+                "{stacked_three}"
+            );
         });
     }
 }

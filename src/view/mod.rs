@@ -527,9 +527,6 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_layout_picker {
         root = root.child(layout_picker_overlay(ctx));
     }
-    if ctx.state.show_release_notes {
-        root = root.child(overlays::release_notes_overlay(ctx));
-    }
     if ctx.state.show_welcome {
         root = root.child(overlays::welcome_overlay(ctx));
     }
@@ -588,6 +585,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.follow_prompt.is_some() {
         root = root.child(follow_prompt_overlay(ctx));
+    }
+    if ctx.state.show_release_notes {
+        root = root.child(overlays::release_notes_overlay(ctx));
     }
     if show_reconnecting || show_offline {
         root = root.child(reconnecting_overlay(ctx));

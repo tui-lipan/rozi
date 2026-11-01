@@ -306,8 +306,8 @@ impl Runtime {
         if !platforms.is_empty() && !platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
         }
-        // Verified now, immediately before the launch, not when it was staged.
-        let bundle_dir = self.store.verified(digest).map_err(|error| match error {
+        // `SupervisedProcess::spawn` verifies it, so this only has to name it.
+        let bundle_dir = self.store.path_for(digest).map_err(|error| match error {
             StoreError::Missing => SpawnFailure::BundleMissing,
             StoreError::Corrupt(detail) => SpawnFailure::BundleCorrupt { detail },
             StoreError::Io(detail) => SpawnFailure::SpawnFailed { detail },

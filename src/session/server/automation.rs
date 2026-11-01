@@ -86,6 +86,32 @@ impl Automation {
             crate::extension_runtime::bundle::hex_digest(&random)
         );
         let mut services = Vec::new();
+        let settings = match definition.settings {
+            Ok(settings) => settings,
+            Err(error) => {
+                // Started with the wrong settings is worse than stopped with a reason. The record
+                // still takes this generation, so a later pass does not retry until one is due.
+                let reason = format!("the host's config cannot be read: {error}");
+                self.extensions.insert(
+                    definition.id,
+                    ActiveExtension {
+                        generation: definition.generation,
+                        credential,
+                        services: definition
+                            .services
+                            .into_iter()
+                            .map(|service| SessionServiceStatus {
+                                name: service.name,
+                                state: "stopped".into(),
+                                pid: None,
+                                reason: Some(reason.clone()),
+                            })
+                            .collect(),
+                    },
+                );
+                return;
+            }
+        };
         for service in definition.services {
             let mut env = service.env;
             env.insert("ROZI_EXTENSION".into(), definition.id.clone());
@@ -93,10 +119,7 @@ impl Automation {
                 crate::config::GENERATION_ENV.into(),
                 definition.generation.to_string(),
             );
-            env.insert(
-                crate::config::SETTINGS_ENV.into(),
-                definition.settings.clone(),
-            );
+            env.insert(crate::config::SETTINGS_ENV.into(), settings.clone());
             env.insert(crate::config::SESSION_NAME_ENV.into(), session.into());
             env.insert(
                 crate::session::protocol::SESSION_INSTANCE_ENV.into(),
@@ -290,11 +313,37 @@ impl SessionServer {
     }
 
     pub(super) fn activate_deployments(&mut self, prepared: Vec<PreparedDeployment>) {
+        // The supervisor wakes twenty times a second, so a session with nothing to supervise goes
+        // without one.
+        if prepared.is_empty() && self.automation.is_none() {
+            return;
+        }
         let automation = self.automation.get_or_insert_with(Automation::new);
         let retired =
             automation.reconcile(prepared, &self.instance_id.to_string(), &self.session_name);
         for client in retired {
             self.remove_client(client);
+        }
+    }
+
+    /// Stop every session process before returning, and close the connections they hold.
+    pub(super) fn stop_automation(&mut self) {
+        let Some(automation) = self.automation.take() else {
+            return;
+        };
+        let clients: Vec<ClientId> = automation.callers.keys().copied().collect();
+        drop(automation);
+        for client in clients {
+            self.remove_client(client);
+        }
+    }
+
+    /// Bring deployments back up under a new generation, as a restart of the server does.
+    pub(super) fn restart_deployments(&mut self) {
+        if !crate::state::is_ephemeral_session_name(&self.session_name)
+            && let Err(error) = self.ensure_deployment_worker(true)
+        {
+            eprintln!("rozi: session automation unavailable: {error}");
         }
     }
 }

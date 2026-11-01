@@ -317,9 +317,9 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "runtime-events",
     "session-control",
     "session-deployments",
-    "session-services",
     "session-no-resurrect",
     "session-notifications",
+    "session-services",
     "sidebar-streams",
     "sidebar-tab-settings",
     "split-size"

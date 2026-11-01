@@ -288,3 +288,264 @@ exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI
         ControlCommand::ExtensionsUndeploy { id: "demo".into() },
     );
 }
+
+/// A service that records what it was started with, for the lifecycle cases below.
+#[cfg(unix)]
+fn recording_bundle(marker: &str) -> Bundle {
+    Bundle::from_files(vec![
+        BundleFile {
+            path: "extension.toml".into(),
+            executable: false,
+            contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n[[services]]\nname='watch'\nexec=['sh','./watch.sh']\nplacement='session'\nrestart='always'\n".to_vec(),
+        },
+        BundleFile {
+            path: "watch.sh".into(),
+            executable: false,
+            contents: format!(
+                r#"# {marker}
+printf '%s' "$ROZI_EXTENSION_CREDENTIAL" > "$ROZI_EXTENSION_STATE_DIR/credential"
+printf '%s' "$ROZI_SESSION_NAME" > "$ROZI_EXTENSION_STATE_DIR/session"
+printf '%s' "$ROZI_EXTENSION_DIR" > "$ROZI_EXTENSION_STATE_DIR/dir"
+printf '%s' "$$" > "$ROZI_EXTENSION_STATE_DIR/pid.tmp"
+mv "$ROZI_EXTENSION_STATE_DIR/pid.tmp" "$ROZI_EXTENSION_STATE_DIR/pid"
+exec sleep 300
+"#
+            )
+            .into_bytes(),
+        },
+    ])
+    .unwrap()
+}
+
+#[cfg(unix)]
+fn deploy_command(bundle: &Bundle) -> ControlCommand {
+    let archive = bundle.archive();
+    ControlCommand::ExtensionsDeploy {
+        id: "demo".into(),
+        digest: bundle.digest().into(),
+        size: archive.len() as u64,
+        offset: 0,
+        data: base64::engine::general_purpose::STANDARD.encode(&archive),
+        last: true,
+    }
+}
+
+#[cfg(unix)]
+fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + common::io_timeout();
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn service_pid(state: &Path) -> i32 {
+    wait_until("the service to start", || state.join("pid").exists());
+    std::fs::read_to_string(state.join("pid"))
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_running(pid: i32) -> bool {
+    // A killed service stays a zombie until its supervisor reaps it, which also counts as gone.
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .is_none_or(|stat| !stat.contains(") Z "))
+        && unsafe { libc::kill(pid, 0) } == 0
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn renaming_a_session_restarts_its_services_from_the_moved_store() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let renamed = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = recording_bundle("rename");
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    let state = root.join("data/rozi/extension-state/demo");
+    let first_pid = service_pid(&state);
+    let first_credential = std::fs::read_to_string(state.join("credential")).unwrap();
+    std::fs::remove_file(state.join("pid")).unwrap();
+
+    let mut client = connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    client.write_control(&common::attach_message(&session, "renamer"));
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    client.write_control(&ClientMessage::Rename {
+        name: renamed.clone(),
+    });
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Renamed { .. }))
+    });
+
+    // Back up, under the new name, running from where the store is now.
+    let second_pid = service_pid(&state);
+    assert_ne!(first_pid, second_pid);
+    assert!(!process_is_running(first_pid));
+    assert_eq!(
+        std::fs::read_to_string(state.join("session")).unwrap(),
+        renamed
+    );
+    let dir = std::fs::read_to_string(state.join("dir")).unwrap();
+    assert!(Path::new(&dir).join("watch.sh").is_file(), "{dir}");
+    assert!(dir.contains(&renamed), "{dir}");
+
+    // The old credential went with the old process.
+    let refused = ask_request(
+        &mut server,
+        &root,
+        &renamed,
+        ControlRequest {
+            command: ControlCommand::ListPanes,
+            credential: Some(first_credential),
+            source_pane: None,
+            source_session: None,
+            caller_context: None,
+            extension: None,
+        },
+    );
+    assert_eq!(
+        refused.code,
+        Some(rozi::control::ControlErrorCode::ExtensionInactive)
+    );
+
+    // It can still be restarted: its launch does not name the store's old path.
+    std::fs::remove_file(state.join("pid")).unwrap();
+    unsafe { libc::kill(second_pid, libc::SIGKILL) };
+    let third_pid = service_pid(&state);
+    assert_ne!(second_pid, third_pid);
+    drop(client);
+    let report = ask(
+        &mut server,
+        &root,
+        &renamed,
+        ControlCommand::ExtensionsStatus,
+    );
+    let report: ExtensionDeploymentReport = serde_json::from_value(report.data.unwrap()).unwrap();
+    assert_eq!(report.session, renamed);
+    assert_eq!(report.deployments.len(), 1);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn undeploying_stops_services_even_when_the_hosts_config_cannot_be_read() {
+    let root = private_temp_dir();
+    let good = "[session]\nresurrect = true\n";
+    std::fs::write(root.join("config.toml"), good).unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let first = recording_bundle("first");
+    ask(&mut server, &root, &session, deploy_command(&first));
+    let state = root.join("data/rozi/extension-state/demo");
+    let pid = service_pid(&state);
+    std::fs::remove_file(state.join("pid")).unwrap();
+
+    std::fs::write(root.join("config.toml"), "not = = toml").unwrap();
+
+    // A new generation replaces the old process, and does not start without its settings.
+    let second = recording_bundle("second");
+    ask(&mut server, &root, &session, deploy_command(&second));
+    wait_until("the old generation to stop", || !process_is_running(pid));
+    assert!(!state.join("pid").exists());
+    let report = ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::ExtensionsStatus,
+    );
+    let report: ExtensionDeploymentReport = serde_json::from_value(report.data.unwrap()).unwrap();
+    let service = &report.deployments[0].services[0];
+    assert_eq!(service.state, "stopped");
+    assert!(
+        service
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("config"),
+        "{service:?}"
+    );
+
+    // Back to a readable config, and a service that really is running when undeploy arrives.
+    std::fs::write(root.join("config.toml"), good).unwrap();
+    let third = recording_bundle("third");
+    ask(&mut server, &root, &session, deploy_command(&third));
+    let pid = service_pid(&state);
+    std::fs::write(root.join("config.toml"), "not = = toml").unwrap();
+    ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::ExtensionsUndeploy { id: "demo".into() },
+    );
+    wait_until("the undeployed service to stop", || {
+        !process_is_running(pid)
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_session_credential_is_gated_and_retiring_it_closes_what_it_holds() {
+    use rozi::control::ControlErrorCode;
+
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = recording_bundle("gated");
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    let state = root.join("data/rozi/extension-state/demo");
+    service_pid(&state);
+    let credential = std::fs::read_to_string(state.join("credential")).unwrap();
+    let request = |command| ControlRequest {
+        command,
+        credential: Some(credential.clone()),
+        source_pane: None,
+        source_session: None,
+        caller_context: None,
+        extension: None,
+    };
+
+    // A session process cannot change what the session runs.
+    for command in [
+        deploy_command(&bundle),
+        ControlCommand::ExtensionsUndeploy { id: "demo".into() },
+    ] {
+        assert_eq!(
+            ask_request(&mut server, &root, &session, request(command)).code,
+            Some(ControlErrorCode::NotPermitted)
+        );
+    }
+
+    // A subscription held under the credential ends when the credential does.
+    let mut held = connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    held.write_control(&ClientMessage::SessionControl {
+        capabilities: None,
+        session: session.clone(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        request: request(ControlCommand::Subscribe {
+            events: Vec::new(),
+            snapshot: false,
+            after: None,
+        }),
+    });
+    read_until(&mut held, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::SessionControlResult { .. })
+        )
+    });
+    ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::ExtensionsUndeploy { id: "demo".into() },
+    );
+    held.wait_closed();
+}

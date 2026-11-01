@@ -2239,7 +2239,18 @@ struct DeploymentJob {
 
 struct DeploymentResult {
     reply: Option<(ClientId, ReplyTo, ControlResponse)>,
-    prepared: std::result::Result<Vec<super::deployments::PreparedDeployment>, String>,
+    /// What the session should now be running, when this job could have changed that.
+    prepared: Option<std::result::Result<Vec<super::deployments::PreparedDeployment>, String>>,
+}
+
+/// Whether a job calls for checking what the session runs, which hashes every deployment. A chunk
+/// of an upload changes nothing until the last one, and a large bundle has many. `status` does,
+/// because it is how a tampered bundle comes to light.
+fn job_can_change_automation(command: &ControlCommand) -> bool {
+    !matches!(
+        command,
+        ControlCommand::ExtensionsDeploy { last: false, .. }
+    )
 }
 
 pub(super) struct DeploymentWorker {
@@ -2271,15 +2282,17 @@ impl DeploymentWorker {
                 if results
                     .send(DeploymentResult {
                         reply: None,
-                        prepared: initial,
+                        prepared: Some(initial),
                     })
                     .is_err()
                 {
                     return;
                 }
                 while let Ok(job) = requests.recv() {
+                    let refresh = job_can_change_automation(&job.command);
                     let response = deployment_response(&store, &session, job.command);
-                    let prepared = store.prepare().map_err(|error| error.to_string());
+                    let prepared =
+                        refresh.then(|| store.prepare().map_err(|error| error.to_string()));
                     if results
                         .send(DeploymentResult {
                             reply: Some((job.client_id, job.reply, response)),
@@ -2401,8 +2414,9 @@ impl SessionServer {
             });
         for result in responses {
             match result.prepared {
-                Ok(prepared) => self.activate_deployments(prepared),
-                Err(error) => eprintln!("rozi: session automation unavailable: {error}"),
+                Some(Ok(prepared)) => self.activate_deployments(prepared),
+                Some(Err(error)) => eprintln!("rozi: session automation unavailable: {error}"),
+                None => {}
             }
             if let Some((client_id, reply, mut response)) = result.reply {
                 self.add_service_status(&mut response);
@@ -2690,6 +2704,52 @@ mod tests {
         let report: crate::control::ExtensionDeploymentReport =
             serde_json::from_value(status.data.expect("a report")).unwrap();
         assert!(report.deployments.is_empty());
+    }
+
+    /// Checking what a session runs hashes everything deployed and discards what fails, so a chunk
+    /// of an upload must not do it. The last chunk and `status` do.
+    #[test]
+    fn only_a_finished_upload_or_status_rechecks_what_is_deployed() {
+        use base64::Engine as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut server = SessionServer::new_named("deploy");
+        let root = temp.path().join("deployments");
+        server.set_deployment_root(root.clone());
+        let deployed = demo_bundle("#!/bin/sh\necho deployed\n");
+        let chunk = |bundle: &crate::extension_runtime::bundle::Bundle, end: usize| {
+            let archive = bundle.archive();
+            ControlCommand::ExtensionsDeploy {
+                id: "demo".to_string(),
+                digest: bundle.digest().to_string(),
+                size: archive.len() as u64,
+                offset: 0,
+                data: base64::engine::general_purpose::STANDARD.encode(&archive[..end]),
+                last: end == archive.len(),
+            }
+        };
+        let (done, _) = control(&mut server, chunk(&deployed, deployed.archive().len()));
+        assert!(done.ok, "{:?}", done.error);
+
+        let directory = root.join("bundles").join(deployed.digest());
+        let file = directory.join("bin/run");
+        let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        // Deliberately tamper with a scratch bundle.
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&file, permissions).unwrap();
+
+        let next = demo_bundle("#!/bin/sh\necho next\n");
+        let (partial, _) = control(&mut server, chunk(&next, 4));
+        assert!(partial.ok, "{:?}", partial.error);
+        assert!(directory.exists(), "a partial chunk checked the deployment");
+
+        let (status, _) = control(&mut server, ControlCommand::ExtensionsStatus);
+        assert!(status.ok, "{:?}", status.error);
+        assert!(
+            !directory.exists(),
+            "status left a tampered bundle in place"
+        );
     }
 
     /// A chunk that does not continue the upload is refused with the argument code, not stored.

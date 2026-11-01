@@ -164,12 +164,18 @@ impl BundleStore {
         &self.root
     }
 
-    /// Remove one stored bundle, whatever its sealed modes. A missing bundle is not an error.
-    pub fn remove(&self, digest: &str) {
-        if !bundle::is_digest(digest) {
+    /// Remove everything but the named bundles, whatever its sealed modes. Only for a store with a
+    /// single writer: a client cache is shared with other runtimes and has to [`Self::prune`].
+    pub fn retain_only(&self, keep: &HashSet<&str>) {
+        let Ok(entries) = std::fs::read_dir(&self.root) else {
             return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !name.to_str().is_some_and(|name| keep.contains(name)) {
+                discard(&entry.path());
+            }
         }
-        discard(&self.root.join(digest));
     }
 
     /// Remove every bundle this store holds. Used when the owner of the store itself goes away, as
@@ -183,7 +189,7 @@ impl BundleStore {
         }
     }
 
-    fn path_for(&self, digest: &str) -> Result<PathBuf, StoreError> {
+    pub(crate) fn path_for(&self, digest: &str) -> Result<PathBuf, StoreError> {
         if !bundle::is_digest(digest) {
             return Err(StoreError::Io(format!("`{digest}` is not a bundle digest")));
         }

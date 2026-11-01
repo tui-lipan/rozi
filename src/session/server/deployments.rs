@@ -10,7 +10,7 @@
 //! forget what the session was told to run. The bytes are staged through the same verified,
 //! read-only representation, so a bundle that changed on disk is refused before it is used.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -106,7 +106,8 @@ pub(super) struct PreparedDeployment {
     pub generation: u64,
     pub directory: PathBuf,
     pub platforms: Vec<String>,
-    pub settings: String,
+    /// The settings its services start with, or why the host's config could not supply them.
+    pub settings: Result<String, String>,
     pub services: Vec<crate::config::PlacedService>,
 }
 
@@ -126,8 +127,16 @@ impl SessionDeployments {
 
     /// Fence every previous server's processes before starting the restored deployments.
     pub(super) fn restart_generations(&self) -> Result<(), DeployError> {
-        let root = self.root()?;
+        let Some(root) = self.existing_root()? else {
+            return Ok(());
+        };
+        // An upload does not outlive the server it was sent to: its sender has to start again.
+        let _ = std::fs::remove_dir_all(root.join(UPLOADS));
         let mut metadata = self.metadata(&root)?;
+        self.sweep(&root, &metadata);
+        if metadata.deployments.is_empty() {
+            return Ok(());
+        }
         for record in metadata.deployments.values_mut() {
             metadata.last_generation =
                 metadata.last_generation.checked_add(1).ok_or_else(|| {
@@ -140,11 +149,18 @@ impl SessionDeployments {
 
     /// Read definitions only from verified bundles. Corrupt records remain listed as unavailable.
     pub(super) fn prepare(&self) -> Result<Vec<PreparedDeployment>, DeployError> {
-        let root = self.root()?;
+        let Some(root) = self.existing_root()? else {
+            return Ok(Vec::new());
+        };
         let metadata = self.metadata(&root)?;
+        if metadata.deployments.is_empty() {
+            return Ok(Vec::new());
+        }
         let bundles = BundleStore::open(root.join(BUNDLES))
             .map_err(|error| DeployError::Unavailable(error.to_string()))?;
-        let user = crate::config::read_user_extension_config().map_err(DeployError::Unavailable)?;
+        // A config that cannot be read must not fail the whole pass: this result is also what stops
+        // the services of an extension that was just undeployed.
+        let user = crate::config::read_user_extension_config();
         let mut prepared = Vec::new();
         for (id, record) in metadata.deployments {
             let Ok(directory) = bundles.verified(&record.digest) else {
@@ -154,24 +170,29 @@ impl SessionDeployments {
             if !checked.info.errors.is_empty() {
                 continue;
             }
-            let mut warnings = Vec::new();
-            let settings = crate::config::merge_extension_settings(
-                &checked.info.setting_specs,
-                &id,
-                user.settings.get(&id),
-                &mut warnings,
-            );
-            for warning in warnings {
-                eprintln!("rozi: {warning}");
-            }
+            let settings = match &user {
+                Ok(user) => {
+                    let mut warnings = Vec::new();
+                    let settings = crate::config::merge_extension_settings(
+                        &checked.info.setting_specs,
+                        &id,
+                        user.settings.get(&id),
+                        &mut warnings,
+                    );
+                    for warning in warnings {
+                        eprintln!("rozi: {warning}");
+                    }
+                    serde_json::to_string(&settings).map_err(|error| error.to_string())
+                }
+                Err(error) => Err(error.clone()),
+            };
             prepared.push(PreparedDeployment {
                 services: checked.session_services(),
                 id,
                 generation: record.generation,
                 directory,
                 platforms: checked.info.platforms,
-                settings: serde_json::to_string(&settings)
-                    .map_err(|error| DeployError::Unavailable(error.to_string()))?,
+                settings,
             });
         }
         Ok(prepared)
@@ -184,9 +205,19 @@ impl SessionDeployments {
         };
         let destination = root.with_file_name(name);
         if destination.exists() {
-            return Err(std::io::Error::other(
-                "the new name already has deployment state",
-            ));
+            // Only a record of something deployed is worth refusing over. An earlier session of
+            // that name may have left a store with nothing in it.
+            let stale = Self {
+                root: Some(destination.clone()),
+            };
+            match stale.metadata(&destination) {
+                Ok(metadata) if metadata.deployments.is_empty() => stale.remove_all()?,
+                _ => {
+                    return Err(std::io::Error::other(
+                        "the new name already has deployment state",
+                    ));
+                }
+            }
         }
         if root.exists() {
             std::fs::rename(root, &destination)?;
@@ -288,23 +319,12 @@ impl SessionDeployments {
                     .to_string(),
             ));
         }
-        file.seek(SeekFrom::Start(0))
-            .map_err(|error| DeployError::Unavailable(format!("cannot read upload: {error}")))?;
-        let mut archive = Vec::with_capacity(size as usize);
-        file.read_to_end(&mut archive)
-            .map_err(|error| DeployError::Unavailable(format!("cannot read upload: {error}")))?;
+        let finished = self.finish_upload(&mut file, extension, digest, size);
         drop(file);
-        let bundle = Bundle::from_archive(&archive, digest)
-            .map_err(|error| DeployError::Mismatch(error.to_string()))?;
-        let identity = manifest_identity(&bundle)?;
-        if identity.id.as_deref() != Some(extension) {
-            return Err(DeployError::Mismatch(format!(
-                "the bundle declares extension `{}`, not `{extension}`",
-                identity.id.as_deref().unwrap_or("")
-            )));
-        }
-        let record = self.commit(extension, &bundle, identity.title, identity.version)?;
-        let _ = std::fs::remove_file(&part);
+        // Finished either way: a refused upload starts again from its first chunk, so nothing it
+        // or an abandoned upload of this extension wrote is worth keeping.
+        clear_uploads(&root, extension);
+        let record = finished?;
         Ok(ExtensionDeploymentUpload {
             extension: extension.to_string(),
             digest: digest.to_string(),
@@ -315,6 +335,31 @@ impl SessionDeployments {
         })
     }
 
+    /// Check a completed upload and commit it.
+    fn finish_upload(
+        &self,
+        file: &mut std::fs::File,
+        extension: &str,
+        digest: &str,
+        size: u64,
+    ) -> Result<DeploymentRecord, DeployError> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| DeployError::Unavailable(format!("cannot read upload: {error}")))?;
+        let mut archive = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut archive)
+            .map_err(|error| DeployError::Unavailable(format!("cannot read upload: {error}")))?;
+        let bundle = Bundle::from_archive(&archive, digest)
+            .map_err(|error| DeployError::Mismatch(error.to_string()))?;
+        let identity = manifest_identity(&bundle)?;
+        if identity.id.as_deref() != Some(extension) {
+            return Err(DeployError::Mismatch(format!(
+                "the bundle declares extension `{}`, not `{extension}`",
+                identity.id.as_deref().unwrap_or("")
+            )));
+        }
+        self.commit(extension, &bundle, identity.title, identity.version)
+    }
+
     /// Remove one deployment. `Ok(false)` means there was nothing by that name.
     pub fn undeploy(&self, extension: &str) -> Result<bool, DeployError> {
         if !crate::platform::paths::valid_extension_id(extension) {
@@ -322,31 +367,28 @@ impl SessionDeployments {
                 "`{extension}` is not an extension id"
             )));
         }
-        let root = self.root()?;
-        let mut metadata = self.metadata(&root)?;
-        let Some(removed) = metadata.deployments.remove(extension) else {
+        let Some(root) = self.existing_root()? else {
             return Ok(false);
         };
-        self.write_metadata(&root, &metadata)?;
-        // A bundle still named by another deployment stays. The digest is content, so identical
-        // files deployed twice share one copy.
-        if !metadata
-            .deployments
-            .values()
-            .any(|record| record.digest == removed.digest)
-        {
-            let bundles = BundleStore::open(root.join(BUNDLES)).map_err(|error| {
-                DeployError::Unavailable(format!("cannot open bundle store: {error}"))
-            })?;
-            bundles.remove(&removed.digest);
+        let mut metadata = self.metadata(&root)?;
+        if metadata.deployments.remove(extension).is_none() {
+            return Ok(false);
         }
+        self.write_metadata(&root, &metadata)?;
+        clear_uploads(&root, extension);
+        self.sweep(&root, &metadata);
         Ok(true)
     }
 
     /// Every deployment, verified now. A record whose files changed or disappeared is reported
     /// unavailable rather than deleted, so the reason survives to the next `status`.
     pub fn status(&self) -> Result<Vec<ExtensionDeploymentInfo>, DeployError> {
-        let root = self.root()?;
+        if self.root.is_none() {
+            self.root()?;
+        }
+        let Some(root) = self.existing_root()? else {
+            return Ok(Vec::new());
+        };
         let metadata = self.metadata(&root)?;
         let bundles = BundleStore::open(root.join(BUNDLES)).map_err(|error| {
             DeployError::Unavailable(format!("cannot open bundle store: {error}"))
@@ -354,7 +396,22 @@ impl SessionDeployments {
         let mut report = Vec::with_capacity(metadata.deployments.len());
         for (extension, record) in metadata.deployments {
             let (status, reason) = match bundles.verified(&record.digest) {
-                Ok(_) => (ExtensionDeploymentStatus::Deployed, None),
+                Ok(directory) => {
+                    // What `prepare` would refuse to run must not read as ready to run. A newer
+                    // `rozi` on this host can reject a manifest an older one accepted.
+                    let checked = crate::config::check_extension(&directory);
+                    if checked.info.errors.is_empty() {
+                        (ExtensionDeploymentStatus::Deployed, None)
+                    } else {
+                        (
+                            ExtensionDeploymentStatus::Unavailable,
+                            Some(format!(
+                                "its manifest is not valid on this host: {}",
+                                checked.info.errors.join("; ")
+                            )),
+                        )
+                    }
+                }
                 Err(StoreError::Missing) => (
                     ExtensionDeploymentStatus::Unavailable,
                     Some("its files are no longer stored on this host".to_string()),
@@ -402,6 +459,9 @@ impl SessionDeployments {
         })?;
         let checked = crate::config::check_extension(&directory);
         if !checked.info.errors.is_empty() {
+            if let Ok(metadata) = self.metadata(&root) {
+                self.sweep(&root, &metadata);
+            }
             return Err(DeployError::Mismatch(format!(
                 "invalid deployed manifest: {}",
                 checked.info.errors.join("; ")
@@ -425,7 +485,33 @@ impl SessionDeployments {
             .insert(extension.to_string(), record.clone());
         metadata.last_generation = generation;
         self.write_metadata(&root, &metadata)?;
+        // The generation this one replaced may have been the last to name its files.
+        self.sweep(&root, &metadata);
         Ok(record)
+    }
+
+    /// Delete every stored bundle no record names. This store has one writer, the session's worker,
+    /// so nothing unnamed here is in use by another deployment. A file a running process still holds
+    /// may refuse on Windows, and the next sweep gets it.
+    fn sweep(&self, root: &Path, metadata: &Metadata) {
+        let Ok(bundles) = BundleStore::open(root.join(BUNDLES)) else {
+            return;
+        };
+        let keep: HashSet<&str> = metadata
+            .deployments
+            .values()
+            .map(|record| record.digest.as_str())
+            .collect();
+        bundles.retain_only(&keep);
+    }
+
+    /// The store's directory if this session has ever written one. Reading must not create it, or
+    /// every named session would leave a store behind whether or not anything was deployed.
+    fn existing_root(&self) -> Result<Option<PathBuf>, DeployError> {
+        match &self.root {
+            Some(root) if root.is_dir() => self.root().map(Some),
+            _ => Ok(None),
+        }
     }
 
     fn root(&self) -> Result<PathBuf, DeployError> {
@@ -484,6 +570,26 @@ impl SessionDeployments {
         })?;
         crate::platform::persist::replace_file(&root.join(METADATA_FILE), text)
             .map_err(|error| DeployError::Unavailable(format!("cannot write metadata: {error}")))
+    }
+}
+
+/// Forget every partial upload of `extension`. Another extension's are named differently even when
+/// one ID is a prefix of the other, because the whole remainder has to be a digest.
+fn clear_uploads(root: &Path, extension: &str) {
+    let Ok(entries) = std::fs::read_dir(root.join(UPLOADS)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let is_upload = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(extension))
+            .and_then(|name| name.strip_prefix('-'))
+            .and_then(|name| name.strip_suffix(".part"))
+            .is_some_and(bundle::is_digest);
+        if is_upload {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -757,6 +863,183 @@ mod tests {
             redeployed_after_undeploy > redeployed,
             "{redeployed_after_undeploy} after {redeployed}"
         );
+    }
+
+    fn stored_bundles(temp: &tempfile::TempDir) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(bundle_dir(temp))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_redeployment_deletes_the_files_it_replaced() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        let first = bundle("demo", "first");
+        let second = bundle("demo", "second");
+        send(&store, &first, 1024);
+        send(&store, &second, 1024);
+        assert_eq!(stored_bundles(&temp), [second.digest().to_string()]);
+        assert!(store.undeploy("demo").unwrap());
+        assert!(stored_bundles(&temp).is_empty());
+    }
+
+    #[test]
+    fn an_upload_leaves_nothing_behind_when_it_finishes_or_is_replaced() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        let uploads = temp.path().join("store").join(UPLOADS);
+        let parts = || std::fs::read_dir(&uploads).unwrap().count();
+
+        // Abandoned halfway, then a different version sent to completion.
+        let abandoned = bundle("demo", "abandoned");
+        let archive = abandoned.archive();
+        store
+            .append(
+                "demo",
+                abandoned.digest(),
+                archive.len() as u64,
+                0,
+                &archive[..4],
+                false,
+            )
+            .unwrap();
+        assert_eq!(parts(), 1);
+        send(&store, &bundle("demo", "finished"), 1024);
+        assert_eq!(parts(), 0);
+
+        // Refused at the end for not matching its digest.
+        let incoming = bundle("demo", "goodbye");
+        store
+            .append(
+                "demo",
+                abandoned.digest(),
+                incoming.archive().len() as u64,
+                0,
+                &incoming.archive(),
+                true,
+            )
+            .unwrap_err();
+        assert_eq!(parts(), 0);
+    }
+
+    #[test]
+    fn clearing_an_extensions_uploads_spares_one_whose_id_it_prefixes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        let other = bundle("demo-two", "other");
+        let archive = other.archive();
+        store
+            .append(
+                "demo-two",
+                other.digest(),
+                archive.len() as u64,
+                0,
+                &archive[..4],
+                false,
+            )
+            .unwrap();
+        send(&store, &bundle("demo", "finished"), 1024);
+        let uploads = temp.path().join("store").join(UPLOADS);
+        assert_eq!(std::fs::read_dir(uploads).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_session_with_nothing_deployed_keeps_no_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        store.restart_generations().unwrap();
+        assert!(store.prepare().unwrap().is_empty());
+        assert!(store.status().unwrap().is_empty());
+        assert!(!store.undeploy("demo").unwrap());
+        assert!(!temp.path().join("store").exists());
+    }
+
+    #[test]
+    fn a_restart_abandons_uploads_in_progress_and_moves_every_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        let generation = send(&store, &bundle("demo", "hello"), 1024)
+            .generation
+            .unwrap();
+        let partial = bundle("demo", "partial");
+        let archive = partial.archive();
+        store
+            .append(
+                "demo",
+                partial.digest(),
+                archive.len() as u64,
+                0,
+                &archive[..4],
+                false,
+            )
+            .unwrap();
+        store.restart_generations().unwrap();
+        assert!(!temp.path().join("store").join(UPLOADS).exists());
+        assert!(store.status().unwrap()[0].generation > generation);
+    }
+
+    #[test]
+    fn a_stored_manifest_this_host_rejects_is_reported_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(&temp);
+        let accepted = bundle("demo", "hello");
+        send(&store, &accepted, 1024);
+        // A bundle stored by a `rozi` that accepted a manifest this one does not.
+        let rejected = Bundle::from_files(vec![BundleFile {
+            path: "extension.toml".to_string(),
+            executable: false,
+            contents: b"[extension]\nid = \"demo\"\ntitle = \"Demo\"\nversion = \"1\"\napi = 999\n"
+                .to_vec(),
+        }])
+        .unwrap();
+        BundleStore::open(bundle_dir(&temp))
+            .unwrap()
+            .stage(&rejected)
+            .unwrap();
+        let root = temp.path().join("store");
+        let mut metadata = store.metadata(&root).unwrap();
+        metadata.deployments.get_mut("demo").unwrap().digest = rejected.digest().to_string();
+        store.write_metadata(&root, &metadata).unwrap();
+
+        let status = store.status().unwrap();
+        assert_eq!(status[0].status, ExtensionDeploymentStatus::Unavailable);
+        assert!(
+            status[0]
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("manifest"),
+            "{:?}",
+            status[0].reason
+        );
+        assert!(store.prepare().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_rename_replaces_only_a_store_with_nothing_deployed() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("deployments");
+        fs_security::ensure_private_dir(&parent).unwrap();
+        let open = |name: &str| SessionDeployments::new(name, Some(parent.join(name)));
+        let mut renamed = open("first");
+        send(&renamed, &bundle("demo", "hello"), 1024);
+
+        // Left by an earlier session of that name: once deployed to, then undeployed.
+        let emptied = open("emptied");
+        send(&emptied, &bundle("demo", "gone"), 1024);
+        assert!(emptied.undeploy("demo").unwrap());
+        renamed.rename("emptied").unwrap();
+        assert_eq!(renamed.status().unwrap().len(), 1);
+
+        let holding = open("holding");
+        send(&holding, &bundle("demo", "kept"), 1024);
+        renamed.rename("holding").unwrap_err();
+        assert_eq!(holding.status().unwrap().len(), 1);
+        assert_eq!(renamed.status().unwrap().len(), 1);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, mpsc};
 
-pub use crate::session::server::events::{EventKind, WireEvent};
+pub use crate::session::protocol::{EventKind, WireEvent};
 
 #[derive(Clone, Debug)]
 pub struct Event {
@@ -155,18 +155,6 @@ pub fn emit(state: &crate::state::State, event: Event) {
         .event_hub
         .publish_scoped(&event, Some(&EventScope::of(state, &event)));
     run_hooks(state, &event);
-}
-
-/// Publish an event to this client's subscribers, but run its hooks only on the current layout
-/// controller. Server-owned transitions reach every client, so this prevents duplicate external
-/// side effects while preserving each client's local `subscribe` stream.
-pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
-    state
-        .event_hub
-        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
-    if state.is_controller() {
-        run_hooks(state, &event);
-    }
 }
 
 pub(crate) fn run_hooks_for_scope(

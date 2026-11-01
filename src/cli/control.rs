@@ -115,76 +115,84 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
 
 /// Print matching application events as newline-delimited JSON until the connection closes.
 pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
-    let mut request = control_request(control::ControlCommand::Subscribe {
-        events: command.events.clone(),
-        snapshot: command.snapshot,
-        after: command.after.clone(),
-    });
-    let endpoint = super::args::own_session_endpoint(
-        command.endpoint,
-        &mut request,
-        std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
-    );
+    let SubscribeCli {
+        endpoint,
+        events,
+        snapshot,
+        after,
+    } = command;
     match endpoint {
-        ControlEndpoint::Ui(socket) => run_ui_subscribe_cli(socket, command.events),
+        ControlEndpoint::Ui(socket) => run_ui_subscribe_cli(socket, events),
         ControlEndpoint::Session(session) => {
-            run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
+            run_session_subscribe_cli(&session, subscribe_request(events, snapshot, after))
         }
         ControlEndpoint::Remote { target, session } => run_remote_subscribe_cli(
             &target,
             &session,
-            command.events,
-            command.snapshot,
-            command.after,
+            subscribe_request(events, snapshot, after),
         ),
-        ControlEndpoint::Here => {
-            let request = control_request(control::ControlCommand::Subscribe {
-                events: command.events.clone(),
-                snapshot: command.snapshot,
-                after: command.after.clone(),
-            });
-            let context = super::context::verified_caller_context(&request)?;
-            if !context.inside_rozi {
-                eprintln!(
-                    "--here requires a verified caller pane (context: {})",
-                    context.status
-                );
-                std::process::exit(2);
-            }
-            let caller = context.pane.expect("verified pane");
-            if let Some(socket) = super::context::authority_ui(&request, &caller) {
-                if command.snapshot || command.after.is_some() {
-                    eprintln!(
-                        "--snapshot and --after need a session endpoint; this pane answers to a UI, so name it with --session"
-                    );
-                    std::process::exit(1);
-                }
-                run_ui_subscribe_cli(Some(socket), command.events)
-            } else {
-                let session = match crate::session::discovery::session_with_instance(
-                    &caller.session_instance,
-                ) {
-                    Ok(crate::session::discovery::InstanceLookup::Found(name)) => name,
-                    _ => {
-                        eprintln!("could not find caller session");
-                        std::process::exit(2);
-                    }
-                };
-                run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
-            }
-        }
+        ControlEndpoint::Here => run_here_subscribe_cli(events, snapshot, after),
+        // A session process, which names its session by instance because it may have been renamed.
         ControlEndpoint::OwnSession(instance) => {
-            let session = match crate::session::discovery::session_with_instance(&instance) {
-                Ok(crate::session::discovery::InstanceLookup::Found(name)) => name,
+            match crate::session::discovery::session_with_instance(&instance) {
+                Ok(crate::session::discovery::InstanceLookup::Found(session)) => {
+                    run_session_subscribe_cli(&session, subscribe_request(events, snapshot, after))
+                }
                 _ => {
                     eprintln!("could not find session with instance {instance}");
                     std::process::exit(2);
                 }
-            };
-            run_session_subscribe_cli(&session, command.events, command.snapshot, command.after)
+            }
         }
         ControlEndpoint::CallerContext => {
-            eprintln!("subscribe does not support caller context");
+            unreachable!("`control_endpoint` chooses subscribe's endpoint, and never this one")
+        }
+    }
+}
+
+fn subscribe_request(
+    events: Vec<String>,
+    snapshot: bool,
+    after: Option<String>,
+) -> control::ControlRequest {
+    control_request(control::ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    })
+}
+
+/// `--here`: the UI that owns the calling pane if there is one, or else that pane's session.
+fn run_here_subscribe_cli(
+    events: Vec<String>,
+    snapshot: bool,
+    after: Option<String>,
+) -> Result<()> {
+    let request = subscribe_request(events.clone(), snapshot, after.clone());
+    let context = super::context::verified_caller_context(&request)?;
+    if !context.inside_rozi {
+        eprintln!(
+            "--here requires a verified caller pane (context: {})",
+            context.status
+        );
+        std::process::exit(2);
+    }
+    let caller = context.pane.expect("verified pane");
+    if let Some(socket) = super::context::authority_ui(&request, &caller) {
+        if snapshot || after.is_some() {
+            eprintln!(
+                "--snapshot and --after need a session endpoint; this pane answers to a UI, so name it with --session"
+            );
+            std::process::exit(1);
+        }
+        return run_ui_subscribe_cli(Some(socket), events);
+    }
+    match crate::session::discovery::session_with_instance(&caller.session_instance) {
+        Ok(crate::session::discovery::InstanceLookup::Found(session)) => {
+            run_session_subscribe_cli(&session, request)
+        }
+        _ => {
+            eprintln!("could not find caller session");
             std::process::exit(2);
         }
     }
@@ -230,17 +238,7 @@ fn run_ui_subscribe_cli(socket: Option<PathBuf>, events: Vec<String>) -> Result<
     Ok(())
 }
 
-fn run_session_subscribe_cli(
-    session: &str,
-    events: Vec<String>,
-    snapshot: bool,
-    after: Option<String>,
-) -> Result<()> {
-    let request = control_request(control::ControlCommand::Subscribe {
-        events,
-        snapshot,
-        after,
-    });
+fn run_session_subscribe_cli(session: &str, request: control::ControlRequest) -> Result<()> {
     let (mut stream, response) =
         match crate::session::headless::run_session_subscribe(session, request) {
             Ok(res) => res,
@@ -263,9 +261,7 @@ fn run_session_subscribe_cli(
 fn run_remote_subscribe_cli(
     target: &str,
     session: &str,
-    events: Vec<String>,
-    snapshot: bool,
-    after: Option<String>,
+    request: control::ControlRequest,
 ) -> Result<()> {
     let parsed = match crate::session::remote::parse_remote_target(target) {
         Ok(parsed) => parsed,
@@ -275,11 +271,6 @@ fn run_remote_subscribe_cli(
         }
     };
     let config = crate::config::load_config().config.remote;
-    let request = control_request(control::ControlCommand::Subscribe {
-        events,
-        snapshot,
-        after,
-    });
     let mut stdout = std::io::stdout().lock();
     match crate::session::remote::control::forward_control_stream(
         &parsed,

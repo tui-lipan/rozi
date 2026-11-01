@@ -845,7 +845,7 @@ pub enum Msg {
     },
     SessionEvent {
         epoch: u64,
-        event: crate::session::server::events::SessionEvent,
+        event: crate::session::protocol::SessionEvent,
     },
     SessionRuntimeMetrics {
         epoch: u64,

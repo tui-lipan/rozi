@@ -80,8 +80,8 @@ pub fn bundle() -> Value {
     add::<crate::state::SidebarStreamEvent>(&mut generator, &mut roots);
     add::<crate::events::WireEvent>(&mut generator, &mut roots);
     add::<crate::events::EventKind>(&mut generator, &mut roots);
-    add::<crate::session::server::events::SessionSubscribeRecord>(&mut generator, &mut roots);
-    add::<crate::session::server::events::CursorExpired>(&mut generator, &mut roots);
+    add::<crate::session::protocol::SessionSubscribeRecord>(&mut generator, &mut roots);
+    add::<crate::session::protocol::CursorExpired>(&mut generator, &mut roots);
 
     let mut defs = generator.take_definitions(false);
     for (name, schema) in roots {

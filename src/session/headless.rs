@@ -152,6 +152,19 @@ pub fn run_session_subscribe(
     }
 }
 
+/// Write one stream line and flush it, so it arrives when it happens. `false` means the reader has
+/// gone, which ends a stream normally.
+pub(crate) fn write_stream_line(
+    out: &mut impl std::io::Write,
+    line: &str,
+) -> std::result::Result<bool, String> {
+    match writeln!(out, "{line}").and_then(|()| out.flush()) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(false),
+        Err(err) => Err(format!("could not write a record: {err}")),
+    }
+}
+
 /// Write a session subscription's records to `out`, one JSON object per line, until it ends.
 ///
 /// The session closing, a `lagged` record, and whoever reads `out` going away all end the stream
@@ -167,14 +180,12 @@ pub fn pump_session_records(
             Ok(ServerMessage::SessionSubscribeRecord { record }) => {
                 let lagged = matches!(
                     record,
-                    crate::session::server::events::SessionSubscribeRecord::Lagged
+                    crate::session::protocol::SessionSubscribeRecord::Lagged
                 );
                 let line = serde_json::to_string(&record)
                     .map_err(|err| format!("could not encode a record: {err}"))?;
-                match writeln!(out, "{line}").and_then(|()| out.flush()) {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == ErrorKind::BrokenPipe => return Ok(()),
-                    Err(err) => return Err(format!("could not write a record: {err}")),
+                if !write_stream_line(out, &line)? {
+                    return Ok(());
                 }
                 if lagged {
                     return Ok(());

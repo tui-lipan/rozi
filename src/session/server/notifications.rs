@@ -73,6 +73,7 @@ mod tests {
     use crate::session::server::{
         events::SessionSubscribeRecord,
         headless::ReplyTo,
+        subscriptions::SubscribeOptions,
         tests::{add_client, attach_client, decode_outbox_controls},
     };
 
@@ -91,10 +92,12 @@ mod tests {
             server
                 .handle_subscribe_command(
                     subscriber,
-                    Vec::new(),
-                    true,
-                    None,
-                    ReplyTo::StreamingHeadless {
+                    SubscribeOptions {
+                        events: Vec::new(),
+                        snapshot: true,
+                        after: None,
+                    },
+                    &ReplyTo::StreamingHeadless {
                         capabilities: Capabilities::current(),
                         effective_protocol: PROTOCOL_VERSION
                     }

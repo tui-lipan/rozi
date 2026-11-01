@@ -717,6 +717,7 @@ impl SessionServer {
     }
 
     pub(super) fn flush_clients(&mut self) -> bool {
+        self.flush_session_events();
         let mut activity = self.reap_acquisitions();
         let mut dead: Vec<ClientId> = Vec::new();
         let mut completed_seeds = Vec::new();

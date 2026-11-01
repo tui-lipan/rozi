@@ -1255,7 +1255,7 @@ impl SessionServer {
         let now = Instant::now();
         let mut settled = Vec::new();
         for (&pane_id, pane) in &mut self.panes {
-            if let Some((previous, title)) = pane.title_watch.settle(now) {
+            if let Some((previous, title)) = pane.event_watch.title.settle(now) {
                 settled.push((pane_id, previous, title));
             }
         }
@@ -2802,9 +2802,7 @@ mod tests {
             scrollback: 100,
             generation: 1,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
-            last_bell_event: None,
+            event_watch: Default::default(),
             cwd: Some("/launch/dir".to_string()),
             launch: None,
             agent_resume: None,

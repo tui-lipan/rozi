@@ -261,15 +261,17 @@ impl SessionServer {
                 request.launch = None;
             }
         }
+        let event_watch = events::PaneEventWatch::new(
+            screen.bell_count(),
+            screen
+                .title()
+                .and_then(crate::pane::sanitize_terminal_title)
+                .or_else(|| request.title.clone()),
+        );
         match spawned {
             Ok(pty) => {
                 let pid = pty.pid();
                 screen.resize(rows.max(1), cols.max(1));
-                let initial_title = screen
-                    .title()
-                    .and_then(crate::pane::sanitize_terminal_title)
-                    .or_else(|| request.title.clone());
-                let seen_bell_count = screen.bell_count();
                 self.insert_owned_pane(
                     owner,
                     id,
@@ -277,9 +279,7 @@ impl SessionServer {
                         scrollback,
                         generation,
                         title: request.title,
-                        seen_bell_count,
-                        title_watch: events::PaneTitleWatch::new(initial_title),
-                        last_bell_event: None,
+                        event_watch,
                         cwd: effective_cwd,
                         launch: request.launch,
                         agent_resume,
@@ -328,11 +328,6 @@ impl SessionServer {
             }
             Err(err) => {
                 if retain_on_failure {
-                    let initial_title = screen
-                        .title()
-                        .and_then(crate::pane::sanitize_terminal_title)
-                        .or_else(|| request.title.clone());
-                    let seen_bell_count = screen.bell_count();
                     self.insert_owned_pane(
                         owner,
                         id,
@@ -340,9 +335,7 @@ impl SessionServer {
                             scrollback,
                             generation,
                             title: request.title,
-                            seen_bell_count,
-                            title_watch: events::PaneTitleWatch::new(initial_title),
-                            last_bell_event: None,
+                            event_watch,
                             cwd: request.cwd,
                             launch: request.launch,
                             // Reached only when the interactive shell could not start either, so
@@ -553,18 +546,7 @@ impl SessionServer {
                             }
                         }
                         if owner.is_none() {
-                            let bell_count = pane.screen_without_change().bell_count();
-                            let now = Instant::now();
-                            if bell_count > pane.seen_bell_count {
-                                pane.seen_bell_count = bell_count;
-                                bell_rang = pane.last_bell_event.is_none_or(|last| {
-                                    now.duration_since(last) >= events::BELL_COALESCE
-                                });
-                                if bell_rang {
-                                    pane.last_bell_event = Some(now);
-                                }
-                            }
-                            pane.title_watch.observe(pane.effective_title(), now);
+                            bell_rang = pane.watch_output();
                         }
                         if owner.is_none() {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);

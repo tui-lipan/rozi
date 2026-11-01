@@ -1,11 +1,16 @@
-use std::collections::{BTreeMap, VecDeque};
+//! What a session server keeps in order to raise session events: its buffer of recent events, and
+//! what each pane's changes are compared against. The events themselves are protocol types.
+
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-
-use crate::layout::shared::ClientId;
 use crate::session::protocol::{
-    AgentRecord, AgentRuntime, AgentState, PaneRuntimeState, PaneStatus, SessionInstanceId,
+    AgentRecord, AgentRuntime, PaneRuntimeState, PaneStatus, SessionInstanceId,
+    effective_agent_runtimes,
+};
+pub(super) use crate::session::protocol::{
+    CursorExpired, EventFields, EventKind, PaneForeground, SessionEvent, SessionSubscribeRecord,
+    SessionSubscribeSnapshot, agent_state_changes, pane_status_fields,
 };
 use crate::state::PaneId;
 
@@ -69,230 +74,43 @@ impl PaneTitleWatch {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub enum EventKind {
-    PaneSpawned,
-    PaneExited,
-    PaneStatusChanged,
-    PaneTitleChanged,
-    PaneCwdChanged,
-    AgentStateChanged,
-    ForegroundChanged,
-    Bell,
-    SessionNotification,
-    FocusChanged,
-    WorkspaceSwitched,
-    LayoutChanged,
-    SessionAttached,
-    SessionDetached,
-    SessionRenamed,
-    SessionCreated,
-    ControllerChanged,
-    ClientJoined,
-    ClientLeft,
-    ProfileLoaded,
-    ProfileApplied,
-    ProfileSaved,
-    ConfigReloaded,
+/// What one pane's `bell` and `pane-title-changed` events compare against.
+#[derive(Clone, Debug, Default)]
+pub(super) struct PaneEventWatch {
+    /// How many BELs the pane's screen has seen, so one bell is reported once rather than on every
+    /// later chunk of output.
+    seen_bells: u64,
+    /// When `bell` was last recorded, for [`BELL_COALESCE`].
+    last_bell: Option<Instant>,
+    pub(super) title: PaneTitleWatch,
 }
 
-impl EventKind {
-    pub const ALL: [Self; 23] = [
-        Self::PaneSpawned,
-        Self::PaneExited,
-        Self::PaneStatusChanged,
-        Self::PaneTitleChanged,
-        Self::PaneCwdChanged,
-        Self::AgentStateChanged,
-        Self::ForegroundChanged,
-        Self::Bell,
-        Self::SessionNotification,
-        Self::FocusChanged,
-        Self::WorkspaceSwitched,
-        Self::LayoutChanged,
-        Self::SessionAttached,
-        Self::SessionDetached,
-        Self::SessionRenamed,
-        Self::SessionCreated,
-        Self::ControllerChanged,
-        Self::ClientJoined,
-        Self::ClientLeft,
-        Self::ProfileLoaded,
-        Self::ProfileApplied,
-        Self::ProfileSaved,
-        Self::ConfigReloaded,
-    ];
-
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::PaneSpawned => "pane-spawned",
-            Self::PaneExited => "pane-exited",
-            Self::PaneStatusChanged => "pane-status-changed",
-            Self::PaneTitleChanged => "pane-title-changed",
-            Self::PaneCwdChanged => "pane-cwd-changed",
-            Self::AgentStateChanged => "agent-state-changed",
-            Self::ForegroundChanged => "foreground-changed",
-            Self::Bell => "bell",
-            Self::SessionNotification => "session-notification",
-            Self::FocusChanged => "focus-changed",
-            Self::WorkspaceSwitched => "workspace-switched",
-            Self::LayoutChanged => "layout-changed",
-            Self::SessionAttached => "session-attached",
-            Self::SessionDetached => "session-detached",
-            Self::SessionRenamed => "session-renamed",
-            Self::SessionCreated => "session-created",
-            Self::ControllerChanged => "controller-changed",
-            Self::ClientJoined => "client-joined",
-            Self::ClientLeft => "client-left",
-            Self::ProfileLoaded => "profile-loaded",
-            Self::ProfileApplied => "profile-applied",
-            Self::ProfileSaved => "profile-saved",
-            Self::ConfigReloaded => "config-reloaded",
+impl PaneEventWatch {
+    /// Start from what a pane's screen already holds: a restored screen's old bells and title are
+    /// not news.
+    pub(super) fn new(seen_bells: u64, title: Option<String>) -> Self {
+        Self {
+            seen_bells,
+            last_bell: None,
+            title: PaneTitleWatch::new(title),
         }
     }
 
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.id() == value)
-    }
-
-    /// Whether a session server raises this event, rather than one UI about itself.
-    pub fn is_session_owned(self) -> bool {
-        match self {
-            Self::PaneSpawned
-            | Self::PaneExited
-            | Self::PaneStatusChanged
-            | Self::PaneTitleChanged
-            | Self::PaneCwdChanged
-            | Self::AgentStateChanged
-            | Self::ForegroundChanged
-            | Self::Bell
-            | Self::SessionNotification
-            | Self::LayoutChanged
-            | Self::SessionRenamed
-            | Self::ControllerChanged
-            | Self::ClientJoined
-            | Self::ClientLeft => true,
-            Self::FocusChanged
-            | Self::WorkspaceSwitched
-            | Self::SessionAttached
-            | Self::SessionDetached
-            | Self::SessionCreated
-            | Self::ProfileLoaded
-            | Self::ProfileApplied
-            | Self::ProfileSaved
-            | Self::ConfigReloaded => false,
+    /// Note the screen's bell count after a chunk of output. `true` means a new bell is worth an
+    /// event.
+    pub(super) fn ring(&mut self, bell_count: u64, now: Instant) -> bool {
+        if bell_count <= self.seen_bells {
+            return false;
         }
-    }
-}
-
-/// One `subscribe` event as it goes out on the wire.
-///
-/// `data` is deliberately a flat map of strings rather than a per-kind payload type. The fields an
-/// event carries grow over time and a subscriber is expected to read the ones it knows and ignore
-/// the rest, so the schema describes the envelope and the closed vocabulary of event names without
-/// freezing each kind's field list.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct WireEvent {
-    pub event: EventKind,
-    pub data: BTreeMap<String, String>,
-}
-
-/// One sequenced event recorded by a [`SessionServer`](super::SessionServer).
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct SessionEvent {
-    pub session_instance: SessionInstanceId,
-    pub seq: u64,
-    pub kind: EventKind,
-    pub data: BTreeMap<String, String>,
-}
-
-impl SessionEvent {
-    pub fn to_wire_event(&self) -> WireEvent {
-        WireEvent {
-            event: self.kind,
-            data: self.data.clone(),
+        self.seen_bells = bell_count;
+        let ring = self
+            .last_bell
+            .is_none_or(|last| now.duration_since(last) >= BELL_COALESCE);
+        if ring {
+            self.last_bell = Some(now);
         }
+        ring
     }
-
-    pub fn into_wire_event(self) -> WireEvent {
-        WireEvent {
-            event: self.kind,
-            data: self.data,
-        }
-    }
-
-    /// Retained byte weight charged against [`SessionEventBuffer`]'s byte budget.
-    pub fn byte_len(&self) -> usize {
-        self.kind
-            .id()
-            .len()
-            .saturating_add(self.session_instance.as_str().len())
-            .saturating_add(
-                self.data
-                    .iter()
-                    .map(|(key, value)| key.len().saturating_add(value.len()))
-                    .sum::<usize>(),
-            )
-    }
-}
-
-/// Reported when a resume cursor names a different session instance, a sequence number that has
-/// already been evicted from the ring buffer, or a sequence ahead of the server's latest event.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct CursorExpired {
-    pub current_instance: SessionInstanceId,
-    pub oldest_seq: Option<u64>,
-    pub latest_seq: u64,
-}
-
-impl std::fmt::Display for CursorExpired {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "cursor expired: current instance is {}, ",
-            self.current_instance
-        )?;
-        match self.oldest_seq {
-            Some(oldest) => write!(f, "oldest retained seq is {oldest}, ")?,
-            None => write!(f, "no events are retained, ")?,
-        }
-        write!(f, "latest seq is {}", self.latest_seq)
-    }
-}
-
-/// Current snapshot of a session as streamed at subscription start when `--snapshot` is requested.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct SessionSubscribeSnapshot {
-    pub session_instance: SessionInstanceId,
-    pub session: String,
-    pub seq: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller: Option<ClientId>,
-    pub client_count: u32,
-    pub layout_rev: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layout: Option<crate::control::LayoutReport>,
-    pub panes: Vec<crate::control::PaneInfo>,
-    pub notifications: Vec<crate::control::SessionNotification>,
-}
-
-/// Typed records streamed by a session subscription.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub enum SessionSubscribeRecord {
-    Snapshot(SessionSubscribeSnapshot),
-    Event {
-        #[serde(flatten)]
-        event: SessionEvent,
-    },
-    Lagged,
 }
 
 /// Ring buffer of recent session events bounded by both event count and total retained bytes.
@@ -326,30 +144,6 @@ impl SessionEventBuffer {
         }
     }
 
-    pub fn session_instance(&self) -> &SessionInstanceId {
-        &self.session_instance
-    }
-
-    pub fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
-    }
-
-    pub fn total_bytes(&self) -> usize {
-        self.total_bytes
-    }
-
-    pub fn max_events(&self) -> usize {
-        self.max_events
-    }
-
-    pub fn max_bytes(&self) -> usize {
-        self.max_bytes
-    }
-
     pub fn oldest_seq(&self) -> Option<u64> {
         self.events.front().map(|event| event.seq)
     }
@@ -358,7 +152,8 @@ impl SessionEventBuffer {
         self.latest_seq
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &SessionEvent> {
+    #[cfg(all(test, unix))]
+    pub(super) fn iter(&self) -> impl Iterator<Item = &SessionEvent> {
         self.events.iter()
     }
 
@@ -375,7 +170,7 @@ impl SessionEventBuffer {
     ///
     /// The event is returned for live delivery even when it is too large to retain: only a later
     /// resume has to do without it, and that resume finds the gap and reports its cursor expired.
-    pub fn record(&mut self, kind: EventKind, fields: Vec<(&'static str, String)>) -> SessionEvent {
+    pub fn record(&mut self, kind: EventKind, fields: EventFields) -> SessionEvent {
         self.latest_seq = self.latest_seq.saturating_add(1);
         let data = fields
             .into_iter()
@@ -431,26 +226,6 @@ impl SessionEventBuffer {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct PaneForeground {
-    program: Option<String>,
-    pid: Option<u32>,
-}
-
-impl PaneForeground {
-    fn of(runtime: &PaneRuntimeState) -> Self {
-        let program = crate::pane::launch::running_program(
-            runtime.command_phase,
-            runtime.foreground_program.as_deref(),
-            runtime.foreground_shell,
-        );
-        Self {
-            program: program.map(str::to_string),
-            pid: program.and(runtime.foreground_pid),
-        }
-    }
-}
-
 /// Snapshot of a shared pane's observable event fields before a [`PaneRuntimeState`] mutation.
 #[derive(Clone, Debug)]
 pub(super) struct PaneRuntimeBaseline {
@@ -477,8 +252,8 @@ impl PaneRuntimeBaseline {
             pane_id,
             status: pane.runtime.status.clone(),
             cwd: pane.runtime.cwd.clone(),
-            agents: crate::session::protocol::effective_agent_runtimes(&pane.runtime, &records),
-            foreground: PaneForeground::of(&pane.runtime),
+            agents: effective_agent_runtimes(&pane.runtime, &records),
+            foreground: foreground_of(&pane.runtime),
         }
     }
 
@@ -486,50 +261,21 @@ impl PaneRuntimeBaseline {
         self,
         after_state: &PaneRuntimeState,
         after_records: &[AgentRecord],
-    ) -> Vec<(EventKind, Vec<(&'static str, String)>)> {
+    ) -> Vec<(EventKind, EventFields)> {
         let mut events = Vec::new();
         if self.status != after_state.status {
             events.push((
                 EventKind::PaneStatusChanged,
-                vec![
-                    ("pane", self.pane_id.to_string()),
-                    (
-                        "status",
-                        after_state
-                            .status
-                            .as_ref()
-                            .map(|status| status.value.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "reason",
-                        after_state
-                            .status
-                            .as_ref()
-                            .and_then(|status| status.reason.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "previous_status",
-                        self.status
-                            .as_ref()
-                            .map(|status| status.value.clone())
-                            .unwrap_or_default(),
-                    ),
-                    (
-                        "previous_reason",
-                        self.status
-                            .as_ref()
-                            .and_then(|status| status.reason.clone())
-                            .unwrap_or_default(),
-                    ),
-                ],
+                pane_status_fields(
+                    self.pane_id,
+                    self.status.as_ref(),
+                    after_state.status.as_ref(),
+                ),
             ));
         }
 
-        let after_agents =
-            crate::session::protocol::effective_agent_runtimes(after_state, after_records);
-        for fields in diff_agent_events(self.pane_id, &self.agents, &after_agents) {
+        let after_agents = effective_agent_runtimes(after_state, after_records);
+        for fields in agent_state_changes(self.pane_id, &self.agents, &after_agents) {
             events.push((EventKind::AgentStateChanged, fields));
         }
 
@@ -544,79 +290,24 @@ impl PaneRuntimeBaseline {
             ));
         }
 
-        let after_foreground = PaneForeground::of(after_state);
+        let after_foreground = foreground_of(after_state);
         if after_foreground != self.foreground {
             events.push((
                 EventKind::ForegroundChanged,
-                vec![
-                    ("pane", self.pane_id.to_string()),
-                    ("program", after_foreground.program.unwrap_or_default()),
-                    (
-                        "previous_program",
-                        self.foreground.program.unwrap_or_default(),
-                    ),
-                    (
-                        "pid",
-                        after_foreground
-                            .pid
-                            .map(|pid| pid.to_string())
-                            .unwrap_or_default(),
-                    ),
-                ],
+                after_foreground.changed_from(self.pane_id, &self.foreground),
             ));
         }
         events
     }
 }
 
-fn diff_agent_events(
-    pane_id: PaneId,
-    before: &[AgentRuntime],
-    after: &[AgentRuntime],
-) -> Vec<Vec<(&'static str, String)>> {
-    let earlier = |runtime: &AgentRuntime| {
-        before
-            .iter()
-            .find(|candidate| candidate.reference == runtime.reference)
-    };
-    let changed = after.iter().filter_map(|runtime| {
-        let previous = earlier(runtime).map(|earlier| earlier.state);
-        (previous != Some(runtime.state))
-            .then(|| agent_event_fields(pane_id, runtime, Some(runtime.state), previous))
-    });
-    let gone = before
-        .iter()
-        .filter(|runtime| {
-            !after
-                .iter()
-                .any(|candidate| candidate.reference == runtime.reference)
-        })
-        .map(|runtime| agent_event_fields(pane_id, runtime, None, Some(runtime.state)));
-    changed.chain(gone).collect()
-}
-
-fn agent_event_fields(
-    pane_id: PaneId,
-    runtime: &AgentRuntime,
-    state: Option<AgentState>,
-    previous: Option<AgentState>,
-) -> Vec<(&'static str, String)> {
-    let name = |state: Option<AgentState>| state.map(AgentState::as_str).unwrap_or_default();
-    vec![
-        ("pane", pane_id.to_string()),
-        ("agent", runtime.identity.id.clone()),
-        ("label", runtime.label.clone()),
-        (
-            "ref",
-            serde_json::to_string(&runtime.reference).expect("agent references serialize"),
-        ),
-        ("state", name(state).to_string()),
-        ("previous_state", name(previous).to_string()),
-        (
-            "reason",
-            state.and(runtime.reason.clone()).unwrap_or_default(),
-        ),
-    ]
+fn foreground_of(runtime: &PaneRuntimeState) -> PaneForeground {
+    PaneForeground::running(
+        runtime.command_phase,
+        runtime.foreground_program.as_deref(),
+        runtime.foreground_shell,
+        runtime.foreground_pid,
+    )
 }
 
 #[cfg(test)]
@@ -625,6 +316,18 @@ mod tests {
 
     fn instance(id: &str) -> SessionInstanceId {
         serde_json::from_str(&format!("{id:?}")).expect("test session instance id")
+    }
+
+    #[test]
+    fn a_burst_of_bells_rings_once_and_old_bells_never_ring() {
+        let start = Instant::now();
+        let mut watch = PaneEventWatch::new(2, None);
+
+        assert!(!watch.ring(2, start), "bells the screen already held");
+        assert!(watch.ring(3, start));
+        assert!(!watch.ring(5, start + BELL_COALESCE / 2), "part of a burst");
+        assert!(!watch.ring(5, start + BELL_COALESCE), "no new bell");
+        assert!(watch.ring(6, start + BELL_COALESCE), "after the gap");
     }
 
     #[test]
@@ -676,7 +379,7 @@ mod tests {
         );
 
         assert_eq!(oversized.seq, 2);
-        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.events.len(), 0);
         assert!(buffer.after(&inst, 1).is_err());
         assert_eq!(buffer.after(&inst, 2), Ok(Vec::new()));
     }
@@ -693,7 +396,7 @@ mod tests {
             );
         }
 
-        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.events.len(), 3);
         assert_eq!(buffer.oldest_seq(), Some(3));
         assert_eq!(buffer.latest_seq(), 5);
 
@@ -739,8 +442,8 @@ mod tests {
             );
         }
 
-        assert_eq!(buffer.len(), 2);
-        assert!(buffer.total_bytes() <= buffer.max_bytes());
+        assert_eq!(buffer.events.len(), 2);
+        assert!(buffer.total_bytes <= buffer.max_bytes);
         assert_eq!(buffer.oldest_seq(), Some(2));
         assert_eq!(buffer.latest_seq(), 3);
 

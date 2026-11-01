@@ -1037,9 +1037,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             "--after requires an INSTANCE:SEQ argument".to_string()
                         })?;
                         after = Some(val);
-                    } else if !passthrough && arg.starts_with("--after=") {
-                        let val = arg.strip_prefix("--after=").unwrap().to_string();
-                        after = Some(val);
+                    } else if let Some(val) = arg.strip_prefix("--after=").filter(|_| !passthrough)
+                    {
+                        after = Some(val.to_string());
                     } else if !passthrough && arg.starts_with('-') {
                         return Err(format!("unexpected subscribe flag `{arg}`"));
                     } else {
@@ -1852,8 +1852,8 @@ pub(super) fn control_endpoint(
     })
 }
 
-/// The endpoint for a control command that is always a bidirectional UI stream (`publish`,
-/// `subscribe`, `pick`).
+/// The endpoint for a control command that is always a bidirectional UI stream, such as `publish`
+/// or `pick`.
 ///
 /// Routing them through [`control_endpoint`] rather than a separate check keeps their refusal
 /// wording identical to every other command's.
@@ -1864,8 +1864,7 @@ pub(super) fn ui_stream_socket(
 ) -> std::result::Result<Option<PathBuf>, String> {
     match control_endpoint(cli, socket, command)? {
         ControlEndpoint::Ui(socket) => Ok(socket),
-        // `session_control_unsupported` refuses all three against a session, so this cannot be
-        // reached; spelled out rather than unwrapped so a later addition cannot slip past it.
+        // `session_control_unsupported` refuses these against a session, so this cannot be reached; spelled out rather than unwrapped so a later addition cannot slip past it.
         endpoint if endpoint.is_session() => {
             Err("this command needs a running rozi, not a session server".to_string())
         }

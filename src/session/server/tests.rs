@@ -8214,6 +8214,16 @@ fn is_session_parity_event(kind: crate::events::EventKind) -> bool {
     )
 }
 
+/// The scripted mutations spawn a real process, and when its foreground program is first sampled
+/// depends on the platform and the moment. Only pane 1's foreground changes are scripted.
+fn is_unscripted_foreground(
+    kind: crate::events::EventKind,
+    data: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    kind == crate::events::EventKind::ForegroundChanged
+        && data.get("pane").map(String::as_str) != Some("1")
+}
+
 /// Strip client-local presentation fields (`focused`, `self_controller`) and normalize `"self"`
 /// layout authorship to `"client"` so events from different attached clients (and, in Milestone 3,
 /// the server event stream) can be compared directly.
@@ -8367,6 +8377,7 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
                 .server
                 .session_events()
                 .iter()
+                .filter(|event| !is_unscripted_foreground(event.kind, &event.data))
                 .map(|event| event.kind)
                 .collect();
             assert_eq!(
@@ -8398,7 +8409,10 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
             one.drain_client_events()
                 .remove(0)
                 .into_iter()
-                .filter(|event| is_session_parity_event(event.event))
+                .filter(|event| {
+                    is_session_parity_event(event.event)
+                        && !is_unscripted_foreground(event.event, &event.data)
+                })
                 .collect::<Vec<_>>()
         };
         let one_kinds: Vec<crate::events::EventKind> =
@@ -8516,7 +8530,10 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
             .map(|events| {
                 events
                     .into_iter()
-                    .filter(|event| is_session_parity_event(event.event))
+                    .filter(|event| {
+                        is_session_parity_event(event.event)
+                            && !is_unscripted_foreground(event.event, &event.data)
+                    })
                     .collect()
             })
             .collect();

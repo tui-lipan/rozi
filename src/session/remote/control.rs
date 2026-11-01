@@ -171,10 +171,8 @@ pub fn forward_control_stream(
             }
             for line in lines {
                 let line = line.map_err(|err| format!("could not read the stream: {err}"))?;
-                match writeln!(out, "{line}").and_then(|()| out.flush()) {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => break,
-                    Err(err) => return Err(format!("could not write a record: {err}")),
+                if !crate::session::headless::write_stream_line(out, &line)? {
+                    break;
                 }
             }
             Ok(None)

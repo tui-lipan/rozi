@@ -69,6 +69,45 @@ impl PaneTitleWatch {
     }
 }
 
+/// What one pane's `bell` and `pane-title-changed` events compare against.
+#[derive(Clone, Debug, Default)]
+pub(super) struct PaneEventWatch {
+    /// How many BELs the pane's screen has seen, so one bell is reported once rather than on every
+    /// later chunk of output.
+    seen_bells: u64,
+    /// When `bell` was last recorded, for [`BELL_COALESCE`].
+    last_bell: Option<Instant>,
+    pub(super) title: PaneTitleWatch,
+}
+
+impl PaneEventWatch {
+    /// Start from what a pane's screen already holds: a restored screen's old bells and title are
+    /// not news.
+    pub(super) fn new(seen_bells: u64, title: Option<String>) -> Self {
+        Self {
+            seen_bells,
+            last_bell: None,
+            title: PaneTitleWatch::new(title),
+        }
+    }
+
+    /// Note the screen's bell count after a chunk of output. `true` means a new bell is worth an
+    /// event.
+    pub(super) fn ring(&mut self, bell_count: u64, now: Instant) -> bool {
+        if bell_count <= self.seen_bells {
+            return false;
+        }
+        self.seen_bells = bell_count;
+        let ring = self
+            .last_bell
+            .is_none_or(|last| now.duration_since(last) >= BELL_COALESCE);
+        if ring {
+            self.last_bell = Some(now);
+        }
+        ring
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -207,20 +246,6 @@ pub struct SessionEvent {
 }
 
 impl SessionEvent {
-    pub fn to_wire_event(&self) -> WireEvent {
-        WireEvent {
-            event: self.kind,
-            data: self.data.clone(),
-        }
-    }
-
-    pub fn into_wire_event(self) -> WireEvent {
-        WireEvent {
-            event: self.kind,
-            data: self.data,
-        }
-    }
-
     /// Retained byte weight charged against [`SessionEventBuffer`]'s byte budget.
     pub fn byte_len(&self) -> usize {
         self.kind
@@ -321,30 +346,6 @@ impl SessionEventBuffer {
         }
     }
 
-    pub fn session_instance(&self) -> &SessionInstanceId {
-        &self.session_instance
-    }
-
-    pub fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
-    }
-
-    pub fn total_bytes(&self) -> usize {
-        self.total_bytes
-    }
-
-    pub fn max_events(&self) -> usize {
-        self.max_events
-    }
-
-    pub fn max_bytes(&self) -> usize {
-        self.max_bytes
-    }
-
     pub fn oldest_seq(&self) -> Option<u64> {
         self.events.front().map(|event| event.seq)
     }
@@ -353,7 +354,8 @@ impl SessionEventBuffer {
         self.latest_seq
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &SessionEvent> {
+    #[cfg(all(test, unix))]
+    pub(super) fn iter(&self) -> impl Iterator<Item = &SessionEvent> {
         self.events.iter()
     }
 
@@ -623,6 +625,18 @@ mod tests {
     }
 
     #[test]
+    fn a_burst_of_bells_rings_once_and_old_bells_never_ring() {
+        let start = Instant::now();
+        let mut watch = PaneEventWatch::new(2, None);
+
+        assert!(!watch.ring(2, start), "bells the screen already held");
+        assert!(watch.ring(3, start));
+        assert!(!watch.ring(5, start + BELL_COALESCE / 2), "part of a burst");
+        assert!(!watch.ring(5, start + BELL_COALESCE), "no new bell");
+        assert!(watch.ring(6, start + BELL_COALESCE), "after the gap");
+    }
+
+    #[test]
     fn title_watch_coalesces_until_a_title_holds_still() {
         let start = Instant::now();
         let mut watch = PaneTitleWatch::new(None);
@@ -671,7 +685,7 @@ mod tests {
         );
 
         assert_eq!(oversized.seq, 2);
-        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.events.len(), 0);
         assert!(buffer.after(&inst, 1).is_err());
         assert_eq!(buffer.after(&inst, 2), Ok(Vec::new()));
     }
@@ -688,7 +702,7 @@ mod tests {
             );
         }
 
-        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.events.len(), 3);
         assert_eq!(buffer.oldest_seq(), Some(3));
         assert_eq!(buffer.latest_seq(), 5);
 
@@ -734,8 +748,8 @@ mod tests {
             );
         }
 
-        assert_eq!(buffer.len(), 2);
-        assert!(buffer.total_bytes() <= buffer.max_bytes());
+        assert_eq!(buffer.events.len(), 2);
+        assert!(buffer.total_bytes <= buffer.max_bytes);
         assert_eq!(buffer.oldest_seq(), Some(2));
         assert_eq!(buffer.latest_seq(), 3);
 

@@ -50,6 +50,7 @@ pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
 mod runtime;
 mod shutdown;
+mod subscriptions;
 mod waits;
 mod worktree;
 pub(crate) use create::create_detached_session;
@@ -227,7 +228,7 @@ pub struct SessionServer {
     pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
-    session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
+    session_subscribers: HashMap<ClientId, subscriptions::SessionSubscriber>,
     /// Events recorded but not yet sent to attached UIs. See [`Self::flush_session_events`].
     undelivered_ui_events: VecDeque<events::SessionEvent>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
@@ -338,13 +339,8 @@ pub struct ServerPane {
     output_bytes_sent: u64,
     pub generation: u64,
     pub title: Option<String>,
-    /// How many BELs this pane's screen has seen and the server has already reported, so one bell
-    /// is recorded once rather than on every later output chunk.
-    seen_bell_count: u64,
-    /// Debounced terminal-title tracking for `pane-title-changed`.
-    title_watch: events::PaneTitleWatch,
-    /// When this pane last recorded `bell`, for [`events::BELL_COALESCE`].
-    last_bell_event: Option<Instant>,
+    /// What this pane's `bell` and `pane-title-changed` events compare against.
+    event_watch: events::PaneEventWatch,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
@@ -1776,82 +1772,6 @@ impl SessionServer {
         &self.instance_id
     }
 
-    pub fn session_events(&self) -> &events::SessionEventBuffer {
-        &self.session_events
-    }
-
-    pub(super) fn record_session_event(
-        &mut self,
-        kind: events::EventKind,
-        fields: Vec<(&'static str, String)>,
-    ) {
-        debug_assert!(kind.is_session_owned(), "{} is a UI event", kind.id());
-        let event = self.session_events.record(kind, fields);
-        self.dispatch_session_subscribers(&event);
-        self.undelivered_ui_events.push_back(event);
-    }
-
-    /// Send recorded events to attached UIs, once the state messages they describe are queued.
-    ///
-    /// An event is recorded where the server's state changes, and the message telling clients about
-    /// that change usually goes out after it. A UI that heard the event first would run a hook on a
-    /// pane it has not been told about, and would decide who runs that hook from a controller it
-    /// has not yet heard has changed.
-    pub(super) fn flush_session_events(&mut self) {
-        // Delivery can expire a slow client, which records `client-left` onto this same queue.
-        while let Some(event) = self.undelivered_ui_events.pop_front() {
-            self.broadcast_control(&ServerMessage::SessionEvent { event });
-        }
-    }
-
-    pub(super) fn is_session_subscriber(&self, client_id: ClientId) -> bool {
-        self.session_subscribers.contains_key(&client_id)
-    }
-
-    fn dispatch_session_subscribers(&mut self, event: &events::SessionEvent) {
-        let max_backlog = self.max_backlog;
-        let targets: Vec<ClientId> = self
-            .session_subscribers
-            .iter()
-            .filter(|(_, sub)| sub.filter.as_ref().is_none_or(|f| f.contains(&event.kind)))
-            .map(|(&id, _)| id)
-            .collect();
-        if targets.is_empty() {
-            return;
-        }
-
-        let msg = ServerMessage::SessionSubscribeRecord {
-            record: events::SessionSubscribeRecord::Event {
-                event: event.clone(),
-            },
-        };
-        let Some(bytes) = encode_control(&msg) else {
-            return;
-        };
-
-        let mut slow = Vec::new();
-        for client_id in targets {
-            let result = self.client_mut(client_id).map(|client| {
-                client.push_delta(Arc::clone(&bytes), SeedDelta::Control, max_backlog, None)
-            });
-            if matches!(result, Some(ClientFrameResult::Overflow)) {
-                slow.push(client_id);
-            }
-        }
-        for client_id in slow {
-            self.session_subscribers.remove(&client_id);
-            let lagged = ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Lagged,
-            };
-            if let Some(bytes) = encode_control(&lagged) {
-                let _ = self
-                    .client_mut(client_id)
-                    .map(|client| client.push_delta(bytes, SeedDelta::Control, usize::MAX, None));
-            }
-            self.set_close_after_flush(client_id);
-        }
-    }
-
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
         let mut listener = listener;
@@ -1960,7 +1880,6 @@ impl SessionServer {
         self.heartbeat();
         activity |= self.pump_attach_seeds();
         activity |= self.pump_media_output();
-        self.flush_session_events();
         activity |= self.flush_clients();
         self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);
@@ -2260,6 +2179,16 @@ impl ServerPane {
             .title()
             .and_then(crate::pane::sanitize_terminal_title)
             .or_else(|| self.title.clone())
+    }
+
+    /// Note what a chunk of output did to this pane's watched state. `true` means it rang a bell
+    /// worth an event.
+    fn watch_output(&mut self) -> bool {
+        let now = Instant::now();
+        let bell_count = self.screen_without_change().bell_count();
+        let title = self.effective_title();
+        self.event_watch.title.observe(title, now);
+        self.event_watch.ring(bell_count, now)
     }
 
     /// The best *local* cwd known for this pane, suitable for `Command::current_dir` on a

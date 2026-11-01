@@ -157,18 +157,6 @@ pub fn emit(state: &crate::state::State, event: Event) {
     run_hooks(state, &event);
 }
 
-/// Publish an event to this client's subscribers, but run its hooks only on the current layout
-/// controller. Server-owned transitions reach every client, so this prevents duplicate external
-/// side effects while preserving each client's local `subscribe` stream.
-pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
-    state
-        .event_hub
-        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
-    if state.is_controller() {
-        run_hooks(state, &event);
-    }
-}
-
 pub(crate) fn run_hooks_for_scope(
     state: &crate::state::State,
     event: &Event,

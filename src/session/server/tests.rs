@@ -20,9 +20,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         scrollback: 100,
         generation,
         title: None,
-        seen_bell_count: 0,
-        title_watch: Default::default(),
-        last_bell_event: None,
+        event_watch: Default::default(),
         cwd: None,
         launch: None,
         agent_resume: None,
@@ -4461,9 +4459,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
-            last_bell_event: None,
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4637,9 +4633,7 @@ fn duplicate_spawn_is_rejected() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
-            last_bell_event: None,
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4705,9 +4699,7 @@ fn exited_pane_can_be_respawned() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
-            last_bell_event: None,
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4900,9 +4892,7 @@ fn attach_reports_layout_and_panes() {
         scrollback: 100,
         generation: 8,
         title: Some("editor".into()),
-        seen_bell_count: 0,
-        title_watch: Default::default(),
-        last_bell_event: None,
+        event_watch: Default::default(),
         cwd: Some("/repo".into()),
         launch: None,
         agent_resume: None,
@@ -5105,9 +5095,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
-            last_bell_event: None,
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -5193,9 +5181,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 scrollback: 100,
                 generation: id as u64,
                 title: Some(format!("pane-{id}")),
-                seen_bell_count: 0,
-                title_watch: Default::default(),
-                last_bell_event: None,
+                event_watch: Default::default(),
                 cwd: None,
                 launch: Some(if id == 1 {
                     crate::pane::launch::PaneLaunch::Direct {
@@ -8235,8 +8221,8 @@ fn is_unscripted_foreground(
 }
 
 /// Strip client-local presentation fields (`focused`, `self_controller`) and normalize `"self"`
-/// layout authorship to `"client"` so events from different attached clients (and, in Milestone 3,
-/// the server event stream) can be compared directly.
+/// layout authorship to `"client"` so events from different attached clients and the server event
+/// stream can be compared directly.
 fn normalize_session_wire_event(mut event: crate::events::WireEvent) -> crate::events::WireEvent {
     event.data.remove("focused");
     event.data.remove("self_controller");
@@ -8374,18 +8360,16 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
 }
 
 #[test]
-fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
+fn session_events_are_the_same_with_zero_one_and_two_clients_attached() {
     crate::test_support::on_large_stack(|| {
-        // Baseline with 0 clients attached: today events are detected client-side, so a headless
-        // session with no UI clients attached emits no subscriber events at all. Milestone 3 moves
-        // emission to the session server so detached sessions produce the same event stream.
+        // With no clients attached nobody receives the events, and the server still records them.
         {
             let mut zero = EventParityHarness::new(0);
             run_session_event_parity_mutations(&mut zero);
             assert!(zero.drain_client_events().is_empty());
             let server_kinds: Vec<crate::events::EventKind> = zero
                 .server
-                .session_events()
+                .session_events
                 .iter()
                 .filter(|event| !is_unscripted_foreground(event.kind, &event.data))
                 .map(|event| event.kind)
@@ -8573,7 +8557,7 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
 }
 
 #[test]
-fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clients() {
+fn a_controller_spawn_raises_pane_spawned_and_layout_changed_on_every_client() {
     crate::test_support::on_large_stack(|| {
         let mut harness = EventParityHarness::new(2);
         harness.clients[0]
@@ -8586,9 +8570,7 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
         let controller_events = events.remove(0);
         let follower_events = events.remove(0);
 
-        // Today, `pane-spawned` is emitted locally by the client that initiates the split, while
-        // the follower only hears `layout-changed` when the server commits the placement.
-        // Milestone 3 moves `pane-spawned` to the server so followers and headless splits emit it too.
+        // The server raises both, so the client that split and its follower hear the same events.
         let controller_kinds: Vec<_> = controller_events.iter().map(|e| e.event).collect();
         let follower_kinds: Vec<_> = follower_events.iter().map(|e| e.event).collect();
         assert!(controller_kinds.contains(&crate::events::EventKind::PaneSpawned));
@@ -8645,7 +8627,7 @@ fn shared_pane_bells_are_recorded_once_and_a_burst_coalesces() {
     };
     let bells = |server: &SessionServer| {
         server
-            .session_events()
+            .session_events
             .iter()
             .filter(|event| event.kind == crate::events::EventKind::Bell)
             .count()
@@ -8655,19 +8637,12 @@ fn shared_pane_bells_are_recorded_once_and_a_burst_coalesces() {
     deliver(&mut server, b"plain output");
     assert_eq!(bells(&server), 1, "later output must not ring it again");
     assert_eq!(
-        server.session_events().iter().next().unwrap().data["pane"],
+        server.session_events.iter().next().unwrap().data["pane"],
         "1"
     );
 
     deliver(&mut server, b"\x07\x07");
     assert_eq!(bells(&server), 1, "a burst of bells is one event");
-
-    let quiet = Instant::now() - events::BELL_COALESCE;
-    server.panes.get_mut(&1).unwrap().last_bell_event = Some(quiet);
-    deliver(&mut server, b"plain output");
-    assert_eq!(bells(&server), 1, "a coalesced bell is not owed later");
-    deliver(&mut server, b"\x07");
-    assert_eq!(bells(&server), 2, "a bell after the gap is a new event");
 }
 
 fn session_event_position(
@@ -8730,6 +8705,7 @@ fn a_ui_hears_a_session_event_after_the_state_it_describes() {
             }),
         );
 
+        server.flush_session_events();
         let heard = decode_outbox_controls(server.client(ui).unwrap());
         let metadata = heard
             .iter()
@@ -8759,6 +8735,7 @@ fn the_promoted_controller_knows_before_it_hears_the_old_one_left() {
     clear_outboxes(&mut server, &[second]);
 
     server.process_client_frame(first, Frame::Control(ClientMessage::Detach));
+    server.flush_session_events();
 
     let heard = decode_outbox_controls(server.client(second).unwrap());
     let promoted = heard
@@ -8786,7 +8763,7 @@ fn shared_pane_cwd_change_is_recorded() {
     ));
 
     let changed = server
-        .session_events()
+        .session_events
         .iter()
         .find(|event| event.kind == crate::events::EventKind::PaneCwdChanged)
         .expect("working-directory change is a session event");
@@ -8809,22 +8786,22 @@ fn shared_pane_title_change_is_recorded_once_it_settles() {
     ));
     assert!(
         server
-            .session_events()
+            .session_events
             .iter()
             .all(|event| event.kind != crate::events::EventKind::PaneTitleChanged)
     );
 
     // Age the observation past the settle window instead of sleeping.
     let pane = server.panes.get_mut(&1).unwrap();
-    pane.title_watch = events::PaneTitleWatch::new(None);
-    pane.title_watch.observe(
+    pane.event_watch.title = events::PaneTitleWatch::new(None);
+    pane.event_watch.title.observe(
         Some("editor".to_string()),
         Instant::now() - events::TITLE_SETTLE - Duration::from_millis(1),
     );
     server.flush_pane_titles();
 
     let changed = server
-        .session_events()
+        .session_events
         .iter()
         .find(|event| event.kind == crate::events::EventKind::PaneTitleChanged)
         .expect("settled title is a session event");

@@ -30,6 +30,7 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
+mod deployment_worker;
 mod deployments;
 pub mod events;
 mod graphics;
@@ -235,7 +236,7 @@ pub struct SessionServer {
     /// Extensions this session was asked to run itself. Kept across restarts and removed only when
     /// the session is explicitly deleted.
     deployments: deployments::SessionDeployments,
-    deployment_worker: Option<headless::DeploymentWorker>,
+    deployment_worker: Option<deployment_worker::DeploymentWorker>,
     automation: Option<automation::Automation>,
     notifications: VecDeque<crate::control::SessionNotification>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.

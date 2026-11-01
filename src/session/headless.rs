@@ -121,7 +121,7 @@ pub fn run_session_subscribe(
             SessionControlError::Transport(format!("could not reach session `{name}`: {err}"))
         }
     })?;
-    let _ = stream.set_read_timeout(None);
+    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
     let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
     protocol::write_frame(
         &mut stream,
@@ -137,7 +137,11 @@ pub fn run_session_subscribe(
     match protocol::read_frame::<_, ServerMessage>(&mut stream)
         .map_err(|err| SessionControlError::Transport(format!("no answer from `{name}`: {err}")))?
     {
-        ServerMessage::SessionControlResult { response, .. } => Ok((stream, response)),
+        ServerMessage::SessionControlResult { response, .. } => {
+            // The answer came promptly. The events after it arrive whenever they happen.
+            let _ = stream.set_read_timeout(None);
+            Ok((stream, response))
+        }
         ServerMessage::Error { code, message } => {
             Err(SessionControlError::Refused { code, message })
         }
@@ -145,6 +149,49 @@ pub fn run_session_subscribe(
             "session `{name}` answered with an unexpected {} message",
             message_kind(&other)
         ))),
+    }
+}
+
+/// Write a session subscription's records to `out`, one JSON object per line, until it ends.
+///
+/// The session closing, a `lagged` record, and whoever reads `out` going away all end the stream
+/// normally. `Err` is a failure a caller should report.
+pub fn pump_session_records(
+    stream: &mut IpcConnection,
+    out: &mut impl std::io::Write,
+) -> std::result::Result<(), String> {
+    use std::io::ErrorKind;
+
+    loop {
+        match protocol::read_frame::<_, ServerMessage>(stream) {
+            Ok(ServerMessage::SessionSubscribeRecord { record }) => {
+                let lagged = matches!(
+                    record,
+                    crate::session::server::events::SessionSubscribeRecord::Lagged
+                );
+                let line = serde_json::to_string(&record)
+                    .map_err(|err| format!("could not encode a record: {err}"))?;
+                match writeln!(out, "{line}").and_then(|()| out.flush()) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == ErrorKind::BrokenPipe => return Ok(()),
+                    Err(err) => return Err(format!("could not write a record: {err}")),
+                }
+                if lagged {
+                    return Ok(());
+                }
+            }
+            Ok(ServerMessage::Error { code, message }) => return Err(format!("{code}: {message}")),
+            Ok(_) => {}
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
+                ) =>
+            {
+                return Ok(());
+            }
+            Err(err) => return Err(format!("subscription failed: {err}")),
+        }
     }
 }
 

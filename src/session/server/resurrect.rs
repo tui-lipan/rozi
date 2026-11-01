@@ -2612,6 +2612,7 @@ mod tests {
             title: None,
             seen_bell_count: 0,
             title_watch: Default::default(),
+            last_bell_event: None,
             cwd: None,
             launch: None,
             agent_resume: None,

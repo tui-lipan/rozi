@@ -1,9 +1,8 @@
-use super::lease::*;
 use super::pane_events::*;
 use super::status::*;
 use crate::Msg;
 use crate::session::client::SessionClient;
-use crate::session::protocol::{ClientInfo, PaneRuntimeState};
+use crate::session::protocol::PaneRuntimeState;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1992,41 +1991,6 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
         .collect();
     resized.sort_unstable();
     assert_eq!(resized, vec![(1, false, 80, 20), (2, false, 90, 22)]);
-}
-
-#[test]
-fn roster_diff_emits_joins_and_leaves_with_the_new_count() {
-    let client = |id, label: &str| ClientInfo {
-        id,
-        label: label.to_string(),
-        read_only: false,
-        requesting_control: false,
-        parked: false,
-    };
-    let events = roster_diff_events(
-        &[client(1, "one"), client(2, "two")],
-        &[client(2, "renamed"), client(3, "three")],
-    );
-
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].kind, crate::events::EventKind::ClientJoined);
-    assert_eq!(
-        events[0].fields,
-        vec![
-            ("client_id", "3".into()),
-            ("client_name", "three".into()),
-            ("count", "2".into()),
-        ]
-    );
-    assert_eq!(events[1].kind, crate::events::EventKind::ClientLeft);
-    assert_eq!(
-        events[1].fields,
-        vec![
-            ("client_id", "1".into()),
-            ("client_name", "one".into()),
-            ("count", "2".into()),
-        ]
-    );
 }
 
 #[test]

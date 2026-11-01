@@ -143,6 +143,12 @@ pub(crate) fn run_subscribe_cli(command: SubscribeCli) -> Result<()> {
             }
             let caller = context.pane.expect("verified pane");
             if let Some(socket) = super::context::authority_ui(&request, &caller) {
+                if command.snapshot || command.after.is_some() {
+                    eprintln!(
+                        "--snapshot and --after need a session endpoint; this pane answers to a UI, so name it with --session"
+                    );
+                    std::process::exit(1);
+                }
                 run_ui_subscribe_cli(Some(socket), command.events)
             } else {
                 let session = match crate::session::discovery::session_with_instance(
@@ -234,41 +240,12 @@ fn run_session_subscribe_cli(
             }
         };
     if !response.ok {
-        if let Some(error) = response.error {
-            eprintln!("{error}");
-        }
-        std::process::exit(1);
+        exit_subscription_refused(&response);
     }
-
     let mut stdout = std::io::stdout().lock();
-    loop {
-        match crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
-            &mut stream,
-        ) {
-            Ok(crate::session::protocol::ServerMessage::SessionSubscribeRecord { record }) => {
-                let is_lagged = matches!(
-                    record,
-                    crate::session::server::events::SessionSubscribeRecord::Lagged
-                );
-                writeln!(stdout, "{}", serde_json::to_string(&record).unwrap())?;
-                stdout.flush()?;
-                if is_lagged {
-                    break;
-                }
-            }
-            Ok(crate::session::protocol::ServerMessage::Error { code, message }) => {
-                eprintln!("{code}: {message}");
-                std::process::exit(1);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
-                break;
-            }
-            Err(err) => {
-                eprintln!("subscribe error: {err}");
-                std::process::exit(1);
-            }
-            _ => {}
-        }
+    if let Err(err) = crate::session::headless::pump_session_records(&mut stream, &mut stdout) {
+        eprintln!("{err}");
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -293,13 +270,40 @@ fn run_remote_subscribe_cli(
         snapshot,
         after,
     });
-    if let Err(err) =
-        crate::session::remote::control::forward_control_stream(&parsed, session, &request, &config)
-    {
-        eprintln!("{err}");
-        std::process::exit(2);
+    let mut stdout = std::io::stdout().lock();
+    match crate::session::remote::control::forward_control_stream(
+        &parsed,
+        session,
+        &request,
+        &config,
+        &mut stdout,
+    ) {
+        Ok(None) => Ok(()),
+        Ok(Some(response)) => {
+            drop(stdout);
+            exit_subscription_refused(&response)
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
     }
-    Ok(())
+}
+
+/// Report a session's refusal the way every other control command reports a failure, so a script
+/// resuming from a cursor can read `code` and the retained range instead of parsing prose.
+fn exit_subscription_refused(response: &control::ControlResponse) -> ! {
+    use std::io::IsTerminal;
+
+    if let Some(error) = &response.error {
+        eprintln!("{error}");
+    }
+    if !std::io::stdout().is_terminal()
+        && let Ok(document) = serde_json::to_string(response)
+    {
+        println!("{document}");
+    }
+    std::process::exit(1);
 }
 
 pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {

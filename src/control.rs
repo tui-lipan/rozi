@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 4;
+pub const API_SCHEMA_VERSION: u32 = 3;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -3126,7 +3126,22 @@ pub(crate) fn serve_connection(
         // The credential, not the request, says which extension and generation this is.
         request.extension = Some(grant.provenance);
     }
-    if let ControlCommand::Subscribe { events, .. } = &request.command {
+    if let ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    } = &request.command
+    {
+        if *snapshot || after.is_some() {
+            write_control_response(
+                &mut stream,
+                &ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    "snapshot and after need a session endpoint; a UI keeps no event history",
+                ),
+            );
+            return;
+        }
         run_subscription(
             stream,
             link,

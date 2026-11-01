@@ -228,6 +228,8 @@ pub struct SessionServer {
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
     session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
+    /// Events recorded but not yet sent to attached UIs. See [`Self::flush_session_events`].
+    undelivered_ui_events: VecDeque<events::SessionEvent>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
 }
@@ -341,6 +343,8 @@ pub struct ServerPane {
     seen_bell_count: u64,
     /// Debounced terminal-title tracking for `pane-title-changed`.
     title_watch: events::PaneTitleWatch,
+    /// When this pane last recorded `bell`, for [`events::BELL_COALESCE`].
+    last_bell_event: Option<Instant>,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
@@ -1762,6 +1766,7 @@ impl SessionServer {
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
             session_subscribers: HashMap::new(),
+            undelivered_ui_events: VecDeque::new(),
             spawning_pane: None,
             settings,
         }
@@ -1780,12 +1785,22 @@ impl SessionServer {
         kind: events::EventKind,
         fields: Vec<(&'static str, String)>,
     ) {
-        if let Some(event) = self.session_events.record(kind, fields).cloned() {
-            let message = ServerMessage::SessionEvent {
-                event: event.clone(),
-            };
-            self.broadcast_control(&message);
-            self.dispatch_session_subscribers(&event);
+        debug_assert!(kind.is_session_owned(), "{} is a UI event", kind.id());
+        let event = self.session_events.record(kind, fields);
+        self.dispatch_session_subscribers(&event);
+        self.undelivered_ui_events.push_back(event);
+    }
+
+    /// Send recorded events to attached UIs, once the state messages they describe are queued.
+    ///
+    /// An event is recorded where the server's state changes, and the message telling clients about
+    /// that change usually goes out after it. A UI that heard the event first would run a hook on a
+    /// pane it has not been told about, and would decide who runs that hook from a controller it
+    /// has not yet heard has changed.
+    pub(super) fn flush_session_events(&mut self) {
+        // Delivery can expire a slow client, which records `client-left` onto this same queue.
+        while let Some(event) = self.undelivered_ui_events.pop_front() {
+            self.broadcast_control(&ServerMessage::SessionEvent { event });
         }
     }
 
@@ -1945,6 +1960,7 @@ impl SessionServer {
         self.heartbeat();
         activity |= self.pump_attach_seeds();
         activity |= self.pump_media_output();
+        self.flush_session_events();
         activity |= self.flush_clients();
         self.update_graphics_pacing();
         self.update_ephemeral_lifetime(no_client_since);

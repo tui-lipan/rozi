@@ -288,6 +288,9 @@ impl SessionServer {
     /// Execute a control only after its client stream fence has released it. Lifecycle effects
     /// such as Detach must run here too, not when the deferred frame was first received.
     pub(super) fn process_client_control_now(&mut self, id: ClientId, message: ClientMessage) {
+        // What happened before this message reaches clients before its answer does, and a client
+        // attaching now does not hear about changes its attach already shows it.
+        self.flush_session_events();
         let is_attach = matches!(message, ClientMessage::Attach { .. });
         // Both answer one question and hang up: neither ever becomes a client, so both
         // skip the attach requirement below and close once the reply has flushed.
@@ -322,6 +325,7 @@ impl SessionServer {
         if detach {
             self.remove_client(id);
         }
+        self.flush_session_events();
     }
 
     fn accepts_client_control(&mut self, id: ClientId, message: &ClientMessage) -> bool {
@@ -897,6 +901,10 @@ impl SessionServer {
                 if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
                     if let Some(title) = title {
                         pane.title = Some(title);
+                        if owner.is_none() {
+                            pane.title_watch
+                                .observe(pane.effective_title(), Instant::now());
+                        }
                     }
                     if let Some(cwd) = cwd {
                         pane.cwd = Some(cwd);

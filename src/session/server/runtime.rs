@@ -2804,6 +2804,7 @@ mod tests {
             title: None,
             seen_bell_count: 0,
             title_watch: Default::default(),
+            last_bell_event: None,
             cwd: Some("/launch/dir".to_string()),
             launch: None,
             agent_resume: None,

@@ -255,6 +255,7 @@ impl SessionServer {
                         title: request.title,
                         seen_bell_count,
                         title_watch: events::PaneTitleWatch::new(initial_title),
+                        last_bell_event: None,
                         cwd: effective_cwd,
                         launch: request.launch,
                         agent_resume,
@@ -317,6 +318,7 @@ impl SessionServer {
                             title: request.title,
                             seen_bell_count,
                             title_watch: events::PaneTitleWatch::new(initial_title),
+                            last_bell_event: None,
                             cwd: request.cwd,
                             launch: request.launch,
                             // Reached only when the interactive shell could not start either, so
@@ -528,12 +530,17 @@ impl SessionServer {
                         }
                         if owner.is_none() {
                             let bell_count = pane.screen_without_change().bell_count();
-                            bell_rang = bell_count > pane.seen_bell_count;
-                            if bell_rang {
+                            let now = Instant::now();
+                            if bell_count > pane.seen_bell_count {
                                 pane.seen_bell_count = bell_count;
+                                bell_rang = pane.last_bell_event.is_none_or(|last| {
+                                    now.duration_since(last) >= events::BELL_COALESCE
+                                });
+                                if bell_rang {
+                                    pane.last_bell_event = Some(now);
+                                }
                             }
-                            pane.title_watch
-                                .observe(pane.effective_title(), Instant::now());
+                            pane.title_watch.observe(pane.effective_title(), now);
                         }
                         if owner.is_none() {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);

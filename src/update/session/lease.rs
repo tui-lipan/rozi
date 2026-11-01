@@ -204,37 +204,3 @@ pub(crate) fn evicted(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -
     );
     update
 }
-
-#[cfg(test)]
-pub(crate) fn roster_diff_events(
-    previous: &[ClientInfo],
-    current: &[ClientInfo],
-) -> Vec<crate::events::Event> {
-    let count = current.len().to_string();
-    let mut events = Vec::new();
-    for client in current {
-        if !previous.iter().any(|existing| existing.id == client.id) {
-            events.push(crate::events::Event::new(
-                crate::events::EventKind::ClientJoined,
-                vec![
-                    ("client_id", client.id.to_string()),
-                    ("client_name", client.label.clone()),
-                    ("count", count.clone()),
-                ],
-            ));
-        }
-    }
-    for client in previous {
-        if !current.iter().any(|existing| existing.id == client.id) {
-            events.push(crate::events::Event::new(
-                crate::events::EventKind::ClientLeft,
-                vec![
-                    ("client_id", client.id.to_string()),
-                    ("client_name", client.label.clone()),
-                    ("count", count.clone()),
-                ],
-            ));
-        }
-    }
-    events
-}

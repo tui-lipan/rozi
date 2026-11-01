@@ -147,7 +147,7 @@ pub(super) fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
 /// Register and attach a client, returning its id and client-side stream.
 pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (id, stream) = add_client(server);
-    let responses = server.handle_message(
+    server.handle_message(
         id,
         ClientMessage::Attach {
             capabilities: None,
@@ -160,12 +160,28 @@ pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream
             expected_server_nonce: None,
         },
     );
-    assert!(
-        responses
-            .iter()
-            .any(|(_, msg)| matches!(msg, ServerMessage::Attached { .. }))
-    );
+    assert!(matches!(
+        attached_reply(server, id),
+        ServerMessage::Attached { .. }
+    ));
+    clear_outboxes(server, &[id]);
     (id, stream)
+}
+
+/// The join reply leaves through the client's own outbox, not the returned response list, so it is
+/// ordered with the pane frames that follow it. A test that needs it reads it back from there.
+pub(super) fn attached_reply(server: &SessionServer, client_id: ClientId) -> ServerMessage {
+    decode_outbox_frames(server.client(client_id).expect("a registered client"))
+        .into_iter()
+        .find_map(|frame| match frame {
+            DecodedOutboxFrame::Control(message)
+                if matches!(*message, ServerMessage::Attached { .. }) =>
+            {
+                Some(*message)
+            }
+            _ => None,
+        })
+        .expect("an Attached reply")
 }
 
 fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
@@ -187,7 +203,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
 }
 
 #[derive(Debug)]
-enum DecodedOutboxFrame {
+pub(super) enum DecodedOutboxFrame {
     Control(Box<ServerMessage>),
     Pane {
         pane_id: PaneId,
@@ -196,7 +212,7 @@ enum DecodedOutboxFrame {
     },
 }
 
-fn decode_outbox_frames(client: &ClientConn) -> Vec<DecodedOutboxFrame> {
+pub(super) fn decode_outbox_frames(client: &ClientConn) -> Vec<DecodedOutboxFrame> {
     client
         .outbox
         .iter()
@@ -488,8 +504,8 @@ fn a_file_frame_reaches_a_remote_client_as_inline_pixels() {
 #[test]
 fn slow_client_is_disconnected_at_exact_backlog_boundary() {
     let mut server = SessionServer::new_named("dev");
-    server.max_backlog = 32;
     let (id, _stream) = attach_client(&mut server);
+    server.max_backlog = 32;
     let client = server.client_mut(id).unwrap();
     client.outbox.clear();
     client.outbox_bytes = 0;
@@ -567,13 +583,19 @@ fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
     let (first, mut first_stream) = attach_client(&mut server);
     let (second, mut second_stream) = attach_client(&mut server);
 
+    clear_outboxes(&mut server, &[first, second]);
+    let baseline_high_water = server
+        .runtime_metrics()
+        .client_outboxes
+        .bytes
+        .high_water_bytes;
     server.push_to_attached(Arc::new(EncodedOutput {
         bytes: vec![7; 32],
         ..Default::default()
     }));
     let queued = server.runtime_metrics().client_outboxes;
     assert_eq!(queued.bytes.current_bytes, 64);
-    assert_eq!(queued.bytes.high_water_bytes, 64);
+    assert_eq!(queued.bytes.high_water_bytes, baseline_high_water.max(64));
     assert_eq!(queued.clients, 2);
 
     server.flush_clients();
@@ -582,7 +604,7 @@ fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
     std::io::Read::read_exact(&mut second_stream, &mut bytes).unwrap();
     let flushed = server.runtime_metrics().client_outboxes;
     assert_eq!(flushed.bytes.current_bytes, 0);
-    assert_eq!(flushed.bytes.high_water_bytes, 64);
+    assert_eq!(flushed.bytes.high_water_bytes, baseline_high_water.max(64));
 
     server.remove_client(first);
     server.remove_client(second);
@@ -1576,16 +1598,20 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
         shares_filesystem: true,
         expected_server_nonce: None,
     };
-    let agreed = |responses: &[(Target, ServerMessage)]| match responses.first() {
-        Some((_, ServerMessage::Attached { capabilities, .. })) => capabilities.clone(),
-        other => panic!("expected an Attached reply, got {other:?}"),
-    };
+    let agreed =
+        |server: &SessionServer, client_id: ClientId| match attached_reply(server, client_id) {
+            ServerMessage::Attached { capabilities, .. } => capabilities,
+            other => panic!("expected an Attached reply, got {other:?}"),
+        };
 
     // A peer that says nothing is a pre-capability build. Protocol 5 already carried runtime
     // metrics, so a missing field has to keep meaning "metrics, and nothing added since".
     let (legacy, _stream) = add_client(&mut server);
-    let responses = server.handle_message(legacy, attach(None));
-    assert_eq!(agreed(&responses), Some(protocol::Capabilities::legacy()));
+    server.handle_message(legacy, attach(None));
+    assert_eq!(
+        agreed(&server, legacy),
+        Some(protocol::Capabilities::legacy())
+    );
     assert!(matches!(
         server
             .handle_message(legacy, ClientMessage::RequestRuntimeMetrics)
@@ -1596,8 +1622,11 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
     // An explicit empty set is a client declining the optional work, which the server must then
     // not do on its behalf — including the metrics a silent peer would have got.
     let (quiet, _stream) = add_client(&mut server);
-    let responses = server.handle_message(quiet, attach(Some(protocol::Capabilities::default())));
-    assert_eq!(agreed(&responses), Some(protocol::Capabilities::default()));
+    server.handle_message(quiet, attach(Some(protocol::Capabilities::default())));
+    assert_eq!(
+        agreed(&server, quiet),
+        Some(protocol::Capabilities::default())
+    );
     assert!(
         server
             .handle_message(quiet, ClientMessage::RequestRuntimeMetrics)
@@ -1609,8 +1638,11 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
     let (future, _stream) = add_client(&mut server);
     let offered: protocol::Capabilities =
         serde_json::from_str(r#"["runtime-metrics","teleportation"]"#).expect("capability set");
-    let responses = server.handle_message(future, attach(Some(offered)));
-    assert_eq!(agreed(&responses), Some(protocol::Capabilities::legacy()));
+    server.handle_message(future, attach(Some(offered)));
+    assert_eq!(
+        agreed(&server, future),
+        Some(protocol::Capabilities::legacy())
+    );
 }
 
 #[test]
@@ -2100,6 +2132,7 @@ fn filesystem_results_route_through_handle_event_to_only_the_requester() {
     let (controller, _controller_stream) = attach_client(&mut server);
     let (requester, _requester_stream) = attach_client(&mut server);
     let (read_only, _read_only_stream) = attach_read_only_client(&mut server);
+    clear_outboxes(&mut server, &[controller, requester, read_only]);
     let root = "/definitely/not/here/rozi".to_string();
 
     assert!(
@@ -2460,7 +2493,7 @@ fn attach_requires_the_just_started_servers_nonce() {
     assert!(!server.client_attached(raced_client));
 
     let (creator, _stream) = add_client(&mut server);
-    let matching = server.handle_message(
+    server.handle_message(
         creator,
         ClientMessage::Attach {
             capabilities: None,
@@ -2473,11 +2506,10 @@ fn attach_requires_the_just_started_servers_nonce() {
             expected_server_nonce: Some("proxy-a".to_string()),
         },
     );
-    assert!(
-        matching
-            .iter()
-            .any(|(_, message)| matches!(message, ServerMessage::Attached { .. }))
-    );
+    assert!(matches!(
+        attached_reply(&server, creator),
+        ServerMessage::Attached { .. }
+    ));
     assert!(server.client_attached(creator));
 }
 
@@ -4909,7 +4941,7 @@ fn attach_reports_layout_and_panes() {
     server.layout_rev = 7;
 
     let (id, _stream) = add_client(&mut server);
-    let responses = server.handle_message(
+    server.handle_message(
         id,
         ClientMessage::Attach {
             capabilities: None,
@@ -4922,24 +4954,21 @@ fn attach_reports_layout_and_panes() {
             expected_server_nonce: None,
         },
     );
-    let Some((
-        _,
-        ServerMessage::Attached {
-            session,
-            panes,
-            layout_rev,
-            layout,
-            controller,
-            ..
-        },
-    )) = responses.first()
+    let ServerMessage::Attached {
+        session,
+        panes,
+        layout_rev,
+        layout,
+        controller,
+        ..
+    } = attached_reply(&server, id)
     else {
-        panic!("unexpected responses: {responses:?}");
+        panic!("expected an Attached reply");
     };
     assert_eq!(session, "dev");
-    assert_eq!(*layout_rev, 7);
+    assert_eq!(layout_rev, 7);
     assert!(layout.is_some());
-    assert_eq!(*controller, Some(id));
+    assert_eq!(controller, Some(id));
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0].pane_id, 4);
 }
@@ -5123,7 +5152,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
         .iter()
         .find(|item| item.id == client)
         .unwrap();
-    assert_eq!(client.outbox.len(), 2);
+    assert_eq!(client.outbox.len(), 3);
     assert_eq!(client.outbox[0].bytes[4], 2, "raw pane frame must be first");
     assert_eq!(
         client.outbox[1].bytes[4], 1,
@@ -8354,6 +8383,7 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
                     crate::events::EventKind::ForegroundChanged,
                     crate::events::EventKind::ClientJoined,
                     crate::events::EventKind::ClientLeft,
+                    crate::events::EventKind::PaneCwdChanged,
                     crate::events::EventKind::PaneSpawned,
                     crate::events::EventKind::LayoutChanged,
                     crate::events::EventKind::SessionRenamed,

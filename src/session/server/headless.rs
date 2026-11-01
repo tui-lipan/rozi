@@ -2885,7 +2885,7 @@ mod tests {
         // Nobody was attached when it arrived. The server keeps the report on the pane, so a
         // window that attaches afterwards is told it rather than having missed a broadcast.
         let (late, _stream) = super::super::tests::add_client(&mut server);
-        let attached = server.handle_message(
+        server.handle_message(
             late,
             ClientMessage::Attach {
                 capabilities: None,
@@ -2898,14 +2898,15 @@ mod tests {
                 expected_server_nonce: None,
             },
         );
-        let reported = attached.iter().find_map(|(_, message)| match message {
+        let attached = super::super::tests::attached_reply(&server, late);
+        let reported = match &attached {
             ServerMessage::Attached { panes, .. } => panes
                 .iter()
                 .find(|meta| meta.pane_id == 7)
                 .and_then(|meta| meta.runtime.integration.as_ref())
                 .map(|report| report.state),
             _ => None,
-        });
+        };
         assert_eq!(reported, Some(protocol::AgentState::Working));
     }
 

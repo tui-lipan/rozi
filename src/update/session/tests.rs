@@ -2065,8 +2065,28 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
                 state: runtime.clone(),
             })
             .expect("dispatch status transition");
+        assert!(
+            events.try_recv().is_err(),
+            "runtime receipts do not emit shared events"
+        );
+        backend
+            .update_level(Msg::SessionEvent {
+                epoch,
+                event: crate::session::server::events::SessionEvent {
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
+                    seq: 1,
+                    kind: crate::events::EventKind::PaneStatusChanged,
+                    data: std::collections::BTreeMap::from([
+                        ("pane".into(), "1".into()),
+                        ("status".into(), "blocked".into()),
+                        ("reason".into(), "needs approval".into()),
+                        ("previous_status".into(), "".into()),
+                    ]),
+                },
+            })
+            .unwrap();
         let event: serde_json::Value =
-            serde_json::from_str(&events.try_recv().expect("transition event")).unwrap();
+            serde_json::from_str(&events.try_recv().expect("server event")).unwrap();
         assert_eq!(event["event"], "pane-status-changed");
         assert_eq!(event["data"]["pane"], "1");
         assert_eq!(event["data"]["status"], "blocked");
@@ -3571,7 +3591,7 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
 }
 
 #[test]
-fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
+fn layout_revisions_do_not_duplicate_server_events() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(crate::AppRoot::default());
         let epoch = backend.state().runtime_epoch;
@@ -3590,14 +3610,34 @@ fn a_confirmed_or_applied_layout_revision_raises_layout_changed() {
                     live: false,
                 })
                 .unwrap();
-            let event: serde_json::Value = serde_json::from_str(&events.recv().unwrap()).unwrap();
-            assert_eq!(
-                event,
-                serde_json::json!({
-                    "event": "layout-changed",
-                    "data": {"revision": rev.to_string(), "author": expected}
-                })
+            assert!(
+                events.try_recv().is_err(),
+                "layout receipts must not invent events"
             );
+            backend
+                .update_level(Msg::SessionEvent {
+                    epoch,
+                    event: crate::session::server::events::SessionEvent {
+                        session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                            "test",
+                        ),
+                        seq: rev,
+                        kind: crate::events::EventKind::LayoutChanged,
+                        data: std::collections::BTreeMap::from([
+                            ("revision".into(), rev.to_string()),
+                            ("author".into(), expected.into()),
+                        ]),
+                    },
+                })
+                .unwrap();
+            let event: serde_json::Value = serde_json::from_str(
+                &events
+                    .recv_timeout(std::time::Duration::from_secs(1))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(event["data"]["revision"], rev.to_string());
+            assert_eq!(event["data"]["author"], expected);
         }
     });
 }
@@ -3950,7 +3990,7 @@ fn dispatch_runtime(
         .dispatch(Msg::SessionPaneRuntimeChanged {
             epoch,
             pane_id: 1,
-            local: false,
+            local: true,
             generation: 7,
             agents,
             state,
@@ -3974,7 +4014,10 @@ fn next_event(events: &std::sync::mpsc::Receiver<String>) -> serde_json::Value {
 fn agent_state_changes_emit_with_the_agents_list_state_and_ref() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(crate::AppRoot::default());
-        bind_first_pane(&mut backend);
+        let mut local = crate::state::Pane::new(1, 100, Default::default());
+        local.pty_generation = 7;
+        local.terminal.bind_session(1, 7);
+        backend.state_mut().scratch.panes.push(local);
         let events = backend.state().event_hub.subscribe(Some(HashSet::from([
             crate::events::EventKind::AgentStateChanged,
         ])));
@@ -4038,7 +4081,10 @@ fn agent_state_changes_emit_with_the_agents_list_state_and_ref() {
 fn foreground_changes_report_the_running_program() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(crate::AppRoot::default());
-        bind_first_pane(&mut backend);
+        let mut local = crate::state::Pane::new(1, 100, Default::default());
+        local.pty_generation = 7;
+        local.terminal.bind_session(1, 7);
+        backend.state_mut().scratch.panes.push(local);
         let events = backend.state().event_hub.subscribe(Some(HashSet::from([
             crate::events::EventKind::ForegroundChanged,
         ])));
@@ -4142,6 +4188,25 @@ fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
                     },
                 })
                 .expect("dispatch runtime");
+            if !local {
+                assert!(events.try_recv().is_err());
+                backend
+                    .update_level(Msg::SessionEvent {
+                        epoch,
+                        event: crate::session::server::events::SessionEvent {
+                            session_instance: crate::session::protocol::SessionInstanceId::for_test(
+                                "test",
+                            ),
+                            seq: 1,
+                            kind: crate::events::EventKind::ForegroundChanged,
+                            data: std::collections::BTreeMap::from([
+                                ("pane".into(), "1".into()),
+                                ("program".into(), "cargo".into()),
+                            ]),
+                        },
+                    })
+                    .unwrap();
+            }
             next_event(&events)["data"]["focused"].clone()
         };
 
@@ -4151,5 +4216,54 @@ fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
             "false",
             "the hidden session pane with its id"
         );
+    });
+}
+
+#[test]
+fn background_session_events_keep_their_scope_and_reject_stale_sources() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let instance = crate::session::protocol::SessionInstanceId::for_test("background");
+        let state = backend.state_mut();
+        state.runtime_epoch = 9;
+        state.current_mut().session_instance = Some(instance.clone());
+        state.park_current(9, crate::state::Attachment::new());
+        state.runtime_epoch = 10;
+        let events = backend.state().event_hub.subscribe_bound(
+            None,
+            Some(crate::state::WorkerBinding {
+                host: crate::state::HostKey::Local,
+                session: Some(instance.clone()),
+            }),
+        );
+        let event = crate::session::server::events::SessionEvent {
+            session_instance: instance,
+            seq: 1,
+            kind: crate::events::EventKind::ForegroundChanged,
+            data: std::collections::BTreeMap::from([("pane".into(), "1".into())]),
+        };
+        backend
+            .update_level(Msg::SessionEvent {
+                epoch: 9,
+                event: event.clone(),
+            })
+            .unwrap();
+        assert_eq!(next_event(&events)["data"]["focused"], "false");
+        backend
+            .update_level(Msg::SessionEvent {
+                epoch: 99,
+                event: event.clone(),
+            })
+            .unwrap();
+        let mut wrong_instance = event;
+        wrong_instance.session_instance =
+            crate::session::protocol::SessionInstanceId::for_test("other");
+        backend
+            .update_level(Msg::SessionEvent {
+                epoch: 9,
+                event: wrong_instance,
+            })
+            .unwrap();
+        assert!(events.try_recv().is_err());
     });
 }

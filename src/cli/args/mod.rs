@@ -2593,10 +2593,6 @@ mod tests {
                 "active workspace is client-local",
             ),
             (
-                vec!["--session", "dev", "subscribe"],
-                "subscribe streams UI events",
-            ),
-            (
                 vec!["--session", "dev", "pick"],
                 "pick opens a modal in a UI",
             ),

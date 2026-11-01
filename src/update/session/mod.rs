@@ -29,6 +29,26 @@ pub(crate) fn session_event(
     epoch: u64,
     event: crate::session::server::events::SessionEvent,
 ) -> Update {
+    let Some(attachment) = ctx.state.attachment_for_epoch(epoch) else {
+        return Update::none();
+    };
+    if attachment
+        .session_instance
+        .as_ref()
+        .is_some_and(|instance| instance != &event.session_instance)
+    {
+        return Update::none();
+    }
+    let is_controller = attachment.is_controller();
+    let client_id = attachment
+        .shared
+        .as_ref()
+        .map(|shared| shared.client_id.to_string());
+    let scope = crate::events::EventScope {
+        host: crate::state::HostKey::of(attachment.remote_target.as_ref()),
+        session: attachment.session_instance.clone(),
+    };
+    let remote_host = attachment.remote_host.clone();
     let mut fields: std::collections::BTreeMap<String, String> = event.data;
     if matches!(
         event.kind,
@@ -43,19 +63,13 @@ pub(crate) fn session_event(
         let is_focused = fields
             .get("pane")
             .and_then(|p| p.parse().ok())
-            .is_some_and(|id| ctx.state.current().focused_pane == Some(id));
+            .is_some_and(|id| {
+                epoch == ctx.state.runtime_epoch
+                    && ctx.state.focused_pane_target() == Some((id, false))
+            });
         fields.insert("focused".to_string(), is_focused.to_string());
     }
     if event.kind == crate::events::EventKind::ControllerChanged {
-        let client_id = if let Some(attachment) = ctx.state.attachment_for_epoch(epoch) {
-            attachment.shared.as_ref().map(|s| s.client_id.to_string())
-        } else {
-            ctx.state
-                .current()
-                .shared
-                .as_ref()
-                .map(|s| s.client_id.to_string())
-        };
         let is_self = client_id.as_deref().is_some_and(|id| {
             fields
                 .get("controller")
@@ -66,39 +80,18 @@ pub(crate) fn session_event(
     if event.kind == crate::events::EventKind::LayoutChanged
         && let Some(author_client) = fields.remove("author_client")
         && author_client != "0"
-        && ctx
-            .state
-            .current()
-            .shared
-            .as_ref()
-            .map(|s| s.client_id.to_string())
-            .as_deref()
-            == Some(&author_client)
+        && client_id.as_deref() == Some(&author_client)
     {
         fields.insert("author".to_string(), "self".to_string());
     }
 
     let client_event = crate::events::Event::from_map(event.kind, fields);
-    let (scope, remote_host) = if let Some(attachment) = ctx.state.attachment_for_epoch(epoch) {
-        (
-            crate::events::EventScope {
-                host: crate::state::HostKey::of(attachment.remote_target.as_ref()),
-                session: attachment.session_instance.clone(),
-            },
-            attachment.remote_host.clone(),
-        )
-    } else {
-        (
-            crate::events::EventScope::of(&ctx.state, &client_event),
-            ctx.state.current().remote_host.clone(),
-        )
-    };
 
     ctx.state
         .event_hub
         .publish_scoped(&client_event, Some(&scope));
 
-    if ctx.state.is_controller() {
+    if is_controller {
         crate::events::run_hooks_for_scope(&ctx.state, &client_event, remote_host.as_deref());
     }
 

@@ -109,7 +109,7 @@ pub(crate) fn layout_committed(
         .as_ref()
         .map(|shared| shared.client_id);
     let own = my_id == Some(author);
-    let update = if own {
+    if own {
         // Echo of our own commit: confirm the revision, never re-apply our own layout.
         if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
             shared.layout_rev = rev;
@@ -123,20 +123,7 @@ pub(crate) fn layout_committed(
             ctx.state.animation = crate::layout::anim::GeometryAnimation::None;
         }
         update
-    };
-    emit_layout_changed(
-        ctx,
-        rev,
-        if own {
-            "self"
-        } else if author == 0 {
-            // Client ids start at 1; a revision the server wrote itself carries 0.
-            "server"
-        } else {
-            "client"
-        },
-    );
-    update
+    }
 }
 
 fn background_layout_committed(
@@ -250,25 +237,6 @@ fn reconcile_with_pending_spawns(
         ws.tile_tree = crate::layout::effective_tile_tree(ws, None);
     }
     update
-}
-
-/// Announce that the session's layout now stands at accepted revision `rev`: a commit of this
-/// client's confirmed, or another client's or the server's applied.
-///
-/// Only an accepted revision raises it. A rejected commit is the layout specifically *not*
-/// changing - the request that made it already hears the conflict - so it is not announced as a
-/// change, and neither are animation frames or a commit still waiting for its confirmation.
-fn emit_layout_changed(ctx: &Context<AppRoot>, rev: u64, author: &'static str) {
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::LayoutChanged,
-            vec![
-                ("revision", rev.to_string()),
-                ("author", author.to_string()),
-            ],
-        ),
-    );
 }
 
 /// Mirror (or clear) the controller's lifted pane.

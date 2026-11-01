@@ -189,6 +189,7 @@ impl SessionServer {
                     "author",
                     if author == 0 { "server" } else { "client" }.to_string(),
                 ),
+                ("author_client", author.to_string()),
             ],
         );
         let mut messages = vec![(

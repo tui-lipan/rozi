@@ -49,6 +49,20 @@ pub(crate) fn session_event(
             ctx.state.is_controller().to_string(),
         );
     }
+    if event.kind == crate::events::EventKind::LayoutChanged
+        && let Some(author_client) = fields.remove("author_client")
+        && author_client != "0"
+        && ctx
+            .state
+            .current()
+            .shared
+            .as_ref()
+            .map(|s| s.client_id.to_string())
+            .as_deref()
+            == Some(&author_client)
+    {
+        fields.insert("author".to_string(), "self".to_string());
+    }
 
     let client_event = crate::events::Event::from_map(event.kind, fields);
     let (scope, remote_host) = if let Some(attachment) = ctx.state.attachment_for_epoch(epoch) {

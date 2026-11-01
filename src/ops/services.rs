@@ -1,24 +1,14 @@
 use crate::config::{ServiceConfig, ServiceLaunch, expand_path};
 use crate::extension_runtime::log::Attached;
-use crate::platform::command::{
-    CommandGroup, ShellEnv, configure_command_group, kill_on_supervisor_death,
-    spawn_retrying_on_busy,
+use crate::extension_runtime::supervisor::{
+    INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason, evaluate_spawn_failure,
+    spawn_with_log, terminate_with_log,
 };
+use crate::platform::command::{CommandGroup, ShellEnv};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService, State};
 use crate::{AppRoot, Msg};
 use std::time::{Duration, Instant};
 use tui_lipan::prelude::*;
-
-pub(crate) const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
-pub(crate) const MAX_BACKOFF: Duration = Duration::from_secs(30);
-pub(crate) const UPTIME_RESET_SECS: u64 = 60;
-pub(crate) const MAX_FAILURES: u32 = 5;
-
-/// The delay after `current`. Every restart path steps the ladder through here so a change to the
-/// curve cannot apply to crashes but miss clean exits, or apply to exits but miss failed spawns.
-pub(crate) fn next_backoff(current: Duration) -> Duration {
-    (current * 2).min(MAX_BACKOFF)
-}
 
 /// Whether a dormant service stays dormant across a config reload.
 ///
@@ -44,39 +34,54 @@ pub(crate) fn record_spawn_failure(
     detail: &str,
 ) -> Option<String> {
     let hint = log_hint(&config);
-    if config.restart == crate::config::ServiceRestart::Never {
-        let message = format!("`{name}` did not start\n{detail}\nRestart is disabled{hint}");
-        state.services.dormant.insert(
-            name,
-            DormantService {
-                config,
-                reason: DormantReason::NeverRestart,
-            },
-        );
-        return Some(message);
+    match evaluate_spawn_failure(config.restart, failures, backoff_delay, Instant::now()) {
+        RestartOutcome::Stop {
+            reason: StopReason::NeverRestart,
+            ..
+        } => {
+            let message = format!("`{name}` did not start\n{detail}\nRestart is disabled{hint}");
+            state.services.dormant.insert(
+                name,
+                DormantService {
+                    config,
+                    reason: DormantReason::NeverRestart,
+                },
+            );
+            Some(message)
+        }
+        RestartOutcome::Stop {
+            reason: StopReason::ExhaustedBackoff | StopReason::NormalExit,
+            ..
+        } => {
+            let message =
+                format!("`{name}` did not start after {MAX_FAILURES} attempts\n{detail}{hint}");
+            state.services.dormant.insert(
+                name,
+                DormantService {
+                    config,
+                    reason: DormantReason::ExhaustedBackoff,
+                },
+            );
+            Some(message)
+        }
+        RestartOutcome::Restart {
+            restart_at,
+            next_backoff,
+            failures,
+            ..
+        } => {
+            state.services.pending.insert(
+                name,
+                PendingRestart {
+                    config,
+                    restart_at,
+                    backoff_delay: next_backoff,
+                    consecutive_failures: failures,
+                },
+            );
+            None
+        }
     }
-    if failures >= MAX_FAILURES {
-        let message =
-            format!("`{name}` did not start after {MAX_FAILURES} attempts\n{detail}{hint}");
-        state.services.dormant.insert(
-            name,
-            DormantService {
-                config,
-                reason: DormantReason::ExhaustedBackoff,
-            },
-        );
-        return Some(message);
-    }
-    state.services.pending.insert(
-        name,
-        PendingRestart {
-            config,
-            restart_at: Instant::now() + backoff_delay,
-            backoff_delay: next_backoff(backoff_delay),
-            consecutive_failures: failures,
-        },
-    );
-    None
 }
 
 pub(crate) fn spawn_service_child(
@@ -129,32 +134,7 @@ pub(crate) fn spawn_service_child(
     // An extension's service keeps what it prints in the extension's log; any other service's
     // output is discarded.
     let log = service_log(config);
-    crate::extension_runtime::log::Log::route(&mut command, log.as_ref());
-    configure_command_group(&mut command);
-    kill_on_supervisor_death(&mut command);
-
-    let mut child = match spawn_retrying_on_busy(&mut command) {
-        Ok(child) => child,
-        Err(error) => {
-            if let Some(log) = &log {
-                log.note(&format!("could not start: {error}"));
-            }
-            return Err(error);
-        }
-    };
-    let group = match CommandGroup::new(&child) {
-        Ok(g) => g,
-        Err(e) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(e);
-        }
-    };
-    let attached = log.as_ref().map(|log| {
-        log.note(&format!("started pid {}", child.id()));
-        log.attach(&mut child)
-    });
-    Ok((child, group, attached))
+    spawn_with_log(&mut command, log.as_ref(), false)
 }
 
 /// The log of a service that belongs to an extension.
@@ -176,10 +156,12 @@ pub(crate) fn log_hint(config: &ServiceConfig) -> String {
 /// Stop a service rozi decided to stop: a reload that changed it, the extension being disabled or
 /// removed, or rozi quitting. Its log says so, since nothing else would.
 pub(crate) fn terminate_service(mut running: RunningService) {
-    running.group.terminate(&mut running.child);
-    if let Some(log) = &running.log {
-        log.finish("stopped by rozi");
-    }
+    terminate_with_log(
+        &mut running.child,
+        &running.group,
+        running.log.as_ref(),
+        "stopped by rozi",
+    );
 }
 
 pub(crate) fn terminate_all(state: &mut State) {
@@ -340,6 +322,7 @@ fn reconcile_service_set(
 mod tests {
     use super::*;
     use crate::config::ServiceRestart;
+    use crate::extension_runtime::supervisor::{MAX_BACKOFF, next_backoff};
     use std::collections::BTreeMap;
 
     fn shell(command: impl Into<String>) -> ServiceLaunch {

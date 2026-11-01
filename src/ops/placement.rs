@@ -23,7 +23,9 @@ use crate::config::{
 };
 use crate::extension_runtime::client::{RuntimeConnection, RuntimeEvent};
 use crate::extension_runtime::protocol::{Capture, Message, SpawnCwd, SpawnFailure};
-use crate::ops::services::{INITIAL_BACKOFF, MAX_FAILURES, UPTIME_RESET_SECS, next_backoff};
+use crate::extension_runtime::supervisor::{
+    INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason, evaluate_exit,
+};
 use crate::state::{
     HostKey, HostRuntime, HostRuntimeStatus, InstanceKey, InstanceStatus, PendingLaunch,
     PlacedInstance, State, Unavailable, WorkerBinding, WorkerId, WorkerKind, WorkerProcess,
@@ -1150,40 +1152,54 @@ fn service_exited(
     if instance.status != (InstanceStatus::Running { worker }) || killed {
         return;
     }
-    if instance
-        .started_at
-        .is_some_and(|at| at.elapsed() >= Duration::from_secs(UPTIME_RESET_SECS))
-    {
-        instance.failures = 0;
-        instance.backoff = INITIAL_BACKOFF;
-    }
     let clean = code == Some(0);
     let described = code.map_or_else(
         || "was terminated".to_string(),
         |code| format!("exited with status {code}"),
     );
     let restart = restart.unwrap_or(ServiceRestart::OnFailure);
-    if restart == ServiceRestart::Never || (restart == ServiceRestart::OnFailure && clean) {
-        instance.status = InstanceStatus::Stopped { detail: described };
-        return;
+    match evaluate_exit(
+        restart,
+        clean,
+        instance.started_at,
+        instance.failures,
+        instance.backoff,
+        Instant::now(),
+    ) {
+        RestartOutcome::Stop {
+            reason: StopReason::NeverRestart | StopReason::NormalExit,
+            failures,
+        } => {
+            instance.failures = failures;
+            instance.status = InstanceStatus::Stopped { detail: described };
+        }
+        RestartOutcome::Stop {
+            reason: StopReason::ExhaustedBackoff,
+            failures,
+        } => {
+            instance.failures = failures;
+            instance.status = InstanceStatus::Stopped {
+                detail: format!("{described}; gave up after {MAX_FAILURES} attempts"),
+            };
+            let message = format!(
+                "`{}` on {} {described} {MAX_FAILURES} times in a row and was not restarted",
+                key.service,
+                key.binding.host.label()
+            );
+            crate::pane::pty_events::notify_error(ctx, "Extension service failed", message);
+        }
+        RestartOutcome::Restart {
+            restart_at,
+            next_backoff,
+            failures,
+            ..
+        } => {
+            instance.failures = failures;
+            instance.backoff = next_backoff;
+            instance.status = InstanceStatus::Restarting { at: restart_at };
+            arm_wake(&mut ctx.state, Some(restart_at));
+        }
     }
-    instance.failures += 1;
-    if instance.failures >= MAX_FAILURES {
-        instance.status = InstanceStatus::Stopped {
-            detail: format!("{described}; gave up after {MAX_FAILURES} attempts"),
-        };
-        let message = format!(
-            "`{}` on {} {described} {MAX_FAILURES} times in a row and was not restarted",
-            key.service,
-            key.binding.host.label()
-        );
-        crate::pane::pty_events::notify_error(ctx, "Extension service failed", message);
-        return;
-    }
-    let at = Instant::now() + instance.backoff;
-    instance.backoff = next_backoff(instance.backoff);
-    instance.status = InstanceStatus::Restarting { at };
-    arm_wake(&mut ctx.state, Some(at));
 }
 
 /// The placed definition of a named command, if it has one.

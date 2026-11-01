@@ -10,44 +10,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::bundle::Bundle;
 use super::protocol::{
     self, Capture, Frame, Hello, Launch, Message, SpawnCwd, SpawnFailure, read_frame,
 };
 use super::store::{BundleStore, StoreError};
-use crate::platform::command::{
-    CommandGroup, configure_command_group, kill_on_supervisor_death, spawn_retrying_on_busy,
-};
+use super::supervisor::{ProcessSpec, SupervisedProcess};
 use crate::platform::ipc::{EndpointRegistry, IpcConnection};
-
-/// Environment the runtime sets for every process it starts, and never takes from the caller.
-const OWNED_ENV: &[&str] = &[
-    "ROZI",
-    "ROZI_BIN",
-    "ROZI_SOCKET",
-    "ROZI_EXTENSION_DIR",
-    crate::config::STATE_DIR_ENV,
-    crate::state::CREDENTIAL_ENV,
-];
-
-/// Environment a process must not inherit from the runtime itself: the runtime may have been
-/// started from inside a pane, and those values describe that pane, not this process.
-const INHERITED_ENV_REMOVED: &[&str] = &[
-    "ROZI_PANE",
-    "ROZI_SESSION_INSTANCE",
-    "ROZI_EXTENSION",
-    "ROZI_EXTENSION_GENERATION",
-    "ROZI_EXTENSION_CONFIG",
-    crate::config::STATE_DIR_ENV,
-    crate::config::SESSION_NAME_ENV,
-    "ROZI_SERVICE",
-];
 
 /// How long one read of a bridged connection waits before polling again.
 const BRIDGE_READ_POLL: Duration = Duration::from_millis(100);
@@ -89,24 +63,8 @@ enum Event {
 }
 
 struct Running {
-    child: Child,
-    group: CommandGroup,
-    // Never written. Held open so the process sees end of file once the runtime is gone,
-    // however it went.
-    _stdin: Option<ChildStdin>,
-    started: Instant,
+    process: SupervisedProcess,
     digest: String,
-    capture: Option<(Capture, std::thread::JoinHandle<Vec<u8>>)>,
-    log: Option<super::log::Attached>,
-}
-
-impl Running {
-    /// Record in the process's log how it ended, after the last of its output.
-    fn note(&self, outcome: &str) {
-        if let Some(log) = &self.log {
-            log.finish(outcome);
-        }
-    }
 }
 
 pub fn serve_with(
@@ -302,16 +260,14 @@ impl Runtime {
                 self.message(&reply)
             }
             Message::Kill { worker } => {
-                if let Some(mut running) = self.running.remove(&worker) {
-                    running.group.terminate(&mut running.child);
-                    running.note("stopped by rozi");
-                    let output = running.capture.take().map(|(_, reader)| collect(reader));
+                if let Some(running) = self.running.remove(&worker) {
+                    let outcome = running.process.kill("stopped by rozi");
                     self.message(&Message::Exited {
                         worker,
-                        code: None,
-                        killed: true,
-                        timed_out: false,
-                        output,
+                        code: outcome.code,
+                        killed: outcome.killed,
+                        timed_out: outcome.timed_out,
+                        output: outcome.output,
                     })?;
                 }
                 Ok(())
@@ -356,126 +312,23 @@ impl Runtime {
             StoreError::Corrupt(detail) => SpawnFailure::BundleCorrupt { detail },
             StoreError::Io(detail) => SpawnFailure::SpawnFailed { detail },
         })?;
-        // This host's own directory for the extension, never one the client names: state stays
-        // with the machine that wrote it.
-        let extension = env
-            .iter()
-            .find(|(key, _)| key == "ROZI_EXTENSION")
-            .map(|(_, id)| id.clone())
-            .ok_or_else(|| SpawnFailure::SpawnFailed {
-                detail: "the launch names no extension".to_string(),
-            })?;
-        let state_dir = crate::platform::paths::ensure_extension_state_dir(
-            &crate::platform::paths::PlatformEnv::from_process(),
-            &extension,
-        )
-        .map_err(|error| SpawnFailure::SpawnFailed {
-            detail: format!("cannot prepare the extension's state directory: {error}"),
+        let process = SupervisedProcess::spawn(ProcessSpec {
+            bundle_dir,
+            socket_path: self.bridge_path.clone(),
+            launch: launch.clone(),
+            cwd: cwd.clone(),
+            env,
+            credential: credential.to_string(),
+            platforms: platforms.to_vec(),
+            capture,
+            unit: unit.map(str::to_string),
         })?;
-        let mut command = build_command(launch, &bundle_dir)?;
-        match cwd {
-            SpawnCwd::Bundle { path } => {
-                if !super::bundle::is_contained(path) {
-                    return Err(SpawnFailure::SpawnFailed {
-                        detail: format!("working directory `{path}` is outside the extension"),
-                    });
-                }
-                command.current_dir(bundle_dir.join(path));
-            }
-            SpawnCwd::Host { path } => {
-                if Path::new(path).is_dir() {
-                    command.current_dir(path);
-                }
-            }
-            SpawnCwd::Inherit => {}
-        }
-        for key in INHERITED_ENV_REMOVED {
-            command.env_remove(key);
-        }
-        for (key, value) in env {
-            if !OWNED_ENV.contains(&key.as_str()) {
-                command.env(key, value);
-            }
-        }
-        command.env("ROZI", "1");
-        if let Ok(binary) = std::env::current_exe() {
-            command.env("ROZI_BIN", binary);
-        }
-        command.env("ROZI_SOCKET", &self.bridge_path);
-        command.env("ROZI_EXTENSION_DIR", &bundle_dir);
-        command.env(crate::config::STATE_DIR_ENV, &state_dir);
-        command.env(crate::state::CREDENTIAL_ENV, credential);
-        command.stdin(std::process::Stdio::piped());
-        // What the process prints is kept in this host's log for its unit. A collected process's
-        // standard output is its result, not a log, so only its standard error goes there.
-        let log = super::log::open(&extension, unit.unwrap_or("placed"));
-        if capture.is_some() {
-            command.stdout(std::process::Stdio::piped());
-            super::log::Log::route_stderr(&mut command, log.as_ref());
-        } else {
-            super::log::Log::route(&mut command, log.as_ref());
-        }
-        configure_command_group(&mut command);
-        kill_on_supervisor_death(&mut command);
-        let mut child = match spawn_retrying_on_busy(&mut command) {
-            Ok(child) => child,
-            Err(error) => {
-                if let Some(log) = &log {
-                    log.note(&format!("could not start: {error}"));
-                }
-                return Err(SpawnFailure::SpawnFailed {
-                    detail: error.to_string(),
-                });
-            }
-        };
-        let group = match CommandGroup::new(&child) {
-            Ok(group) => group,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(SpawnFailure::SpawnFailed {
-                    detail: error.to_string(),
-                });
-            }
-        };
-        let log = log.map(|log| {
-            log.note(&format!("started pid {}", child.id()));
-            if capture.is_some() {
-                log.attach_stderr(&mut child)
-            } else {
-                log.attach(&mut child)
-            }
-        });
-        let capture = capture.map(|capture| {
-            let mut stdout = child.stdout.take().expect("piped stdout");
-            let limit = capture.max_bytes;
-            let reader = std::thread::spawn(move || {
-                let mut collected = Vec::new();
-                let mut chunk = [0u8; 8192];
-                loop {
-                    match stdout.read(&mut chunk) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let room = limit.saturating_sub(collected.len());
-                            collected.extend_from_slice(&chunk[..n.min(room)]);
-                        }
-                    }
-                }
-                collected
-            });
-            (capture, reader)
-        });
-        let pid = child.id();
+        let pid = process.pid();
         self.running.insert(
             worker,
             Running {
-                _stdin: child.stdin.take(),
-                child,
-                group,
-                started: Instant::now(),
+                process,
                 digest: digest.to_string(),
-                capture,
-                log,
             },
         );
         Ok(pid)
@@ -502,44 +355,26 @@ impl Runtime {
     fn tick(&mut self) -> io::Result<()> {
         let mut ended = Vec::new();
         for (worker, running) in &mut self.running {
-            if let Some((capture, _)) = &running.capture
-                && running.started.elapsed() > Duration::from_millis(capture.timeout_ms)
-            {
-                running.group.terminate(&mut running.child);
-                ended.push((*worker, None, true));
-                continue;
-            }
-            match running.group.reap_if_exited(&mut running.child) {
-                Ok(Some(status)) => ended.push((*worker, status.code(), false)),
-                Ok(None) => {}
-                Err(_) => ended.push((*worker, None, false)),
+            if let Some(outcome) = running.process.poll() {
+                ended.push((*worker, outcome));
             }
         }
-        for (worker, code, timed_out) in ended {
-            let Some(mut running) = self.running.remove(&worker) else {
-                continue;
-            };
-            running.note(&match (code, timed_out) {
-                (_, true) => "stopped: timed out".to_string(),
-                (Some(code), false) => format!("exited with status {code}"),
-                (None, false) => "was terminated by a signal".to_string(),
-            });
-            let output = running.capture.take().map(|(_, reader)| collect(reader));
+        for (worker, outcome) in ended {
+            self.running.remove(&worker);
             self.message(&Message::Exited {
                 worker,
-                code,
-                killed: false,
-                timed_out,
-                output,
+                code: outcome.code,
+                killed: outcome.killed,
+                timed_out: outcome.timed_out,
+                output: outcome.output,
             })?;
         }
         Ok(())
     }
 
     fn shutdown(&mut self) {
-        for (_, mut running) in self.running.drain() {
-            running.group.terminate(&mut running.child);
-            running.note("stopped: the runtime shut down");
+        for (_, running) in self.running.drain() {
+            let _ = running.process.kill("stopped: the runtime shut down");
         }
         for (_, writer) in self.bridges.drain() {
             let _ = writer.send(None);
@@ -549,67 +384,6 @@ impl Runtime {
     fn message(&self, message: &Message) -> io::Result<()> {
         send(&self.writer, |out| protocol::write_message(out, message))
     }
-}
-
-fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> String {
-    String::from_utf8_lossy(&reader.join().unwrap_or_default()).into_owned()
-}
-
-fn build_command(
-    launch: &Launch,
-    bundle_dir: &Path,
-) -> Result<std::process::Command, SpawnFailure> {
-    match launch.template().resolve(bundle_dir) {
-        crate::config::LaunchTemplate::Direct(argv) => {
-            let Some((program, args)) = argv.split_first() else {
-                return Err(SpawnFailure::SpawnFailed {
-                    detail: "empty argv".to_string(),
-                });
-            };
-            let path = if Path::new(program).is_absolute() {
-                // Only a `./` path inside the bundle resolves to an absolute one; check it is there.
-                if !Path::new(program).is_file() {
-                    return Err(SpawnFailure::MissingExecutable {
-                        program: program.clone(),
-                    });
-                }
-                PathBuf::from(program)
-            } else {
-                locate(program).ok_or_else(|| SpawnFailure::MissingExecutable {
-                    program: program.clone(),
-                })?
-            };
-            let mut command = std::process::Command::new(path);
-            command.args(args);
-            Ok(command)
-        }
-        crate::config::LaunchTemplate::Shell(line) => {
-            let runner = crate::platform::command::resolve_command_shell(
-                None,
-                &crate::platform::command::ShellEnv::from_process(),
-            );
-            if !crate::platform::command::program_exists(&runner.program) {
-                return Err(SpawnFailure::MissingExecutable {
-                    program: runner.program,
-                });
-            }
-            let mut command = std::process::Command::new(&runner.program);
-            command.args(&runner.args);
-            command.arg(line);
-            Ok(command)
-        }
-    }
-}
-
-/// A bare program name on this host's `PATH`, or `None` when it is not installed.
-#[cfg(windows)]
-fn locate(program: &str) -> Option<PathBuf> {
-    crate::platform::command::lookup_program(program)
-}
-
-#[cfg(not(windows))]
-fn locate(program: &str) -> Option<PathBuf> {
-    crate::platform::command::program_exists(program).then(|| PathBuf::from(program))
 }
 
 fn send(
@@ -738,6 +512,10 @@ mod tests {
     use super::*;
     use crate::extension_runtime::bundle::BundleFile;
     use crate::extension_runtime::protocol::{write_hello, write_message, write_stage};
+    #[cfg(unix)]
+    use std::path::Path;
+    #[cfg(unix)]
+    use std::time::Instant;
 
     /// A short directory for the bridge endpoint: a Unix socket path has to fit in `sun_path`, so
     /// not under a deep temp directory. Windows names a pipe after it and has no such limit.

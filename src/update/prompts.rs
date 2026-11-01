@@ -516,7 +516,9 @@ fn close_or_advance_askpass(ctx: &mut Context<AppRoot>) -> Update {
     }
     ctx.state.askpass = None;
     ctx.state.commands_dirty = true;
-    if ctx.state.remote_picker.is_some() {
+    if ctx.state.show_release_notes {
+        crate::ops::focus::request_release_notes_focus(ctx);
+    } else if ctx.state.remote_picker.is_some() {
         crate::ops::focus::request_remote_picker_focus(ctx);
     } else if ctx.state.show_session_picker {
         crate::ops::focus::request_session_picker_focus(ctx);

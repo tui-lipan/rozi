@@ -5,6 +5,9 @@ use crate::state::PaneId;
 use crate::view;
 
 pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
+    if ctx.state.has_modal_overlay() {
+        return;
+    }
     if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
@@ -92,10 +95,16 @@ pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
 }
 
 pub(crate) fn request_session_picker_focus(ctx: &mut Context<AppRoot>) {
+    if ctx.state.askpass.is_some() || ctx.state.show_release_notes {
+        return;
+    }
     focus_key(ctx, view::session_picker_key());
 }
 
 pub(crate) fn request_remote_picker_focus(ctx: &mut Context<AppRoot>) {
+    if ctx.state.askpass.is_some() || ctx.state.show_release_notes {
+        return;
+    }
     focus_key(ctx, view::remote_picker_key());
 }
 

@@ -220,7 +220,9 @@ pub(crate) fn apply_attach_policy_if_occupied(
         selected: 0,
     });
     ctx.state.commands_dirty = true;
-    ctx.request_focus(crate::view::follow_prompt_key());
+    if ctx.state.askpass.is_none() && !ctx.state.show_release_notes {
+        ctx.request_focus(crate::view::follow_prompt_key());
+    }
 }
 
 /// Apply the user's answer to the follow prompt. Cancelling leaves the session the way switching

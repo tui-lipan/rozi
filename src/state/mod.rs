@@ -1264,10 +1264,17 @@ impl State {
         self.askpass.is_some() && self.modal_overlays().any(|name| name != "askpass")
     }
 
+    /// Whether the release notes modal is stacked on another dialog (such as the startup session or
+    /// remote-host picker) rather than on the panes.
+    pub fn release_notes_is_stacked(&self) -> bool {
+        self.show_release_notes && self.modal_overlays().any(|name| name != "release-notes")
+    }
+
     /// Every open modal overlay, topmost first.
-    fn modal_overlays(&self) -> impl Iterator<Item = &'static str> {
+    pub(crate) fn modal_overlays(&self) -> impl Iterator<Item = &'static str> {
         [
             (self.askpass.is_some(), "askpass"),
+            (self.show_release_notes, "release-notes"),
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),
             (self.agent_picker.is_some(), "agent-picker"),
@@ -1282,7 +1289,6 @@ impl State {
             (self.search.is_some(), "search"),
             (self.show_pick, "pick"),
             (self.show_layout_picker, "layout-picker"),
-            (self.show_release_notes, "release-notes"),
             (self.show_welcome, "welcome"),
             (self.show_theme_picker, "theme-picker"),
             (self.keybindings.is_some(), "help"),

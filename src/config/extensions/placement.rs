@@ -27,6 +27,8 @@ pub enum Placement {
     EachHost,
     /// One instance per attached session, on that session's host.
     EachSession,
+    /// Owned by an explicitly deployed session, independent of attached clients.
+    Session,
 }
 
 impl Placement {
@@ -36,6 +38,7 @@ impl Placement {
             Self::ActiveSession => "active-session",
             Self::EachHost => "each-host",
             Self::EachSession => "each-session",
+            Self::Session => "session",
         }
     }
 
@@ -53,7 +56,8 @@ impl Placement {
             "active-session" => Self::ActiveSession,
             "each-host" if service => Self::EachHost,
             "each-session" if service => Self::EachSession,
-            "each-host" | "each-session" => {
+            "session" if service => Self::Session,
+            "each-host" | "each-session" | "session" => {
                 return Err(format!(
                     "placement `{value}` is only for services; a command runs once, on the \
                      client or on the active session's host"
@@ -61,7 +65,7 @@ impl Placement {
             }
             other => {
                 let allowed = if service {
-                    "client, active-session, each-host, each-session"
+                    "client, active-session, each-host, each-session, session"
                 } else {
                     "client, active-session"
                 };
@@ -327,6 +331,12 @@ mod tests {
             Placement::EachSession
         );
         assert!(Placement::parse(Some("everywhere"), true).is_err());
+        assert!(Placement::parse(Some("session"), false).is_err());
+        assert_eq!(
+            Placement::parse(Some("session"), true).unwrap(),
+            Placement::Session
+        );
+        assert!(SessionScope::parse(Some("attached"), Placement::Session).is_err());
     }
 
     #[test]

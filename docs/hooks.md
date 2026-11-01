@@ -40,6 +40,7 @@ event's fields in the [environment](#environment).
 | `pane-cwd-changed` | A pane's working directory changes. | `pane`, `cwd`, `previous_cwd`, `focused` |
 | `agent-state-changed` | An agent's state changes, including when it appears in a pane and when it goes. Seeding agents on attach does not fire it. | `pane`, `agent`, `label`, `ref`, `state`, `previous_state`, `reason`, `focused` |
 | `foreground-changed` | The program running in a pane changes, including when the pane returns to its shell prompt. | `pane`, `program`, `previous_program`, `pid`, `focused` |
+| `session-notification` | A notification is sent to the session. Replaying the retained inbox does not raise it again. | `id`, `level`, `title`, `message`, `session` |
 | `bell` | A pane rings the terminal bell. Bells within 250 ms of the one reported are coalesced into it. | `pane`, `focused` |
 | `focus-changed` | Focus moves to another workspace pane. | `pane` |
 | `workspace-switched` | The active workspace changes. | `workspace` |
@@ -132,8 +133,8 @@ Hooks for events the session raises run only on the client holding layout contro
 runs one hook however many clients are attached: `pane-spawned`, `pane-exited`,
 `pane-status-changed`, `pane-title-changed`, `pane-cwd-changed`, `agent-state-changed`,
 `foreground-changed`, `bell`, `layout-changed`, `client-joined`, `client-left`,
-`controller-changed`, and `session-renamed`. While a session has no controller, these hooks do not
-run. Hooks for every other event run on the client where it happened.
+`controller-changed`, `session-renamed`, and `session-notification`. While a session has no
+controller, these hooks do not run. Hooks for every other event run on the client where it happened.
 
 Automation that must hear session events with no UI attached subscribes to the session with
 [`rozi --session <NAME> subscribe`](control.md#session-subscriptions).

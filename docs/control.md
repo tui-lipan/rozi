@@ -243,14 +243,16 @@ attached.
 | `move-to-workspace <1-9>` | Move the focused pane. | no |
 | `status [--target <PANE_ID>] <VALUE> [--reason TEXT]` | Report status for a pane. | yes |
 | `status --clear [--target <PANE_ID>]` | Clear reported status. | yes |
-| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Show a toast. | no |
+| `notify <MESSAGE> [--title TEXT] [--level info\|error]` | Notify a UI or a named session. | yes |
 | `show-command <ID>`, `hide-command <ID>` | Show or hide one of the calling extension's commands in the command palette. | no |
 | `subscribe [EVENT...] [--snapshot] [--after INSTANCE:SEQ]` | Stream events as NDJSON. An empty list subscribes to all events. `--snapshot` and `--after` need a session endpoint. | yes |
 | `pick [--title TEXT] [--placeholder TEXT] [--json]` | Open a modal picker using stdin and stdout. | no |
 | `prompt --title TEXT [--placeholder TEXT] [--value TEXT] [--masked] [--json]` | Ask for a line of text in a modal prompt. | no |
 | `publish` | Publish Activity rows over stdin and receive activations on stdout. `--kind agent` declares the rows agents; `--name` tells apart several publishers in one pane. | no |
 | `sidebar publish --tab TAB [--name NAME]` | Publish rows to a sidebar [stream tab](sidebar.md#stream-tabs) over stdin and receive what the user does with them on stdout. | no |
-| `extensions status [--json]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host). | no |
+| `extensions status [--json] [--session <NAME>]` | Report where the UI runs [placed extension processes](writing-extensions.md#run-on-the-session-host); with `--session`, report the extensions that session holds. | no |
+| `extensions deploy <ID> --session <NAME> [--remote HOST]` | Store a verified copy of an installed extension in a session, which keeps it across detach and restart. | — |
+| `extensions undeploy <ID> --session <NAME> [--remote HOST]` | Remove a session's copy of an extension. | — |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
 
@@ -283,8 +285,8 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 2,
-  "session_protocol": 37,
+  "schema": 3,
+  "session_protocol": 46,
   "capabilities": [
     "agent-prompt-results",
     "agent-waits",
@@ -314,7 +316,10 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "remote-extension-runtime",
     "runtime-events",
     "session-control",
+    "session-deployments",
     "session-no-resurrect",
+    "session-notifications",
+    "session-services",
     "sidebar-streams",
     "sidebar-tab-settings",
     "split-size"
@@ -330,6 +335,17 @@ background without opening a UI. An older binary refuses `--detach`.
 
 `session-no-resurrect` means `sessions new <NAME> --detach` accepts `--no-resurrect`. An older
 binary refuses it.
+
+`session-notifications` means `notify` accepts a session endpoint and its subscription snapshots
+include a retained notification inbox.
+
+`session-services` means explicitly deployed `placement = "session"` services run without a UI
+and use credentials issued by that session.
+
+`session-deployments` means a session server accepts `extensions deploy`, `extensions undeploy`,
+and `extensions status --session`: it keeps its own verified copy of an extension. An older
+session server refuses them, and `rozi extensions deploy` reports that the session cannot hold
+deployments.
 
 `extension-link-handlers` means installed extensions can contribute
 [link handlers](writing-extensions.md#link-handlers) through their manifest.
@@ -369,6 +385,7 @@ manifest that uses either.
 `list-panes`, `layout get`, `metrics`, `capture-pane`, `capture-ui`, `record list`, and
 `extensions status` print human-readable output to a terminal and stable JSON when redirected. Use
 `--format text` or `--format json` to choose explicitly, or `--json` for `extensions status`.
+`extensions deploy` prints its last chunk's report the same way.
 
 Other successful one-shot commands print a short acknowledgement on a terminal and the JSON
 response when redirected. A failure prints its error to stderr; with JSON output, the failure
@@ -926,7 +943,18 @@ Use `notify` for failures, and for successful results that would otherwise go un
 
 ```sh
 rozi notify "tests failed" --title Build --level error
+rozi --session work notify "background build finished"
 ```
+
+A notification sent to a session is stored there and raises `session-notification`. Every attached
+UI presents live notifications. A late attachment receives the retained inbox, which holds at most
+64 notifications and 256 KiB of message and title text while that server runs. A single message
+and title together may contain at most 8192 bytes. Restarting the server clears this inbox.
+
+Read state belongs to each UI. Displaying a notification in one UI does not hide it from another.
+Reconnecting to the same session instance avoids repeating notifications already displayed by that
+UI; starting a new UI presents the retained inbox again. Session subscription snapshots include
+`notifications`, with each item's `id`, `level`, `title`, `message`, and event `seq`.
 
 `show-command` and `hide-command` work only from an extension's own command or service, for a
 command its manifest declares. See

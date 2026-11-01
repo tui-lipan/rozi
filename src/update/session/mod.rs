@@ -85,6 +85,19 @@ pub(crate) fn session_event(
         fields.insert("author".to_string(), "self".to_string());
     }
 
+    let presentation = if event.kind == crate::events::EventKind::SessionNotification
+        && let Some(notification) = notification_from_fields(&fields, event.seq)
+    {
+        session_notifications(
+            ctx,
+            epoch,
+            event.session_instance.clone(),
+            fields.get("session").cloned().unwrap_or_default(),
+            vec![notification],
+        )
+    } else {
+        Update::none()
+    };
     let client_event = crate::events::Event::from_map(event.kind, fields);
 
     ctx.state
@@ -95,8 +108,69 @@ pub(crate) fn session_event(
         crate::events::run_hooks_for_scope(&ctx.state, &client_event, remote_host.as_deref());
     }
 
-    Update::none()
+    presentation
 }
 
 #[cfg(test)]
 mod tests;
+
+fn notification_from_fields(
+    fields: &std::collections::BTreeMap<String, String>,
+    seq: u64,
+) -> Option<crate::control::SessionNotification> {
+    Some(crate::control::SessionNotification {
+        id: fields.get("id")?.clone(),
+        seq,
+        level: crate::control::NotifyLevel::parse_cli(fields.get("level")?).ok()?,
+        title: fields
+            .get("title")
+            .filter(|title| !title.is_empty())
+            .cloned(),
+        message: fields.get("message")?.clone(),
+    })
+}
+
+pub(crate) fn session_notifications(
+    ctx: &mut Context<crate::app::AppRoot>,
+    epoch: u64,
+    instance: crate::session::protocol::SessionInstanceId,
+    session: String,
+    notifications: Vec<crate::control::SessionNotification>,
+) -> Update {
+    if ctx
+        .state
+        .attachment_for_epoch(epoch)
+        .is_none_or(|attachment| attachment.session_instance.as_ref() != Some(&instance))
+    {
+        return Update::none();
+    }
+    let mut shown = false;
+    for notification in notifications {
+        let cursor = ctx
+            .state
+            .session_notification_cursors
+            .entry(instance.clone())
+            .or_default();
+        if notification.seq <= *cursor {
+            continue;
+        }
+        *cursor = notification.seq;
+        shown = true;
+        let message = format!("{session}: {}", notification.message);
+        match notification.level {
+            crate::control::NotifyLevel::Info => crate::pane::pty_events::notify_info(ctx, message),
+            crate::control::NotifyLevel::Error => crate::pane::pty_events::notify_error(
+                ctx,
+                notification
+                    .title
+                    .unwrap_or_else(|| "Session notification".into()),
+                message,
+            ),
+        };
+    }
+    if shown {
+        Update::full()
+    } else {
+        Update::none()
+    }
+}

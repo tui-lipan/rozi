@@ -544,6 +544,12 @@ pub enum ServerMessage {
         allow_takeover: bool,
         origin: SessionOrigin,
     },
+    /// Retained inbox delivered immediately after attach, before live notification events.
+    SessionNotifications {
+        session_instance: super::SessionInstanceId,
+        session: String,
+        notifications: Vec<crate::control::SessionNotification>,
+    },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
         #[serde(default, skip_serializing_if = "Option::is_none")]

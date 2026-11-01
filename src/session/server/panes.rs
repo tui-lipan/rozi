@@ -29,6 +29,17 @@ impl SessionServer {
         if name == self.session_name {
             return ServerMessage::Renamed { session: name };
         }
+        self.drain_deployment_results();
+        if self
+            .deployment_worker
+            .as_ref()
+            .is_some_and(|worker| worker.pending != 0)
+        {
+            return ServerMessage::Error {
+                code: "rename-failed".into(),
+                message: "a deployment request is in progress; retry the rename".into(),
+            };
+        }
         let new_endpoint = match session_endpoint(&name) {
             Ok(endpoint) => endpoint,
             Err(err) => {
@@ -60,6 +71,18 @@ impl SessionServer {
                 message: err.to_string(),
             };
         }
+        // Session services run from the store being moved and were started with the old name, so
+        // none may run across the move, and Windows cannot move a directory one is using. They come
+        // back like after a restart, which also retires what they held.
+        self.deployment_worker.take();
+        self.stop_automation();
+        if let Err(error) = self.deployments.rename(&name) {
+            self.restart_deployments();
+            return ServerMessage::Error {
+                code: "rename-failed".into(),
+                message: error.to_string(),
+            };
+        }
         let retired = self.endpoint.replace(new_endpoint);
         self.pending_listener = Some((listener, retired));
         let previous = std::mem::replace(&mut self.session_name, name.clone());
@@ -67,6 +90,7 @@ impl SessionServer {
             events::EventKind::SessionRenamed,
             vec![("session", name.clone()), ("previous", previous)],
         );
+        self.restart_deployments();
         ServerMessage::Renamed { session: name }
     }
 

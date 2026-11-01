@@ -16,3 +16,7 @@ pub mod log;
 pub mod protocol;
 pub mod server;
 pub mod store;
+pub(crate) mod supervisor;
+
+/// Credentials issued by a session server, distinct from client runtime credentials.
+pub const SESSION_CREDENTIAL_PREFIX: &str = "session-v1:";

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::vec::IntoIter;
 
 use super::{
-    ControlCli, ControlEndpoint, ExtensionsCommand, ListFormat, ParsedCli, control_request,
-    reject_trailing_control_args, require_value,
+    CliArgs, ControlCli, ControlEndpoint, ExtensionsCommand, ExtensionsDeployCli, ListFormat,
+    ParsedCli, control_request, reject_trailing_control_args, require_value,
 };
 use crate::cli::help::{HelpSection, HelpStyles, append_help_sections, row};
 
@@ -34,8 +34,16 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             row("new <ID>", "Create a valid extension scaffold"),
             row("check <PATH> [--json]", "Validate an unpacked extension"),
             row(
-                "status [--json]",
-                "Show where placed extension processes run",
+                "status [--json] [--session <NAME>]",
+                "Show placed processes, or a session's deployments",
+            ),
+            row(
+                "deploy <ID> --session <NAME>",
+                "Store an extension on a session server",
+            ),
+            row(
+                "undeploy <ID> --session <NAME>",
+                "Remove an extension from a session server",
             ),
             row(
                 "logs <ID> [--unit <U>] [-n <N>]",
@@ -169,8 +177,9 @@ pub(crate) fn print_update_help() {
 
 pub(super) fn parse(
     iter: &mut Peekable<IntoIter<String>>,
-    config_path: Option<String>,
+    cli: CliArgs,
 ) -> std::result::Result<ParsedCli, String> {
+    let config_path = cli.config_path.clone();
     if iter
         .clone()
         .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
@@ -193,26 +202,9 @@ pub(super) fn parse(
         Some("new") => parse_new(iter),
         Some("check") => parse_check(iter),
         Some("logs") => parse_logs(iter),
-        Some("status") => {
-            let mut format = None;
-            for flag in iter {
-                match flag.as_str() {
-                    "--json" if format.is_none() => format = Some(ListFormat::Json),
-                    other => {
-                        return Err(format!(
-                            "unexpected argument `{other}` after extensions status"
-                        ));
-                    }
-                }
-            }
-            Ok(ParsedCli::Control(ControlCli {
-                config_path,
-                endpoint: ControlEndpoint::Ui(None),
-                request: control_request(crate::control::ControlCommand::ExtensionRuntimeStatus),
-                output_format: format,
-                output: None,
-            }))
-        }
+        Some("deploy") => parse_deploy(iter, cli),
+        Some("undeploy") => parse_undeploy(iter, cli),
+        Some("status") => parse_status(iter, cli),
         Some("runtime") => {
             if iter.next().is_some() {
                 return Err("extensions runtime accepts no arguments".to_string());
@@ -220,8 +212,199 @@ pub(super) fn parse(
             Ok(ParsedCli::Extensions(ExtensionsCommand::Runtime))
         }
         Some(other) => Err(format!(
-            "unknown extensions command `{other}` (expected list, install, update, remove, new, check, status, or logs)"
+            "unknown extensions command `{other}` (expected list, install, update, remove, new, check, deploy, undeploy, status, or logs)"
         )),
+    }
+}
+
+/// Where a session-owned extension command goes: one named session, on this machine or through
+/// `--remote`.
+struct SessionTarget {
+    session: String,
+    remote: Option<String>,
+}
+
+/// `--session` and `--remote`, from either side of the `extensions` namespace. A target given before
+/// it lives on `cli`; one given after it is collected here.
+struct SessionTargetFlags {
+    session: Option<String>,
+    flag_target: bool,
+    remote: Option<String>,
+    command: &'static str,
+}
+
+impl SessionTargetFlags {
+    fn new(cli: &CliArgs, command: &'static str) -> Self {
+        Self {
+            session: cli.attach_session.clone(),
+            flag_target: cli.session_flag_target,
+            remote: cli.remote.clone(),
+            command,
+        }
+    }
+
+    /// Take `arg` and its value if it is one of these flags. `Ok(false)` leaves it to the caller.
+    fn accept(
+        &mut self,
+        arg: &str,
+        iter: &mut impl Iterator<Item = String>,
+    ) -> std::result::Result<bool, String> {
+        let command = self.command;
+        match arg {
+            "--session" => {
+                let missing = format!("extensions {command} --session requires a name");
+                if self
+                    .session
+                    .replace(require_value(iter, &missing)?)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "extensions {command} names a session more than once"
+                    ));
+                }
+                self.flag_target = true;
+            }
+            "--remote" => {
+                if self.remote.is_some() {
+                    return Err(format!(
+                        "extensions {command} names a remote host more than once"
+                    ));
+                }
+                let missing = format!("extensions {command} --remote requires a host");
+                let target = require_value(iter, &missing)?;
+                crate::session::remote::parse_remote_target(&target)?;
+                self.remote = Some(target);
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// The session named, or `None` when no flag named anything to address.
+    fn target(self) -> std::result::Result<Option<SessionTarget>, String> {
+        let Some(session) = self.session else {
+            if self.remote.is_some() {
+                return Err(format!(
+                    "extensions {} --remote needs --session <NAME>: deployments belong to a named session",
+                    self.command
+                ));
+            }
+            return Ok(None);
+        };
+        if !self.flag_target {
+            return Err(format!(
+                "`{session}` is a launch target; write `--session {session}` to address that session"
+            ));
+        }
+        Ok(Some(SessionTarget {
+            session,
+            remote: self.remote,
+        }))
+    }
+}
+
+/// The target of a command that accepts nothing else and has no use without one.
+fn session_target(
+    cli: &CliArgs,
+    iter: &mut impl Iterator<Item = String>,
+    command: &'static str,
+) -> std::result::Result<SessionTarget, String> {
+    let mut flags = SessionTargetFlags::new(cli, command);
+    while let Some(arg) = iter.next() {
+        if !flags.accept(&arg, iter)? {
+            return Err(format!(
+                "unexpected argument `{arg}` after extensions {command}"
+            ));
+        }
+    }
+    flags.target()?.ok_or_else(|| {
+        format!(
+            "extensions {command} needs --session <NAME>: deployments belong to a session server"
+        )
+    })
+}
+
+fn parse_deploy(
+    iter: &mut Peekable<IntoIter<String>>,
+    cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let Some(first) = iter.next() else {
+        return Err("extensions deploy requires an extension id".to_string());
+    };
+    if first.starts_with('-') {
+        return Err(format!("unknown extensions deploy option `{first}`"));
+    }
+    let target = session_target(&cli, iter, "deploy")?;
+    Ok(ParsedCli::ExtensionsDeploy(ExtensionsDeployCli {
+        id: first,
+        session: target.session,
+        remote: target.remote,
+        config_path: cli.config_path,
+    }))
+}
+
+fn parse_undeploy(
+    iter: &mut Peekable<IntoIter<String>>,
+    cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let Some(first) = iter.next() else {
+        return Err("extensions undeploy requires an extension id".to_string());
+    };
+    if first.starts_with('-') {
+        return Err(format!("unknown extensions undeploy option `{first}`"));
+    }
+    let target = session_target(&cli, iter, "undeploy")?;
+    let endpoint = endpoint_for(&target);
+    Ok(ParsedCli::Control(ControlCli {
+        config_path: cli.config_path,
+        endpoint,
+        request: control_request(crate::control::ControlCommand::ExtensionsUndeploy { id: first }),
+        output_format: None,
+        output: None,
+    }))
+}
+
+fn parse_status(
+    iter: &mut Peekable<IntoIter<String>>,
+    cli: CliArgs,
+) -> std::result::Result<ParsedCli, String> {
+    let mut format = None;
+    let mut flags = SessionTargetFlags::new(&cli, "status");
+    while let Some(arg) = iter.next() {
+        if arg == "--json" && format.is_none() {
+            format = Some(ListFormat::Json);
+        } else if !flags.accept(&arg, iter)? {
+            return Err(format!(
+                "unexpected argument `{arg}` after extensions status"
+            ));
+        }
+    }
+    let (endpoint, command) = match flags.target()? {
+        None => (
+            ControlEndpoint::Ui(None),
+            crate::control::ControlCommand::ExtensionRuntimeStatus,
+        ),
+        Some(target) => (
+            endpoint_for(&target),
+            crate::control::ControlCommand::ExtensionsStatus,
+        ),
+    };
+    Ok(ParsedCli::Control(ControlCli {
+        config_path: cli.config_path,
+        endpoint,
+        request: control_request(command),
+        output_format: format,
+        output: None,
+    }))
+}
+
+fn endpoint_for(target: &SessionTarget) -> ControlEndpoint {
+    match &target.remote {
+        Some(host) => ControlEndpoint::Remote {
+            target: host.clone(),
+            session: target.session.clone(),
+        },
+        None => ControlEndpoint::Session(target.session.clone()),
     }
 }
 
@@ -441,6 +624,95 @@ mod tests {
     }
 
     #[test]
+    fn deployment_commands_target_one_named_session() {
+        let parse =
+            |args: &[&str]| parse_cli_args(args.iter().map(|arg| arg.to_string()).collect());
+
+        let Ok(ParsedCli::ExtensionsDeploy(command)) =
+            parse(&["extensions", "deploy", "demo", "--session", "work"])
+        else {
+            panic!("deploy is its own command");
+        };
+        assert_eq!(command.id, "demo");
+        assert_eq!(command.session, "work");
+        assert_eq!(command.remote, None);
+
+        // The session may also come before the namespace, where the global parser sees it.
+        let Ok(ParsedCli::ExtensionsDeploy(command)) =
+            parse(&["--session", "work", "extensions", "deploy", "demo"])
+        else {
+            panic!("deploy accepts the session before `extensions`");
+        };
+        assert_eq!(command.session, "work");
+
+        let Ok(ParsedCli::ExtensionsDeploy(command)) = parse(&[
+            "extensions",
+            "deploy",
+            "demo",
+            "--remote",
+            "build-host",
+            "--session",
+            "work",
+        ]) else {
+            panic!("deploy accepts --remote");
+        };
+        assert_eq!(command.remote.as_deref(), Some("build-host"));
+
+        // A deployment belongs to one session server, so there is no default target.
+        let error = parse(&["extensions", "deploy", "demo"]).expect_err("no session");
+        assert!(error.contains("--session"), "{error}");
+        let error = parse(&["extensions", "deploy", "demo", "--remote", "build-host"])
+            .expect_err("a remote host is not a session");
+        assert!(error.contains("--session"), "{error}");
+        let error = parse(&[
+            "extensions",
+            "deploy",
+            "demo",
+            "--session",
+            "work",
+            "--session",
+            "other",
+        ])
+        .expect_err("one session at a time");
+        assert!(error.contains("more than once"), "{error}");
+        let error = parse(&[
+            "extensions",
+            "deploy",
+            "demo",
+            "--session",
+            "work",
+            "--json",
+        ])
+        .expect_err("deploy streams a bundle, not a JSON report");
+        assert!(error.contains("unexpected argument"), "{error}");
+
+        let Ok(ParsedCli::Control(cli)) =
+            parse(&["extensions", "undeploy", "demo", "--session", "work"])
+        else {
+            panic!("undeploy is a control command");
+        };
+        assert_eq!(cli.endpoint, ControlEndpoint::Session("work".to_string()));
+        assert_eq!(
+            cli.request.command,
+            crate::control::ControlCommand::ExtensionsUndeploy {
+                id: "demo".to_string()
+            }
+        );
+
+        let Ok(ParsedCli::Control(cli)) =
+            parse(&["extensions", "status", "--session", "work", "--json"])
+        else {
+            panic!("status with a session is a control command");
+        };
+        assert_eq!(cli.endpoint, ControlEndpoint::Session("work".to_string()));
+        assert_eq!(
+            cli.request.command,
+            crate::control::ControlCommand::ExtensionsStatus
+        );
+        assert_eq!(cli.output_format, Some(ListFormat::Json));
+    }
+
+    #[test]
     fn extensions_namespace_parses_commands_and_help() {
         for args in [vec!["extensions"], vec!["extensions", "--help"]] {
             assert!(matches!(
@@ -591,7 +863,7 @@ mod tests {
         );
         assert_eq!(
             parse_cli_args(vec!["extensions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown extensions command `lst` (expected list, install, update, remove, new, check, status, or logs)"
+            "unknown extensions command `lst` (expected list, install, update, remove, new, check, deploy, undeploy, status, or logs)"
         );
     }
 

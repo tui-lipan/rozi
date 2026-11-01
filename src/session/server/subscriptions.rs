@@ -249,6 +249,7 @@ impl SessionServer {
                 layout_rev: self.layout_rev,
                 layout,
                 panes: self.session_pane_report(),
+                notifications: self.notifications.iter().cloned().collect(),
             }),
         };
         let encoded = serde_json::to_vec(&message).map_or(usize::MAX, |body| body.len());

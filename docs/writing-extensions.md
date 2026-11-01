@@ -232,17 +232,20 @@ declares exactly one of `exec` or `shell`.
 | `cwd` | path string | extension directory; a relative path resolves from there |
 | `restart` | `on-failure`, `always`, or `never` | `on-failure` |
 | `env` | string map | empty |
-| `placement` | `client`, `active-session`, `each-host`, or `each-session` | `client` |
+| `placement` | `client`, `active-session`, `each-host`, `each-session`, or `session` | `client` |
 | `session_scope` | `active` or `attached`; `attached` needs `each-host` or `each-session` | `active` |
 
-By default, services run in the client, not the session server; `placement` runs them on the hosts
-of attached sessions instead (see [Run on the session host](#run-on-the-session-host)). A service
-starts while a UI with the extension is attached, receives that UI's
-[control environment](#runtime-environment), and stops when the client detaches or the extension is
+By default, services run in the client. `active-session`, `each-host`, and `each-session` run them on
+the hosts of attached sessions. These services start while a UI with the extension is attached,
+receive that UI's
+[control environment](#runtime-environment), and stop when the client detaches or the extension is
 disabled or removed. A reload that changes a process-facing
 field or setting, any file in the extension directory other than `extension.toml`, or the
 checkout itself (as `rozi extensions update` replaces it) restarts the service; editing only
-`title`, `description`, or `version` in place leaves it running. An extension of more than 32 MiB or 4096 files is not checked for file changes. Services do not run in a detached session.
+`title`, `description`, or `version` in place leaves it running. An extension of more than 32 MiB
+or 4096 files is not checked for file changes. Use `placement = "session"` and
+[deploy the extension](extensions.md#deploy-to-a-session) for a service that must keep running after
+every client detaches.
 
 Let `rozi` supervise the process rather than daemonizing it or writing your own restart loop. Use a
 service for long-lived work such as [`rozi subscribe`](control.md#subscriptions) or
@@ -289,6 +292,7 @@ placement = "active-session"
 | `active-session` | On the host of the session on screen. A service follows that session: switching sessions restarts it beside the new one. | commands, services, command tabs |
 | `each-host` | One instance on every host with an attached session, including the client itself when a local session is attached. Several sessions on one host share it. | services |
 | `each-session` | One instance per attached session, on that session's host. | services |
+| `session` | One instance owned by each session you explicitly deploy the extension to. Runs with no UI attached. | services |
 
 A placed contribution runs from a copy of the extension's files, not from an installation on the
 host:
@@ -321,6 +325,35 @@ nothing on another machine:
 still load on a macOS client and run its placed contributions on a Linux host; its client
 contributions are left out.
 
+### Run a service without a UI
+
+```toml
+[[services]]
+name = "watch"
+exec = ["python3", "./bin/watch.py"]
+placement = "session"
+restart = "on-failure"
+```
+
+Deploy it with `rozi extensions deploy <ID> --session <NAME>`. Use
+`rozi extensions status --session <NAME>` for service states and process IDs. Session services read
+settings from `[extensions.<ID>]` in the host's config, combined with their deployed manifest's
+defaults. Redeploy or restart the session to apply host setting changes. While the host's config
+cannot be read, a service that is due to start stays stopped, and `status` gives the reason.
+
+These processes receive `ROZI_SESSION_INSTANCE` and find their session directly. Use `ROZI_BIN`
+for commands and subscriptions. They can use commands supported by a session endpoint, except
+`extensions deploy` and `extensions undeploy`. Commands needing a UI, including `pick` and
+`run-action`, are refused. There is no focused pane, so pane commands must name a target.
+
+Use `rozi notify` for a session notification. Every attached UI receives it, and a late UI receives
+the retained inbox. Subscribing to `session-notification` also works without a UI.
+
+Their `ROZI_EXTENSION_CREDENTIAL` comes from the session and is valid only there. Client-issued
+credentials and client generation claims are refused. Redeploying, undeploying, renaming the
+session, or restarting retires old credentials and closes their open subscriptions and pending
+requests. Do not copy or log credentials.
+
 ### Availability
 
 A placed contribution never falls back to running on the client. When a host cannot run it, `rozi`
@@ -346,9 +379,14 @@ anything is unavailable. `--json` prints the same report, and `rozi extensions l
 For each host, the client starts one extension runtime: in-process for the client's own machine,
 and over a separate SSH connection for a remote host. A remote runtime belongs to the client that
 started it. It ends, with everything it runs, when the client detaches the host's last session,
-exits, or loses the connection. Two clients attached to the same host each run their own. Nothing
-placed keeps running in a detached session; contributions that must, such as
-[agent definitions](#agent-definitions), come from extensions installed on the host itself.
+exits, or loses the connection. Two clients attached to the same host each run their own.
+
+Session services belong to an explicitly deployed extension. They start when deployed and return
+when the session restarts or is resurrected. Client reloads, attaching, and detaching do not change
+them. Redeploying or renaming the session restarts them under a new generation, and undeploying or
+deleting the session stops them. Services do not change the session's lifetime policy. If the session
+server is killed outright, a process a service started may outlive it, so a service that starts
+helpers should have them exit when it does.
 
 A placed service follows its `restart` policy like a client one. Disabling, removing, or changing the
 extension stops its placed processes on every host.

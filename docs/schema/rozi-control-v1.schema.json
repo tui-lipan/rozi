@@ -1267,6 +1267,80 @@
           "type": "object"
         },
         {
+          "description": "Upload a chunk of an extension bundle to a session server. `offset` is the byte in the\ncanonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk\nthat does not continue where the stored upload ended is refused rather than guessed at.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-deploy",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64 of the archive bytes in this chunk.",
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID the bundle must declare. Named `id`, not `extension`, because that name\nbelongs to the caller's provenance on the request around this command.",
+              "type": "string"
+            },
+            "last": {
+              "default": false,
+              "type": "boolean"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "digest",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Forget a session's deployment of one extension. The files stay if another deployment uses\nthe same digest.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-undeploy",
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID to forget; see [`Self::ExtensionsDeploy`] for why it is not `extension`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the extensions a session server holds, with the digest and generation each was\ndeployed under and whether its files still verify.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "focus",
@@ -2797,6 +2871,80 @@
           "type": "object"
         },
         {
+          "description": "Upload a chunk of an extension bundle to a session server. `offset` is the byte in the\ncanonical archive this chunk starts at; `last` finishes the upload and verifies it. A chunk\nthat does not continue where the stored upload ended is refused rather than guessed at.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-deploy",
+              "type": "string"
+            },
+            "data": {
+              "description": "Base64 of the archive bytes in this chunk.",
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID the bundle must declare. Named `id`, not `extension`, because that name\nbelongs to the caller's provenance on the request around this command.",
+              "type": "string"
+            },
+            "last": {
+              "default": false,
+              "type": "boolean"
+            },
+            "offset": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "digest",
+            "size",
+            "offset",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Forget a session's deployment of one extension. The files stay if another deployment uses\nthe same digest.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-undeploy",
+              "type": "string"
+            },
+            "id": {
+              "description": "The extension ID to forget; see [`Self::ExtensionsDeploy`] for why it is not `extension`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "List the extensions a session server holds, with the digest and generation each was\ndeployed under and whether its files still verify.",
+          "properties": {
+            "cmd": {
+              "const": "extensions-status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "focus",
@@ -4049,6 +4197,7 @@
         "agent-state-changed",
         "foreground-changed",
         "bell",
+        "session-notification",
         "focus-changed",
         "workspace-switched",
         "layout-changed",
@@ -4065,6 +4214,178 @@
         "config-reloaded"
       ],
       "type": "string"
+    },
+    "ExtensionDeploymentInfo": {
+      "properties": {
+        "deployed_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "digest": {
+          "description": "Content digest of the files the deployment runs from.",
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "files": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "Increases with every deployment this session records.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "local_copy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtensionLocalCopy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Comparison made by the CLI against its installed copy, absent on the session endpoint."
+        },
+        "reason": {
+          "description": "Why the deployment cannot run, when it cannot.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "services": {
+          "items": {
+            "$ref": "#/$defs/SessionServiceStatus"
+          },
+          "type": "array"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/ExtensionDeploymentStatus"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "extension",
+        "digest",
+        "generation",
+        "deployed_at_unix_ms",
+        "files",
+        "size",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ExtensionDeploymentReport": {
+      "description": "`extensions-status` on a session endpoint: the extensions that session holds itself.",
+      "properties": {
+        "deployments": {
+          "items": {
+            "$ref": "#/$defs/ExtensionDeploymentInfo"
+          },
+          "type": "array"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "deployments"
+      ],
+      "type": "object"
+    },
+    "ExtensionDeploymentStatus": {
+      "oneOf": [
+        {
+          "const": "deployed",
+          "description": "Stored, verified, and ready for the session to run.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Recorded, but its files no longer verify. The reason says what changed.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExtensionDeploymentUpload": {
+      "description": "One chunk's answer to `extensions-deploy`.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "received": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "extension",
+        "digest",
+        "received",
+        "size",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "ExtensionLocalCopy": {
+      "description": "How a deployment compares with the copy installed where the CLI runs.",
+      "oneOf": [
+        {
+          "enum": [
+            "matches",
+            "differs",
+            "not-installed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Installed, but its files could not be read to compare them.",
+          "type": "string"
+        }
+      ]
     },
     "ExtensionProvenance": {
       "description": "Provenance carried automatically by the CLI for a process launched by an extension.\n\nThe opaque generation is a fencing token, not authentication: it rejects processes from a\nretired runtime definition, but another process running as the same user is inside Rozi's trust\nboundary and may be able to observe it.",
@@ -4157,6 +4478,22 @@
         "runtimes",
         "instances",
         "processes"
+      ],
+      "type": "object"
+    },
+    "ExtensionUndeployReport": {
+      "description": "`extensions-undeploy`: whether anything was removed.",
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "extension",
+        "removed"
       ],
       "type": "object"
     },
@@ -6549,6 +6886,92 @@
       ],
       "type": "object"
     },
+    "SessionNotification": {
+      "description": "A notification retained by its session and presented independently by each client.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "level": {
+          "$ref": "#/$defs/NotifyLevel"
+        },
+        "message": {
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "level",
+        "message",
+        "seq"
+      ],
+      "type": "object"
+    },
+    "SessionServiceState": {
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "starting",
+          "description": "Asked to start; no process has been reported yet.",
+          "type": "string"
+        },
+        {
+          "const": "restarting",
+          "description": "Exited, and waiting out its backoff before the next start.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Not running and not due to start again. `reason` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "SessionServiceStatus": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/SessionServiceState"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "type": "object"
+    },
     "SessionSubscribeRecord": {
       "description": "Typed records streamed by a session subscription.",
       "oneOf": [
@@ -6644,6 +7067,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "notifications": {
+          "items": {
+            "$ref": "#/$defs/SessionNotification"
+          },
+          "type": "array"
+        },
         "panes": {
           "items": {
             "$ref": "#/$defs/PaneInfo"
@@ -6668,7 +7097,8 @@
         "seq",
         "client_count",
         "layout_rev",
-        "panes"
+        "panes",
+        "notifications"
       ],
       "type": "object"
     },

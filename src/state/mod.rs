@@ -440,6 +440,7 @@ pub struct State {
     pub(crate) welcome_due: bool,
     pub show_welcome: bool,
     pub event_hub: crate::events::EventHub,
+    pub session_notification_cursors: HashMap<crate::session::protocol::SessionInstanceId, u64>,
     /// Open `publish` streams, keyed by the pane whose program opened one.
     ///
     /// Held so a sidebar click can ask that program to bring a row on screen. Dropping the sender
@@ -775,6 +776,7 @@ impl State {
             welcome_due: false,
             show_welcome: false,
             event_hub: crate::events::EventHub::default(),
+            session_notification_cursors: HashMap::new(),
             publish_streams: std::collections::HashMap::new(),
             terminal_presentation_subscription: None,
             extension_subscriptions: HashMap::new(),

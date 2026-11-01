@@ -183,6 +183,39 @@ The list includes loaded, disabled, invalid, incompatible, and duplicate extensi
 adds installation paths; public command, service, agent, and sidebar tab IDs; navigation targets;
 resolved executables; and validation errors.
 
+## Deploy to a session
+
+A session server keeps its own copy of an extension when you deploy one to it. The copy belongs to
+the session: it stays after the last UI detaches, survives the session restarting or being
+resurrected, and is deleted only when the session itself is deleted.
+
+```sh
+rozi extensions deploy git-tools --session work
+rozi extensions status --session work
+rozi extensions undeploy git-tools --session work
+```
+
+`deploy` reads the installed extension this `rozi` validated, so the session receives the files you
+have, not whatever another `rozi` has loaded. A copy that does not match the bundle it was sent as,
+or whose manifest names a different extension, is refused. `status --session` lists each deployment
+with its digest, generation, file count, and the state and process ID of each session service. It
+compares each deployment with the local installed copy and reports `matches`, `differs`,
+`not-installed`, or `unavailable`. A deployment whose files fail verification stays unavailable until
+you redeploy it. `undeploy` removes the record and the files unless another deployment uses the same
+files.
+
+Deployments belong to one named session, so `--session` is required; there is no default session to
+deploy to. Temporary sessions and read-only clients cannot change deployments. Attaching a UI
+does not update deployed files. Add `--remote <TARGET>` to deploy to a session on another machine
+over SSH, using the same targets as [`rozi --remote`](remote.md). Without `--session`,
+`rozi extensions status` reports where this client runs
+[placed extension processes](writing-extensions.md#run-on-the-session-host).
+
+Deployed files are trusted executable code on the session's host. The deployment store is private
+to that host's user. Every file in the extension directory is transferred, including manifest
+settings, so keep credentials outside the extension directory. Configure secrets on the host and
+read them from the host's credential provider or private files.
+
 ## Disable or remove an extension
 
 Press `Enter` on a loaded extension in **Extensions…** to disable it, and again to enable it. `rozi`

@@ -1,7 +1,7 @@
-use crate::config::ServiceRestart;
-use crate::ops::services::{
-    INITIAL_BACKOFF, MAX_FAILURES, next_backoff, record_spawn_failure, spawn_service_child,
+use crate::extension_runtime::supervisor::{
+    BackoffPolicy, MAX_FAILURES, RestartOutcome, StopReason,
 };
+use crate::ops::services::{record_spawn_failure, spawn_service_child};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService};
 use crate::{AppRoot, Msg};
 use std::time::{Duration, Instant};
@@ -38,14 +38,6 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
             None => continue,
         };
 
-        let mut consecutive_failures = running.consecutive_failures;
-        let mut backoff_delay = running.backoff_delay;
-        if running.started_at.elapsed()
-            >= Duration::from_secs(crate::ops::services::UPTIME_RESET_SECS)
-        {
-            consecutive_failures = 0;
-            backoff_delay = INITIAL_BACKOFF;
-        }
         // Already reaped and contained by `reap_if_exited`; terminating again would signal a group
         // id the kernel is free to have reused.
         let config = running.config.clone();
@@ -61,8 +53,18 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
         }
         let hint = crate::ops::services::log_hint(&config);
 
-        match config.restart {
-            ServiceRestart::Never => {
+        match BackoffPolicy::default().evaluate_exit(
+            config.restart,
+            is_success,
+            Some(running.started_at),
+            running.consecutive_failures,
+            running.backoff_delay,
+            Instant::now(),
+        ) {
+            RestartOutcome::Stop {
+                reason: StopReason::NeverRestart,
+                ..
+            } => {
                 if !is_success {
                     crate::pane::pty_events::notify_error(
                         ctx,
@@ -78,96 +80,53 @@ pub(crate) fn handle_tick(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
                     },
                 );
             }
-            ServiceRestart::OnFailure => {
-                if is_success {
-                    ctx.state.services.dormant.insert(
-                        name,
-                        DormantService {
-                            config,
-                            reason: DormantReason::NormalExit,
-                        },
-                    );
-                } else {
-                    consecutive_failures += 1;
-                    if consecutive_failures >= MAX_FAILURES {
-                        crate::pane::pty_events::notify_error(
-                            ctx,
-                            "Service failed",
-                            format!(
-                                "`{name}` failed {MAX_FAILURES} times\n\
-                                 Last result: {failure_detail}{hint}"
-                            ),
-                        );
-                        ctx.state.services.dormant.insert(
-                            name,
-                            DormantService {
-                                config,
-                                reason: DormantReason::ExhaustedBackoff,
-                            },
-                        );
-                    } else {
-                        let restart_at = Instant::now() + backoff_delay;
-                        let next_backoff = next_backoff(backoff_delay);
-                        ctx.state.services.pending.insert(
-                            name,
-                            PendingRestart {
-                                config,
-                                restart_at,
-                                backoff_delay: next_backoff,
-                                consecutive_failures,
-                            },
-                        );
-                    }
-                }
+            RestartOutcome::Stop {
+                reason: StopReason::NormalExit,
+                ..
+            } => {
+                ctx.state.services.dormant.insert(
+                    name,
+                    DormantService {
+                        config,
+                        reason: DormantReason::NormalExit,
+                    },
+                );
             }
-            ServiceRestart::Always => {
-                if is_success {
-                    // A clean exit is not a failure, so it never counts toward dormancy - but it
-                    // still steps the ladder. Without that, a service that exits 0 immediately
-                    // respawns once a second for the life of the session, silently. The uptime
-                    // reset above is what returns a healthy service to a 1s restart.
-                    let restart_at = Instant::now() + backoff_delay;
-                    ctx.state.services.pending.insert(
-                        name,
-                        PendingRestart {
-                            config,
-                            restart_at,
-                            backoff_delay: next_backoff(backoff_delay),
-                            consecutive_failures,
-                        },
-                    );
-                } else {
-                    consecutive_failures += 1;
-                    if consecutive_failures >= MAX_FAILURES {
-                        crate::pane::pty_events::notify_error(
-                            ctx,
-                            "Service failed",
-                            format!(
-                                "`{name}` failed {MAX_FAILURES} times\n\
-                                 Last result: {failure_detail}{hint}"
-                            ),
-                        );
-                        ctx.state.services.dormant.insert(
-                            name,
-                            DormantService {
-                                config,
-                                reason: DormantReason::ExhaustedBackoff,
-                            },
-                        );
-                    } else {
-                        let restart_at = Instant::now() + backoff_delay;
-                        let next_backoff = next_backoff(backoff_delay);
-                        ctx.state.services.pending.insert(
-                            name,
-                            PendingRestart {
-                                config,
-                                restart_at,
-                                backoff_delay: next_backoff,
-                                consecutive_failures,
-                            },
-                        );
-                    }
-                }
+            RestartOutcome::Stop {
+                reason: StopReason::ExhaustedBackoff,
+                ..
+            } => {
+                crate::pane::pty_events::notify_error(
+                    ctx,
+                    "Service failed",
+                    format!(
+                        "`{name}` failed {MAX_FAILURES} times\n\
+                         Last result: {failure_detail}{hint}"
+                    ),
+                );
+                ctx.state.services.dormant.insert(
+                    name,
+                    DormantService {
+                        config,
+                        reason: DormantReason::ExhaustedBackoff,
+                    },
+                );
+            }
+            RestartOutcome::Restart {
+                restart_at,
+                next_backoff,
+                failures,
+                ..
+            } => {
+                ctx.state.services.pending.insert(
+                    name,
+                    PendingRestart {
+                        config,
+                        restart_at,
+                        backoff_delay: next_backoff,
+                        consecutive_failures: failures,
+                    },
+                );
             }
         }
     }

@@ -689,6 +689,126 @@ fn format_check_text(sections: &[crate::config::ReportSection], styles: OutputSt
     out
 }
 
+/// Upload one installed extension to a session server in bounded chunks.
+///
+/// The bundle is read from the installation this client already validated, not from whatever a UI
+/// happens to be running, so the bytes the session keeps are the ones the sender named. Each chunk
+/// is its own control request: a session endpoint answers one request per connection, and a 32 MiB
+/// bundle cannot fit in one.
+pub(crate) fn run_deploy_extension_cli(command: super::args::ExtensionsDeployCli) -> Result<()> {
+    use base64::Engine as _;
+
+    let scan = crate::config::scan_extensions_for_cli();
+    let entry = scan
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id.as_deref() == Some(command.id.as_str()))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("extension `{}` is not installed", command.id),
+            )
+        })?;
+    if matches!(
+        entry.status,
+        crate::config::ExtensionStatus::Invalid | crate::config::ExtensionStatus::Incompatible
+    ) {
+        return Err(std::io::Error::other(format!(
+            "extension `{}` cannot be deployed: {}",
+            command.id,
+            if entry.errors.is_empty() {
+                entry.status.as_str().to_string()
+            } else {
+                entry.errors.join("; ")
+            }
+        ))
+        .into());
+    }
+    let bundle = crate::extension_runtime::bundle::snapshot(std::path::Path::new(&entry.path))
+        .map_err(std::io::Error::other)?;
+    let archive = bundle.archive();
+    let size = archive.len() as u64;
+    let remote = match &command.remote {
+        Some(target) => Some(
+            crate::session::remote::parse_remote_target(target).map_err(std::io::Error::other)?,
+        ),
+        None => None,
+    };
+    let remote_config = remote
+        .as_ref()
+        .map(|_| crate::config::load_config().config.remote);
+    let mut offset = 0usize;
+    let mut final_reply = None;
+    while offset < archive.len() {
+        let end = (offset + crate::session::server::DEPLOY_CHUNK_BYTES).min(archive.len());
+        let mut request =
+            super::args::control_request(crate::control::ControlCommand::ExtensionsDeploy {
+                id: command.id.clone(),
+                digest: bundle.digest().to_string(),
+                size,
+                offset: offset as u64,
+                data: base64::engine::general_purpose::STANDARD.encode(&archive[offset..end]),
+                last: end == archive.len(),
+            });
+        super::control::drop_caller_pane(&mut request);
+        let response = match ask_deploy_endpoint(
+            &command.session,
+            remote.as_ref(),
+            remote_config.as_ref(),
+            request,
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                // The session was never reached; the same status a refused connection exits with.
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        };
+        if !response.ok {
+            if let Some(error) = &response.error {
+                eprintln!("{error}");
+            }
+            std::process::exit(1);
+        }
+        final_reply = Some(response);
+        offset = end;
+    }
+
+    if let Some(response) = final_reply {
+        print_deploy_reply(&response);
+    }
+    Ok(())
+}
+
+fn ask_deploy_endpoint(
+    session: &str,
+    remote: Option<&crate::session::remote::RemoteTarget>,
+    remote_config: Option<&crate::config::RemoteConfig>,
+    request: crate::control::ControlRequest,
+) -> std::result::Result<crate::control::ControlResponse, String> {
+    match (remote, remote_config) {
+        (Some(target), Some(config)) => {
+            crate::session::remote::control::forward_control(target, session, &request, config)
+        }
+        _ => crate::session::headless::run_session_control(session, request)
+            .map_err(|error| error.to_string()),
+    }
+}
+
+fn print_deploy_reply(response: &crate::control::ControlResponse) {
+    use std::io::IsTerminal;
+
+    let styles = OutputStyles::detect();
+    if std::io::stdout().is_terminal() {
+        print!(
+            "{}",
+            super::output::format_extension_deploy_text(response.data.as_ref(), styles)
+        );
+    } else {
+        println!("{}", serde_json::to_string(response).unwrap_or_default());
+    }
+}
+
 fn report_tone(tone: crate::config::ReportTone) -> OutputTone {
     match tone {
         crate::config::ReportTone::Plain => OutputTone::Plain,
@@ -698,4 +818,38 @@ fn report_tone(tone: crate::config::ReportTone) -> OutputTone {
         crate::config::ReportTone::Error => OutputTone::Error,
         crate::config::ReportTone::Muted => OutputTone::Muted,
     }
+}
+
+/// Compare deployed bytes with the invoking client's installed extensions.
+pub(super) fn compare_deployments_with_local(response: &mut serde_json::Value) {
+    let Some(data) = response.get_mut("data") else {
+        return;
+    };
+    let Ok(mut report) =
+        serde_json::from_value::<crate::control::ExtensionDeploymentReport>(data.clone())
+    else {
+        return;
+    };
+    let entries = crate::config::scan_extensions_for_cli().entries();
+    for deployment in &mut report.deployments {
+        use crate::control::ExtensionLocalCopy;
+        deployment.local_copy = Some(
+            match entries
+                .iter()
+                .find(|entry| entry.id.as_deref() == Some(&deployment.extension))
+            {
+                None => ExtensionLocalCopy::NotInstalled,
+                Some(entry) => match crate::extension_runtime::bundle::snapshot(
+                    std::path::Path::new(&entry.path),
+                ) {
+                    Ok(bundle) if bundle.digest() == deployment.digest => {
+                        ExtensionLocalCopy::Matches
+                    }
+                    Ok(_) => ExtensionLocalCopy::Differs,
+                    Err(_) => ExtensionLocalCopy::Unavailable,
+                },
+            },
+        );
+    }
+    *data = serde_json::to_value(report).expect("deployment report serializes");
 }

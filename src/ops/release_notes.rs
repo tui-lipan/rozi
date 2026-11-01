@@ -532,4 +532,70 @@ mod app_tests {
             assert!(!other.state().release_notes_due);
         });
     }
+
+    fn row_of(frame: &str, needle: &str) -> usize {
+        frame
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("`{needle}` is on screen:\n{frame}"))
+    }
+
+    #[test]
+    fn askpass_over_release_notes_and_startup_picker_staggers_modal_tops() {
+        crate::test_support::on_large_stack(|| {
+            // Case 1: release notes -> askpass (no picker beneath).
+            let mut backend = backend_with("9.9.5");
+            backend
+                .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
+                .unwrap();
+            let base_top = row_of(&frame(&mut backend), "What's new · rozi v9.9.5");
+            assert!(!backend.state().release_notes_is_stacked());
+
+            backend
+                .dispatch(Msg::RemoteAskpassPrompt {
+                    id: 1,
+                    session: "ssh-1".into(),
+                    attach_epoch: None,
+                    kind: crate::session::remote::AskpassKind::Secret,
+                    prompt: "dev@workbox's password: ".into(),
+                })
+                .unwrap();
+            assert!(!backend.state().release_notes_is_stacked());
+            assert_eq!(backend.state().askpass_stack_depth(), 1);
+            let stacked_two = frame(&mut backend);
+            assert_eq!(
+                row_of(&stacked_two, "What's new · rozi v9.9.5"),
+                base_top,
+                "{stacked_two}"
+            );
+            assert_eq!(
+                row_of(&stacked_two, "SSH · dev@workbox's password"),
+                base_top + 1,
+                "{stacked_two}"
+            );
+
+            // Case 2: session picker -> release notes -> askpass.
+            backend.state_mut().session_picker =
+                Some(crate::state::SessionPickerState::new(Vec::new()));
+            backend.state_mut().show_session_picker = true;
+            assert!(backend.state().release_notes_is_stacked());
+            assert_eq!(backend.state().askpass_stack_depth(), 2);
+            let stacked_three = frame(&mut backend);
+            assert_eq!(
+                row_of(&stacked_three, "Sessions"),
+                base_top,
+                "{stacked_three}"
+            );
+            assert_eq!(
+                row_of(&stacked_three, "What's new · rozi v9.9.5"),
+                base_top + 1,
+                "{stacked_three}"
+            );
+            assert_eq!(
+                row_of(&stacked_three, "SSH · dev@workbox's password"),
+                base_top + 2,
+                "{stacked_three}"
+            );
+        });
+    }
 }

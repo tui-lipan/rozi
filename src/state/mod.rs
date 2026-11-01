@@ -1258,16 +1258,36 @@ impl State {
         self.modal_overlays().next()
     }
 
-    /// Whether an SSH prompt is stacked on another dialog rather than on the panes, so it drops one
-    /// row below that dialog's top like every other stacked card.
-    pub fn askpass_is_stacked(&self) -> bool {
-        self.askpass.is_some() && self.modal_overlays().any(|name| name != "askpass")
+    /// How many open modal dialogs sit beneath an SSH prompt (`0` when it is over the panes or is
+    /// not open), so it drops one row per dialog below the bottom dialog's top edge.
+    pub fn askpass_stack_depth(&self) -> u16 {
+        if self.askpass.is_none() {
+            return 0;
+        }
+        u16::try_from(
+            self.modal_overlays()
+                .skip_while(|&name| name != "askpass")
+                .skip(1)
+                .count(),
+        )
+        .unwrap_or(u16::MAX)
     }
 
-    /// Whether the release notes modal is stacked on another dialog (such as the startup session or
-    /// remote-host picker) rather than on the panes.
+    /// Whether an SSH prompt is stacked on another dialog rather than on the panes, so it drops
+    /// below that dialog's top like every other stacked card.
+    pub fn askpass_is_stacked(&self) -> bool {
+        self.askpass_stack_depth() > 0
+    }
+
+    /// Whether the release notes modal is stacked on another dialog beneath it (such as the
+    /// startup session or remote-host picker) rather than on the panes.
     pub fn release_notes_is_stacked(&self) -> bool {
-        self.show_release_notes && self.modal_overlays().any(|name| name != "release-notes")
+        self.show_release_notes
+            && self
+                .modal_overlays()
+                .skip_while(|&name| name != "release-notes")
+                .nth(1)
+                .is_some()
     }
 
     /// Every open modal overlay, topmost first.

@@ -153,8 +153,10 @@ pub(super) struct DialogChrome<'a> {
     pub(super) caption: Option<PromptCaption<'a>>,
     /// Fade whatever is already on screen behind this dialog. See [`PromptChrome::dim_behind`].
     pub(super) dim_behind: bool,
-    /// When this dialog stacks on a list overlay, pin it one row below that overlay's top.
+    /// When this dialog stacks on a list overlay, pin it below that overlay's top.
     pub(super) parent_reserve_percent: Option<u16>,
+    /// How many cards stack between that list overlay and this dialog, counting the dialog.
+    pub(super) layers: u16,
 }
 
 /// Shared chrome for the dialogs answered by choosing rather than typing: the palette modal every
@@ -174,6 +176,7 @@ pub(super) fn dialog_overlay(
         caption,
         dim_behind,
         parent_reserve_percent,
+        layers,
     } = chrome;
     let theme = &ctx.state.theme;
     let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
@@ -197,7 +200,8 @@ pub(super) fn dialog_overlay(
     body = body.child(dialog_button_row(ctx, &close, buttons));
 
     let mut modal = match parent_reserve_percent {
-        Some(parent) => nested_action_palette_modal(ctx, title, parent),
+        Some(parent) => action_palette_modal(ctx, title)
+            .reserve_height(crate::view::stacked_reserve(ctx, parent, layers)),
         None => action_palette_modal(ctx, title),
     }
     .on_close(ctx.link().callback(move |_| close.clone()))

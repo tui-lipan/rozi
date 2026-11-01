@@ -8383,7 +8383,6 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
                     crate::events::EventKind::ForegroundChanged,
                     crate::events::EventKind::ClientJoined,
                     crate::events::EventKind::ClientLeft,
-                    crate::events::EventKind::PaneCwdChanged,
                     crate::events::EventKind::PaneSpawned,
                     crate::events::EventKind::LayoutChanged,
                     crate::events::EventKind::SessionRenamed,

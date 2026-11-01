@@ -705,8 +705,9 @@ this UI has received it:
 `author` is `self` for this UI's own change, `client` for another client's, and `server` for a
 change made through a session endpoint. The event fires only for accepted revisions: not for a
 change the server rejects, not for animation frames, and not before the server confirms. A session
-endpoint cannot `subscribe`, so a script driving a detached session reads `revision` from
-`layout get` instead.
+A session endpoint does not raise this event; a script driving a detached session subscribes to the
+session endpoint itself (see [Session subscriptions](#session-subscriptions)) and reads `revision`
+from each `event` record, or from `layout get`.
 
 ## Sending keys and capturing output
 

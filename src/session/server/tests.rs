@@ -20,6 +20,8 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         scrollback: 100,
         generation,
         title: None,
+        seen_bell_count: 0,
+        title_watch: Default::default(),
         cwd: None,
         launch: None,
         agent_resume: None,
@@ -4425,6 +4427,8 @@ fn resize_updates_screen_and_broadcasts_ack() {
             scrollback: 100,
             generation: 2,
             title: None,
+            seen_bell_count: 0,
+            title_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4598,6 +4602,8 @@ fn duplicate_spawn_is_rejected() {
             scrollback: 100,
             generation: 2,
             title: None,
+            seen_bell_count: 0,
+            title_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4663,6 +4669,8 @@ fn exited_pane_can_be_respawned() {
             scrollback: 100,
             generation: 2,
             title: None,
+            seen_bell_count: 0,
+            title_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4855,6 +4863,8 @@ fn attach_reports_layout_and_panes() {
         scrollback: 100,
         generation: 8,
         title: Some("editor".into()),
+        seen_bell_count: 0,
+        title_watch: Default::default(),
         cwd: Some("/repo".into()),
         launch: None,
         agent_resume: None,
@@ -5060,6 +5070,8 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             scrollback: 100,
             generation: 2,
             title: None,
+            seen_bell_count: 0,
+            title_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -5144,6 +5156,8 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 scrollback: 100,
                 generation: id as u64,
                 title: Some(format!("pane-{id}")),
+                seen_bell_count: 0,
+                title_watch: Default::default(),
                 cwd: None,
                 launch: Some(if id == 1 {
                     crate::pane::launch::PaneLaunch::Direct {
@@ -8559,4 +8573,103 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
             normalize_session_wire_event(follower_layout.clone()),
         );
     });
+}
+
+#[test]
+fn shared_pane_bell_is_recorded_once_per_bell() {
+    let mut server = SessionServer::new_named("bell-events");
+    server.panes.insert(1, test_pane(1));
+    let deliver = |server: &mut SessionServer, bytes: &[u8]| {
+        server.handle_event(ServerEvent::Pty(
+            None,
+            1,
+            1,
+            TerminalPtyEvent::Output(bytes.to_vec().into()),
+        ));
+    };
+
+    deliver(&mut server, b"\x07");
+    deliver(&mut server, b"plain output");
+    let kinds: Vec<_> = server
+        .session_events()
+        .iter()
+        .map(|event| event.kind)
+        .collect();
+    assert_eq!(kinds, vec![crate::events::EventKind::Bell]);
+    assert_eq!(
+        server.session_events().iter().next().unwrap().data["pane"],
+        "1"
+    );
+
+    deliver(&mut server, b"\x07\x07");
+    let bells: Vec<_> = server
+        .session_events()
+        .iter()
+        .filter(|event| event.kind == crate::events::EventKind::Bell)
+        .collect();
+    assert_eq!(
+        bells.len(),
+        2,
+        "two bells in one chunk coalesce to one event"
+    );
+}
+
+#[test]
+fn shared_pane_cwd_change_is_recorded() {
+    let mut server = SessionServer::new_named("cwd-events");
+    server.panes.insert(1, test_pane(1));
+
+    server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]7;file://localhost/tmp\x1b\\".to_vec().into()),
+    ));
+
+    let changed = server
+        .session_events()
+        .iter()
+        .find(|event| event.kind == crate::events::EventKind::PaneCwdChanged)
+        .expect("working-directory change is a session event");
+    assert_eq!(changed.data["pane"], "1");
+    assert_eq!(changed.data["cwd"], "/tmp");
+    assert_eq!(changed.data["previous_cwd"], "");
+}
+
+#[test]
+fn shared_pane_title_change_is_recorded_once_it_settles() {
+    let mut server = SessionServer::new_named("title-events");
+    server.panes.insert(1, test_pane(1));
+
+    // Output observes the title, but does not record it until it has held still.
+    server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]0;editor\x07".to_vec().into()),
+    ));
+    assert!(
+        server
+            .session_events()
+            .iter()
+            .all(|event| event.kind != crate::events::EventKind::PaneTitleChanged)
+    );
+
+    // Age the observation past the settle window instead of sleeping.
+    let pane = server.panes.get_mut(&1).unwrap();
+    pane.title_watch = events::PaneTitleWatch::new(None);
+    pane.title_watch.observe(
+        Some("editor".to_string()),
+        Instant::now() - events::TITLE_SETTLE - Duration::from_millis(1),
+    );
+    server.flush_pane_titles();
+
+    let changed = server
+        .session_events()
+        .iter()
+        .find(|event| event.kind == crate::events::EventKind::PaneTitleChanged)
+        .expect("settled title is a session event");
+    assert_eq!(changed.data["pane"], "1");
+    assert_eq!(changed.data["title"], "editor");
+    assert_eq!(changed.data["previous_title"], "");
 }

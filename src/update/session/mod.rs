@@ -34,8 +34,11 @@ pub(crate) fn session_event(
         event.kind,
         crate::events::EventKind::PaneExited
             | crate::events::EventKind::PaneStatusChanged
+            | crate::events::EventKind::PaneTitleChanged
+            | crate::events::EventKind::PaneCwdChanged
             | crate::events::EventKind::AgentStateChanged
             | crate::events::EventKind::ForegroundChanged
+            | crate::events::EventKind::Bell
     ) {
         let is_focused = fields
             .get("pane")

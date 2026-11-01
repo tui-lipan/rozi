@@ -334,6 +334,11 @@ pub struct ServerPane {
     output_bytes_sent: u64,
     pub generation: u64,
     pub title: Option<String>,
+    /// How many BELs this pane's screen has seen and the server has already reported, so one bell
+    /// is recorded once rather than on every later output chunk.
+    seen_bell_count: u64,
+    /// Debounced terminal-title tracking for `pane-title-changed`.
+    title_watch: events::PaneTitleWatch,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,

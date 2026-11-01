@@ -36,6 +36,8 @@ event's fields in the [environment](#environment).
 | `pane-spawned` | A workspace pane is created. | `pane`, `workspace`, `command`, `cwd` |
 | `pane-exited` | A pane's process exit reaches the client. | `pane`, `code`, `focused` |
 | `pane-status-changed` | A pane's reported status changes or clears. Seeding status on attach does not fire it. | `pane`, `status`, `reason`, `previous_status`, `previous_reason`, `focused` |
+| `pane-title-changed` | A pane's terminal title settles on a new value. A title that changes several times a second is coalesced, so only the value it comes to rest at fires. | `pane`, `title`, `previous_title`, `focused` |
+| `pane-cwd-changed` | A pane's working directory changes. | `pane`, `cwd`, `previous_cwd`, `focused` |
 | `agent-state-changed` | An agent's state changes, including when it appears in a pane and when it goes. Seeding agents on attach does not fire it. | `pane`, `agent`, `label`, `ref`, `state`, `previous_state`, `reason`, `focused` |
 | `foreground-changed` | The program running in a pane changes, including when the pane returns to its shell prompt. | `pane`, `program`, `previous_program`, `pid`, `focused` |
 | `bell` | A pane rings the terminal bell. | `pane`, `focused` |
@@ -60,6 +62,14 @@ Every field is a string:
 - `command` and `cwd` are empty when the pane inherited them.
 - `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`.
 - `controller` and the status fields are empty when there is no value.
+- `pane-title-changed.title` is the title the pane now reports, after display-text sanitization, and
+  is empty when the program cleared it. `previous_title` is what the session last reported and is
+  empty when it had none. A title that keeps changing - a spinner, an elapsed clock - fires once
+  when it holds still, not on every frame.
+- `pane-cwd-changed.cwd` is the pane's new working directory on the session host, and
+  `previous_cwd` is the one it left. Both are empty when there is no value. A shell integration
+  reports the directory as the program runs, so a command that changes directory without shell
+  integration fires only when rozi can otherwise observe it.
 - `agent-state-changed` describes each agent as [`rozi agents list`](agents.md#inspect-and-wait-for-agents)
   does. `state` and `previous_state` are `working`, `blocked`, `idle`, `done`, or `error`;
   `previous_state` is empty when the agent appears, and `state` is empty when it goes. `agent` is
@@ -117,9 +127,10 @@ skip hooks once 32 jobs are already running. For state, retries, or long-lived e
 ### Shared sessions
 
 Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks.
-Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `agent-state-changed`,
-`foreground-changed`, `bell`, `layout-changed`, `client-joined`, `client-left`, `controller-changed`,
-`session-renamed`) run only on the controller client holding layout control, while client-local hooks
+Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
+`pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
+`client-joined`, `client-left`, `controller-changed`, `session-renamed`) run only on the controller
+client holding layout control, while client-local hooks
 (`focus-changed`, `workspace-switched`, `session-attached`, `session-detached`) run on the client
 where the event occurred.
 

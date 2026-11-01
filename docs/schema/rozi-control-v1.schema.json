@@ -4044,6 +4044,8 @@
         "pane-spawned",
         "pane-exited",
         "pane-status-changed",
+        "pane-title-changed",
+        "pane-cwd-changed",
         "agent-state-changed",
         "foreground-changed",
         "bell",
@@ -7698,5 +7700,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 3
+  "x-rozi-schema-version": 4
 }

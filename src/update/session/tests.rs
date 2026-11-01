@@ -593,38 +593,32 @@ fn bell_events_include_focused_for_current_panes() {
         let mut backend = TestBackend::new(crate::AppRoot::default());
         let epoch = backend.state().runtime_epoch;
         let pane_id = backend.state().current().focused_pane.unwrap();
-        let generation = 42;
-        {
-            let pane = crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
-            pane.pty_generation = generation;
-            pane.terminal.bind_session(pane_id, generation);
-        }
         let events = backend
             .state()
             .event_hub
             .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+        let bell = |pane_id: crate::state::PaneId| {
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("pane".to_string(), pane_id.to_string());
+            crate::session::server::events::SessionEvent {
+                session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
+                seq: 1,
+                kind: crate::events::EventKind::Bell,
+                data,
+            }
+        };
         backend
-            .update_level(Msg::SessionOutput {
-                media: None,
-                metadata: crate::session::protocol::OutputMetadata::default(),
+            .update_level(Msg::SessionEvent {
                 epoch,
-                pane_id,
-                local: false,
-                generation,
-                bytes: vec![7],
+                event: bell(pane_id),
             })
             .unwrap();
         assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
         backend.state_mut().current_mut().focused_pane = None;
         backend
-            .update_level(Msg::SessionOutput {
-                media: None,
-                metadata: crate::session::protocol::OutputMetadata::default(),
+            .update_level(Msg::SessionEvent {
                 epoch,
-                pane_id,
-                local: false,
-                generation,
-                bytes: vec![7],
+                event: bell(pane_id),
             })
             .unwrap();
         assert!(events.recv().unwrap().contains("\"focused\":\"false\""));
@@ -647,10 +641,6 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
             pane.pty_generation = generation;
             pane.terminal.bind_session(pane_id, generation);
         }
-        let events = backend
-            .state()
-            .event_hub
-            .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
 
         backend
             .set_window_focused(false)
@@ -666,7 +656,6 @@ fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
                 bytes: vec![7],
             })
             .expect("deliver BEL while unfocused");
-        assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
         let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
         assert!(pane.activity.has_unseen_output);
         assert!(pane.activity.bell);
@@ -734,11 +723,6 @@ fn unwatched_bell_marks(
             pane.terminal.bind_session(pane_id, generation);
             configure(&mut pane.terminal);
         }
-        let events = backend
-            .state()
-            .event_hub
-            .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
-
         backend
             .set_window_focused(false)
             .expect("lose host-window focus");
@@ -753,7 +737,6 @@ fn unwatched_bell_marks(
                 bytes: vec![7],
             })
             .expect("deliver BEL while unfocused");
-        assert!(events.recv().unwrap().contains("\"pane\""));
         let pane = crate::pane::lifecycle::find_pane(backend.state(), pane_id).unwrap();
         assert!(pane.activity.has_unseen_output);
         pane.activity.bell

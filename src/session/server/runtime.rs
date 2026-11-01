@@ -1218,6 +1218,7 @@ impl SessionServer {
             return;
         }
         self.last_runtime_poll = Instant::now();
+        self.flush_pane_titles();
         let panes: Vec<_> = self
             .panes
             .iter()
@@ -1241,6 +1242,31 @@ impl SessionServer {
             self.sync_pane_runtime_inner(Some(owner), id, generation, true, &mut scan);
         }
         self.reconcile_sleep_policy();
+    }
+
+    /// Record `pane-title-changed` for every shared pane whose title has held still long enough,
+    /// coalescing the intermediate values a program animates through.
+    pub(super) fn flush_pane_titles(&mut self) {
+        if self.panes.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let mut settled = Vec::new();
+        for (&pane_id, pane) in &mut self.panes {
+            if let Some((previous, title)) = pane.title_watch.settle(now) {
+                settled.push((pane_id, previous, title));
+            }
+        }
+        for (pane_id, previous, title) in settled {
+            self.record_session_event(
+                events::EventKind::PaneTitleChanged,
+                vec![
+                    ("pane", pane_id.to_string()),
+                    ("title", title.unwrap_or_default()),
+                    ("previous_title", previous.unwrap_or_default()),
+                ],
+            );
+        }
     }
 
     /// Recompute `pane_id`'s runtime state and broadcast a
@@ -2774,6 +2800,8 @@ mod tests {
             scrollback: 100,
             generation: 1,
             title: None,
+            seen_bell_count: 0,
+            title_watch: Default::default(),
             cwd: Some("/launch/dir".to_string()),
             launch: None,
             agent_resume: None,

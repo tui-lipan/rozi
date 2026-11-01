@@ -120,17 +120,22 @@ fn emit_output_bell(
     pane_id: PaneId,
     focused: Option<PaneId>,
     alert_raised: bool,
+    local: bool,
 ) {
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::Bell,
-            vec![
-                ("pane", pane_id.to_string()),
-                ("focused", (focused == Some(pane_id)).to_string()),
-            ],
-        ),
-    );
+    // A shared pane's bell is a session event the server records and delivers once to every
+    // attached UI. Only a client-owned pane (scratchpad, popup) still raises it here.
+    if local {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::Bell,
+                vec![
+                    ("pane", pane_id.to_string()),
+                    ("focused", (focused == Some(pane_id)).to_string()),
+                ],
+            ),
+        );
+    }
     if alert_raised && !ctx.state.do_not_disturb {
         crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Bell);
     }
@@ -274,7 +279,7 @@ pub(crate) fn output(
     }
     crate::ops::capture_wait::pane_output(ctx, pane_id, local);
     if effects.bell_fired {
-        emit_output_bell(ctx, pane_id, focused, effects.bell_alert_raised);
+        emit_output_bell(ctx, pane_id, focused, effects.bell_alert_raised, local);
     }
     if effects.indicator_raised {
         // Session output bypasses the global post-update sweep. An unseen-output or bell edge is

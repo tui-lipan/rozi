@@ -228,6 +228,11 @@ impl SessionServer {
             Ok(pty) => {
                 let pid = pty.pid();
                 screen.resize(rows.max(1), cols.max(1));
+                let initial_title = screen
+                    .title()
+                    .and_then(crate::pane::sanitize_terminal_title)
+                    .or_else(|| request.title.clone());
+                let seen_bell_count = screen.bell_count();
                 self.insert_owned_pane(
                     owner,
                     id,
@@ -235,6 +240,8 @@ impl SessionServer {
                         scrollback,
                         generation,
                         title: request.title,
+                        seen_bell_count,
+                        title_watch: events::PaneTitleWatch::new(initial_title),
                         cwd: effective_cwd,
                         launch: request.launch,
                         agent_resume,
@@ -283,6 +290,11 @@ impl SessionServer {
             }
             Err(err) => {
                 if retain_on_failure {
+                    let initial_title = screen
+                        .title()
+                        .and_then(crate::pane::sanitize_terminal_title)
+                        .or_else(|| request.title.clone());
+                    let seen_bell_count = screen.bell_count();
                     self.insert_owned_pane(
                         owner,
                         id,
@@ -290,6 +302,8 @@ impl SessionServer {
                             scrollback,
                             generation,
                             title: request.title,
+                            seen_bell_count,
+                            title_watch: events::PaneTitleWatch::new(initial_title),
                             cwd: request.cwd,
                             launch: request.launch,
                             // Reached only when the interactive shell could not start either, so
@@ -461,6 +475,7 @@ impl SessionServer {
                 }
                 match event {
                     TerminalPtyEvent::Output(bytes) => {
+                        let mut bell_rang = false;
                         let logging_error =
                             pane.log.as_mut().and_then(|log| log.write(&bytes).err());
                         if logging_error.is_some() {
@@ -499,6 +514,15 @@ impl SessionServer {
                             }
                         }
                         if owner.is_none() {
+                            let bell_count = pane.screen_without_change().bell_count();
+                            bell_rang = bell_count > pane.seen_bell_count;
+                            if bell_rang {
+                                pane.seen_bell_count = bell_count;
+                            }
+                            pane.title_watch
+                                .observe(pane.effective_title(), Instant::now());
+                        }
+                        if owner.is_none() {
                             self.dirty_generation = self.dirty_generation.saturating_add(1);
                         }
                         let output = ServerOutbound::PaneOutput {
@@ -510,6 +534,12 @@ impl SessionServer {
                             bytes: bytes.to_vec(),
                         };
                         self.send_outbound(owner, &output);
+                        if bell_rang {
+                            self.record_session_event(
+                                events::EventKind::Bell,
+                                vec![("pane", id.to_string())],
+                            );
+                        }
                         if let Some(error) = logging_error {
                             self.send_outbound(
                                 owner,

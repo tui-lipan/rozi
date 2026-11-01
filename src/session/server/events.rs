@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,57 @@ use crate::state::PaneId;
 pub const DEFAULT_MAX_EVENTS: usize = 1024;
 pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
 
+/// How long a pane's title must hold still before `pane-title-changed` is recorded.
+///
+/// Programs that animate a title - a spinner, an elapsed clock, blinking attention text - rewrite
+/// it several times a second. A subscriber cares about the title a pane settled on, not every
+/// frame of the animation, so a change is held until it survives this window.
+pub const TITLE_SETTLE: Duration = Duration::from_millis(400);
+
+/// Debounced title tracking for one pane, so a chatty title cannot flood the event buffer.
+#[derive(Clone, Debug, Default)]
+pub(super) struct PaneTitleWatch {
+    /// The title last reported, or the title the pane started with.
+    reported: Option<String>,
+    /// The newest observed title and when it was first seen.
+    pending: Option<(Option<String>, Instant)>,
+}
+
+impl PaneTitleWatch {
+    pub(super) fn new(reported: Option<String>) -> Self {
+        Self {
+            reported,
+            pending: None,
+        }
+    }
+
+    /// Observe a pane's title after a chunk of output. Returning to the reported title cancels a
+    /// pending change; any other title restarts the settle window from its first sighting.
+    pub(super) fn observe(&mut self, title: Option<String>, now: Instant) {
+        if title == self.reported {
+            self.pending = None;
+        } else if self
+            .pending
+            .as_ref()
+            .is_none_or(|(pending, _)| pending != &title)
+        {
+            self.pending = Some((title, now));
+        }
+    }
+
+    /// Take a title that has been stable for [`TITLE_SETTLE`], as `(previous, current)`.
+    pub(super) fn settle(&mut self, now: Instant) -> Option<(Option<String>, Option<String>)> {
+        let (title, since) = self.pending.as_ref()?;
+        if now.duration_since(*since) < TITLE_SETTLE {
+            return None;
+        }
+        let title = title.clone();
+        let previous = std::mem::replace(&mut self.reported, title.clone());
+        self.pending = None;
+        Some((previous, title))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -18,6 +70,8 @@ pub enum EventKind {
     PaneSpawned,
     PaneExited,
     PaneStatusChanged,
+    PaneTitleChanged,
+    PaneCwdChanged,
     AgentStateChanged,
     ForegroundChanged,
     Bell,
@@ -38,10 +92,12 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::PaneStatusChanged,
+        Self::PaneTitleChanged,
+        Self::PaneCwdChanged,
         Self::AgentStateChanged,
         Self::ForegroundChanged,
         Self::Bell,
@@ -66,6 +122,8 @@ impl EventKind {
             Self::PaneSpawned => "pane-spawned",
             Self::PaneExited => "pane-exited",
             Self::PaneStatusChanged => "pane-status-changed",
+            Self::PaneTitleChanged => "pane-title-changed",
+            Self::PaneCwdChanged => "pane-cwd-changed",
             Self::AgentStateChanged => "agent-state-changed",
             Self::ForegroundChanged => "foreground-changed",
             Self::Bell => "bell",
@@ -345,6 +403,7 @@ impl PaneForeground {
 pub(super) struct PaneRuntimeBaseline {
     pane_id: PaneId,
     status: Option<PaneStatus>,
+    cwd: Option<String>,
     agents: Vec<AgentRuntime>,
     foreground: PaneForeground,
 }
@@ -364,6 +423,7 @@ impl PaneRuntimeBaseline {
         Self {
             pane_id,
             status: pane.runtime.status.clone(),
+            cwd: pane.runtime.cwd.clone(),
             agents: crate::session::protocol::effective_agent_runtimes(&pane.runtime, &records),
             foreground: PaneForeground::of(&pane.runtime),
         }
@@ -418,6 +478,17 @@ impl PaneRuntimeBaseline {
             crate::session::protocol::effective_agent_runtimes(after_state, after_records);
         for fields in diff_agent_events(self.pane_id, &self.agents, &after_agents) {
             events.push((EventKind::AgentStateChanged, fields));
+        }
+
+        if after_state.cwd != self.cwd {
+            events.push((
+                EventKind::PaneCwdChanged,
+                vec![
+                    ("pane", self.pane_id.to_string()),
+                    ("cwd", after_state.cwd.clone().unwrap_or_default()),
+                    ("previous_cwd", self.cwd.clone().unwrap_or_default()),
+                ],
+            ));
         }
 
         let after_foreground = PaneForeground::of(after_state);
@@ -501,6 +572,41 @@ mod tests {
 
     fn instance(id: &str) -> SessionInstanceId {
         serde_json::from_str(&format!("{id:?}")).expect("test session instance id")
+    }
+
+    #[test]
+    fn title_watch_coalesces_until_a_title_holds_still() {
+        let start = Instant::now();
+        let mut watch = PaneTitleWatch::new(None);
+
+        watch.observe(Some("build 1".into()), start);
+        watch.observe(Some("build 2".into()), start + Duration::from_millis(50));
+        watch.observe(Some("build 3".into()), start + Duration::from_millis(100));
+        assert_eq!(watch.settle(start + Duration::from_millis(300)), None);
+
+        // The newest title settles after holding for TITLE_SETTLE, not from the first sighting.
+        let settled = watch.settle(start + Duration::from_millis(100) + TITLE_SETTLE);
+        assert_eq!(settled, Some((None, Some("build 3".to_string()))));
+        assert_eq!(
+            watch.settle(start + TITLE_SETTLE + Duration::from_secs(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn title_watch_cancels_a_change_that_returns_to_the_reported_title() {
+        let start = Instant::now();
+        let mut watch = PaneTitleWatch::new(Some("shell".into()));
+
+        watch.observe(Some("spinner".into()), start);
+        watch.observe(Some("shell".into()), start + Duration::from_millis(50));
+        assert_eq!(watch.settle(start + TITLE_SETTLE * 2), None);
+
+        watch.observe(Some("editor".into()), start);
+        assert_eq!(
+            watch.settle(start + TITLE_SETTLE),
+            Some((Some("shell".to_string()), Some("editor".to_string())))
+        );
     }
 
     #[test]

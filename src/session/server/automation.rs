@@ -86,41 +86,50 @@ impl Automation {
             crate::extension_runtime::SESSION_CREDENTIAL_PREFIX,
             crate::extension_runtime::bundle::hex_digest(&random)
         );
-        let mut services = Vec::new();
-        let settings = match definition.settings {
-            Ok(settings) => settings,
-            Err(error) => {
-                // Started with the wrong settings is worse than stopped with a reason. The record
-                // still takes this generation, so a later pass does not retry until one is due.
-                let reason = format!("the host's config cannot be read: {error}");
-                self.extensions.insert(
-                    definition.id,
-                    ActiveExtension {
-                        generation: definition.generation,
-                        credential,
-                        services: definition
-                            .services
-                            .into_iter()
-                            .map(|service| SessionServiceStatus {
-                                name: service.name,
-                                state: SessionServiceState::Stopped,
-                                pid: None,
-                                reason: Some(reason.clone()),
-                            })
-                            .collect(),
-                    },
-                );
-                return;
+        let services = match &definition.settings {
+            Ok(settings) => {
+                self.start_services(&definition, settings, &credential, instance, session)
             }
+            // Started with the wrong settings is worse than stopped with a reason. The record still
+            // takes this generation, so a later pass does not retry until a new one is due.
+            Err(error) => definition
+                .services
+                .iter()
+                .map(|service| SessionServiceStatus {
+                    name: service.name.clone(),
+                    state: SessionServiceState::Stopped,
+                    pid: None,
+                    reason: Some(format!("the host's config cannot be read: {error}")),
+                })
+                .collect(),
         };
-        for service in definition.services {
-            let mut env = service.env;
+        self.extensions.insert(
+            definition.id,
+            ActiveExtension {
+                generation: definition.generation,
+                credential,
+                services,
+            },
+        );
+    }
+
+    fn start_services(
+        &mut self,
+        definition: &PreparedDeployment,
+        settings: &str,
+        credential: &str,
+        instance: &str,
+        session: &str,
+    ) -> Vec<SessionServiceStatus> {
+        let mut services = Vec::new();
+        for service in &definition.services {
+            let mut env = service.env.clone();
             env.insert("ROZI_EXTENSION".into(), definition.id.clone());
             env.insert(
                 crate::config::GENERATION_ENV.into(),
                 definition.generation.to_string(),
             );
-            env.insert(crate::config::SETTINGS_ENV.into(), settings.clone());
+            env.insert(crate::config::SETTINGS_ENV.into(), settings.into());
             env.insert(crate::config::SESSION_NAME_ENV.into(), session.into());
             env.insert(
                 crate::session::protocol::SESSION_INSTANCE_ENV.into(),
@@ -134,9 +143,11 @@ impl Automation {
                         bundle_dir: definition.directory.clone(),
                         socket_path: Default::default(),
                         launch: Launch::from(&service.launch),
-                        cwd: SpawnCwd::Bundle { path: service.cwd },
+                        cwd: SpawnCwd::Bundle {
+                            path: service.cwd.clone(),
+                        },
                         env: env.into_iter().collect(),
-                        credential: credential.clone(),
+                        credential: credential.to_string(),
                         platforms: definition.platforms.clone(),
                         capture: None,
                         unit: Some(format!("service.{}", service.name)),
@@ -145,7 +156,7 @@ impl Automation {
                 },
             );
             services.push(SessionServiceStatus {
-                name: service.name,
+                name: service.name.clone(),
                 state: if result.is_ok() {
                     SessionServiceState::Starting
                 } else {
@@ -155,14 +166,7 @@ impl Automation {
                 reason: result.err().map(|error| error.to_string()),
             });
         }
-        self.extensions.insert(
-            definition.id,
-            ActiveExtension {
-                generation: definition.generation,
-                credential,
-                services,
-            },
-        );
+        services
     }
 
     pub fn poll(&mut self) {

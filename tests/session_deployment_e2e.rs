@@ -183,14 +183,40 @@ fn session_services_subscribe_without_clients_and_retire_their_credentials() {
     let session = unique_session_name();
     let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
     let bundle = Bundle::from_files(vec![
-        BundleFile { path: "extension.toml".into(), executable: false, contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n[[services]]\nname='watch'\nexec=['sh','./watch.sh']\nplacement='session'\nrestart='always'\n[settings]\ngreeting='default'\n".to_vec() },
-        BundleFile { path: "watch.sh".into(), executable: false, contents: br#"printf '%s' "$ROZI_EXTENSION_CREDENTIAL" > "$ROZI_EXTENSION_STATE_DIR/credential"
+        BundleFile {
+            path: "extension.toml".into(),
+            executable: false,
+            contents: br#"
+[extension]
+id = "demo"
+title = "Demo"
+version = "1"
+api = 1
+
+[[services]]
+name = "watch"
+exec = ["sh", "./watch.sh"]
+placement = "session"
+restart = "always"
+
+[settings]
+greeting = "default"
+"#
+            .to_vec(),
+        },
+        BundleFile {
+            path: "watch.sh".into(),
+            executable: false,
+            contents: br#"printf '%s' "$ROZI_EXTENSION_CREDENTIAL" > "$ROZI_EXTENSION_STATE_DIR/credential"
 printf '%s' "$ROZI_EXTENSION_GENERATION" > "$ROZI_EXTENSION_STATE_DIR/generation"
 printf '%s' "$ROZI_EXTENSION_CONFIG" > "$ROZI_EXTENSION_STATE_DIR/settings"
 "$ROZI_BIN" notify "service started"
 exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI_EXTENSION_STATE_DIR/events"
-"#.to_vec() },
-    ]).unwrap();
+"#
+            .to_vec(),
+        },
+    ])
+    .unwrap();
     let archive = bundle.archive();
     let deploy = || ControlCommand::ExtensionsDeploy {
         id: "demo".into(),
@@ -296,7 +322,20 @@ fn recording_bundle(marker: &str) -> Bundle {
         BundleFile {
             path: "extension.toml".into(),
             executable: false,
-            contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n[[services]]\nname='watch'\nexec=['sh','./watch.sh']\nplacement='session'\nrestart='always'\n".to_vec(),
+            contents: br#"
+[extension]
+id = "demo"
+title = "Demo"
+version = "1"
+api = 1
+
+[[services]]
+name = "watch"
+exec = ["sh", "./watch.sh"]
+placement = "session"
+restart = "always"
+"#
+            .to_vec(),
         },
         BundleFile {
             path: "watch.sh".into(),

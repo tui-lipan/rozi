@@ -71,6 +71,7 @@ mod tests {
         Capabilities, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
     };
     use crate::session::server::{
+        events::SessionSubscribeRecord,
         headless::ReplyTo,
         tests::{add_client, attach_client, decode_outbox_controls},
     };
@@ -100,7 +101,15 @@ mod tests {
                 .is_none()
         );
         let snapshot = decode_outbox_controls(server.client(subscriber).unwrap());
-        assert!(snapshot.iter().any(|message| matches!(message, ServerMessage::SessionSubscribeRecord { record: super::super::events::SessionSubscribeRecord::Snapshot(snapshot) } if snapshot.notifications.len() == 1 && snapshot.notifications[0].message == "detached message")));
+        let retained = snapshot.iter().find_map(|message| match message {
+            ServerMessage::SessionSubscribeRecord {
+                record: SessionSubscribeRecord::Snapshot(snapshot),
+            } => Some(&snapshot.notifications),
+            _ => None,
+        });
+        let retained = retained.expect("a snapshot record");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].message, "detached message");
         let (late, _late_stream) = add_client(&mut server);
         server.handle_message(
             late,
@@ -115,7 +124,12 @@ mod tests {
                 expected_server_nonce: None,
             },
         );
-        assert!(decode_outbox_controls(server.client(late).unwrap()).iter().any(|message| matches!(message, ServerMessage::SessionNotifications { notifications, .. } if notifications.len() == 1)));
+        let inbox = decode_outbox_controls(server.client(late).unwrap());
+        let inbox = inbox.iter().find_map(|message| match message {
+            ServerMessage::SessionNotifications { notifications, .. } => Some(notifications),
+            _ => None,
+        });
+        assert_eq!(inbox.expect("the retained inbox").len(), 1);
         let (other, _other_stream) = attach_client(&mut server);
         server.session_notify("live message".into(), None, NotifyLevel::Info);
         let mut sequences = Vec::new();

@@ -4274,31 +4274,36 @@ fn notification_read_state_is_local_to_each_ui_and_session_instance() {
         let mut first = TestBackend::new(crate::AppRoot::default());
         let mut second = TestBackend::new(crate::AppRoot::default());
         let instance = crate::session::protocol::SessionInstanceId::for_test("notifications");
+        let deliver = |backend: &mut TestBackend<crate::AppRoot>, seq: u64| {
+            backend
+                .update_level(Msg::SessionNotifications {
+                    epoch: backend.state().runtime_epoch,
+                    session_instance: instance.clone(),
+                    session: "work".into(),
+                    notifications: vec![crate::control::SessionNotification {
+                        id: format!("notification-{seq}"),
+                        seq,
+                        level: crate::control::NotifyLevel::Info,
+                        title: None,
+                        message: format!("finished {seq}"),
+                    }],
+                })
+                .unwrap();
+        };
         for backend in [&mut first, &mut second] {
             backend.state_mut().current_mut().session_instance = Some(instance.clone());
-            for _ in 0..2 {
-                backend
-                    .update_level(Msg::SessionNotifications {
-                        epoch: backend.state().runtime_epoch,
-                        session_instance: instance.clone(),
-                        session: "work".into(),
-                        notifications: vec![crate::control::SessionNotification {
-                            id: "notification-5".into(),
-                            seq: 5,
-                            level: crate::control::NotifyLevel::Info,
-                            title: None,
-                            message: "finished".into(),
-                        }],
-                    })
-                    .unwrap();
-                assert_eq!(backend.state().session_notification_cursors[&instance], 5);
-                assert_eq!(backend.state().replaceable_toasts.len(), 1);
-            }
+            // A reconnect replays the inbox: the same notification twice shows once.
+            deliver(backend, 5);
+            deliver(backend, 5);
+            assert_eq!(backend.state().session_notification_cursors[&instance], 5);
+            assert_eq!(backend.state().replaceable_toasts.len(), 1);
         }
-        first
-            .state_mut()
-            .session_notification_cursors
-            .insert(instance.clone(), 8);
+
+        // One UI reading further moves nothing for the other, which still gets it when it arrives.
+        deliver(&mut first, 8);
+        assert_eq!(first.state().session_notification_cursors[&instance], 8);
         assert_eq!(second.state().session_notification_cursors[&instance], 5);
+        deliver(&mut second, 8);
+        assert_eq!(second.state().session_notification_cursors[&instance], 8);
     });
 }

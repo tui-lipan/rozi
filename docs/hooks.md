@@ -130,8 +130,8 @@ skip hooks once 32 jobs are already running. For state, retries, or long-lived e
 Hooks belong to UI clients, not to session servers. Each attached client loads its own hooks.
 Session-event hooks (`pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
 `pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
-`client-joined`, `client-left`, `controller-changed`, `session-renamed`, `session-notification`) run only on the controller
-client holding layout control, while client-local hooks
+`client-joined`, `client-left`, `controller-changed`, `session-renamed`, `session-notification`) run
+only on the controller client holding layout control, while client-local hooks
 (`focus-changed`, `workspace-switched`, `session-attached`, `session-detached`) run on the client
 where the event occurred.
 

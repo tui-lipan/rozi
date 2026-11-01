@@ -233,17 +233,14 @@ pub struct SessionServer {
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
     session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
-<<<<<<< HEAD
     /// Extensions this session was asked to run itself. Kept across restarts and removed only when
     /// the session is explicitly deleted.
     deployments: deployments::SessionDeployments,
     deployment_worker: Option<headless::DeploymentWorker>,
     automation: Option<automation::Automation>,
     notifications: VecDeque<crate::control::SessionNotification>,
-=======
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
->>>>>>> feat/session-events
 }
 
 #[derive(Clone, Debug)]
@@ -1777,14 +1774,11 @@ impl SessionServer {
             pending_listener: None,
             sleep_policy: power::AgentSleepPolicy::default(),
             session_subscribers: HashMap::new(),
-<<<<<<< HEAD
             deployments,
             deployment_worker: None,
             automation: None,
             notifications: VecDeque::new(),
-=======
             spawning_pane: None,
->>>>>>> feat/session-events
             settings,
         }
     }

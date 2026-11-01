@@ -84,6 +84,10 @@ use crate::platform::fs_security;
 const PIPE_OUT_BUFFER: u32 = 256 * 1024;
 const PIPE_IN_BUFFER: u32 = 64 * 1024;
 
+/// Most bytes one `WriteFile` offers. In `PIPE_NOWAIT` mode a write the pipe's buffer can never hold
+/// may be accepted for zero bytes every time, which would look like a full pipe until the deadline.
+const MAX_WRITE: usize = PIPE_IN_BUFFER as usize;
+
 /// How long a `connect` waits for a busy pipe (every instance momentarily in use) before failing.
 const CONNECT_BUSY_WAIT: u32 = 1_000;
 
@@ -704,7 +708,7 @@ impl Write for LocalConnection {
                 WriteFile(
                     self.handle.0,
                     buf.as_ptr(),
-                    buf.len() as u32,
+                    buf.len().min(MAX_WRITE) as u32,
                     &mut written,
                     std::ptr::null_mut(),
                 )

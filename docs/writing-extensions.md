@@ -540,7 +540,8 @@ A session runs at most 8 calls at once; another call fails instead of waiting. S
 `singleton` action that is already running.
 
 A call ends when it reaches its deadline, when its caller disconnects, when someone runs
-`rozi invocation cancel`, or when the extension is redeployed or undeployed. Its process and
+`rozi invocation cancel`, when the extension is redeployed or undeployed, or when the session is
+renamed. Its process and
 everything it started are killed. A process that detaches itself from its group and keeps stdout
 open fails the call, so close stdout in anything you leave behind.
 

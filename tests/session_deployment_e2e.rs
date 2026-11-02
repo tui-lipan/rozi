@@ -414,7 +414,6 @@ exec sleep 300
     .unwrap()
 }
 
-#[cfg(unix)]
 fn deploy_command(bundle: &Bundle) -> ControlCommand {
     let archive = bundle.archive();
     ControlCommand::ExtensionsDeploy {

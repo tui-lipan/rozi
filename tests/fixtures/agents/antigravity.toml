@@ -64,3 +64,24 @@ screen = '''
 ───────────────────────────────────────────────────────────────────────────────────
 ? for shortcuts                                           Gemini 3.7 Flash · high
 '''
+
+# Captured from Antigravity CLI 1.4.12 on 2026-11-02 in an unseen repository, nothing pressed. It read
+# as idle, so `agents prompt` would type into it, and its Enter would trust the folder.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+screen = '''
+Accessing workspace:
+
+/tmp/rza/p/antigravity
+
+Do you trust the contents of this project?
+
+Antigravity CLI requires permission to read, edit, and execute files here.
+
+> Yes, I trust this folder
+  No, exit
+
+  ↑/↓ Navigate · enter Confirm
+                                                          auto · Gemini 3.8 Flash · high
+'''

@@ -143,3 +143,50 @@ screen = '''
 │                                                                                         │
 ╰─────────────────────────────────────────────────────────────────────────────────────────╯
 '''
+
+# Captured from oh-my-pi 18.15.0 on 2026-11-02, with no provider set up, nothing pressed. It read as
+# idle, so `agents prompt` would type into its search box, and its Enter would pick a provider.
+[[case]]
+name = "startup-setup-chooser"
+state = "blocked"
+title = "π > omp"
+screen = '''
+                                      ████████████
+                                         ██  ██
+                                         ██  ██
+                                         ▒▒  ██
+                                             ██
+                                          omp
+                                   Setup step 1 of 5
+
+    Sign in to your providers
+    Sign in to one or more providers. Press ⎋ when you're done.
+
+    Pick a provider to sign in — you can connect more than one.
+
+    ╭─ Select provider to login ───────────────────────────────────────────────────╮
+    │ ❯ ChatGPT Plus/Pro (Codex Subscription)                                    █ │
+    │   Anthropic (Claude Pro/Max)                                               │ │
+    │   Z.AI (GLM Coding Plan)                                                   │ │
+    │   Z.AI (GLM Coding Plan · Sign in)                                         │ │
+    │   Kimi Code                                                                │ │
+    │   OpenRouter                                                               │ │
+    │   GitHub Copilot                                                           │ │
+    │   Cursor (Claude, GPT, etc.)                                               │ │
+    │   Devin                                                                    │ │
+    │   Google Antigravity (Gemini, Claude, GPT-OSS)                             │ │
+    │ Type to search                                                               │
+    ╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+                  ↑/↓ select · ⏎ confirm · ⎋ skip · Ctrl+C exit setup
+'''

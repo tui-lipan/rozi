@@ -35,10 +35,8 @@ const AWAITING_EVIDENCE: &[&str] = &[
     // refuses with a notice pointing at Antigravity, which Rozi detects separately. The definition
     // stays for anyone still running an older build; nobody here can watch one work.
     "gemini",
-    "devin",
     "mastracode",
     "droid",
-    "amp",
     "hermes",
     "qoder-cli",
     "aider",

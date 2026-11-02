@@ -1,0 +1,13 @@
+source = "capture"
+captured_at = "2026-11-02"
+notes = "Amp 0.0.1793635240, signed out, 88x39 pane, first launch in an unseen directory"
+
+# The only screen a signed-out Amp shows, nothing pressed. It read as idle, so `agents prompt` would
+# type into it. Its `[(y)es, (n)o]` is not the `[y/n]` the shared vocabulary knows.
+[[case]]
+name = "startup-sign-in"
+state = "blocked"
+screen = '''
+No API key found. Starting login flow...
+Would you like to log in to Amp? [(y)es, (n)o]:
+'''

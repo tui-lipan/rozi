@@ -117,3 +117,9 @@ match, and no idle or working screen may. Two would-be regressions were caught e
   is `cursor-agent`. `lab.py` knows the overrides.
 - **Some agents auto-approve.** An agent that deletes a file without asking is not a failed capture,
   it is telling you its policy. Note it in the fixture and move on.
+- **"Installed" can mean a lazy mise shim.** On a machine like that, launching an agent downloads it
+  first, up to hundreds of megabytes each, and the pane shows mise's progress until it finishes. A
+  launcher can also run `mise use -g`, which rewrites the global config and makes lazy installs running
+  beside it fail. Allow for the wait, and launch one agent first when a batch fails this way.
+- **A signed-out agent shows its sign-in, not its prompt.** Capture that screen too, since a prompt
+  typed into it can answer it. It says nothing about the agent's working or idle states.

@@ -132,3 +132,25 @@ screen = '''
  Gemini 3.5 Flash Lite thinking: medium  ~/.cache/rozi-agent-lab
                                                                       context: 3% (26k/1M)
 '''
+
+# Captured from Kimi Code 2.4.1 on 2026-11-02 in an unseen repository, nothing pressed. It reads as
+# blocked through the shared vocabulary, with no rule of Kimi's own behind it; this keeps it that way.
+[[case]]
+name = "startup-trust-dialog"
+state = "blocked"
+screen = '''
+ ──────────────────────────────────────────────────────────────────────────────────────
+  Trust this folder?
+  ↑↓ navigate · Enter select · Esc exit
+
+  /tmp/rza/p/kimi
+
+  No project integrations or instructions to activate.
+
+  Trust is remembered for this folder, including future project config changes.
+  Tool approvals follow your permission settings.
+
+   ❯ Trust and continue
+     Exit
+ ──────────────────────────────────────────────────────────────────────────────────────
+'''

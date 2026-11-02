@@ -98,3 +98,15 @@ screen = '''
   GPT-5.6 Sol 272K Extra High                                           Run Everything
   ~/.cache/rozi-agent-lab
 '''
+
+# Captured from Cursor Agent 2026.10.22 on 2026-11-02, signed out, nothing pressed. It read as idle,
+# so `agents prompt` would type into it, and the first key would start the sign-in. It is all this pane
+# shows, so no other signal can say so.
+[[case]]
+name = "startup-sign-in"
+state = "blocked"
+screen = '''
+                               Cursor Agent
+                               v2026.10.22-27dcf5f
+                               Press any key to log in...
+'''

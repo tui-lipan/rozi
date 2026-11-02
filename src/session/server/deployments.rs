@@ -28,6 +28,7 @@ use crate::platform::fs_security;
 pub const DEPLOY_CHUNK_BYTES: usize = 512 * 1024;
 
 const METADATA_FILE: &str = "deployments.json";
+const ROOT_DIRECTORY: &str = "session-deployments";
 const METADATA_VERSION: u32 = 1;
 const UPLOADS: &str = "uploads";
 const BUNDLES: &str = "bundles";
@@ -666,7 +667,41 @@ fn resolved_settings(
 }
 
 fn default_root(state: &Path, session: &str) -> PathBuf {
-    state.join("session-deployments").join(session)
+    state.join(ROOT_DIRECTORY).join(session)
+}
+
+/// Every session on this machine with something deployed to it, and when that last changed. A store
+/// that cannot be read is left out: what happens next is someone reopening a session they named, and
+/// that reports the problem.
+pub(super) fn sessions_with_deployments() -> Vec<(String, u64)> {
+    let Some(state) = crate::platform::paths::state_dir_if_available(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    ) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(state.join(ROOT_DIRECTORY)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let session = entry.file_name().into_string().ok()?;
+            if !crate::session::discovery::valid_session_name(&session) {
+                return None;
+            }
+            let store = SessionDeployments {
+                root: Some(entry.path()),
+            };
+            let latest = store
+                .metadata(&entry.path())
+                .ok()?
+                .deployments
+                .values()
+                .map(|record| record.deployed_at_unix_ms)
+                .max()?;
+            Some((session, latest))
+        })
+        .collect()
 }
 
 fn validate_request(extension: &str, digest: &str, size: u64) -> Result<(), DeployError> {

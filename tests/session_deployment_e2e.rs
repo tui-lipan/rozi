@@ -319,6 +319,74 @@ fn sessions_restart_starts_fresh_panes_and_keeps_deployments() {
     assert!(!missing.status.success(), "a killed session is not running");
 }
 
+fn listed_status(root: &Path, session: &str) -> Option<String> {
+    let done = rozi(root)
+        .args(["sessions", "list", "--format", "json"])
+        .output()
+        .expect("sessions list");
+    assert!(done.status.success(), "{done:?}");
+    let rows: serde_json::Value = serde_json::from_slice(&done.stdout).unwrap();
+    rows.as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == session)
+        .map(|row| row["status"].as_str().unwrap().to_string())
+}
+
+/// A server can crash before it has saved anything, and what is deployed to it is still on disk,
+/// still trusted code. Listing it is what lets anyone find it, and deleting it has to work.
+#[test]
+fn a_crashed_session_with_a_deployment_stays_listed_until_it_is_deleted() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = Bundle::from_files(vec![BundleFile {
+        path: "extension.toml".into(),
+        executable: false,
+        contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n".to_vec(),
+    }])
+    .unwrap();
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    server.kill_for_restart();
+    assert_eq!(
+        listed_status(&root, &session).as_deref(),
+        Some("restorable"),
+        "nothing was ever snapshotted, and it is still deployed"
+    );
+
+    let killed = rozi(&root)
+        .args(["sessions", "kill", &session])
+        .output()
+        .expect("sessions kill");
+    assert!(killed.status.success(), "{killed:?}");
+    assert_eq!(listed_status(&root, &session), None, "and now it is gone");
+}
+
+/// A session with nothing deployed left has nothing to find.
+#[test]
+fn an_undeployed_session_that_crashed_is_not_listed() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = Bundle::from_files(vec![BundleFile {
+        path: "extension.toml".into(),
+        executable: false,
+        contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n".to_vec(),
+    }])
+    .unwrap();
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::ExtensionsUndeploy { id: "demo".into() },
+    );
+    server.kill_for_restart();
+    assert_eq!(listed_status(&root, &session), None);
+}
+
 /// `sessions new` is the way back after a crash. It discards the panes, not what was deployed,
 /// and deleting the session is still what removes those.
 #[test]

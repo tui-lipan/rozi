@@ -85,8 +85,8 @@ A verified `pane` is a reference containing `session_instance`, `pane_id`, and `
 `agent` is the pane's current agent record when one can be selected.
 
 `status` is `verified`, `outside`, `incomplete`, `stale-session`, or `stale-pane`. Missing caller
-information is `outside`; partial information is `incomplete`. A retired session instance or a
-pane that has exited is stale. A stale pane has no verified `pane` or `agent`.
+information is `outside`; partial information is `incomplete`. A retired session instance, a server
+on another rozi version, or a pane that has exited is stale. A stale pane has no verified `pane` or `agent`.
 
 `ui.available` says whether the caller's UI can be reached. When the caller's session is known,
 `ui.displays_session` and `ui.holds_session` distinguish the session on screen from an attachment

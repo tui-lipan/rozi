@@ -87,6 +87,46 @@ fn verify_session_context(
         .map_err(|error| std::io::Error::other(error).into())
 }
 
+/// Why `--here` cannot go on, and what to do about it when that is known.
+pub(super) fn here_refusal(request: &control::ControlRequest, status: &str) -> String {
+    let refusal = format!("--here requires a verified caller pane (context: {status})");
+    if status != "stale-session" {
+        return refusal;
+    }
+    let other_versions = request.source_session.as_ref().and_then(|instance| {
+        match crate::session::discovery::session_with_instance(instance) {
+            Ok(crate::session::discovery::InstanceLookup::NotFound { other_versions, .. }) => {
+                other_version_help(&other_versions)
+            }
+            _ => None,
+        }
+    });
+    match other_versions {
+        Some(help) => format!("{refusal}\n{help}"),
+        None => refusal,
+    }
+}
+
+/// What to say when a pane cannot reach its server and these sessions run another rozi version. An
+/// update leaves running servers on the old build, and nothing from a pane reaches one on the new
+/// build, including an agent's reports, so its state stops changing without any other sign.
+pub(super) fn other_version_help(sessions: &[String]) -> Option<String> {
+    match sessions {
+        [] => None,
+        [session] => Some(format!(
+            "session `{session}` runs a different rozi version and may be this pane's. Nothing from \
+             this pane reaches it, agent reports included, until it is restarted, which ends its \
+             panes: rozi sessions restart {session}"
+        )),
+        sessions => Some(format!(
+            "sessions `{}` run a different rozi version, and one may be this pane's. Nothing from \
+             this pane reaches it, agent reports included, until it is restarted, which ends its \
+             panes: rozi sessions restart <NAME>",
+            sessions.join("`, `")
+        )),
+    }
+}
+
 fn probe_ui_context() -> Option<control::UiContextMetadata> {
     probe_ui_at(&discover_socket(None).ok()?)
 }
@@ -188,6 +228,20 @@ pub(super) fn pin_here_target(command: &mut control::ControlCommand, pane: crate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_on_another_version_is_named_with_the_way_to_restart_it() {
+        assert_eq!(other_version_help(&[]), None);
+
+        let one = other_version_help(&["dev".to_string()]).unwrap();
+        assert!(one.contains("session `dev`"), "{one}");
+        assert!(one.contains("agent reports"), "{one}");
+        assert!(one.contains("rozi sessions restart dev"), "{one}");
+
+        let two = other_version_help(&["a".to_string(), "b".to_string()]).unwrap();
+        assert!(two.contains("sessions `a`, `b`"), "{two}");
+        assert!(two.contains("rozi sessions restart <NAME>"), "{two}");
+    }
     use crate::session::protocol::SessionInstanceId;
     #[test]
     fn a_caller_can_belong_to_a_background_attachment() {

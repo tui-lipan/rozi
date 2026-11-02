@@ -809,7 +809,14 @@ pub(super) fn format_extension_deploy_text(
             .unwrap_or_default();
         format!(
             "{} {} · bundle {} · {} bytes{generation}\n",
-            styles.paint("Deployed", OutputTone::Success),
+            styles.paint(
+                if upload.unchanged {
+                    "Unchanged"
+                } else {
+                    "Deployed"
+                },
+                OutputTone::Success,
+            ),
             styles.paint(&upload.extension, OutputTone::Accent),
             upload.digest.chars().take(12).collect::<String>(),
             upload.size,
@@ -1516,6 +1523,27 @@ pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputSty
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deploy_that_changed_nothing_says_so() {
+        let upload = |unchanged: bool| {
+            serde_json::to_value(control::ExtensionDeploymentUpload {
+                extension: "demo".into(),
+                digest: "abcdef".into(),
+                received: 1,
+                size: 1,
+                complete: true,
+                generation: Some(1),
+                unchanged,
+            })
+            .unwrap()
+        };
+        let text = |unchanged| {
+            format_extension_deploy_text(Some(&upload(unchanged)), OutputStyles::plain())
+        };
+        assert!(text(false).starts_with("Deployed demo"), "{}", text(false));
+        assert!(text(true).starts_with("Unchanged demo"), "{}", text(true));
+    }
 
     #[test]
     fn layout_change_text_says_what_happened_and_shows_the_workspace() {

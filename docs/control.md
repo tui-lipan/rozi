@@ -1004,7 +1004,7 @@ the call, including a call made through a UI.
 | `invocation-limit` | The session is already running 8 calls. |
 | `invocation-depth` | Actions are already nested 8 deep. |
 | `invocation-timeout` | The call reached its deadline. |
-| `invocation-cancelled` | The call was cancelled, its extension was redeployed or undeployed, or the session was renamed. |
+| `invocation-cancelled` | The call was cancelled, a redeploy changed its extension, it was undeployed, or the session was renamed. |
 | `invocation-not-found` | `invocation cancel` named a call that is not running. |
 
 ## Subscriptions

@@ -211,6 +211,22 @@ impl Automation {
         }
     }
 
+    /// The settings an extension is running with, if it is all running right now. A deployment of
+    /// the same files with these settings would change nothing, so a service that has just exited
+    /// has to count: reports are taken here because clients are served before the loop next polls,
+    /// and a redeploy deciding on an older answer would leave that service stopped. A service
+    /// exiting after this is one exiting after the deploy.
+    pub fn settled_settings_now(&mut self, id: &str) -> Option<String> {
+        self.poll();
+        let extension = self.extensions.get(id)?;
+        extension
+            .services
+            .iter()
+            .all(|service| service.state == SessionServiceState::Running)
+            .then(|| extension.settings.clone().ok())
+            .flatten()
+    }
+
     pub fn services(&self, id: &str) -> Vec<SessionServiceStatus> {
         self.extensions
             .get(id)
@@ -518,6 +534,77 @@ impl SessionServer {
             && let Err(error) = self.ensure_deployment_worker(true)
         {
             eprintln!("rozi: session automation unavailable: {error}");
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::extension_runtime::bundle::{Bundle, BundleFile};
+    use crate::session::server::deployments::SessionDeployments;
+
+    /// Nothing else polls between a service exiting and a redeploy being decided, because the
+    /// server loop serves clients first.
+    #[test]
+    fn a_service_that_just_exited_is_not_settled_with_nothing_else_polling() {
+        crate::test_support::isolate_user_dirs();
+        let root = tempfile::tempdir().unwrap();
+        let exit_now = root.path().join("exit-now");
+        let bundle = Bundle::from_files(vec![
+            BundleFile {
+                path: "extension.toml".into(),
+                executable: false,
+                contents:
+                    b"[extension]\nid = 'settle-test'\ntitle = 'Demo'\nversion = '1'\napi = 1\n\
+                    [[services]]\nname = 'watch'\nexec = ['sh', './watch.sh']\n\
+                    placement = 'session'\nrestart = 'never'\n"
+                        .to_vec(),
+            },
+            BundleFile {
+                path: "watch.sh".into(),
+                executable: false,
+                contents: format!(
+                    "while [ ! -e '{}' ]; do sleep 0.01; done\n",
+                    exit_now.display()
+                )
+                .into_bytes(),
+            },
+        ])
+        .unwrap();
+        let store = SessionDeployments::new("settle-test", Some(root.path().join("store")));
+        let archive = bundle.archive();
+        store
+            .append(
+                "settle-test",
+                bundle.digest(),
+                archive.len() as u64,
+                0,
+                &archive,
+                true,
+            )
+            .unwrap();
+
+        let mut automation = Automation::new();
+        automation.reconcile(store.prepare().unwrap(), "instance", "settle-test");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            automation.poll();
+            if automation.services("settle-test")[0].state == SessionServiceState::Running {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "it never ran");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(automation.settled_settings_now("settle-test").is_some());
+
+        std::fs::write(&exit_now, "").unwrap();
+        while automation.settled_settings_now("settle-test").is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a service that exited still reads as settled"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }

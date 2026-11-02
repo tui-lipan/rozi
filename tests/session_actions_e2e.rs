@@ -608,6 +608,32 @@ exec sleep 30
     );
 }
 
+/// Deploying the same files again must not end a call that is running. Redeploying different ones
+/// still does.
+#[cfg(unix)]
+#[test]
+fn a_call_survives_a_redeploy_of_the_same_files_and_ends_with_different_ones() {
+    let mut lab = Lab::new();
+    let manifest = format!(
+        r#"
+[[actions]]
+id = "wait"
+title = "Wait"
+exec = ["sh", "-c", "exec sleep 30"]
+{OPEN_SCHEMA}"#
+    );
+    lab.deploy(&manifest, &[]);
+    let _caller = lab.send(invocation("demo.wait", json!({})));
+    wait_until("the call", || lab.running().len() == 1);
+
+    lab.deploy(&manifest, &[]);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(lab.running().len(), 1, "the same files ended the call");
+
+    lab.deploy(&format!("# changed\n{manifest}"), &[]);
+    wait_until("the call to end", || lab.running().is_empty());
+}
+
 #[test]
 fn a_process_that_escapes_its_group_cannot_hang_a_call() {
     if !has_setsid() {

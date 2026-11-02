@@ -4602,6 +4602,10 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "unchanged": {
+          "description": "The session already runs these files with these settings, so nothing was restarted.",
+          "type": "boolean"
         }
       },
       "required": [

@@ -2,6 +2,7 @@
 
 use std::sync::mpsc;
 
+use super::deployments::UploadChunk;
 use super::deployments::{DEPLOY_CHUNK_BYTES, DeployError, PreparedDeployment, SessionDeployments};
 use super::headless::ReplyTo;
 use super::{ClientId, SessionServer};
@@ -33,6 +34,7 @@ fn run_deployment_job(
     store: &SessionDeployments,
     session: &str,
     command: ControlCommand,
+    settled_settings: Option<&str>,
 ) -> DeploymentAnswer {
     let response = match command {
         ControlCommand::ExtensionsDeploy {
@@ -53,7 +55,15 @@ fn run_deployment_job(
                     ));
                 }
             };
-            match store.append(&id, &digest, size, offset, &bytes, last) {
+            let upload = UploadChunk {
+                extension: &id,
+                digest: &digest,
+                size,
+                offset,
+                data: &bytes,
+                last,
+            };
+            match store.append_unless_settled(upload, settled_settings) {
                 Ok(upload) => ControlResponse::ok(upload),
                 Err(error) => deployment_error(error),
             }
@@ -83,6 +93,9 @@ struct DeploymentJob {
     client_id: ClientId,
     reply: ReplyTo,
     command: ControlCommand,
+    /// What the extension this deploys is running with, if it is all running. Only the server can
+    /// see that, and only the worker reads the bundle and the config to compare it with.
+    settled_settings: Option<String>,
 }
 
 struct DeploymentResult {
@@ -135,7 +148,12 @@ impl DeploymentWorker {
                 }
                 while let Ok(job) = requests.recv() {
                     let refresh = job_can_change_automation(&job.command);
-                    let answer = run_deployment_job(&store, &session, job.command);
+                    let answer = run_deployment_job(
+                        &store,
+                        &session,
+                        job.command,
+                        job.settled_settings.as_deref(),
+                    );
                     let prepared =
                         refresh.then(|| store.prepare().map_err(|error| error.to_string()));
                     if results
@@ -206,6 +224,13 @@ impl SessionServer {
                 "cannot start deployment worker: {error}"
             )));
         }
+        let settled_settings = match &command {
+            ControlCommand::ExtensionsDeploy { id, last: true, .. } => self
+                .automation
+                .as_mut()
+                .and_then(|automation| automation.settled_settings_now(id)),
+            _ => None,
+        };
         let worker = self.deployment_worker.as_mut().expect("worker started");
         if worker.pending >= MAX_PENDING {
             return Some(ControlResponse::error(
@@ -220,6 +245,7 @@ impl SessionServer {
                 client_id,
                 reply,
                 command,
+                settled_settings,
             }) {
             Ok(()) => {
                 worker.pending += 1;

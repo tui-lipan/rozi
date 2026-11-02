@@ -113,6 +113,16 @@ pub(super) struct PreparedDeployment {
     pub actions: Vec<crate::config::ExtensionAction>,
 }
 
+/// One piece of an upload, as a client sent it.
+pub(super) struct UploadChunk<'a> {
+    pub extension: &'a str,
+    pub digest: &'a str,
+    pub size: u64,
+    pub offset: u64,
+    pub data: &'a [u8],
+    pub last: bool,
+}
+
 impl SessionDeployments {
     /// Open the store for `session`. `root` is the deployment root itself, not a parent, and is
     /// only named by tests; production resolves the session's directory in state.
@@ -172,22 +182,7 @@ impl SessionDeployments {
             if !checked.info.errors.is_empty() {
                 continue;
             }
-            let settings = match &user {
-                Ok(user) => {
-                    let mut warnings = Vec::new();
-                    let settings = crate::config::merge_extension_settings(
-                        &checked.info.setting_specs,
-                        &id,
-                        user.settings.get(&id),
-                        &mut warnings,
-                    );
-                    for warning in warnings {
-                        eprintln!("rozi: {warning}");
-                    }
-                    serde_json::to_string(&settings).map_err(|error| error.to_string())
-                }
-                Err(error) => Err(error.clone()),
-            };
+            let settings = resolved_settings(&user, &checked, &id);
             prepared.push(PreparedDeployment {
                 services: checked.session_services(),
                 actions: checked.actions.clone(),
@@ -249,6 +244,7 @@ impl SessionDeployments {
 
     /// Append one chunk of a bundle. Returns how much of the announced size has arrived and
     /// whether this call completed the upload.
+    #[cfg(test)]
     pub fn append(
         &self,
         extension: &str,
@@ -258,6 +254,32 @@ impl SessionDeployments {
         data: &[u8],
         last: bool,
     ) -> Result<ExtensionDeploymentUpload, DeployError> {
+        let chunk = UploadChunk {
+            extension,
+            digest,
+            size,
+            offset,
+            data,
+            last,
+        };
+        self.append_unless_settled(chunk, None)
+    }
+
+    /// [`Self::append`], leaving the deployment as it is when the upload turns out to be the files it
+    /// already has and `settled_settings`, what it is running with, are still what it would get.
+    pub(super) fn append_unless_settled(
+        &self,
+        chunk: UploadChunk<'_>,
+        settled_settings: Option<&str>,
+    ) -> Result<ExtensionDeploymentUpload, DeployError> {
+        let UploadChunk {
+            extension,
+            digest,
+            size,
+            offset,
+            data,
+            last,
+        } = chunk;
         validate_request(extension, digest, size)?;
         let root = self.root()?;
         let uploads = root.join(UPLOADS);
@@ -314,6 +336,7 @@ impl SessionDeployments {
                 size,
                 complete: false,
                 generation: None,
+                unchanged: false,
             });
         }
         if !last {
@@ -322,12 +345,12 @@ impl SessionDeployments {
                     .to_string(),
             ));
         }
-        let finished = self.finish_upload(&mut file, extension, digest, size);
+        let finished = self.finish_upload(&mut file, extension, digest, size, settled_settings);
         drop(file);
         // Finished either way: a refused upload starts again from its first chunk, so nothing it
         // or an abandoned upload of this extension wrote is worth keeping.
         clear_uploads(&root, extension);
-        let record = finished?;
+        let (record, unchanged) = finished?;
         Ok(ExtensionDeploymentUpload {
             extension: extension.to_string(),
             digest: digest.to_string(),
@@ -335,6 +358,7 @@ impl SessionDeployments {
             size,
             complete: true,
             generation: Some(record.generation),
+            unchanged,
         })
     }
 
@@ -345,7 +369,8 @@ impl SessionDeployments {
         extension: &str,
         digest: &str,
         size: u64,
-    ) -> Result<DeploymentRecord, DeployError> {
+        settled_settings: Option<&str>,
+    ) -> Result<(DeploymentRecord, bool), DeployError> {
         file.seek(SeekFrom::Start(0))
             .map_err(|error| DeployError::Unavailable(format!("cannot read upload: {error}")))?;
         let mut archive = Vec::with_capacity(size as usize);
@@ -360,7 +385,34 @@ impl SessionDeployments {
                 identity.id.as_deref().unwrap_or("")
             )));
         }
+        if let Some(record) = self.settled_record(extension, &bundle, settled_settings) {
+            return Ok((record, true));
+        }
         self.commit(extension, &bundle, identity.title, identity.version)
+            .map(|record| (record, false))
+    }
+
+    /// The deployment this upload would leave exactly as it is, if there is one. Redeploying is how
+    /// a host's new settings reach a session and how a stopped service gets going again, so this is
+    /// only the case when the files and resolved settings match and everything is running.
+    fn settled_record(
+        &self,
+        extension: &str,
+        bundle: &Bundle,
+        settled_settings: Option<&str>,
+    ) -> Option<DeploymentRecord> {
+        let settled_settings = settled_settings?;
+        let root = self.existing_root().ok()??;
+        let record = self.metadata(&root).ok()?.deployments.remove(extension)?;
+        if record.digest != bundle.digest() {
+            return None;
+        }
+        let bundles = BundleStore::open(root.join(BUNDLES)).ok()?;
+        let directory = bundles.verified(&record.digest).ok()?;
+        let checked = crate::config::check_extension(&directory);
+        let user = crate::config::read_user_extension_config();
+        let settings = resolved_settings(&user, &checked, extension).ok()?;
+        (settings == settled_settings).then_some(record)
     }
 
     /// Remove one deployment. `Ok(false)` means there was nothing by that name.
@@ -591,6 +643,27 @@ fn clear_uploads(root: &Path, extension: &str) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// What an extension's processes get: its declared settings with the host's over them, or why the
+/// host's config could not supply them.
+fn resolved_settings(
+    user: &Result<crate::config::UserExtensionConfig, String>,
+    checked: &crate::config::DiscoveredExtension,
+    extension: &str,
+) -> Result<String, String> {
+    let user = user.as_ref().map_err(Clone::clone)?;
+    let mut warnings = Vec::new();
+    let settings = crate::config::merge_extension_settings(
+        &checked.info.setting_specs,
+        extension,
+        user.settings.get(extension),
+        &mut warnings,
+    );
+    for warning in warnings {
+        eprintln!("rozi: {warning}");
+    }
+    serde_json::to_string(&settings).map_err(|error| error.to_string())
 }
 
 fn default_root(state: &Path, session: &str) -> PathBuf {

@@ -571,6 +571,12 @@ exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI
         },
     );
     wait_for_text(&state.join("events"), "pane-spawned");
+    // A redeploy that changes something retires the old credential. Same files alone would not.
+    std::fs::write(
+        root.join("config.toml"),
+        "[session]\nresurrect=true\n[extensions.demo]\ngreeting='changed'\n",
+    )
+    .unwrap();
     ask(&mut server, &root, &session, deploy());
     assert_eq!(
         ask_request(&mut server, &root, &session, request(credential)).code,
@@ -672,6 +678,138 @@ fn process_is_running(pid: i32) -> bool {
         .ok()
         .is_none_or(|stat| !stat.contains(") Z "))
         && unsafe { libc::kill(pid, 0) } == 0
+}
+
+/// A bundle with one service, whose manifest and script the caller finishes.
+#[cfg(target_os = "linux")]
+fn service_bundle(restart: &str, settings: &str, script: &str) -> Bundle {
+    Bundle::from_files(vec![
+        BundleFile {
+            path: "extension.toml".into(),
+            executable: false,
+            contents: format!(
+                "[extension]\nid = 'demo'\ntitle = 'Demo'\nversion = '1'\napi = 1\n{settings}\n\
+                 [[services]]\nname = 'watch'\nexec = ['sh', './watch.sh']\n\
+                 placement = 'session'\nrestart = '{restart}'\n"
+            )
+            .into_bytes(),
+        },
+        BundleFile {
+            path: "watch.sh".into(),
+            executable: false,
+            contents: script.as_bytes().to_vec(),
+        },
+    ])
+    .unwrap()
+}
+
+#[cfg(target_os = "linux")]
+const RECORDS_ITS_PID: &str = r#"printf '%s' "$$" > "$ROZI_EXTENSION_STATE_DIR/pid.tmp"
+mv "$ROZI_EXTENSION_STATE_DIR/pid.tmp" "$ROZI_EXTENSION_STATE_DIR/pid"
+exec sleep 300
+"#;
+
+#[cfg(target_os = "linux")]
+fn service_state(server: &mut ServerGuard, root: &Path, session: &str) -> String {
+    let reply = ask(server, root, session, ControlCommand::ExtensionsStatus);
+    reply.data.unwrap()["deployments"][0]["services"][0]["state"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[cfg(target_os = "linux")]
+fn deployed_generation(reply: &ControlResponse) -> (u64, bool) {
+    let data = reply.data.as_ref().unwrap();
+    (
+        data["generation"].as_u64().unwrap(),
+        data["unchanged"].as_bool().unwrap_or(false),
+    )
+}
+
+/// Deploying the same thing twice, as a script that runs on every change does, must not disturb
+/// what is running.
+#[cfg(target_os = "linux")]
+#[test]
+fn redeploying_what_is_already_running_changes_nothing() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = service_bundle("always", "", RECORDS_ITS_PID);
+    let first = ask(&mut server, &root, &session, deploy_command(&bundle));
+    assert_eq!(deployed_generation(&first), (1, false));
+    let state = root.join("data/rozi/extension-state/demo");
+    let pid = service_pid(&state);
+    wait_until("the service to be running", || {
+        service_state(&mut server, &root, &session) == "running"
+    });
+    std::fs::remove_file(state.join("pid")).unwrap();
+
+    let again = ask(&mut server, &root, &session, deploy_command(&bundle));
+    assert_eq!(deployed_generation(&again), (1, true));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(process_is_running(pid), "the service was stopped");
+    assert!(!state.join("pid").exists(), "the service was started again");
+    assert_eq!(service_state(&mut server, &root, &session), "running");
+}
+
+/// Redeploying is how a host's new settings reach a session, so it still has to restart for them.
+#[cfg(target_os = "linux")]
+#[test]
+fn redeploying_with_changed_settings_restarts_the_service() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = service_bundle("always", "[settings]\nmode = 'a'", RECORDS_ITS_PID);
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    let state = root.join("data/rozi/extension-state/demo");
+    service_pid(&state);
+    wait_until("the service to be running", || {
+        service_state(&mut server, &root, &session) == "running"
+    });
+    std::fs::remove_file(state.join("pid")).unwrap();
+
+    std::fs::write(root.join("config.toml"), "[extensions.demo]\nmode = 'b'\n").unwrap();
+    let again = ask(&mut server, &root, &session, deploy_command(&bundle));
+    assert_eq!(deployed_generation(&again), (2, false));
+    service_pid(&state);
+}
+
+/// A service that has stopped gets another chance from a redeploy, which is how someone starts it.
+#[cfg(target_os = "linux")]
+#[test]
+fn redeploying_restarts_a_service_that_has_stopped() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = service_bundle("never", "", "exit 0\n");
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    wait_until("the service to stop", || {
+        service_state(&mut server, &root, &session) == "stopped"
+    });
+    let again = ask(&mut server, &root, &session, deploy_command(&bundle));
+    assert_eq!(deployed_generation(&again), (2, false));
+}
+
+/// Different files are a different deployment, whatever is running.
+#[cfg(target_os = "linux")]
+#[test]
+fn redeploying_different_files_restarts_the_service() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let first = service_bundle("always", "", RECORDS_ITS_PID);
+    ask(&mut server, &root, &session, deploy_command(&first));
+    wait_until("the service to be running", || {
+        service_state(&mut server, &root, &session) == "running"
+    });
+    let changed = service_bundle("always", "", &format!("# changed\n{RECORDS_ITS_PID}"));
+    let again = ask(&mut server, &root, &session, deploy_command(&changed));
+    assert_eq!(deployed_generation(&again), (2, false));
 }
 
 #[cfg(target_os = "linux")]

@@ -75,6 +75,13 @@
         "agent": {
           "type": "string"
         },
+        "completions": {
+          "default": 0,
+          "description": "Runs this agent has finished. A new `ref` starts again from zero, so compare two values only\nfor the same `ref`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "cwd": {
           "type": [
             "string",
@@ -112,6 +119,13 @@
         },
         "state": {
           "$ref": "#/$defs/AgentState"
+        },
+        "task": {
+          "description": "What the agent works on, when its published row names it.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "workspace": {
           "format": "uint",

@@ -1228,6 +1228,8 @@ impl SessionServer {
                     label: runtime.label,
                     state: runtime.state,
                     reason: runtime.reason,
+                    task: runtime.task,
+                    completions: runtime.completions,
                     cwd: protocol::occupant_cwd(
                         &pane.runtime.rows,
                         runtime.reference.slot.as_ref(),
@@ -3089,6 +3091,41 @@ mod tests {
         );
         let got: AgentInfo = serde_json::from_value(got.data.unwrap()).unwrap();
         assert_eq!(got, agents[0]);
+    }
+
+    /// A script that was not watching still learns a run ended, from the session endpoint alone.
+    #[test]
+    fn agent_list_and_get_count_the_runs_an_agent_finished() {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server, 7);
+        let (listed, _) = control(&mut server, ControlCommand::AgentsList);
+        let agents: Vec<AgentInfo> = serde_json::from_value(listed.data.unwrap()).unwrap();
+        assert_eq!(agents[0].completions, 0);
+
+        let pane = server.panes.get_mut(&7).unwrap();
+        for state in [
+            protocol::DetectedAgentState::Working,
+            protocol::DetectedAgentState::Idle,
+        ] {
+            let before = pane.agent.agent_states(&pane.runtime);
+            pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+                agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                state,
+            });
+            pane.agent.observe(before, &pane.runtime);
+        }
+
+        let (listed, _) = control(&mut server, ControlCommand::AgentsList);
+        let agents: Vec<AgentInfo> = serde_json::from_value(listed.data.unwrap()).unwrap();
+        assert_eq!(agents[0].completions, 1);
+        let (got, _) = control(
+            &mut server,
+            ControlCommand::AgentGet {
+                target: AgentTarget::Ref(agents[0].reference.clone()),
+            },
+        );
+        let got: AgentInfo = serde_json::from_value(got.data.unwrap()).unwrap();
+        assert_eq!(got.completions, 1);
     }
 
     fn published(

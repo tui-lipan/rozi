@@ -6636,6 +6636,36 @@ fn a_turn_that_ended_falls_to_done_once_the_screen_is_quiet_and_not_through_a_di
     assert_eq!(completions(&server), 1);
 }
 
+/// Codex runs every Stop hook at once, and one can still send the turn on after this one reported.
+/// Its screen says `Running hooks` until they have all finished.
+#[test]
+fn a_turn_stays_working_while_the_screen_shows_it_is_not_over() {
+    use protocol::{AgentState, DetectedAgentState};
+    let mut server = SessionServer::new_named("dev");
+    pane_with_agent(&mut server);
+    assert!(report_unless_quiet(&mut server, AgentState::Working, AgentState::Done, 1).ok);
+    screen_reads(&mut server, DetectedAgentState::Working);
+    assert_eq!(reported(&server).0, AgentState::Working);
+    assert_eq!(completions(&server), 0);
+
+    // The other hook blocked: the turn goes on, under an ordinary report.
+    assert!(
+        agent_report(
+            &mut server,
+            "client",
+            Some(AgentState::Working),
+            "origin",
+            2
+        )
+        .ok
+    );
+    assert_eq!(completions(&server), 0);
+    assert!(report_unless_quiet(&mut server, AgentState::Working, AgentState::Done, 3).ok);
+    screen_reads(&mut server, DetectedAgentState::Idle);
+    assert_eq!(reported(&server).0, AgentState::Done);
+    assert_eq!(completions(&server), 1, "one turn, however many Stop hooks");
+}
+
 #[test]
 fn a_turn_that_ended_is_not_held_back_on_a_pane_with_no_screen_to_read() {
     use protocol::{AgentState, DetectedAgentState};

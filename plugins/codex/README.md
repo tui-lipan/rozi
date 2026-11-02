@@ -49,12 +49,13 @@ each thread's state from the background server and lists every loaded thread as 
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
 | Compaction | `working`, keeping the same integration token |
-| Turn finishes | `done` about two seconds later, or `blocked` if Codex opens a dialog first |
+| Turn finishes | `done` once the screen has been quiet for about two seconds, or `blocked` if Codex opens a dialog first |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
 
-Codex opens some dialogs with no hook, such as its offer to switch models after a turn, so a turn
-that finished waits for the screen before it reads `done`. `rozi agents prompt` refuses to type into
+A turn isn't over when this plugin's `Stop` hook runs: another `Stop` hook can still be running, and
+can send the turn on, and Codex opens some dialogs with no hook, such as its offer to switch models.
+So a turn waits for the screen before it reads `done`. `rozi agents prompt` refuses to type into
 those dialogs whatever the pane reports.
 
 A prompt reports nothing until Codex is about to call the model, because another hook can still

@@ -54,10 +54,6 @@ pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 /// prompt still clears within a beat. The cost is one-directional by design: a run that really has
 /// stopped reports it a moment late, which is worth far more than a state that oscillates.
 pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
-/// How long a report falling back to `done` waits on a screen that keeps reading as working. The
-/// agent said the turn ended, so a screen that goes on animating, such as for a background job,
-/// must not hold that back for good.
-const QUIET_DONE_LIMIT: Duration = Duration::from_secs(10);
 
 /// How long after an agent is first named that its screen cannot yet say it is working.
 ///
@@ -2741,9 +2737,9 @@ fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
 /// A dialog can open with no hook to say so, and typing into one answers it, so until then the
 /// report also says what the screen says: blocked while a dialog is up, working after it.
 ///
-/// A fallback to `done` is the agent's own word that the turn ended, and only the chance of a
-/// dialog holds it back. So it doesn't need a screen to agree: with none to read it falls once the
-/// grace has passed, and it waits on one reading as working only for [`QUIET_DONE_LIMIT`].
+/// A fallback to `done` waits on a screen reading as working however long that takes: another
+/// hook on the same event can still be running, and can send the turn on. With no screen to read,
+/// which happens on a pane listing agent rows, nothing better is coming, so it falls after the grace.
 fn settle_quiet_report(
     report: Option<Box<protocol::AgentIntegrationReport>>,
     detected: Option<&DetectedAgent>,
@@ -2757,8 +2753,8 @@ fn settle_quiet_report(
     let reading = detected
         .filter(|detected| detected.agent.id == report.identity.id)
         .map(|detected| detected.state);
-    let elapsed = now_unix_ms.saturating_sub(report.reported_at_unix_ms);
-    let grace_passed = elapsed >= STATE_SETTLE_GRACE.as_millis() as u64;
+    let grace_passed = now_unix_ms.saturating_sub(report.reported_at_unix_ms)
+        >= STATE_SETTLE_GRACE.as_millis() as u64;
     let finished = report
         .unless_quiet
         .as_ref()
@@ -2770,7 +2766,7 @@ fn settle_quiet_report(
         }
         Some(DetectedAgentState::Working) => {
             report.state = protocol::AgentState::Working;
-            finished && elapsed >= QUIET_DONE_LIMIT.as_millis() as u64
+            false
         }
         Some(DetectedAgentState::Idle) => grace_passed,
         None => finished && grace_passed,
@@ -3030,21 +3026,16 @@ mod tests {
             state(settle_quiet_report(report(1000), Some(&idle), 1000 + grace)),
             AgentState::Idle
         );
-        // A turn that ended waits only so long on a screen that goes on reading as working.
+        // A turn that ended waits on a screen reading as working: another hook may send it on.
         let finished = |at| {
             let mut report = report(at).unwrap();
             report.unless_quiet.as_mut().unwrap().state = AgentState::Done;
             Some(report)
         };
         let working = detected("claude", protocol::DetectedAgentState::Working);
-        let limit = QUIET_DONE_LIMIT.as_millis() as u64;
         assert_eq!(
-            state(settle_quiet_report(finished(0), Some(&working), limit - 1)),
+            state(settle_quiet_report(finished(0), Some(&working), u64::MAX)),
             AgentState::Working
-        );
-        assert_eq!(
-            state(settle_quiet_report(finished(0), Some(&working), limit)),
-            AgentState::Done
         );
         assert_eq!(
             state(settle_quiet_report(finished(1000), None, 1000 + grace - 1)),

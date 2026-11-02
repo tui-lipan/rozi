@@ -316,7 +316,9 @@ periodically and when the last client detaches after a change. A session started
 `rozi sessions new <NAME> --detach --no-resurrect` is never saved.
 
 When the session server is no longer running, the picker lists a usable snapshot as `Restorable`.
-Restoring recreates:
+So is a session with [extensions deployed](extensions.md#deploy-to-a-session) to it, even if its
+server stopped before saving anything, so that you can find it and reopen or delete it. Restoring
+recreates:
 
 - workspace layouts, names, and pane placement
 - pane commands and working directories

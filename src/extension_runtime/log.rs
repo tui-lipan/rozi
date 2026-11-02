@@ -809,7 +809,17 @@ mod tests {
             })
         };
         mid_rotation.recv().unwrap();
-        let lines = tail_in(&env, "tool", "commands", 10).unwrap();
+        // A stalled rotator can outlast one read's wait, which is the busy report the next test
+        // covers. A read that does return must still have waited for the whole rotation.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let lines = loop {
+            match tail_in(&env, "tool", "commands", 10) {
+                Err(busy) if busy.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "the rotation never finished");
+                }
+                read => break read.unwrap(),
+            }
+        };
         rotator.join().unwrap();
         assert_eq!(lines, ["old", "new"]);
     }

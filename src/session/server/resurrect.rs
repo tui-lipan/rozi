@@ -345,10 +345,11 @@ fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
     })
 }
 
-/// Which conversation a snapshot taken now would resume: the agent and its session, without the
-/// report time, which moves on its own. A change in this is a change the snapshot must catch.
-pub(super) fn resume_target(pane: &ServerPane) -> Option<(String, String)> {
-    agent_resume(pane).map(|resume| (resume.agent, resume.session))
+/// Which conversation a snapshot taken now would resume, and how: the agent, its session, and
+/// whether its hooks reported it, without the report time, which moves on its own. A change in this
+/// is a change the snapshot must catch.
+pub(super) fn resume_target(pane: &ServerPane) -> Option<(String, String, bool)> {
+    agent_resume(pane).map(|resume| (resume.agent, resume.session, resume.reported))
 }
 
 /// The conversation the pane's live state names.
@@ -1851,6 +1852,94 @@ mod tests {
             .map(str::to_string)
     }
 
+    /// How Rozi learned of a conversation decides how a restore reopens it, so a change in that
+    /// alone is a change the snapshot has to catch, in either direction, even with the same
+    /// conversation and nothing printed.
+    #[cfg(unix)]
+    #[test]
+    fn a_change_in_how_a_conversation_was_learned_reaches_the_persisted_snapshot() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("snapshots");
+        let name = "native-agent-provenance";
+        let mut server = SessionServer::new_named_with_settings(
+            name,
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::from_secs(60 * 60),
+                ..ServerSettings::default()
+            },
+        );
+        let (client, _stream) = super::super::tests::attach_client(&mut server);
+        let mut pane = running("codex", &[], protocol::PaneCommandPhase::Executing);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("codex", "Codex").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        let generation = pane.generation;
+        pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            integration: "hook".into(),
+            identity: protocol::AgentIdentity::new("codex", "Codex"),
+            reference: protocol::AgentRef {
+                pane: protocol::PaneRef {
+                    session_instance: server.instance_id.clone(),
+                    pane_id: 1,
+                    generation,
+                },
+                slot: None,
+                incarnation: 1,
+            },
+            state: protocol::AgentState::Idle,
+            reason: None,
+            native_session: Some("native-a".into()),
+            seq: 1,
+            reported_at_unix_ms: 42,
+        }));
+        server.panes.insert(1, pane);
+        let publish = |server: &mut SessionServer, rows| {
+            server
+                .report_pane_rows(
+                    client,
+                    1,
+                    generation,
+                    false,
+                    super::super::runtime::PanePublisher {
+                        id: "sessions".into(),
+                        kind: protocol::PublisherKind::Agent,
+                    },
+                    rows,
+                )
+                .expect("rows accepted")
+        };
+        let persisted = |root: &std::path::Path| {
+            let meta: serde_json::Value =
+                serde_json::from_slice(&fs::read(root.join(name).join("meta.json")).unwrap())
+                    .unwrap();
+            let resume = &meta["panes"][0]["agent_resume"];
+            (
+                resume["session"].as_str().map(str::to_string),
+                resume["reported"].as_bool(),
+            )
+        };
+        let session = || Some("native-a".to_string());
+
+        server.mark_dirty();
+        server.snapshot_before_shutdown().expect("first snapshot");
+        assert_eq!(persisted(&root), (session(), Some(true)));
+
+        // A publisher's active row now names the same conversation.
+        publish(&mut server, vec![agent_row("", "a", true)]);
+        assert!(server.snapshot_dirty(), "only how it was learned changed");
+        server.snapshot_before_shutdown().expect("second snapshot");
+        assert_eq!(persisted(&root), (session(), Some(false)));
+
+        // That row goes, and the hooks' report speaks for the pane again.
+        publish(&mut server, Vec::new());
+        assert!(server.snapshot_dirty(), "only how it was learned changed");
+        server.snapshot_before_shutdown().expect("third snapshot");
+        assert_eq!(persisted(&root), (session(), Some(true)));
+    }
+
     /// A publisher switching conversation dirties the snapshot even when the pane prints nothing
     /// afterwards, and so does its window leaving: the snapshot the normal scheduling path then
     /// writes names the conversation the publisher switched to, not the one persisted before.
@@ -1930,7 +2019,7 @@ mod tests {
                 .panes
                 .get_mut(&1)
                 .and_then(|pane| resume_target(pane))
-                .map(|(_, session)| session)
+                .map(|(_, session, _)| session)
                 .as_deref(),
             Some("native-b")
         );
@@ -1964,8 +2053,9 @@ mod tests {
         b.native_session = None;
         pane.runtime.rows = vec![agent_row("3/sessions", "a", true), b];
         server.panes.insert(1, pane);
-        let resumed =
-            |server: &SessionServer| resume_target(&server.panes[&1]).map(|(_, session)| session);
+        let resumed = |server: &SessionServer| {
+            resume_target(&server.panes[&1]).map(|(_, session, _)| session)
+        };
         assert_eq!(resumed(&server).as_deref(), Some("native-a"));
 
         server.withdraw_client_rows(3);
@@ -2609,6 +2699,7 @@ mod tests {
             agent: "claude".to_string(),
             session: "held-conversation".to_string(),
             reported_at: 1,
+            reported: false,
         });
         server.panes.insert(1, pane);
         server.mark_dirty();

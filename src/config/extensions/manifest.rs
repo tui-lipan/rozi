@@ -9,6 +9,8 @@ pub(super) struct ExtensionManifestFile {
     #[serde(default)]
     pub(super) commands: Vec<ExtensionCommandFile>,
     #[serde(default)]
+    pub(super) actions: Vec<super::actions::ExtensionActionFile>,
+    #[serde(default)]
     pub(super) link_handlers: Vec<ExtensionLinkHandlerFile>,
     #[serde(default)]
     pub(super) services: Vec<ExtensionServiceFile>,

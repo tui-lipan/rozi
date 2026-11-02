@@ -182,6 +182,12 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         ControlCommand::ExtensionRuntimeStatus => {
             Gate::Denied("the runtime status describes every placed process of this client")
         }
+        ControlCommand::Invoke { .. }
+        | ControlCommand::InvocationList
+        | ControlCommand::InvocationCancel { .. }
+        | ControlCommand::ActionsList => Gate::Denied(
+            "a placed process cannot call session actions; deploy it as a session service",
+        ),
         ControlCommand::ExtensionsDeploy { .. }
         | ControlCommand::ExtensionsUndeploy { .. }
         | ControlCommand::ExtensionsStatus => Gate::Denied(
@@ -516,6 +522,7 @@ mod tests {
                 request,
                 reply,
                 worker: Some(worker),
+                caller: None,
             }))
             .expect("dispatch");
         response

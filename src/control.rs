@@ -112,6 +112,9 @@ pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
 /// A session server stores, verifies, lists, and removes extension deployments of its own, so a
 /// client can hand it the files an extension will run when no UI is attached.
 pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
+/// A session server runs deployed actions: `invoke`, `invocation-list`, `invocation-cancel`, and
+/// `actions-list`.
+pub const SESSION_ACTIONS_CAPABILITY: &str = "session-actions";
 /// A session server runs the `placement = "session"` services of what is deployed to it, with no UI
 /// attached, under credentials it issues itself.
 pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
@@ -165,6 +168,7 @@ impl ApiDescription {
                 REMOTE_CONTROL_CAPABILITY,
                 crate::extension_runtime::protocol::CAPABILITY,
                 RUNTIME_EVENTS_CAPABILITY,
+                SESSION_ACTIONS_CAPABILITY,
                 SESSION_CONTROL_CAPABILITY,
                 SESSION_DEPLOYMENTS_CAPABILITY,
                 SESSION_NO_RESURRECT_CAPABILITY,
@@ -442,6 +446,7 @@ impl CaptureScrollback {
 pub enum ControlCommand {
     /// Verified caller identity on a server; attachment metadata on a UI.
     Context,
+    /// List the panes this endpoint can see.
     ListPanes,
     /// The panes of every session this UI has attached, on screen or not.
     ListAttachedPanes,
@@ -502,9 +507,7 @@ pub enum ControlCommand {
     },
     /// Scroll a Scrollable strip so a pane is in view, without moving focus. The viewport is
     /// client-local, so only a UI answers; the shared layout and its revision do not change.
-    PaneReveal {
-        target: PaneId,
-    },
+    PaneReveal { target: PaneId },
     /// Close a pane, ending its process. The request is the confirmation; `[confirm]` does not
     /// apply.
     PaneClose {
@@ -512,23 +515,23 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         if_revision: Option<u64>,
     },
+    /// List the agents detected in panes.
     AgentsList,
     /// Every agent this UI knows about: the session on screen, its other local sessions, and every
     /// connected host, the ones that want attention first. Reached through `agents list --all`.
     AgentsOverview,
     /// Go to an agent wherever it runs: focus its pane in the session on screen, or switch to or
     /// attach its session first. Takes a `location` from `agents-overview`.
-    AgentGo {
-        location: AgentLocationSpec,
-    },
-    AgentGet {
-        target: AgentTarget,
-    },
+    AgentGo { location: AgentLocationSpec },
+    /// Read one agent's record.
+    AgentGet { target: AgentTarget },
+    /// Capture the text of an agent's pane.
     AgentRead {
         target: AgentTarget,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scrollback: Option<CaptureScrollback>,
     },
+    /// Report runtime metrics.
     Metrics,
     /// Report this client's extension runtimes and the placed extension processes running through
     /// them: where each runs, under which generation and bundle, and why one that is not running
@@ -558,9 +561,8 @@ pub enum ControlCommand {
     /// List the extensions a session server holds, with the digest and generation each was
     /// deployed under and whether its files still verify.
     ExtensionsStatus,
-    Focus {
-        target: PaneId,
-    },
+    /// Move this client's focus to a pane.
+    Focus { target: PaneId },
     /// Send literal text to a pane. `wait` holds the reply until the pane answers; see
     /// [`PaneWait`].
     SendText {
@@ -591,6 +593,7 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scale: Option<u8>,
     },
+    /// Open a pane.
     NewPane {
         /// Shell command line interpreted by the configured command runner.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -630,9 +633,22 @@ pub enum ControlCommand {
         size: Option<PaneSize>,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
-    RunAction {
+    RunAction { action: String },
+    /// Call a deployed action with JSON arguments and answer with its JSON result.
+    Invoke {
         action: String,
+        #[serde(default = "empty_action_args")]
+        args: serde_json::Value,
+        /// Shortens the action's own deadline. It can never lengthen it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
     },
+    /// The action calls running in this session.
+    InvocationList,
+    /// Stop a running action call. The call itself answers `invocation-cancelled`.
+    InvocationCancel { invocation_id: String },
+    /// Every action deployed in this session, with its schemas.
+    ActionsList,
     /// Capture a pane. Without `scrollback`, returns the current visible snapshot grid.
     /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
     /// `render` picks plain text, an ANSI-styled document, a PNG, or styled runs as JSON; the
@@ -667,13 +683,10 @@ pub enum ControlCommand {
         image_pixels: bool,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
-    SwitchWorkspace {
-        index: usize,
-    },
+    SwitchWorkspace { index: usize },
     /// Move the focused pane to another workspace. `index` is 1-based (1-9).
-    MoveToWorkspace {
-        index: usize,
-    },
+    MoveToWorkspace { index: usize },
+    /// Open a command in this client's popup pane.
     Popup {
         command: String,
         cwd: Option<String>,
@@ -709,6 +722,7 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+    /// Stream events as line-delimited JSON until the endpoint closes.
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -717,12 +731,14 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<String>,
     },
+    /// Turn logging of a pane's output on or off.
     PaneLogging {
         #[serde(default)]
         target: Option<PaneId>,
         #[serde(default)]
         enabled: Option<bool>,
     },
+    /// Set or clear a pane's reported status.
     SetStatus {
         #[serde(default)]
         target: Option<PaneId>,
@@ -731,12 +747,14 @@ pub enum ControlCommand {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// Wait for an agent to reach a condition.
     AgentWait {
         target: AgentTarget,
         until: AgentWaitCondition,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u64>,
     },
+    /// Type a prompt into an agent, optionally waiting for it to reach a condition.
     AgentPrompt {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture: Option<CaptureRender>,
@@ -749,6 +767,7 @@ pub enum ControlCommand {
         #[serde(default)]
         allow_working: bool,
     },
+    /// Report an agent's state from its own integration, for a pane.
     AgentReport {
         #[serde(default)]
         target: Option<PaneId>,
@@ -761,6 +780,7 @@ pub enum ControlCommand {
         native_session: Option<String>,
         seq: u64,
     },
+    /// Withdraw an integration's agent report from a pane.
     AgentRelease {
         #[serde(default)]
         target: Option<PaneId>,
@@ -863,9 +883,8 @@ pub enum ControlCommand {
     /// Stop the UI's recording and answer once its file is complete.
     RecordUiStop,
     /// Add a labelled mark to the UI's recording.
-    RecordUiMark {
-        label: String,
-    },
+    RecordUiMark { label: String },
+    /// Show a picker in this client and stream the selection back.
     Pick {
         #[serde(default)]
         title: Option<String>,
@@ -2395,6 +2414,66 @@ pub struct SessionMetricsReport {
     pub server: crate::runtime_metrics::CachedServerRuntimeMetrics,
 }
 
+/// Largest action arguments and result, as encoded JSON.
+pub const ACTION_PAYLOAD_BYTES: usize = 512 * 1024;
+/// Longest deadline an action may declare.
+pub const ACTION_DEADLINE_MAX_MS: u64 = 600_000;
+
+fn empty_action_args() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
+/// What a successful `invoke` answers with.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct InvocationResult {
+    pub invocation_id: String,
+    pub result: serde_json::Value,
+}
+
+/// One running action call.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct InvocationInfo {
+    pub invocation_id: String,
+    pub action: String,
+    pub generation: u64,
+    /// 1 for a call from outside an action, one more for each action calling another.
+    pub depth: u8,
+    pub deadline_unix_ms: u64,
+}
+
+/// An action a client may offer in its palette: it needs no arguments.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaletteAction {
+    pub id: String,
+    pub title: String,
+}
+
+/// A deployed action, callable with `invoke`. Separate from keybindable commands, which `run-action`
+/// runs and which answer nothing.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct ActionInfo {
+    pub id: String,
+    pub title: String,
+    pub args_schema: serde_json::Value,
+    pub result_schema: serde_json::Value,
+    pub deadline_ms: u64,
+    pub concurrency: ActionConcurrency,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ActionConcurrency {
+    /// Calls may overlap.
+    #[default]
+    Parallel,
+    /// A call while another runs answers `action-busy`.
+    Singleton,
+}
+
 /// A notification retained by its session and presented independently by each client.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -2518,6 +2597,16 @@ pub enum ControlErrorCode {
     // A placed extension process asked about a session outside the host or session it was placed
     // for.
     OutOfScope,
+    ActionNotFound,
+    ActionBusy,
+    ActionFailed,
+    InvalidArguments,
+    InvalidResult,
+    InvocationCancelled,
+    InvocationDepth,
+    InvocationLimit,
+    InvocationNotFound,
+    InvocationTimeout,
 }
 
 /// Where a control request came from. Never part of the wire format: it is what the UI knows about
@@ -2547,6 +2636,8 @@ pub struct ControlEnvelope {
     /// The placed worker that sent this, as its credential established. Re-checked when the request
     /// is handled, so a worker revoked in between is refused.
     pub worker: Option<crate::state::WorkerId>,
+    /// Names this request in a later [`Msg::ControlCallerGone`], when it should end with its caller.
+    pub caller: Option<u64>,
 }
 
 impl ControlEnvelope {
@@ -2556,6 +2647,7 @@ impl ControlEnvelope {
             request,
             reply,
             worker: None,
+            caller: None,
         }
     }
 }
@@ -3162,16 +3254,7 @@ fn run_subscription(
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Subscribers send nothing after the request. Probe for EOF while idle.
-                let mut probe = [0u8; 8];
-                let _ = stream.set_nonblocking(true);
-                let disconnected = match std::io::Read::read(&mut stream, &mut probe) {
-                    Ok(0) => true,
-                    Ok(_) => false,
-                    Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
-                };
-                let _ = stream.set_nonblocking(false);
-                if disconnected {
+                if caller_hung_up(&mut stream) {
                     break;
                 }
             }
@@ -3220,6 +3303,12 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
         ControlCommand::RecordStop { .. } | ControlCommand::RecordUiStop
     ) {
         return crate::session::headless::RECORDING_STOP_TIMEOUT;
+    }
+    if let ControlCommand::Invoke { timeout_ms, .. } = command {
+        return Duration::from_millis(
+            timeout_ms.map_or(ACTION_DEADLINE_MAX_MS, |ms| ms.min(ACTION_DEADLINE_MAX_MS)),
+        )
+        .saturating_add(REPLY_TIMEOUT);
     }
     if let ControlCommand::AgentWait {
         timeout_ms: Some(timeout_ms),
@@ -3411,19 +3500,70 @@ pub(crate) fn serve_connection(
         return;
     }
     let reply_timeout = control_reply_timeout(&request.command);
+    let caller = matches!(request.command, ControlCommand::Invoke { .. })
+        .then(|| NEXT_WATCHED_CALLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (tx, rx) = mpsc::channel();
     link.send(Msg::ControlRequest(ControlEnvelope {
         request,
         reply: tx,
         worker,
+        caller,
     }));
-    let response = rx.recv_timeout(reply_timeout).unwrap_or_else(|_| {
+    let response = if let Some(caller) = caller {
+        let Some(response) = reply_unless_hung_up(&mut stream, &rx, reply_timeout) else {
+            link.send(Msg::ControlCallerGone { caller });
+            return;
+        };
+        response
+    } else {
+        rx.recv_timeout(reply_timeout).ok()
+    };
+    let response = response.unwrap_or_else(|| {
         ControlResponse::error_with(
             ControlErrorCode::RequestTimeout,
             "control request timed out",
         )
     });
     write_control_response(&mut stream, &response);
+}
+
+static NEXT_WATCHED_CALLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Whether a caller that sends nothing after its request has closed the connection.
+fn caller_hung_up(stream: &mut IpcConnection) -> bool {
+    let mut probe = [0u8; 8];
+    let _ = stream.set_nonblocking(true);
+    let hung_up = match std::io::Read::read(stream, &mut probe) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
+    };
+    let _ = stream.set_nonblocking(false);
+    hung_up
+}
+
+/// Wait for a reply while watching the caller. `None` means it hung up first; `Some(None)` means no
+/// reply came in time.
+fn reply_unless_hung_up(
+    stream: &mut IpcConnection,
+    replies: &mpsc::Receiver<ControlResponse>,
+    timeout: Duration,
+) -> Option<Option<ControlResponse>> {
+    const PROBE_INTERVAL: Duration = Duration::from_millis(100);
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match replies.recv_timeout(left.min(PROBE_INTERVAL)) {
+            Ok(response) => return Some(Some(response)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(None),
+            Err(mpsc::RecvTimeoutError::Timeout) if left <= PROBE_INTERVAL => return Some(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if caller_hung_up(stream) {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

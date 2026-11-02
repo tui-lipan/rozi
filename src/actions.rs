@@ -1435,6 +1435,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch control action");
 

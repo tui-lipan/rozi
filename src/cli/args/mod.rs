@@ -235,6 +235,8 @@ pub(crate) enum ParsedCli {
     ReleaseNotes,
     ApiDescribe,
     ApiSchema,
+    ApiCommands,
+    ApiCommand(String),
     Skill(SkillCommand),
     SkillHelp,
     AgentsHelp,
@@ -273,6 +275,9 @@ pub(crate) enum ParsedCli {
         autostart: bool,
     },
     /// Hidden remote-side control runner: one JSON request in, one JSON response out.
+    RemoteCall {
+        name: String,
+    },
     RemoteControl {
         name: String,
     },
@@ -397,6 +402,7 @@ fn help_option_values(option: &str, next: Option<&str>) -> usize {
         | "--server"
         | "--remote-serve"
         | "--remote-control"
+        | "--remote-call"
         | "--remote-serve-existing" => 1,
         "--server-start" | "--fresh-server-start" => 2,
         "--remote" => usize::from(next.is_some_and(|value| {
@@ -453,7 +459,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "api" => {
                 let subcommand = require_value(
                     &mut iter,
-                    "api requires a subcommand (expected `describe` or `schema`)",
+                    "api requires a subcommand (expected `describe`, `schema`, `commands`, or `command`)",
                 )?;
                 return match subcommand.as_str() {
                     "describe" => {
@@ -464,8 +470,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         reject_trailing_control_args(&mut iter, "api schema")?;
                         Ok(ParsedCli::ApiSchema)
                     }
+                    "commands" => {
+                        reject_trailing_control_args(&mut iter, "api commands")?;
+                        Ok(ParsedCli::ApiCommands)
+                    }
+                    "command" => {
+                        let id = require_value(&mut iter, "api command requires a command id")?;
+                        reject_trailing_control_args(&mut iter, "api command")?;
+                        Ok(ParsedCli::ApiCommand(id))
+                    }
                     other => Err(format!(
-                        "unknown api subcommand `{other}`; expected `describe` or `schema`"
+                        "unknown api subcommand `{other}`; expected `describe`, `schema`, `commands`, or `command`"
                     )),
                 };
             }
@@ -573,6 +588,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     name,
                     autostart: true,
                 });
+            }
+            "--remote-call" => {
+                let name = require_value(&mut iter, "--remote-call requires a session name")?;
+                reject_trailing_control_args(&mut iter, "--remote-call")?;
+                return Ok(ParsedCli::RemoteCall { name });
             }
             "--remote-control" => {
                 let name = require_value(&mut iter, "--remote-control requires a session name")?;
@@ -1267,6 +1287,112 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     output: None,
                 }));
             }
+            "invoke" => {
+                let action = require_value(&mut iter, "invoke requires an action id")?;
+                let mut args = None;
+                let mut timeout_ms = None;
+                let mut output_format = None;
+                while let Some(arg) = iter.next() {
+                    match arg.as_str() {
+                        "--format" => {
+                            output_format = parse_output_format(
+                                &mut ["--format".to_string(), iter.next().unwrap_or_default()]
+                                    .into_iter(),
+                                "invoke",
+                            )?;
+                        }
+                        "--args-json" => {
+                            let text = require_value(&mut iter, "--args-json requires JSON")?;
+                            // A command line is too short for the largest arguments on some systems.
+                            let text = if text == "-" {
+                                std::io::read_to_string(std::io::stdin())
+                                    .map_err(|error| format!("--args-json: {error}"))?
+                            } else {
+                                text
+                            };
+                            args = Some(
+                                serde_json::from_str(&text)
+                                    .map_err(|error| format!("--args-json: {error}"))?,
+                            );
+                        }
+                        "--timeout" => {
+                            let value = require_value(&mut iter, "--timeout requires a duration")?;
+                            timeout_ms = Some(parse_duration_ms(&value, "--timeout")?);
+                        }
+                        other => {
+                            return Err(format!("unexpected argument `{other}` after invoke"));
+                        }
+                    }
+                }
+                let command = control::ControlCommand::Invoke {
+                    action,
+                    args: args.unwrap_or_else(|| serde_json::json!({})),
+                    timeout_ms,
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
+                    output: None,
+                }));
+            }
+            "actions" => {
+                let verb =
+                    require_value(&mut iter, "actions requires a subcommand (expected `list`)")?;
+                if verb != "list" {
+                    return Err(format!(
+                        "unknown actions subcommand `{verb}`; expected `list`"
+                    ));
+                }
+                let rest: Vec<String> = iter.by_ref().collect();
+                let output_format = if rest == ["--json"] {
+                    Some(ListFormat::Json)
+                } else {
+                    parse_output_format(&mut rest.into_iter(), "actions list")?
+                };
+                let command = control::ControlCommand::ActionsList;
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
+                    output: None,
+                }));
+            }
+            "invocation" => {
+                let verb = require_value(
+                    &mut iter,
+                    "invocation requires a subcommand (expected `list` or `cancel`)",
+                )?;
+                let mut output_format = None;
+                let command = match verb.as_str() {
+                    "list" => {
+                        output_format = parse_output_format(&mut iter, "invocation list")?;
+                        control::ControlCommand::InvocationList
+                    }
+                    "cancel" => {
+                        let invocation_id = require_value(
+                            &mut iter,
+                            "invocation cancel requires an invocation id",
+                        )?;
+                        reject_trailing_control_args(&mut iter, "invocation cancel")?;
+                        control::ControlCommand::InvocationCancel { invocation_id }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unknown invocation subcommand `{other}`; expected `list` or `cancel`"
+                        ));
+                    }
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    config_path: cli.config_path.clone(),
+                    endpoint: control_endpoint(&cli, socket, &command)?,
+                    request: control_request(command),
+                    output_format,
+                    output: None,
+                }));
+            }
             "capture-pane" => {
                 let mut target = None;
                 let mut scrollback = None;
@@ -1890,6 +2016,9 @@ pub(super) fn reject_trailing_control_args(
 /// (`ui_socket_in_env` false). The pane's own id becomes the explicit target: it is meaningful here
 /// because the instance, which the server checks, proves which namespace it belongs to.
 ///
+/// A shared pane's action commands always go to its own server: deployed actions belong to the
+/// session, so they must not depend on a UI being attached.
+///
 /// Anything else keeps its endpoint, including discovery of the only live UI when nothing names
 /// one. A pane that does have `ROZI_SOCKET` keeps reporting through its UI.
 pub(super) fn own_session_endpoint(
@@ -1897,10 +2026,17 @@ pub(super) fn own_session_endpoint(
     request: &mut control::ControlRequest,
     ui_socket_in_env: bool,
 ) -> ControlEndpoint {
+    let session_only = request.credential.as_deref().is_some_and(|token| {
+        token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
+    }) || matches!(
+        request.command,
+        control::ControlCommand::Invoke { .. }
+            | control::ControlCommand::InvocationList
+            | control::ControlCommand::InvocationCancel { .. }
+            | control::ControlCommand::ActionsList
+    );
     if endpoint == ControlEndpoint::Ui(None)
-        && request.credential.as_deref().is_some_and(|token| {
-            token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
-        })
+        && session_only
         && let Some(instance) = request.source_session.clone()
     {
         return ControlEndpoint::OwnSession(instance);
@@ -2055,7 +2191,79 @@ mod tests {
             parse_cli_args(vec!["api".into(), "schema".into()]).expect("parses"),
             ParsedCli::ApiSchema
         ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "commands".into()]).expect("parses"),
+            ParsedCli::ApiCommands
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["api".into(), "command".into(), "invoke".into()]).expect("parses"),
+            ParsedCli::ApiCommand(id) if id == "invoke"
+        ));
+        assert!(parse_cli_args(vec!["api".into(), "command".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "schema".into(), "extra".into()]).is_err());
+        let args = |list: &[&str]| {
+            list.iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>()
+        };
+        let invoked = |list: &[&str]| match parse_cli_args(args(list)).expect("parses") {
+            ParsedCli::Control(control) => control.request.command,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            invoked(&[
+                "invoke",
+                "demo.run",
+                "--args-json",
+                "{\"a\":1}",
+                "--timeout",
+                "2s"
+            ]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({"a": 1}),
+                timeout_ms: Some(2000),
+            }
+        );
+        assert_eq!(
+            invoked(&["invoke", "demo.run"]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({}),
+                timeout_ms: None,
+            }
+        );
+        for list in [
+            &["actions", "list", "--format", "json"][..],
+            &["actions", "list", "--json"],
+        ] {
+            let ParsedCli::Control(control) = parse_cli_args(args(list)).expect("parses") else {
+                panic!("{list:?}");
+            };
+            assert_eq!(
+                control.request.command,
+                control::ControlCommand::ActionsList
+            );
+            assert_eq!(control.output_format, Some(ListFormat::Json));
+        }
+        assert_eq!(
+            invoked(&["invocation", "cancel", "abc"]),
+            control::ControlCommand::InvocationCancel {
+                invocation_id: "abc".into()
+            }
+        );
+        for bad in [
+            &["invoke"][..],
+            &["invoke", "x", "--args-json", "{"],
+            &["invoke", "x", "extra"],
+            &["invocation"],
+            &["invocation", "cancel"],
+            &["invocation", "other"],
+            &["actions"],
+            &["actions", "other"],
+        ] {
+            assert!(parse_cli_args(args(bad)).is_err(), "{bad:?}");
+        }
         assert!(parse_cli_args(vec!["api".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
         assert!(matches!(
@@ -2154,6 +2362,53 @@ mod tests {
     /// A remote or restored pane has no `ROZI_SOCKET`, but its own server owns its agent state, so
     /// its reports go there - by instance, with the pane's own id as the explicit target. Anything
     /// that names an endpoint, or is not a report from a shared pane, stays where it was.
+    #[test]
+    fn a_panes_action_commands_go_to_its_own_session_with_or_without_a_ui() {
+        let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");
+        let commands = [
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({}),
+                timeout_ms: None,
+            },
+            control::ControlCommand::InvocationList,
+            control::ControlCommand::InvocationCancel {
+                invocation_id: "abc".into(),
+            },
+            control::ControlCommand::ActionsList,
+        ];
+        for command in commands {
+            let request = |source_session| control::ControlRequest {
+                command: command.clone(),
+                source_pane: Some(7),
+                source_session,
+                extension: None,
+                caller_context: None,
+                credential: None,
+            };
+            for ui_socket_in_env in [false, true] {
+                assert_eq!(
+                    own_session_endpoint(
+                        ControlEndpoint::Ui(None),
+                        &mut request(Some(instance.clone())),
+                        ui_socket_in_env,
+                    ),
+                    ControlEndpoint::OwnSession(instance.clone())
+                );
+            }
+            // Outside every session, or with a UI named on purpose, the UI answers.
+            assert_eq!(
+                own_session_endpoint(ControlEndpoint::Ui(None), &mut request(None), true),
+                ControlEndpoint::Ui(None)
+            );
+            let named = ControlEndpoint::Ui(Some(PathBuf::from("/tmp/rozi.sock")));
+            assert_eq!(
+                own_session_endpoint(named.clone(), &mut request(Some(instance.clone())), true),
+                named
+            );
+        }
+    }
+
     #[test]
     fn a_report_from_a_pane_with_no_ui_goes_to_its_own_session_server() {
         let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");

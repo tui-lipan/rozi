@@ -3554,6 +3554,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("cross-workspace focus");
             assert!(response.recv().unwrap().ok);
@@ -3579,6 +3580,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("same-workspace focus");
             assert!(response.recv().unwrap().ok);

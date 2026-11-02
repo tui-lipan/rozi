@@ -307,6 +307,7 @@ mod tests {
             },
             reply,
             worker: None,
+            caller: None,
         });
         (message, response)
     }

@@ -283,6 +283,18 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Run a bindable action by its command id",
             ),
             row(
+                "invoke <ACTION> [--args-json JSON] [--timeout DUR]",
+                "Call a deployed action",
+            ),
+            row(
+                "invocation list | cancel <ID>",
+                "List or stop running action calls",
+            ),
+            row(
+                "actions list [--format text|json]",
+                "List a session's deployed actions",
+            ),
+            row(
                 "notify <MESSAGE> [--title T] [--level info|error]",
                 "Raise a toast from a script",
             ),
@@ -320,6 +332,11 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Describe API versions and capabilities as JSON",
             ),
             row("api schema", "Print the control API's JSON Schema"),
+            row("api commands", "List every control command"),
+            row(
+                "api command <ID>",
+                "Describe a control command's request and reply",
+            ),
         ],
     },
     HelpSection {

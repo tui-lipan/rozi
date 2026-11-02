@@ -145,6 +145,51 @@ pub(crate) fn sync(ctx: &Context<AppRoot>) {
     register_workspace_commands(ctx, config, active);
     register_named_commands(ctx, config, active);
     register_user_commands(ctx, config, active);
+    register_session_actions(ctx, active);
+}
+
+/// The session's deployed actions this client may run: none if it may only watch.
+pub(crate) fn offered_session_actions(
+    attachment: &crate::state::Attachment,
+) -> Vec<crate::control::PaletteAction> {
+    if attachment
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.read_only)
+    {
+        return Vec::new();
+    }
+    attachment.session_actions.clone()
+}
+
+fn register_session_actions(ctx: &Context<AppRoot>, active: bool) {
+    const PREFIX: &str = "session-action.";
+    let actions = offered_session_actions(ctx.state.current());
+    let registry = ctx.command_registry();
+    let stale_ids: Vec<_> = registry
+        .entries()
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.id.as_str().strip_prefix(PREFIX)?;
+            (!actions.iter().any(|action| action.id == id)).then_some(entry.id)
+        })
+        .collect();
+    for id in stale_ids {
+        registry.unregister(id);
+    }
+    for action in actions {
+        let link = ctx.link().clone();
+        ctx.register_command(
+            CommandEntry::builder(format!("{PREFIX}{}", action.id))
+                .label(action.title)
+                .category("Session")
+                .enabled(active)
+                .handler(Callback::new(move |_| {
+                    link.send(Msg::RunPaletteAction(action.id.clone()))
+                }))
+                .build(),
+        );
+    }
 }
 
 fn register_forward_prefix_command(ctx: &Context<AppRoot>, config: &Config, active: bool) {

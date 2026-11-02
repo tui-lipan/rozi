@@ -227,6 +227,10 @@ attached.
 | `send-keys [--target <PANE_ID>] [-l\|--literal] [WAIT] [--capture text\|ansi\|png\|spans] [--] <KEY\|TEXT>...` | Send named keys and text. | yes |
 | `split [OPTIONS] [COMMAND \| --argv PROGRAM [ARG...]]` | Open a pane. | yes |
 | `run-action <ACTION_ID>` | Run a built-in, configured, or extension command ID. | no |
+| `invoke <ACTION> [--args-json JSON\|-] [--timeout DUR] [--format text\|json]` | Call a [deployed action](writing-extensions.md#actions) and print its result. | yes |
+| `actions list [--json\|--format text\|json]` | List a session's deployed actions, with their schemas in JSON. | yes |
+| `invocation list [--format text\|json]` | List the action calls running in the session. | yes |
+| `invocation cancel <INVOCATION_ID>` | Stop a running action call. | yes |
 | `capture-pane [--target ID] [--scrollback N\|full] [--last-output] [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [WAIT] [--output FILE] [--format text\|json]` | Capture a pane as text, ANSI, PNG, or styled runs. | yes |
 | `capture-ui [--render text\|ansi\|png\|spans] [--scale 1-3] [--image-pixels] [--output FILE] [--format text\|json]` | Capture the whole UI as it is drawn. | no |
 | `record start [pane] [--target ID] [--output FILE [--force]] [--max-fps N] [--duration DUR] [--max-bytes SIZE]` | Start recording a pane. | yes |
@@ -255,6 +259,8 @@ attached.
 | `extensions undeploy <ID> --session <NAME> [--remote HOST]` | Remove a session's copy of an extension. | — |
 | `api describe` | Print the API versions and capabilities of the installed binary. | — |
 | `api schema` | Print the [JSON Schema](#json-schema) of the installed binary's control API. | — |
+| `api commands` | List the installed binary's control commands. | — |
+| `api command <ID>` | Describe one control command: its request, what its reply carries, and the definitions they use. | — |
 
 `layout set` and the `pane` commands also accept `--format text|json`. `WAIT` is
 `[--wait-for TEXT] [--settle DURATION] --timeout DURATION`; see [Wait for output](#wait-for-output).
@@ -339,6 +345,9 @@ binary refuses it.
 `session-notifications` means `notify` accepts a session endpoint and its subscription snapshots
 include a retained notification inbox.
 
+`session-actions` means a session server runs deployed [actions](writing-extensions.md#actions):
+it accepts `invoke`, `actions list`, `invocation list`, and `invocation cancel`.
+
 `session-services` means explicitly deployed `placement = "session"` services run without a UI
 and use credentials issued by that session.
 
@@ -422,8 +431,11 @@ requests, the response envelope, error codes, each command's `data` payload, pub
 rows, agent records and references, and the event envelope.
 
 The schema is generated from the source, so it always matches the binary it ships with.
-`rozi api schema` prints that binary's copy, without connecting to a UI or session. Contributors
-regenerate it with:
+`rozi api schema` prints that binary's copy, without connecting to a UI or session.
+`rozi api commands` lists its commands by the `cmd` each is sent as, and `rozi api command <ID>` gives
+one command's request schema, the payload names its reply carries in `reply` (`[]` marks an array,
+and an empty list means no named payload), and every definition those use. Contributors regenerate
+it with:
 
 ```bash
 cargo run --features schema-gen --bin rozi-api-schema
@@ -959,6 +971,40 @@ UI; starting a new UI presents the retained inbox again. Session subscription sn
 `show-command` and `hide-command` work only from an extension's own command or service, for a
 command its manifest declares. See
 [Show a command only when it applies](writing-extensions.md#show-a-command-only-when-it-applies).
+
+## Call an action
+
+`invoke` calls an action an extension [deployed](extensions.md) to a session. It prints the result
+on a terminal; piped, it prints the JSON envelope with the result in `data.result`. `run-action` runs
+a command the way a person would and answers nothing; `invoke` is for a caller that needs the result.
+`actions list --format json` shows what a session offers, with each action's schemas.
+
+```sh
+rozi --session work invoke git-tools.run-tests --args-json '{"package":"rozi"}' --timeout 2m
+```
+
+Without `--args-json` the arguments are `{}`, and `--args-json -` reads them from standard input,
+which suits arguments too long for a command line. `--timeout` can shorten the action's deadline but
+not lengthen it. Inside a session's pane, `invoke`, `actions list`, and `invocation` without `--session`
+go to that session, whether or not a UI is attached. From a script on the UI's machine they go to the
+session on screen. Extension processes started by a UI cannot call actions through it: deploy the
+caller as a [session service](writing-extensions.md#run-a-service-without-a-ui).
+
+A read-only client can list calls but cannot start or cancel them. Closing the connection cancels
+the call, including a call made through a UI.
+
+| Error code | Meaning |
+| --- | --- |
+| `action-not-found` | No action of that ID is deployed in this session. |
+| `invalid-arguments` | The arguments do not match the action's schema, or exceed 512 KiB. |
+| `invalid-result` | The action did not print one JSON value matching its schema within 512 KiB. |
+| `action-failed` | The process could not start, exited with another status, or left a process holding stdout. Read the [extension's log](writing-extensions.md#read-an-extensions-logs). |
+| `action-busy` | A `singleton` action is already running. |
+| `invocation-limit` | The session is already running 8 calls. |
+| `invocation-depth` | Actions are already nested 8 deep. |
+| `invocation-timeout` | The call reached its deadline. |
+| `invocation-cancelled` | The call was cancelled, its extension was redeployed or undeployed, or the session was renamed. |
+| `invocation-not-found` | `invocation cancel` named a call that is not running. |
 
 ## Subscriptions
 

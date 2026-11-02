@@ -90,7 +90,11 @@ fn validate_prompt_capture(
 /// message has to say that rather than suggest the session is broken.
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
-        ControlCommand::Context
+        ControlCommand::Invoke { .. }
+        | ControlCommand::InvocationList
+        | ControlCommand::InvocationCancel { .. }
+        | ControlCommand::ActionsList
+        | ControlCommand::Context
         | ControlCommand::ListPanes
         | ControlCommand::LayoutGet { .. }
         | ControlCommand::LayoutSet { .. }
@@ -189,6 +193,14 @@ pub fn attached_control_refusal(
     read_only: bool,
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
+        ControlCommand::InvocationList | ControlCommand::ActionsList => None,
+        ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } if read_only => {
+            Some((
+                ControlErrorCode::ReadOnly,
+                "read-only clients cannot invoke or cancel actions",
+            ))
+        }
+        ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } => None,
         ControlCommand::RecordList
         | ControlCommand::AgentWait { .. }
         | ControlCommand::ExtensionsStatus => None,
@@ -463,6 +475,15 @@ impl SessionServer {
             Some(Some(response))
         } else {
             match &request.command {
+                command @ (ControlCommand::Invoke { .. }
+                | ControlCommand::InvocationList
+                | ControlCommand::InvocationCancel { .. }) => Some(self.submit_invocation(
+                    client_id,
+                    reply.clone(),
+                    command.clone(),
+                    request.credential.clone(),
+                )),
+
                 ControlCommand::AgentWait {
                     target,
                     until,
@@ -577,6 +598,7 @@ impl SessionServer {
         // recording requests, but the CLI drops it for a session endpoint along with `source_pane`,
         // so a pane naming a pane in its own session says so with `--target "$ROZI_PANE"`.
         match request.command {
+            ControlCommand::ActionsList => ControlResponse::ok(self.action_infos()),
             ControlCommand::Context => {
                 self.caller_context(request.source_session.as_ref(), request.source_pane)
             }

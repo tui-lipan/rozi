@@ -39,28 +39,35 @@ pub fn forward_control(
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
     }
-    json_transport::forward(target, config, &["--remote-control", session], request).map_err(
-        |error| match error {
-            TransportError::Preflight(message) => message,
-            TransportError::Encode(error) => {
-                format!("could not encode the control request: {error}")
-            }
-            TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
-            TransportError::Send(error) => format!("could not send the control request: {error}"),
-            TransportError::Failed(output) => control_forward_failure(
-                output.status.code(),
-                &String::from_utf8_lossy(&output.stderr),
-                session,
-                &target.display_label(),
-            ),
-            TransportError::Answer(json_transport::AnswerError::Empty) => {
-                "the remote rozi answered with nothing".into()
-            }
-            TransportError::Answer(json_transport::AnswerError::Malformed) => {
-                "could not read the remote rozi's answer: no control response in its output".into()
-            }
-        },
-    )
+    // An action call ends with its caller, which only a runner that watches for it can tell.
+    let forwarded = if matches!(
+        request.command,
+        crate::control::ControlCommand::Invoke { .. }
+    ) {
+        json_transport::forward_watched(target, config, &["--remote-call", session], request)
+    } else {
+        json_transport::forward(target, config, &["--remote-control", session], request)
+    };
+    forwarded.map_err(|error| match error {
+        TransportError::Preflight(message) => message,
+        TransportError::Encode(error) => {
+            format!("could not encode the control request: {error}")
+        }
+        TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
+        TransportError::Send(error) => format!("could not send the control request: {error}"),
+        TransportError::Failed(output) => control_forward_failure(
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+            session,
+            &target.display_label(),
+        ),
+        TransportError::Answer(json_transport::AnswerError::Empty) => {
+            "the remote rozi answered with nothing".into()
+        }
+        TransportError::Answer(json_transport::AnswerError::Malformed) => {
+            "could not read the remote rozi's answer: no control response in its output".into()
+        }
+    })
 }
 
 /// Turn a failed forwarding attempt into one line worth reading.
@@ -72,6 +79,11 @@ pub fn forward_control(
 /// caller is actually addressing.
 fn control_forward_failure(code: Option<i32>, stderr: &str, session: &str, host: &str) -> String {
     let stderr = stderr.trim();
+    if stderr.contains("unknown flag `--remote-call`") {
+        return format!(
+            "remote control failed: the rozi on `{host}` is too old to call actions (update rozi there)"
+        );
+    }
     if stderr.contains("unknown flag `--remote-control`") {
         return format!(
             "remote control failed: the rozi on `{host}` is too old to run control commands (update rozi there)"
@@ -144,6 +156,25 @@ fn run_remote_subscription(session: &str, request: ControlRequest) -> Result<(),
         std::process::exit(0);
     });
     crate::session::headless::pump_session_records(&mut stream, &mut stdout)
+}
+
+/// `--remote-call <NAME>`: [`run_remote_control`] for a request that ends with its caller.
+///
+/// Reads one line rather than to end of file, because end of file comes later and means something
+/// else: the caller or its connection has gone. Leaving then closes the session connection, and the
+/// server cancels the call.
+pub fn run_remote_call(session: &str) -> Result<ControlResponse, String> {
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|err| format!("could not read the control request: {err}"))?;
+    let request: ControlRequest = serde_json::from_str(line.trim())
+        .map_err(|err| format!("could not parse the control request: {err}"))?;
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        std::process::exit(UNREACHABLE_EXIT);
+    });
+    crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
 }
 
 /// Forward a subscription and copy its records to `out` until it ends.
@@ -235,6 +266,17 @@ mod tests {
             parsed.code,
             Some(crate::control::ControlErrorCode::PaneNotFound)
         );
+    }
+
+    #[test]
+    fn an_old_remote_rozi_cannot_be_left_waiting_for_a_call() {
+        let skew = control_forward_failure(
+            Some(1),
+            "unknown flag `--remote-call`\nRun `rozi --help` for usage.",
+            "dev",
+            "work",
+        );
+        assert!(skew.contains("too old to call actions"), "{skew}");
     }
 
     /// Old runners must report version skew rather than a typo in the caller's command.

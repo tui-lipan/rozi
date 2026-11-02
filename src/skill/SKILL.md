@@ -35,6 +35,7 @@ rozi --help
 rozi agents --help
 rozi api describe    # JSON: API, schema, and session protocol versions, plus capabilities
 rozi api schema      # JSON Schema of every control command, response, and event
+rozi api commands    # control commands by id; `rozi api command <ID>` for one's full contract
 ```
 
 Do not run bare `rozi` for discovery. It launches or attaches the TUI. Likewise, `rozi dev` launches
@@ -299,6 +300,8 @@ Other UI-only tools:
 ```bash
 rozi focus <PANE_ID>                         # only when the user asks
 rozi run-action <ACTION_ID>                  # never guess an id
+rozi actions list --format json              # a session's deployed actions, with their schemas
+rozi invoke <EXT>.<ACTION> --args-json '{}'  # a deployed action's JSON result is in data.result
 rozi notify 'tests failed' --title Build --level error
 branch=$(git branch --format='%(refname:short)' | rozi pick --title Branch) || exit 0
 name=$(rozi prompt --title 'Branch name') || exit 0

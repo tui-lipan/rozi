@@ -4271,3 +4271,50 @@ fn notification_read_state_is_local_to_each_ui_and_session_instance() {
         assert_eq!(second.state().session_notification_cursors[&instance], 8);
     });
 }
+
+#[test]
+fn deployed_actions_reach_the_palette_only_for_a_client_that_may_call_them() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        backend
+            .update_level(Msg::SessionActions {
+                epoch,
+                actions: vec![crate::control::PaletteAction {
+                    id: "demo.plain".into(),
+                    title: "Plain".into(),
+                }],
+            })
+            .unwrap();
+        assert_eq!(backend.state().current().session_actions.len(), 1);
+        assert_eq!(
+            crate::commands::offered_session_actions(backend.state().current()).len(),
+            1
+        );
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.read_only = true;
+        backend.state_mut().current_mut().shared = Some(shared);
+        assert!(crate::commands::offered_session_actions(backend.state().current()).is_empty());
+        backend.state_mut().current_mut().shared = None;
+
+        // Nothing to run it on: the person hears why rather than nothing happening.
+        backend
+            .update_level(Msg::RunPaletteAction("demo.plain".into()))
+            .unwrap();
+        assert!(
+            backend
+                .state()
+                .replaceable_toasts
+                .values()
+                .any(|toast| toast.content().contains("not attached")),
+        );
+
+        backend
+            .update_level(Msg::SessionActions {
+                epoch,
+                actions: Vec::new(),
+            })
+            .unwrap();
+        assert!(backend.state().current().session_actions.is_empty());
+    });
+}

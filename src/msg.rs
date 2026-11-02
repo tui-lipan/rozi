@@ -847,6 +847,16 @@ pub enum Msg {
         epoch: u64,
         event: crate::session::protocol::SessionEvent,
     },
+    SessionActions {
+        epoch: u64,
+        actions: Vec<crate::control::PaletteAction>,
+    },
+    /// The control-socket caller of an envelope that named one has hung up.
+    ControlCallerGone {
+        caller: u64,
+    },
+    /// A person chose a deployed action from the palette.
+    RunPaletteAction(String),
     SessionRuntimeMetrics {
         epoch: u64,
     },

@@ -481,6 +481,73 @@ capabilities on the client and on every host they run on. Set `min_rozi` to a re
 [Check the installed API](control.md#check-the-installed-api)); an older `rozi` rejects the
 `placement` key.
 
+## Actions
+
+An action is an operation other programs and extensions can call with `rozi invoke`. It takes JSON
+arguments and answers with a JSON result, and it runs in the session it is deployed to, whether or
+not a UI is attached. A command behaves as if a person ran it and answers nothing. Use an action
+when the caller needs an answer. `[[actions]]` comes with the `session-actions` capability.
+
+```toml
+[[actions]]
+id = "run-tests"
+title = "Run tests"
+exec = ["python3", "./bin/run-tests.py"]
+args_schema = { type = "object", required = ["package"], properties = { package = { type = "string" } } }
+result_schema = { type = "object", required = ["passed"] }
+deadline_ms = 120000
+concurrency = "singleton"
+```
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `id` | string | required; called as `<extension>.<id>` |
+| `title` | string | required |
+| `exec` | string array | required; a name on the host's `PATH` or a `./` path inside the extension |
+| `args_schema` | JSON Schema | required; `{}` accepts anything |
+| `result_schema` | JSON Schema | required; `{}` accepts anything |
+| `deadline_ms` | 1 to 600000 | `30000` |
+| `concurrency` | `parallel` or `singleton` | `parallel` |
+| `placement` | `session` | `session` |
+
+Deploy the extension with `rozi extensions deploy <ID> --session <NAME>`, then call the action:
+
+```bash
+rozi --session work invoke git-tools.run-tests --args-json '{"package":"rozi"}'
+rozi --session work actions list --format json   # every deployed action, with its schemas
+```
+
+Each call starts one process, in the deployed extension's directory. It reads its arguments from
+stdin and prints one JSON value to stdout, then exits with status 0. Anything else it wants to say
+goes to stderr, which is kept in the extension's [log](#read-an-extensions-logs). Arguments and
+results may each be at most 512 KiB, and each is checked against its schema. A schema cannot refer
+to anything outside itself.
+
+```python
+#!/usr/bin/env python3
+import json, sys
+
+args = json.load(sys.stdin)
+print(json.dumps({"passed": run_tests(args["package"])}))
+```
+
+A process receives the [session service environment](#run-a-service-without-a-ui), plus
+`ROZI_ACTION` and `ROZI_INVOCATION_ID`. It runs no UI: `pick` and `prompt` are refused.
+
+An action, or a session service, calls another action the same way, with `$ROZI_BIN invoke`. Calls
+may nest 8 deep, and a nested call must end before its caller's deadline, whatever its own says.
+A session runs at most 8 calls at once; another call fails instead of waiting. So does a call to a
+`singleton` action that is already running.
+
+A call ends when it reaches its deadline, when its caller disconnects, when someone runs
+`rozi invocation cancel`, when the extension is redeployed or undeployed, or when the session is
+renamed. Its process and
+everything it started are killed. A process that detaches itself from its group and keeps stdout
+open fails the call, so close stdout in anything you leave behind.
+
+An action that accepts `{}` appears in the command palette of UIs attached to that session, except
+read-only ones. The palette calls it with `{}` and reports whether it finished.
+
 ## Settings
 
 Declare the settings an extension understands, each with its default value:
@@ -857,6 +924,8 @@ Every extension command and service receives:
 | `ROZI_EXTENSION_GENERATION` | Opaque token identifying the currently loaded extension. |
 | `ROZI_BIN` | The running `rozi` executable, when available. |
 | `ROZI_SOCKET` | The current UI's control endpoint, when available. |
+
+An [action](#actions) also receives `ROZI_ACTION` and `ROZI_INVOCATION_ID`.
 
 A [placed](#run-on-the-session-host) contribution receives the same variables, with these
 differences:

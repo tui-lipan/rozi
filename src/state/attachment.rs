@@ -70,6 +70,8 @@ pub struct Attachment {
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     pub session_instance: Option<crate::session::protocol::SessionInstanceId>,
+    /// Actions deployed in this session that the palette can offer.
+    pub session_actions: Vec<crate::control::PaletteAction>,
     /// When attached via `--remote`, the remote host alias/URL; `None` for local sessions.
     /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
     /// remote when this is set, even if `cwd_host` is `None` (server-relative).
@@ -173,6 +175,7 @@ impl Attachment {
             session_client: None,
             session_name: None,
             session_instance: None,
+            session_actions: Vec::new(),
             remote_host: None,
             path_family: crate::platform::paths::PathFamily::local(),
             ssh_connection: None,

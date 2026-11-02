@@ -319,6 +319,7 @@ impl SessionServer {
             && !self.capture_waits.contains_key(&id)
             && !self.holds_recording_reply(id)
             && !self.holds_deployment_reply(id)
+            && !self.holds_invocation_reply(id)
             && !self.is_session_subscriber(id)
         {
             self.set_close_after_flush(id);
@@ -557,6 +558,14 @@ impl SessionServer {
             } => {
                 self.reload_config_for(&request.command);
                 self.handle_attached_control(client_id, request_id, request)
+            }
+            ClientMessage::CancelAttachedControl { request_id } => {
+                if let Some(automation) = &self.automation {
+                    automation
+                        .invocations()
+                        .cancel_attached(client_id, request_id);
+                }
+                Vec::new()
             }
             ClientMessage::SetPaneLogging {
                 pane_id,
@@ -1400,6 +1409,16 @@ impl SessionServer {
                 },
             );
         }
+        // Even when there are none: a reconnecting client may still hold a list from before.
+        let actions = self
+            .automation
+            .as_ref()
+            .map_or_else(Vec::new, |automation| automation.palette_actions());
+        self.enqueue(
+            client_id,
+            Target::Sender,
+            ServerMessage::SessionActions { actions },
+        );
         if let Some(client_name) = joined_label {
             self.record_session_event(
                 events::EventKind::ClientJoined,

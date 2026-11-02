@@ -36,6 +36,7 @@ mod events;
 mod graphics;
 mod graphics_pacer;
 mod headless;
+mod invocations;
 mod media;
 mod notifications;
 pub use headless::{attached_control_refusal, session_control_unsupported};
@@ -1892,6 +1893,7 @@ impl SessionServer {
         self.retry_browse_requests();
         self.drain_worktree_results();
         self.drain_deployment_results();
+        self.drain_invocation_results();
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.resolve_capture_waits();

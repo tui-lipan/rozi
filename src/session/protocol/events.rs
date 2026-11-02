@@ -222,6 +222,9 @@ pub enum SessionSubscribeRecord {
         event: SessionEvent,
     },
     Lagged,
+    /// The session stopped cleanly, so nothing more will come. A stream that closes without this or
+    /// [`Self::Lagged`] was cut short.
+    Ended,
 }
 
 /// The program a pane runs in its foreground, other than its shell, and its process group.

@@ -321,20 +321,96 @@ fn a_refused_subscription_says_why_in_a_form_a_script_can_read() {
     );
 }
 
+/// The last record, once the subscriber has exited and its output has been read to the end.
+fn last_line(stream: &Stream) -> Option<String> {
+    stream.lines.try_iter().last()
+}
+
+/// Signal this lab's session server, found by the session name in its command line.
+fn signal_server(lab: &Lab, signal: &str) {
+    let status = Command::new("pkill")
+        .args([signal, "-f", &format!("server-start {} ", lab.session)])
+        .status()
+        .unwrap();
+    assert!(status.success(), "the session server was found");
+}
+
 #[test]
-fn a_subscription_ends_cleanly_when_its_session_stops() {
-    let lab = Lab::start("stops");
+fn a_session_stopping_cleanly_ends_its_stream_with_status_zero() {
+    for name in ["cleankill", "cleanterm"] {
+        let lab = Lab::start(&format!("{name}{}", std::process::id()));
+        let (mut subscriber, _stdin) = Stream::open(lab.on_session(&["subscribe", "--snapshot"]));
+        assert_eq!(subscriber.next()["type"], "snapshot");
+
+        if name == "cleanterm" {
+            signal_server(&lab, "-TERM");
+        } else {
+            let status = lab
+                .rozi(&["sessions", "kill", &lab.session])
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+
+        assert_eq!(subscriber.wait_for_exit().code(), Some(0), "{name}");
+        std::thread::sleep(Duration::from_millis(50));
+        let last = last_line(&subscriber).expect("a last record");
+        assert_eq!(last, r#"{"type":"ended"}"#, "{name}");
+    }
+}
+
+/// A supervisor restarts on failure, so a crash must not look like the session stopping.
+#[test]
+fn a_session_that_crashes_cuts_its_stream_off_with_status_two() {
+    let lab = Lab::start(&format!("crash{}", std::process::id()));
     let (mut subscriber, _stdin) = Stream::open(lab.on_session(&["subscribe", "--snapshot"]));
     assert_eq!(subscriber.next()["type"], "snapshot");
 
-    let status = lab
-        .rozi(&["sessions", "kill", "stops"])
-        .stdout(Stdio::null())
-        .status()
-        .unwrap();
-    assert!(status.success());
+    signal_server(&lab, "-KILL");
 
-    assert_eq!(subscriber.wait_for_exit().code(), Some(0));
+    assert_eq!(subscriber.wait_for_exit().code(), Some(2));
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(last_line(&subscriber), None, "no last record from a crash");
+}
+
+/// Its reader stalls, the events pile up past what the server will hold, and the subscriber then
+/// reads everything it was sent, ending in `lagged`.
+#[test]
+fn a_subscriber_that_falls_behind_says_so_and_exits_one() {
+    let lab = Lab::start("lags");
+    let mut subscriber = lab
+        .on_session(&["subscribe"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Subscribed once the first event it can hear reaches the buffer ahead of this one.
+    std::thread::sleep(Duration::from_millis(300));
+
+    // `pane-spawned` carries the command, so a long one is a large event.
+    let long_argument = "y".repeat(100_000);
+    for _ in 0..130 {
+        let status = lab
+            .on_session(&["split", "--argv", "true", &long_argument])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "the pane spawned");
+    }
+
+    let mut output = BufReader::new(subscriber.stdout.take().unwrap());
+    let mut last = String::new();
+    let mut line = String::new();
+    while output.read_line(&mut line).unwrap() > 0 {
+        std::mem::swap(&mut last, &mut line);
+        line.clear();
+    }
+    let status = subscriber.wait().unwrap();
+
+    assert_eq!(last.trim(), r#"{"type":"lagged"}"#);
+    assert_eq!(status.code(), Some(1));
 }
 
 /// The far side of `rozi --remote`: exactly what ssh runs, with its stdio piped as ssh pipes it.

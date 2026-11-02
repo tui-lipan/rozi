@@ -239,11 +239,16 @@ fn run_session_subscribe_cli(session: &str, request: control::ControlRequest) ->
         exit_subscription_refused(&response);
     }
     let mut stdout = std::io::stdout().lock();
-    if let Err(err) = crate::session::headless::pump_session_records(&mut stream, &mut stdout) {
-        eprintln!("{err}");
-        std::process::exit(1);
+    match crate::session::headless::pump_session_records(&mut stream, &mut stdout) {
+        Ok(end) => {
+            drop(stdout);
+            exit_for_stream_end(end)
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
     }
-    Ok(())
 }
 
 fn run_remote_subscribe_cli(
@@ -259,21 +264,33 @@ fn run_remote_subscribe_cli(
         }
     };
     let config = crate::config::load_config().config.remote;
+    use crate::session::remote::control::{RemoteStream, forward_control_stream};
     let mut stdout = std::io::stdout().lock();
-    match crate::session::remote::control::forward_control_stream(
-        &parsed,
-        session,
-        &request,
-        &config,
-        &mut stdout,
-    ) {
-        Ok(None) => Ok(()),
-        Ok(Some(response)) => {
-            drop(stdout);
-            exit_subscription_refused(&response)
-        }
+    let outcome = forward_control_stream(&parsed, session, &request, &config, &mut stdout);
+    drop(stdout);
+    match outcome {
+        Ok(RemoteStream::Stopped(end)) => exit_for_stream_end(end),
+        Ok(RemoteStream::Refused(response)) => exit_subscription_refused(&response),
         Err(err) => {
             eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// A supervisor reads a stream's exit status, not its records, so the status has to say whether
+/// the stream did what it promised. A subscriber that lagged or was cut off has missed events and
+/// wants restarting; one whose session stopped, or whose reader left, has not.
+fn exit_for_stream_end(end: crate::session::headless::StreamEnd) -> Result<()> {
+    use crate::session::headless::StreamEnd;
+    match end {
+        StreamEnd::Ended | StreamEnd::ReaderGone => Ok(()),
+        StreamEnd::Lagged => {
+            eprintln!("subscriber fell behind; resume with --after from the last seq read");
+            std::process::exit(1);
+        }
+        StreamEnd::Cut => {
+            eprintln!("the stream was cut off: the session crashed or the connection was lost");
             std::process::exit(2);
         }
     }

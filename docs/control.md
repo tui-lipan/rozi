@@ -380,7 +380,8 @@ document is also written to stdout.
 | `1` | The command was invalid or refused, the reply had `ok: false`, a [wait](#wait-for-output) timed out, or a capture could not be written. |
 | `2` | No endpoint was reached: discovery failed, the connection failed, the reply was empty or not JSON, or a PNG was about to be written to a terminal. |
 
-`pick` and `prompt` have their own statuses; see [Pickers](#pickers) and [Prompts](#prompts).
+`pick` and `prompt` have their own statuses; see [Pickers](#pickers) and [Prompts](#prompts). So does
+[a session subscription](#session-subscriptions).
 
 `list-panes` describes only the endpoint that answered. From a UI, it includes the current
 attachment and client-local scratch panes, not every named session. From `--session`, it includes
@@ -961,6 +962,7 @@ Every line has a `type`:
 | `snapshot` | The session's current state, sent first with `--snapshot`: `session_instance`, `session`, `seq`, `controller`, `client_count`, `layout_rev`, `layout`, and `panes`. The next event has the sequence number after its `seq`. Nothing is lost or repeated between them. |
 | `event` | One event: `session_instance`, `seq`, `kind`, and `data`, with the [same fields](hooks.md#events-and-fields) except the client's own `focused` and `self_controller`. |
 | `lagged` | The subscriber fell too far behind. The stream ends here; resume from the last `seq` you read. |
+| `ended` | The session stopped cleanly. The stream ends here. |
 
 A session raises `pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-title-changed`,
 `pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
@@ -977,8 +979,20 @@ instance, fails with `cursor-expired` and never falls back to a snapshot. As wit
 the failure is on stderr, and redirected stdout also gets the failure document, whose `data` holds
 `current_instance`, `oldest_seq`, and `latest_seq`. Start again with `--snapshot`.
 
-The command exits `0` when the stream ends, whether the session stopped or it sent `lagged`. Over
-`--remote`, losing the SSH connection exits `2`.
+The exit status says whether the stream did what it promised, so a supervisor can act on it without
+reading the records:
+
+| Exit status | How the stream stopped |
+| --- | --- |
+| `0` | The session stopped cleanly (`ended`), or whatever was reading the output went away. |
+| `1` | The subscriber fell behind (`lagged`), or the subscription was refused. |
+| `2` | The stream was cut off: the session crashed, the connection was lost, or it could not be reached. |
+
+A [service](configuration.md#services) with the default `restart = "on-failure"` therefore restarts
+after `1` or `2` and stays stopped after `0`. A plain restart carries on live and skips what it
+missed, so a subscriber that cannot miss events saves the last `seq` it read and restarts with
+`--after`. In a pipeline such as `rozi --session dev subscribe | jq .`, use `set -o pipefail` to see
+this status.
 
 ## Pickers
 

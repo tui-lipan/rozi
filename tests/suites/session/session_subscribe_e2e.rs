@@ -5,6 +5,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
@@ -20,8 +21,11 @@ struct Lab {
 
 impl Lab {
     fn start(name: &str) -> Self {
-        // Short, because the endpoint's socket path has to fit SUN_LEN.
-        let root = std::env::temp_dir().join(format!("rzs-{}-{name}", std::process::id()));
+        // Short whatever the session is called, because the endpoint's socket path has to fit
+        // SUN_LEN under a platform's own long temporary directory.
+        static NEXT_LAB: AtomicU32 = AtomicU32::new(0);
+        let lab = NEXT_LAB.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("rzs{}-{lab}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for dir in ["c", "d", "s", "k", "r"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
@@ -337,12 +341,12 @@ fn signal_server(lab: &Lab, signal: &str) {
 
 #[test]
 fn a_session_stopping_cleanly_ends_its_stream_with_status_zero() {
-    for name in ["cleankill", "cleanterm"] {
+    for name in ["kill", "term"] {
         let lab = Lab::start(&format!("{name}{}", std::process::id()));
         let (mut subscriber, _stdin) = Stream::open(lab.on_session(&["subscribe", "--snapshot"]));
         assert_eq!(subscriber.next()["type"], "snapshot");
 
-        if name == "cleanterm" {
+        if name == "term" {
             signal_server(&lab, "-TERM");
         } else {
             let status = lab
@@ -389,11 +393,14 @@ fn a_subscriber_that_falls_behind_says_so_and_exits_one() {
     // Subscribed once the first event it can hear reaches the buffer ahead of this one.
     std::thread::sleep(Duration::from_millis(300));
 
-    // `pane-spawned` carries the command, so a long one is a large event.
+    // `pane-spawned` carries the command, so a long one is a large event, and a few of them outgrow
+    // the server's 8 MiB backlog without loading the machine with hundreds of processes.
     let long_argument = "y".repeat(100_000);
-    for _ in 0..130 {
+    let mut split = vec!["split", "--argv", "true"];
+    split.extend(std::iter::repeat_n(long_argument.as_str(), 5));
+    for _ in 0..26 {
         let status = lab
-            .on_session(&["split", "--argv", "true", &long_argument])
+            .on_session(&split)
             .stdout(Stdio::null())
             .status()
             .unwrap();

@@ -4124,6 +4124,25 @@ fn shutdown_accepts_writable_followers_and_rejects_read_only_or_unattached_clien
     assert!(!unattached_server.shutdown);
 }
 
+/// A client may send its last control and hang up while the server has output queued for it. The
+/// write then fails before the next read, and the control is still waiting in the socket.
+#[test]
+fn a_failed_write_still_applies_the_controls_the_client_sent_before_closing() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, mut stream) = attach_client(&mut server);
+    protocol::write_frame(&mut stream, &ClientMessage::Shutdown).unwrap();
+    drop(stream);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.client_attached(client) {
+        assert!(Instant::now() < deadline, "the write never failed");
+        server.enqueue(client, Target::Sender, ServerMessage::Ping { seq: 1 });
+        server.flush_clients();
+        std::thread::yield_now();
+    }
+    assert!(server.shutdown, "the final Shutdown was discarded");
+}
+
 #[test]
 fn local_named_shutdown_waits_for_the_real_server_to_retire() {
     // A pid and a counter, not 19 digits of nanoseconds: this name goes into a Unix socket path,
@@ -7325,6 +7344,24 @@ fn finish_media_events(server: &mut SessionServer) {
     }
 }
 
+/// Pump until the server has seen a dropped test stream's EOF. A process spawned by a test running
+/// in parallel holds a copy of the descriptor until its `exec`, so the drop alone does not close it.
+fn pump_until_transport_closed(server: &mut SessionServer, client: ClientId) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        server.pump_clients();
+        if server
+            .client_mut(client)
+            .expect("a fenced client survives its EOF")
+            .transport_closed
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the server never saw EOF");
+        std::thread::yield_now();
+    }
+}
+
 fn assert_inline_pixel(bytes: &[u8], expected: &[u8]) {
     assert!(!bytes.windows(3).any(|key| key == b"t=t" || key == b"t=s"));
     let mut receiver = TerminalScreen::new(5, 20, 100);
@@ -7730,10 +7767,9 @@ fn media_fence_drains_final_controls_even_when_the_connection_has_closed() {
         },
     );
     drop(stream);
-    server.pump_clients();
+    pump_until_transport_closed(&mut server, controller);
     server.flush_clients();
     assert!(server.client_attached(controller));
-    assert!(server.client_mut(controller).unwrap().transport_closed);
     finish_media_events(&mut server);
     assert_eq!(server.layout_rev, 1);
     assert!(!server.client_attached(controller));
@@ -7776,8 +7812,7 @@ fn heartbeat_keeps_a_closed_client_until_its_media_fence_drains() {
         protocol::write_frame(&mut stream, &message).unwrap();
     }
     drop(stream);
-    server.pump_clients();
-    assert!(server.client_mut(controller).unwrap().transport_closed);
+    pump_until_transport_closed(&mut server, controller);
     std::thread::sleep(Duration::from_millis(5));
     server.heartbeat();
     assert!(server.client_attached(controller));

@@ -1,5 +1,19 @@
 use super::*;
 
+/// Reads spent recovering what a client sent before its connection broke. This covers a full socket
+/// buffer, and the limit stops a peer that closed only its reading side from holding the server.
+const FINAL_CLIENT_READS: usize = 64;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutboxFlush {
+    /// The connection can take more output, whether or not the outbox emptied.
+    Open,
+    /// The next frame's acquisition could not be prepared.
+    Rejected,
+    /// A write failed, so the peer is gone. It may have sent frames first.
+    PeerGone,
+}
+
 impl SessionServer {
     pub(super) fn credit_server_stall(&mut self, stalled_for: Duration) {
         if stalled_for < HEARTBEAT_STALL_THRESHOLD {
@@ -721,13 +735,20 @@ impl SessionServer {
         let mut activity = self.reap_acquisitions();
         let mut dead: Vec<ClientId> = Vec::new();
         let mut completed_seeds = Vec::new();
+        let mut final_frames = Vec::new();
         let now = Instant::now();
         for client in &mut self.clients {
             if client.transport_closed {
                 continue;
             }
-            let (client_activity, mut disconnect) = Self::flush_client_outbox(client);
+            let (client_activity, flushed) = Self::flush_client_outbox(client);
             activity |= client_activity;
+            let mut disconnect = flushed != OutboxFlush::Open;
+            // A client can send its last control and hang up before this write. Those bytes are
+            // still in the socket and would be lost with it.
+            if flushed == OutboxFlush::PeerGone {
+                Self::read_client_frames(client, FINAL_CLIENT_READS, &mut final_frames);
+            }
             if let Some(seed) = Self::take_completed_seed(client, now) {
                 completed_seeds.push(seed);
             }
@@ -741,17 +762,20 @@ impl SessionServer {
         for seed in completed_seeds {
             self.finish_attach_seed(seed, false);
         }
+        for (id, frame) in final_frames {
+            self.process_client_frame(id, frame);
+        }
         for id in dead {
             self.disconnect_after_controls(id);
         }
         activity
     }
 
-    fn flush_client_outbox(client: &mut ClientConn) -> (bool, bool) {
+    fn flush_client_outbox(client: &mut ClientConn) -> (bool, OutboxFlush) {
         let mut activity = false;
         while !client.outbox.is_empty() {
             if client.front_offset == 0 && !client.prepare_acquisition() {
-                return (true, true);
+                return (true, OutboxFlush::Rejected);
             }
             let front = client.outbox.front().expect("nonempty outbox");
             let class = front.class;
@@ -761,7 +785,7 @@ impl SessionServer {
                     if let Some(seed) = client.seed.as_mut() {
                         seed.disconnect_reason = Some("transport-closed");
                     }
-                    return (true, true);
+                    return (true, OutboxFlush::PeerGone);
                 }
                 Ok(n) => {
                     activity = true;
@@ -783,17 +807,17 @@ impl SessionServer {
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) =>
                 {
-                    return (activity, false);
+                    return (activity, OutboxFlush::Open);
                 }
                 Err(_) => {
                     if let Some(seed) = client.seed.as_mut() {
                         seed.disconnect_reason = Some("transport-write-failed");
                     }
-                    return (true, true);
+                    return (true, OutboxFlush::PeerGone);
                 }
             }
         }
-        (activity, false)
+        (activity, OutboxFlush::Open)
     }
 
     fn take_completed_seed(client: &mut ClientConn, now: Instant) -> Option<AttachSeedState> {

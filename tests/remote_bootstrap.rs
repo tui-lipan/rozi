@@ -179,12 +179,17 @@ fn tui_command(root: &Path, case: &str) -> Command {
         ),
     )
     .unwrap();
+    // A slow runner can take seconds to connect and install, so each step waits for the screen it
+    // needs rather than for a fixed time. The Sessions picker is already open under the host list
+    // at startup, so only its footer for a connected host says discovery has finished.
+    const PROMPT: &str = "wait-for:exists,text~Install Rozi on remote,30000";
+    const PICKER: &str = "wait-for:exists,text~disconnect host,30000";
     let answer = if case == "tui_accept" {
-        "type:yes; key:enter"
+        format!("{PROMPT}; type:yes; key:enter; {PICKER}")
     } else if case == "tui_always" {
-        "sleep:100"
+        PICKER.to_string()
     } else {
-        "key:esc"
+        format!("{PROMPT}; key:esc; sleep:2000")
     };
     let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
     command
@@ -195,7 +200,9 @@ fn tui_command(root: &Path, case: &str) -> Command {
         .env("TUI_LIPAN_SNAPSHOT_SETTLE_MS", "500")
         .env(
             "TUI_LIPAN_SNAPSHOT_SCRIPT",
-            format!("key:ctrl+r; sleep:200; key:enter; sleep:1000; {answer}; sleep:2000; wait:500"),
+            format!(
+                "key:ctrl+r; wait-for:exists,text~Search hosts,30000; key:enter; {answer}; wait:500"
+            ),
         );
     command
 }

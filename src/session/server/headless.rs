@@ -194,13 +194,11 @@ pub fn attached_control_refusal(
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
         ControlCommand::InvocationList | ControlCommand::ActionsList => None,
-        ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } if read_only => {
-            Some((
+        ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } => read_only
+            .then_some((
                 ControlErrorCode::ReadOnly,
                 "read-only clients cannot invoke or cancel actions",
-            ))
-        }
-        ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } => None,
+            )),
         ControlCommand::RecordList
         | ControlCommand::AgentWait { .. }
         | ControlCommand::ExtensionsStatus => None,
@@ -483,7 +481,6 @@ impl SessionServer {
                     command.clone(),
                     request.credential.clone(),
                 )),
-
                 ControlCommand::AgentWait {
                     target,
                     until,

@@ -13,13 +13,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::headless::ReplyTo;
 use super::{ClientId, SessionServer};
-use crate::config::ExtensionAction;
 use crate::control::{
     ACTION_PAYLOAD_BYTES, ActionConcurrency, ActionInfo, ControlCommand, ControlErrorCode,
     ControlResponse, InvocationInfo, InvocationResult,
 };
 use crate::extension_runtime::protocol::{Capture, Launch, SpawnCwd, SpawnFailure};
-use crate::extension_runtime::supervisor::{ProcessSpec, SupervisedProcess};
+use crate::extension_runtime::supervisor::{ExitOutcome, ProcessSpec, SupervisedProcess};
 
 /// Calls running at once across the whole server. A call past this fails rather than waits: a
 /// nested call waiting on a slot its own ancestors hold would never get one.
@@ -30,7 +29,8 @@ const POLL: Duration = Duration::from_millis(10);
 /// How long shutdown waits for running calls to kill their processes.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
-type CallResult = Result<serde_json::Value, (ControlErrorCode, String)>;
+type CallError = (ControlErrorCode, String);
+type CallResult = Result<serde_json::Value, CallError>;
 
 /// Who hears a call's answer. `None` once that caller has gone.
 pub(super) type CallCaller = Option<(ClientId, ReplyTo)>;
@@ -49,11 +49,23 @@ struct Running {
     caller: CallCaller,
 }
 
+impl Running {
+    fn called_by(&self, client: ClientId) -> bool {
+        self.caller
+            .as_ref()
+            .is_some_and(|(owner, _)| *owner == client)
+    }
+
+    fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 /// What a call needs from the extension that declares it.
 pub(super) struct CallTarget {
     pub extension: String,
     pub generation: u64,
-    pub action: ExtensionAction,
+    pub action: ActionInfo,
     pub spec: ProcessSpec,
 }
 
@@ -66,20 +78,86 @@ pub(super) struct CallRequest {
     pub caller_credential: Option<String>,
 }
 
+/// A call that has ended, with who hears about it and the credential that ended with it.
+pub(super) struct EndedCall {
+    pub caller: CallCaller,
+    pub credential: String,
+    pub response: ControlResponse,
+}
+
 pub(super) struct Invocations {
     running: HashMap<String, Running>,
     sender: mpsc::Sender<Finished>,
     finished: mpsc::Receiver<Finished>,
 }
 
-fn refusal(code: ControlErrorCode, message: impl Into<String>) -> ControlResponse {
-    ControlResponse::error_with(code, message)
-}
-
 fn random_hex(bytes: usize) -> std::io::Result<String> {
     let mut random = vec![0u8; bytes];
     getrandom::fill(&mut random).map_err(std::io::Error::other)?;
     Ok(crate::extension_runtime::bundle::hex_digest(&random))
+}
+
+/// How deep a call runs, given the call that made it.
+fn nesting_depth(parent: Option<&Running>) -> Result<u8, ControlResponse> {
+    let depth = parent.map_or(1, |parent| parent.info.depth.saturating_add(1));
+    if depth > MAX_DEPTH {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvocationDepth,
+            format!("actions may nest at most {MAX_DEPTH} calls deep"),
+        ));
+    }
+    Ok(depth)
+}
+
+/// The shortest of what the action declares, what the caller asked for, and what its parent has left.
+fn time_allowed(
+    action: &ActionInfo,
+    timeout_ms: Option<u64>,
+    parent: Option<&Running>,
+    now: Instant,
+) -> Result<Duration, ControlResponse> {
+    let declared = Duration::from_millis(action.deadline_ms);
+    let allowed = timeout_ms.map_or(declared, |ms| declared.min(Duration::from_millis(ms)));
+    let Some(parent) = parent else {
+        return Ok(allowed);
+    };
+    let remaining = parent.deadline.saturating_duration_since(now);
+    if remaining.is_zero() {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvocationTimeout,
+            "the calling action's deadline has passed",
+        ));
+    }
+    Ok(allowed.min(remaining))
+}
+
+fn encode_args(args: &serde_json::Value) -> Result<Vec<u8>, ControlResponse> {
+    let encoded = serde_json::to_vec(args).map_err(|error| {
+        ControlResponse::error_with(ControlErrorCode::InvalidArguments, error.to_string())
+    })?;
+    if encoded.len() > ACTION_PAYLOAD_BYTES {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::InvalidArguments,
+            format!("action arguments may be at most {ACTION_PAYLOAD_BYTES} bytes"),
+        ));
+    }
+    Ok(encoded)
+}
+
+/// A new call's id, and the credential that proves a process belongs to it.
+fn issue_identity(instance: &str) -> Result<(String, String), ControlResponse> {
+    let issue = || -> std::io::Result<(String, String)> {
+        let id = random_hex(16)?;
+        let credential = format!(
+            "{}{instance}:{}",
+            crate::extension_runtime::SESSION_CREDENTIAL_PREFIX,
+            random_hex(32)?
+        );
+        Ok((id, credential))
+    };
+    issue().map_err(|error| {
+        ControlResponse::error(format!("cannot issue an invocation credential: {error}"))
+    })
 }
 
 impl Invocations {
@@ -99,6 +177,15 @@ impl Invocations {
         request: CallRequest,
         instance: &str,
     ) -> Option<ControlResponse> {
+        self.try_start(target, request, instance).err()
+    }
+
+    fn try_start(
+        &mut self,
+        target: CallTarget,
+        request: CallRequest,
+        instance: &str,
+    ) -> Result<(), ControlResponse> {
         let CallTarget {
             extension,
             generation,
@@ -109,75 +196,15 @@ impl Invocations {
             .caller_credential
             .as_deref()
             .and_then(|credential| self.by_credential(credential));
-        let depth = parent.map_or(1, |parent| parent.info.depth.saturating_add(1));
-        if depth > MAX_DEPTH {
-            return Some(refusal(
-                ControlErrorCode::InvocationDepth,
-                format!("actions may nest at most {MAX_DEPTH} calls deep"),
-            ));
-        }
+        let depth = nesting_depth(parent)?;
         let now = Instant::now();
-        let mut allowed = Duration::from_millis(action.info.deadline_ms);
-        if let Some(timeout_ms) = request.timeout_ms {
-            allowed = allowed.min(Duration::from_millis(timeout_ms));
-        }
-        if let Some(parent) = parent {
-            let remaining = parent.deadline.saturating_duration_since(now);
-            if remaining.is_zero() {
-                return Some(refusal(
-                    ControlErrorCode::InvocationTimeout,
-                    "the calling action's deadline has passed",
-                ));
-            }
-            allowed = allowed.min(remaining);
-        }
-        if self.running.len() >= MAX_RUNNING {
-            return Some(refusal(
-                ControlErrorCode::InvocationLimit,
-                format!("this session already runs {MAX_RUNNING} action calls"),
-            ));
-        }
-        if action.info.concurrency == ActionConcurrency::Singleton
-            && self
-                .running
-                .values()
-                .any(|running| running.info.action == action.info.id)
-        {
-            return Some(refusal(
-                ControlErrorCode::ActionBusy,
-                format!("`{}` is already running", action.info.id),
-            ));
-        }
-        let args = match serde_json::to_vec(&request.args) {
-            Ok(args) if args.len() <= ACTION_PAYLOAD_BYTES => args,
-            Ok(_) => {
-                return Some(refusal(
-                    ControlErrorCode::InvalidArguments,
-                    format!("action arguments may be at most {ACTION_PAYLOAD_BYTES} bytes"),
-                ));
-            }
-            Err(error) => {
-                return Some(refusal(
-                    ControlErrorCode::InvalidArguments,
-                    error.to_string(),
-                ));
-            }
-        };
-        let (id, secret) = match (random_hex(16), random_hex(32)) {
-            (Ok(id), Ok(secret)) => (id, secret),
-            (Err(error), _) | (_, Err(error)) => {
-                return Some(ControlResponse::error(format!(
-                    "cannot issue an invocation credential: {error}"
-                )));
-            }
-        };
-        let credential = format!(
-            "{}{instance}:{secret}",
-            crate::extension_runtime::SESSION_CREDENTIAL_PREFIX
-        );
+        let allowed = time_allowed(&action, request.timeout_ms, parent, now)?;
+        self.check_capacity(&action)?;
+        let args = encode_args(&request.args)?;
+        let (id, credential) = issue_identity(instance)?;
         spec.credential = credential.clone();
         spec.env
-            .push((crate::config::ACTION_ENV.into(), action.info.id.clone()));
+            .push((crate::config::ACTION_ENV.into(), action.id.clone()));
         spec.env
             .push((crate::config::INVOCATION_ENV.into(), id.clone()));
         let deadline = now + allowed;
@@ -190,7 +217,7 @@ impl Invocations {
         let cancel = Arc::new(AtomicBool::new(false));
         let info = InvocationInfo {
             invocation_id: id.clone(),
-            action: action.info.id.clone(),
+            action: action.id.clone(),
             generation,
             depth,
             deadline_unix_ms: unix_ms_after(allowed),
@@ -198,28 +225,16 @@ impl Invocations {
         let sender = self.sender.clone();
         let thread_cancel = cancel.clone();
         let thread_id = id.clone();
-        let schemas = action.info.clone();
-        let spawned = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("rozi-action".into())
             .spawn(move || {
-                let result = run_call(
-                    spec,
-                    &schemas,
-                    &request.args,
-                    args,
-                    deadline,
-                    &thread_cancel,
-                );
+                let result = run_call(spec, &action, &request.args, args, deadline, &thread_cancel);
                 let _ = sender.send(Finished {
                     id: thread_id,
                     result,
                 });
-            });
-        if let Err(error) = spawned {
-            return Some(ControlResponse::error(format!(
-                "cannot start the action: {error}"
-            )));
-        }
+            })
+            .map_err(|error| ControlResponse::error(format!("cannot start the action: {error}")))?;
         self.running.insert(
             id,
             Running {
@@ -231,7 +246,29 @@ impl Invocations {
                 caller: Some((request.client, request.reply)),
             },
         );
-        None
+        Ok(())
+    }
+
+    /// Refuse a call there is no room for. It fails rather than waits; see [`MAX_RUNNING`].
+    fn check_capacity(&self, action: &ActionInfo) -> Result<(), ControlResponse> {
+        if self.running.len() >= MAX_RUNNING {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvocationLimit,
+                format!("this session already runs {MAX_RUNNING} action calls"),
+            ));
+        }
+        let busy = action.concurrency == ActionConcurrency::Singleton
+            && self
+                .running
+                .values()
+                .any(|running| running.info.action == action.id);
+        if busy {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::ActionBusy,
+                format!("`{}` is already running", action.id),
+            ));
+        }
+        Ok(())
     }
 
     /// The live call holding `credential`. A cancelled call's credential is already dead, however
@@ -258,7 +295,7 @@ impl Invocations {
 
     pub fn cancel(&self, invocation_id: &str) -> Option<InvocationInfo> {
         let running = self.running.get(invocation_id)?;
-        running.cancel.store(true, Ordering::Relaxed);
+        running.stop();
         Some(running.info.clone())
     }
 
@@ -271,20 +308,16 @@ impl Invocations {
             })
         };
         if let Some(running) = self.running.values().find(started_it) {
-            running.cancel.store(true, Ordering::Relaxed);
+            running.stop();
         }
     }
 
     /// Cancel a departed caller's calls. Nobody is left to answer.
     pub fn abandon_client(&mut self, client: ClientId) {
         for running in self.running.values_mut() {
-            if running
-                .caller
-                .as_ref()
-                .is_some_and(|(owner, _)| *owner == client)
-            {
+            if running.called_by(client) {
                 running.caller = None;
-                running.cancel.store(true, Ordering::Relaxed);
+                running.stop();
             }
         }
     }
@@ -297,26 +330,22 @@ impl Invocations {
                 running.extension == extension && running.info.generation == generation
             })
             .map(|running| {
-                running.cancel.store(true, Ordering::Relaxed);
+                running.stop();
                 running.credential.clone()
             })
             .collect()
     }
 
     pub fn holds_reply(&self, client: ClientId) -> bool {
-        self.running.values().any(|running| {
-            running
-                .caller
-                .as_ref()
-                .is_some_and(|(owner, _)| *owner == client)
-        })
+        self.running
+            .values()
+            .any(|running| running.called_by(client))
     }
 
-    /// Calls that have ended, each with its caller and the credential that ended with it.
-    pub fn drain(&mut self) -> Vec<(CallCaller, String, ControlResponse)> {
-        let finished: Vec<_> = self.finished.try_iter().collect();
-        finished
-            .into_iter()
+    /// The calls that have ended since the last time this was asked.
+    pub fn drain(&mut self) -> Vec<EndedCall> {
+        self.finished
+            .try_iter()
             .filter_map(|finished| {
                 let running = self.running.remove(&finished.id)?;
                 let response = match finished.result {
@@ -326,7 +355,11 @@ impl Invocations {
                     }),
                     Err((code, message)) => ControlResponse::error_with(code, message),
                 };
-                Some((running.caller, running.credential, response))
+                Some(EndedCall {
+                    caller: running.caller,
+                    credential: running.credential,
+                    response,
+                })
             })
             .collect()
     }
@@ -346,7 +379,7 @@ impl Invocations {
     /// left behind: shutting a session down must not depend on what an extension started.
     pub fn shut_down(&mut self) {
         for running in self.running.values() {
-            running.cancel.store(true, Ordering::Relaxed);
+            running.stop();
         }
         let deadline = Instant::now() + SHUTDOWN_GRACE;
         while !self.running.is_empty() {
@@ -376,14 +409,19 @@ fn check_schema(
     value: &serde_json::Value,
     code: ControlErrorCode,
     what: &str,
-) -> Result<(), (ControlErrorCode, String)> {
-    let validator = jsonschema::options()
-        .offline()
-        .build(schema)
-        .map_err(|error| (ControlErrorCode::ActionFailed, error.to_string()))?;
+) -> Result<(), CallError> {
+    let validator = crate::config::action_schema_validator(schema)
+        .map_err(|error| (ControlErrorCode::ActionFailed, error))?;
     validator
         .validate(value)
         .map_err(|error| (code, format!("{what} do not match the schema: {error}")))
+}
+
+fn cancelled() -> CallError {
+    (
+        ControlErrorCode::InvocationCancelled,
+        "the call was cancelled".to_string(),
+    )
 }
 
 /// Refuse to go on with a call that was cancelled or has passed its deadline.
@@ -391,12 +429,9 @@ fn check_live(
     action: &ActionInfo,
     deadline: Instant,
     cancel: &AtomicBool,
-) -> Result<(), (ControlErrorCode, String)> {
+) -> Result<(), CallError> {
     if cancel.load(Ordering::Relaxed) {
-        return Err((
-            ControlErrorCode::InvocationCancelled,
-            "the call was cancelled".to_string(),
-        ));
+        return Err(cancelled());
     }
     if Instant::now() >= deadline {
         return Err((
@@ -421,6 +456,20 @@ fn run_call(
         ControlErrorCode::InvalidArguments,
         "arguments",
     )?;
+    let outcome = run_process(spec, action, encoded_args, deadline, cancel)?;
+    let result = read_result(outcome, action)?;
+    check_live(action, deadline, cancel)?;
+    Ok(result)
+}
+
+/// Start the call's process and wait for it to end, or end it.
+fn run_process(
+    spec: ProcessSpec,
+    action: &ActionInfo,
+    encoded_args: Vec<u8>,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<ExitOutcome, CallError> {
     let spawn_failed =
         |failure: SpawnFailure| (ControlErrorCode::ActionFailed, failure.to_string());
     let prepared = SupervisedProcess::prepare(spec).map_err(spawn_failed)?;
@@ -436,10 +485,7 @@ fn run_call(
     let outcome = loop {
         if cancel.load(Ordering::Relaxed) {
             process.kill("stopped: cancelled");
-            return Err((
-                ControlErrorCode::InvocationCancelled,
-                "the call was cancelled".to_string(),
-            ));
+            return Err(cancelled());
         }
         if let Some(outcome) = process.poll_until(deadline) {
             break outcome;
@@ -447,6 +493,11 @@ fn run_call(
         std::thread::sleep(POLL);
     };
     check_live(action, deadline, cancel)?;
+    Ok(outcome)
+}
+
+/// The JSON result a finished process printed, checked against the action's schema.
+fn read_result(outcome: ExitOutcome, action: &ActionInfo) -> CallResult {
     if !outcome.is_success() {
         return Err((
             ControlErrorCode::ActionFailed,
@@ -457,7 +508,7 @@ fn run_call(
             ),
         ));
     }
-    let Some(output) = outcome.output_bytes else {
+    let Some(output) = outcome.output else {
         return Err((
             ControlErrorCode::ActionFailed,
             format!("`{}` left a process holding its output open", action.id),
@@ -481,7 +532,6 @@ fn run_call(
         ControlErrorCode::InvalidResult,
         "results",
     )?;
-    check_live(action, deadline, cancel)?;
     Ok(result)
 }
 
@@ -503,7 +553,7 @@ impl SessionServer {
                 timeout_ms,
             } => {
                 let Some(automation) = automation else {
-                    return Some(refusal(
+                    return Some(ControlResponse::error_with(
                         ControlErrorCode::ActionNotFound,
                         format!("no deployed action `{action}`"),
                     ));
@@ -529,7 +579,7 @@ impl SessionServer {
                     .and_then(|automation| automation.invocations().cancel(&invocation_id))
                 {
                     Some(info) => ControlResponse::ok(info),
-                    None => refusal(
+                    None => ControlResponse::error_with(
                         ControlErrorCode::InvocationNotFound,
                         format!("no running invocation `{invocation_id}`"),
                     ),
@@ -567,7 +617,7 @@ impl SessionServer {
     }
 }
 
-/// How a process names itself to a call: `Launch` from the manifest, run from the bundle's root.
+/// How to start a process for a call: the manifest's command, from the bundle's root.
 pub(super) fn call_spec(
     directory: std::path::PathBuf,
     platforms: Vec<String>,

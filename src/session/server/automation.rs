@@ -262,13 +262,14 @@ impl Automation {
         &self.invocations
     }
 
-    pub fn action_infos(&self) -> Vec<ActionInfo> {
-        let mut actions: Vec<_> = self
-            .extensions
+    fn actions(&self) -> impl Iterator<Item = &ExtensionAction> {
+        self.extensions
             .values()
             .flat_map(|extension| &extension.actions)
-            .map(|action| action.info.clone())
-            .collect();
+    }
+
+    pub fn action_infos(&self) -> Vec<ActionInfo> {
+        let mut actions: Vec<_> = self.actions().map(|action| action.info.clone()).collect();
         actions.sort_by(|a, b| a.id.cmp(&b.id));
         actions
     }
@@ -276,9 +277,7 @@ impl Automation {
     /// The actions a person can run from a palette, which takes no arguments.
     pub fn palette_actions(&self) -> Vec<crate::control::PaletteAction> {
         let mut actions: Vec<_> = self
-            .extensions
-            .values()
-            .flat_map(|extension| &extension.actions)
+            .actions()
             .filter(|action| action.runs_without_arguments)
             .map(|action| crate::control::PaletteAction {
                 id: action.info.id.clone(),
@@ -343,7 +342,7 @@ impl Automation {
         let target = CallTarget {
             extension: extension.clone(),
             generation: active.generation,
-            action: action.clone(),
+            action: action.info.clone(),
             spec: call_spec(
                 active.directory.clone(),
                 active.platforms.clone(),
@@ -360,9 +359,9 @@ impl Automation {
     pub fn drain_invocations(&mut self) -> (Vec<(CallCaller, ControlResponse)>, Vec<ClientId>) {
         let mut answers = Vec::new();
         let mut revoked = HashSet::new();
-        for (caller, credential, response) in self.invocations.drain() {
-            answers.push((caller, response));
-            revoked.insert(credential);
+        for ended in self.invocations.drain() {
+            answers.push((ended.caller, ended.response));
+            revoked.insert(ended.credential);
         }
         let departed = self
             .callers

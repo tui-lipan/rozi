@@ -267,7 +267,7 @@ impl Runtime {
                         code: outcome.code,
                         killed: outcome.killed,
                         timed_out: outcome.timed_out,
-                        output: outcome.output,
+                        output: outcome.output_text(),
                     })?;
                 }
                 Ok(())
@@ -366,7 +366,7 @@ impl Runtime {
                 code: outcome.code,
                 killed: outcome.killed,
                 timed_out: outcome.timed_out,
-                output: outcome.output,
+                output: outcome.output_text(),
             })?;
         }
         Ok(())

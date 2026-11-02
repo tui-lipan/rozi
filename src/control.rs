@@ -2420,6 +2420,14 @@ pub const ACTION_PAYLOAD_BYTES: usize = 512 * 1024;
 /// Longest deadline an action may declare.
 pub const ACTION_DEADLINE_MAX_MS: u64 = 600_000;
 
+/// How long an `invoke` can take at most. The server ends a call by its deadline, which a caller can
+/// shorten but not lengthen.
+pub(crate) fn longest_invoke_ms(timeout_ms: Option<u64>) -> u64 {
+    timeout_ms
+        .unwrap_or(ACTION_DEADLINE_MAX_MS)
+        .min(ACTION_DEADLINE_MAX_MS)
+}
+
 fn empty_action_args() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
@@ -3306,10 +3314,7 @@ fn control_reply_timeout(command: &ControlCommand) -> Duration {
         return crate::session::headless::RECORDING_STOP_TIMEOUT;
     }
     if let ControlCommand::Invoke { timeout_ms, .. } = command {
-        return Duration::from_millis(
-            timeout_ms.map_or(ACTION_DEADLINE_MAX_MS, |ms| ms.min(ACTION_DEADLINE_MAX_MS)),
-        )
-        .saturating_add(REPLY_TIMEOUT);
+        return Duration::from_millis(longest_invoke_ms(*timeout_ms)).saturating_add(REPLY_TIMEOUT);
     }
     if let ControlCommand::AgentWait {
         timeout_ms: Some(timeout_ms),
@@ -3511,7 +3516,7 @@ pub(crate) fn serve_connection(
         caller,
     }));
     let response = if let Some(caller) = caller {
-        let Some(response) = reply_unless_hung_up(&mut stream, &rx, reply_timeout) else {
+        let Ok(response) = reply_unless_hung_up(&mut stream, &rx, reply_timeout) else {
             link.send(Msg::ControlCallerGone { caller });
             return;
         };
@@ -3543,24 +3548,26 @@ fn caller_hung_up(stream: &mut IpcConnection) -> bool {
     hung_up
 }
 
-/// Wait for a reply while watching the caller. `None` means it hung up first; `Some(None)` means no
-/// reply came in time.
+/// The caller closed its connection before its reply came.
+struct CallerHungUp;
+
+/// Wait for a reply while watching the caller. `Ok(None)` means no reply came in time.
 fn reply_unless_hung_up(
     stream: &mut IpcConnection,
     replies: &mpsc::Receiver<ControlResponse>,
     timeout: Duration,
-) -> Option<Option<ControlResponse>> {
+) -> std::result::Result<Option<ControlResponse>, CallerHungUp> {
     const PROBE_INTERVAL: Duration = Duration::from_millis(100);
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         match replies.recv_timeout(left.min(PROBE_INTERVAL)) {
-            Ok(response) => return Some(Some(response)),
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Some(None),
-            Err(mpsc::RecvTimeoutError::Timeout) if left <= PROBE_INTERVAL => return Some(None),
+            Ok(response) => return Ok(Some(response)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) if left <= PROBE_INTERVAL => return Ok(None),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if caller_hung_up(stream) {
-                    return None;
+                    return Err(CallerHungUp);
                 }
             }
         }

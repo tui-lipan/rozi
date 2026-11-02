@@ -179,6 +179,10 @@ fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
+fn has_setsid() -> bool {
+    Command::new("setsid").arg("--version").output().is_ok()
+}
+
 fn alive(pid: &str) -> bool {
     Command::new("kill")
         .args(["-0", pid])
@@ -606,7 +610,7 @@ exec sleep 30
 
 #[test]
 fn a_process_that_escapes_its_group_cannot_hang_a_call() {
-    if Command::new("setsid").arg("--version").output().is_err() {
+    if !has_setsid() {
         return;
     }
     let mut lab = Lab::new();
@@ -942,7 +946,7 @@ exec = ["sh", "-c", "exec sleep 30"]
 
 #[test]
 fn a_cancelled_calls_credential_dies_before_the_call_finishes_ending() {
-    if Command::new("setsid").arg("--version").output().is_err() {
+    if !has_setsid() {
         return;
     }
     let mut lab = Lab::new();

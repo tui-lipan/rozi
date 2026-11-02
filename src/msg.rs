@@ -847,6 +847,7 @@ pub enum Msg {
         epoch: u64,
         event: crate::session::protocol::SessionEvent,
     },
+    /// The deployed actions a session offers for the palette.
     SessionActions {
         epoch: u64,
         actions: Vec<crate::control::PaletteAction>,

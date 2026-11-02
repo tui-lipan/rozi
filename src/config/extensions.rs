@@ -10,7 +10,7 @@ use tui_lipan::prelude::KeyBinding;
 
 mod actions;
 mod advice;
-pub(crate) use actions::ExtensionAction;
+pub(crate) use actions::{ExtensionAction, action_schema_validator};
 mod authoring;
 mod contributions;
 mod diagnostics;

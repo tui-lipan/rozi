@@ -268,11 +268,16 @@ pub struct ExitOutcome {
     pub code: Option<i32>,
     pub killed: bool,
     pub timed_out: bool,
-    pub output: Option<String>,
-    pub output_bytes: Option<Vec<u8>>,
+    pub output: Option<Vec<u8>>,
 }
 
 impl ExitOutcome {
+    pub fn output_text(&self) -> Option<String> {
+        self.output
+            .as_ref()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    }
+
     pub fn is_success(&self) -> bool {
         !self.killed && !self.timed_out && self.code == Some(0)
     }
@@ -352,7 +357,7 @@ pub fn terminate_with_log(
     }
 }
 
-/// A process checked and ready to start, for a caller with a last word on whether it does.
+/// A process that has passed every check and has not started.
 pub struct PreparedProcess {
     command: Command,
     extension: String,
@@ -365,9 +370,9 @@ pub struct PreparedProcess {
 pub struct SupervisedProcess {
     child: Child,
     group: CommandGroup,
-    // Never written. Held open so the process sees end of file once the supervisor is gone,
-    // however it went.
-    _stdin: Option<ChildStdin>,
+    // Held open unless taken, so the process sees end of file once the supervisor is gone, however
+    // it went.
+    stdin: Option<ChildStdin>,
     started: Instant,
     capture: Option<(Capture, std::thread::JoinHandle<Vec<u8>>)>,
     log: Option<Attached>,
@@ -403,7 +408,7 @@ impl PreparedProcess {
             (capture, reader)
         });
         Ok(SupervisedProcess {
-            _stdin: child.stdin.take(),
+            stdin: child.stdin.take(),
             child,
             group,
             started: Instant::now(),
@@ -445,22 +450,7 @@ impl SupervisedProcess {
             detail: format!("cannot prepare the extension's state directory: {error}"),
         })?;
         let mut command = build_command(&spec.launch, &spec.bundle_dir)?;
-        match &spec.cwd {
-            SpawnCwd::Bundle { path } => {
-                if !super::bundle::is_contained(path) {
-                    return Err(SpawnFailure::SpawnFailed {
-                        detail: format!("working directory `{path}` is outside the extension"),
-                    });
-                }
-                command.current_dir(spec.bundle_dir.join(path));
-            }
-            SpawnCwd::Host { path } => {
-                if Path::new(path).is_dir() {
-                    command.current_dir(path);
-                }
-            }
-            SpawnCwd::Inherit => {}
-        }
+        set_working_directory(&mut command, &spec.cwd, &spec.bundle_dir)?;
         for key in INHERITED_ENV_REMOVED {
             command.env_remove(key);
         }
@@ -488,7 +478,7 @@ impl SupervisedProcess {
 
     /// Take the write end of the process's standard input, so it sees end of file once written.
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self._stdin.take()
+        self.stdin.take()
     }
 
     pub fn pid(&self) -> u32 {
@@ -527,20 +517,12 @@ impl SupervisedProcess {
             }
         };
         let drain_until = Instant::now() + CAPTURE_DRAIN;
-        let drain_until = deadline.map_or(drain_until, |deadline| deadline.min(drain_until));
-        let output_bytes = self
-            .capture
-            .take()
-            .and_then(|(_, reader)| collect(reader, drain_until));
-        let output = output_bytes
-            .as_ref()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+        let output = self.take_output(deadline.map_or(drain_until, |at| at.min(drain_until)));
         let outcome = ExitOutcome {
             code,
             killed: false,
             timed_out,
             output,
-            output_bytes,
         };
         if let Some(log) = &self.log {
             log.finish(&outcome.log_note());
@@ -551,22 +533,44 @@ impl SupervisedProcess {
     /// Terminate the process and its descendants immediately, recording `note` in its log.
     pub fn kill(mut self, note: &str) -> ExitOutcome {
         terminate_with_log(&mut self.child, &self.group, self.log.as_ref(), note);
-        let drain_until = Instant::now() + CAPTURE_DRAIN;
-        let output_bytes = self
-            .capture
-            .take()
-            .and_then(|(_, reader)| collect(reader, drain_until));
-        let output = output_bytes
-            .as_ref()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
+        let output = self.take_output(Instant::now() + CAPTURE_DRAIN);
         ExitOutcome {
             code: None,
             killed: true,
             timed_out: false,
             output,
-            output_bytes,
         }
     }
+
+    fn take_output(&mut self, until: Instant) -> Option<Vec<u8>> {
+        self.capture
+            .take()
+            .and_then(|(_, reader)| collect(reader, until))
+    }
+}
+
+fn set_working_directory(
+    command: &mut Command,
+    cwd: &SpawnCwd,
+    bundle_dir: &Path,
+) -> Result<(), SpawnFailure> {
+    match cwd {
+        SpawnCwd::Bundle { path } => {
+            if !super::bundle::is_contained(path) {
+                return Err(SpawnFailure::SpawnFailed {
+                    detail: format!("working directory `{path}` is outside the extension"),
+                });
+            }
+            command.current_dir(bundle_dir.join(path));
+        }
+        SpawnCwd::Host { path } => {
+            if Path::new(path).is_dir() {
+                command.current_dir(path);
+            }
+        }
+        SpawnCwd::Inherit => {}
+    }
+    Ok(())
 }
 
 /// What a process captured. `None` when a process that escaped its group still holds the pipe
@@ -1272,7 +1276,7 @@ mod tests {
         };
         assert!(outcome.timed_out);
         assert!(!outcome.killed);
-        assert_eq!(outcome.output.as_deref(), Some("partial-out"));
+        assert_eq!(outcome.output_text().as_deref(), Some("partial-out"));
 
         while crate::platform::command::process_is_alive(parent_pid) {
             assert!(Instant::now() < deadline, "timed-out process survived");

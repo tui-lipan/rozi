@@ -39,7 +39,13 @@ pub(crate) fn forward<Request: Serialize, Reply: DeserializeOwned>(
     runner_args: &[&str],
     request: &Request,
 ) -> Result<Reply, TransportError> {
-    forward_over(target, config, runner_args, request, Stdin::Close)
+    forward_over(
+        target,
+        config,
+        runner_args,
+        request,
+        AfterRequest::CloseStdin,
+    )
 }
 
 /// [`forward`] for a request that should end with its caller. The runner reads one line, and its
@@ -51,13 +57,20 @@ pub(crate) fn forward_watched<Request: Serialize, Reply: DeserializeOwned>(
     runner_args: &[&str],
     request: &Request,
 ) -> Result<Reply, TransportError> {
-    forward_over(target, config, runner_args, request, Stdin::Hold)
+    forward_over(
+        target,
+        config,
+        runner_args,
+        request,
+        AfterRequest::HoldStdin,
+    )
 }
 
+/// What happens to the runner's standard input once it has the request.
 #[derive(Clone, Copy, PartialEq)]
-enum Stdin {
-    Close,
-    Hold,
+enum AfterRequest {
+    CloseStdin,
+    HoldStdin,
 }
 
 fn forward_over<Request: Serialize, Reply: DeserializeOwned>(
@@ -65,11 +78,11 @@ fn forward_over<Request: Serialize, Reply: DeserializeOwned>(
     config: &RemoteConfig,
     runner_args: &[&str],
     request: &Request,
-    stdin: Stdin,
+    after_request: AfterRequest,
 ) -> Result<Reply, TransportError> {
     let mut command = runner_command(target, config, runner_args)?;
     let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
-    let result = exchange_over(&mut command, &payload, stdin).and_then(|output| {
+    let result = exchange(&mut command, &payload, after_request).and_then(|output| {
         if !output.status.success() {
             return Err(TransportError::Failed(output));
         }
@@ -240,15 +253,10 @@ fn runner_command(
     Ok(command)
 }
 
-#[cfg(all(test, unix))]
-fn exchange(command: &mut Command, payload: &[u8]) -> Result<Output, TransportError> {
-    exchange_over(command, payload, Stdin::Close)
-}
-
-fn exchange_over(
+fn exchange(
     command: &mut Command,
     payload: &[u8],
-    after_request: Stdin,
+    after_request: AfterRequest,
 ) -> Result<Output, TransportError> {
     let mut child = command
         .stdin(Stdio::piped())
@@ -257,15 +265,15 @@ fn exchange_over(
         .spawn()
         .map_err(TransportError::Ssh)?;
     let mut stdin = child.stdin.take().expect("piped stdin");
-    // Drain stdout/stderr while sending too: even a login banner can fill a pipe. Closing stdin
-    // ends the request. No transport deadline: forwarded waits and checkouts can take a long time.
+    // Drain stdout/stderr while sending too: even a login banner can fill a pipe. The sender
+    // dropping stdin closes it, which ends the request. No transport deadline: forwarded waits and checkouts can take a long time.
     std::thread::scope(|scope| {
         let (finished, wait_for_finish) = std::sync::mpsc::channel::<()>();
         let sender = scope.spawn(move || {
             let sent = stdin
                 .write_all(payload)
                 .and_then(|()| stdin.write_all(b"\n"));
-            if after_request == Stdin::Hold {
+            if after_request == AfterRequest::HoldStdin {
                 let _ = wait_for_finish.recv();
             }
             sent
@@ -341,13 +349,16 @@ exec 3<&0
 (IFS= read -r more <&3; : > "$0") > /dev/null 2>&1 &
 sleep 0.3
 if [ -e "$0" ]; then echo closed; else echo held; fi"#;
-        for (mode, expected) in [(Stdin::Hold, "held"), (Stdin::Close, "closed")] {
+        for (mode, expected) in [
+            (AfterRequest::HoldStdin, "held"),
+            (AfterRequest::CloseStdin, "closed"),
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let mut command = Command::new("sh");
             command
                 .args(["-c", probe])
                 .arg(directory.path().join("eof"));
-            let output = exchange_over(&mut command, b"request", mode).unwrap();
+            let output = exchange(&mut command, b"request", mode).unwrap();
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),
                 format!("request\n{expected}\n")
@@ -396,7 +407,7 @@ if [ -e "$0" ]; then echo closed; else echo held; fi"#;
         let mut command = Command::new("sh");
         command.args(["-c", "head -c 262144 /dev/zero; cat"]);
         let request = vec![b'x'; 262144];
-        let output = exchange(&mut command, &request).unwrap();
+        let output = exchange(&mut command, &request, AfterRequest::CloseStdin).unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout.len(), 524289);
         assert_eq!(&output.stdout[262144..524288], request);
@@ -408,7 +419,7 @@ if [ -e "$0" ]; then echo closed; else echo held; fi"#;
     fn rejecting_runner_keeps_its_diagnostic_when_it_closes_stdin_early() {
         let mut command = Command::new("sh");
         command.args(["-c", "printf 'unknown runner' >&2; exit 17"]);
-        let output = exchange(&mut command, &vec![b'x'; 262144]).unwrap();
+        let output = exchange(&mut command, &vec![b'x'; 262144], AfterRequest::CloseStdin).unwrap();
         assert_eq!(output.status.code(), Some(17));
         assert_eq!(output.stderr, b"unknown runner");
     }
@@ -418,7 +429,7 @@ if [ -e "$0" ]; then echo closed; else echo held; fi"#;
     fn exchange_closes_input_and_preserves_output_status_and_stderr() {
         let mut command = Command::new("sh");
         command.args(["-c", "cat; printf 'diagnostic' >&2; exit 23"]);
-        let output = exchange(&mut command, b"request").unwrap();
+        let output = exchange(&mut command, b"request", AfterRequest::CloseStdin).unwrap();
         assert_eq!(output.stdout, b"request\n");
         assert_eq!(output.stderr, b"diagnostic");
         assert_eq!(output.status.code(), Some(23));
@@ -429,6 +440,12 @@ if [ -e "$0" ]; then echo closed; else echo held; fi"#;
     fn exchange_preserves_signal_termination() {
         let mut command = Command::new("sh");
         command.args(["-c", "cat >/dev/null; kill -TERM $$"]);
-        assert_eq!(exchange(&mut command, b"{}").unwrap().status.code(), None);
+        assert_eq!(
+            exchange(&mut command, b"{}", AfterRequest::CloseStdin)
+                .unwrap()
+                .status
+                .code(),
+            None
+        );
     }
 }

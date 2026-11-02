@@ -274,10 +274,11 @@ pub(crate) enum ParsedCli {
         name: String,
         autostart: bool,
     },
-    /// Hidden remote-side control runner: one JSON request in, one JSON response out.
+    /// Hidden remote-side runner for one action call, which ends if its standard input closes.
     RemoteCall {
         name: String,
     },
+    /// Hidden remote-side control runner: one JSON request in, one JSON response out.
     RemoteControl {
         name: String,
     },
@@ -1288,47 +1289,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "invoke" => {
-                let action = require_value(&mut iter, "invoke requires an action id")?;
-                let mut args = None;
-                let mut timeout_ms = None;
-                let mut output_format = None;
-                while let Some(arg) = iter.next() {
-                    match arg.as_str() {
-                        "--format" => {
-                            output_format = parse_output_format(
-                                &mut ["--format".to_string(), iter.next().unwrap_or_default()]
-                                    .into_iter(),
-                                "invoke",
-                            )?;
-                        }
-                        "--args-json" => {
-                            let text = require_value(&mut iter, "--args-json requires JSON")?;
-                            // A command line is too short for the largest arguments on some systems.
-                            let text = if text == "-" {
-                                std::io::read_to_string(std::io::stdin())
-                                    .map_err(|error| format!("--args-json: {error}"))?
-                            } else {
-                                text
-                            };
-                            args = Some(
-                                serde_json::from_str(&text)
-                                    .map_err(|error| format!("--args-json: {error}"))?,
-                            );
-                        }
-                        "--timeout" => {
-                            let value = require_value(&mut iter, "--timeout requires a duration")?;
-                            timeout_ms = Some(parse_duration_ms(&value, "--timeout")?);
-                        }
-                        other => {
-                            return Err(format!("unexpected argument `{other}` after invoke"));
-                        }
-                    }
-                }
-                let command = control::ControlCommand::Invoke {
-                    action,
-                    args: args.unwrap_or_else(|| serde_json::json!({})),
-                    timeout_ms,
-                };
+                let (command, output_format) = parse_invoke(&mut iter)?;
                 return Ok(ParsedCli::Control(ControlCli {
                     config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
@@ -1912,6 +1873,50 @@ pub(super) fn parse_output_format(
     Ok(output_format)
 }
 
+/// The arguments of `invoke`: the command they make, and how to print its answer.
+fn parse_invoke(
+    iter: &mut impl Iterator<Item = String>,
+) -> std::result::Result<(control::ControlCommand, Option<ListFormat>), String> {
+    let action = require_value(iter, "invoke requires an action id")?;
+    let mut args = None;
+    let mut timeout_ms = None;
+    let mut output_format = None;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--format" => {
+                let value = require_value(iter, "--format requires text or json")?;
+                output_format = Some(parse_list_format(&value, "invoke")?);
+            }
+            "--args-json" => {
+                let text = require_value(iter, "--args-json requires JSON")?;
+                args = Some(parse_args_json(text)?);
+            }
+            "--timeout" => {
+                let value = require_value(iter, "--timeout requires a duration")?;
+                timeout_ms = Some(parse_duration_ms(&value, "--timeout")?);
+            }
+            other => return Err(format!("unexpected argument `{other}` after invoke")),
+        }
+    }
+    let command = control::ControlCommand::Invoke {
+        action,
+        args: args.unwrap_or_else(|| serde_json::json!({})),
+        timeout_ms,
+    };
+    Ok((command, output_format))
+}
+
+/// `-` reads standard input: a command line is too short for the largest arguments on some systems.
+fn parse_args_json(text: String) -> std::result::Result<serde_json::Value, String> {
+    let text = if text == "-" {
+        std::io::read_to_string(std::io::stdin())
+            .map_err(|error| format!("--args-json: {error}"))?
+    } else {
+        text
+    };
+    serde_json::from_str(&text).map_err(|error| format!("--args-json: {error}"))
+}
+
 /// Decide which endpoint a control command talks to, rejecting launch-only options.
 ///
 /// A control command never attaches anything, so the launch options are rejected rather than
@@ -2201,69 +2206,6 @@ mod tests {
         ));
         assert!(parse_cli_args(vec!["api".into(), "command".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "schema".into(), "extra".into()]).is_err());
-        let args = |list: &[&str]| {
-            list.iter()
-                .map(|arg| (*arg).to_string())
-                .collect::<Vec<_>>()
-        };
-        let invoked = |list: &[&str]| match parse_cli_args(args(list)).expect("parses") {
-            ParsedCli::Control(control) => control.request.command,
-            other => panic!("{other:?}"),
-        };
-        assert_eq!(
-            invoked(&[
-                "invoke",
-                "demo.run",
-                "--args-json",
-                "{\"a\":1}",
-                "--timeout",
-                "2s"
-            ]),
-            control::ControlCommand::Invoke {
-                action: "demo.run".into(),
-                args: serde_json::json!({"a": 1}),
-                timeout_ms: Some(2000),
-            }
-        );
-        assert_eq!(
-            invoked(&["invoke", "demo.run"]),
-            control::ControlCommand::Invoke {
-                action: "demo.run".into(),
-                args: serde_json::json!({}),
-                timeout_ms: None,
-            }
-        );
-        for list in [
-            &["actions", "list", "--format", "json"][..],
-            &["actions", "list", "--json"],
-        ] {
-            let ParsedCli::Control(control) = parse_cli_args(args(list)).expect("parses") else {
-                panic!("{list:?}");
-            };
-            assert_eq!(
-                control.request.command,
-                control::ControlCommand::ActionsList
-            );
-            assert_eq!(control.output_format, Some(ListFormat::Json));
-        }
-        assert_eq!(
-            invoked(&["invocation", "cancel", "abc"]),
-            control::ControlCommand::InvocationCancel {
-                invocation_id: "abc".into()
-            }
-        );
-        for bad in [
-            &["invoke"][..],
-            &["invoke", "x", "--args-json", "{"],
-            &["invoke", "x", "extra"],
-            &["invocation"],
-            &["invocation", "cancel"],
-            &["invocation", "other"],
-            &["actions"],
-            &["actions", "other"],
-        ] {
-            assert!(parse_cli_args(args(bad)).is_err(), "{bad:?}");
-        }
         assert!(parse_cli_args(vec!["api".into()]).is_err());
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
         assert!(matches!(
@@ -2359,9 +2301,74 @@ mod tests {
         ));
     }
 
-    /// A remote or restored pane has no `ROZI_SOCKET`, but its own server owns its agent state, so
-    /// its reports go there - by instance, with the pane's own id as the explicit target. Anything
-    /// that names an endpoint, or is not a report from a shared pane, stays where it was.
+    #[test]
+    fn action_commands_parse_their_arguments_and_refuse_anything_else() {
+        let args = |list: &[&str]| {
+            list.iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>()
+        };
+        let invoked = |list: &[&str]| match parse_cli_args(args(list)).expect("parses") {
+            ParsedCli::Control(control) => control.request.command,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            invoked(&[
+                "invoke",
+                "demo.run",
+                "--args-json",
+                "{\"a\":1}",
+                "--timeout",
+                "2s"
+            ]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({"a": 1}),
+                timeout_ms: Some(2000),
+            }
+        );
+        assert_eq!(
+            invoked(&["invoke", "demo.run"]),
+            control::ControlCommand::Invoke {
+                action: "demo.run".into(),
+                args: serde_json::json!({}),
+                timeout_ms: None,
+            }
+        );
+        for list in [
+            &["actions", "list", "--format", "json"][..],
+            &["actions", "list", "--json"],
+        ] {
+            let ParsedCli::Control(control) = parse_cli_args(args(list)).expect("parses") else {
+                panic!("{list:?}");
+            };
+            assert_eq!(
+                control.request.command,
+                control::ControlCommand::ActionsList
+            );
+            assert_eq!(control.output_format, Some(ListFormat::Json));
+        }
+        assert_eq!(
+            invoked(&["invocation", "cancel", "abc"]),
+            control::ControlCommand::InvocationCancel {
+                invocation_id: "abc".into()
+            }
+        );
+        for bad in [
+            &["invoke"][..],
+            &["invoke", "x", "--args-json", "{"],
+            &["invoke", "x", "extra"],
+            &["invoke", "x", "--format"],
+            &["invocation"],
+            &["invocation", "cancel"],
+            &["invocation", "other"],
+            &["actions"],
+            &["actions", "other"],
+        ] {
+            assert!(parse_cli_args(args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn a_panes_action_commands_go_to_its_own_session_with_or_without_a_ui() {
         let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");
@@ -2409,6 +2416,9 @@ mod tests {
         }
     }
 
+    /// A remote or restored pane has no `ROZI_SOCKET`, but its own server owns its agent state, so
+    /// its reports go there - by instance, with the pane's own id as the explicit target. Anything
+    /// that names an endpoint, or is not a report from a shared pane, stays where it was.
     #[test]
     fn a_report_from_a_pane_with_no_ui_goes_to_its_own_session_server() {
         let instance = crate::session::protocol::SessionInstanceId::for_test("server-a");

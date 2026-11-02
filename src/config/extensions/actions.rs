@@ -112,8 +112,16 @@ fn compile_schema(schema: &serde_json::Value) -> Result<jsonschema::Validator, S
             "a schema may contain at most {MAX_SCHEMA_BYTES} bytes"
         ));
     }
+    action_schema_validator(schema)
+        .map_err(|error| format!("invalid or externally referenced schema: {error}"))
+}
+
+/// Compile an action's schema. Offline: a schema may not refer to anything outside itself.
+pub(crate) fn action_schema_validator(
+    schema: &serde_json::Value,
+) -> Result<jsonschema::Validator, String> {
     jsonschema::options()
         .offline()
         .build(schema)
-        .map_err(|error| format!("invalid or externally referenced schema: {error}"))
+        .map_err(|error| error.to_string())
 }

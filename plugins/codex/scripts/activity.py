@@ -35,8 +35,10 @@ DELIVERY_BUDGET = 0.9
 SHORT_HOOK_BUDGETS = {"Interrupt": 1.2}
 
 
-def session_start_transition(event: dict) -> tuple[str, str | None]:
-    return ("working" if event.get("source") == "compact" else "idle"), None
+def session_start_transition(_event: dict) -> tuple[str, str | None]:
+    # Codex starts a thread's hooks at its first prompt, so a run is already under way. Saying idle
+    # here would end the run screen detection just saw start, and count it as finished.
+    return "working", None
 
 
 def prompt_transition(_event: dict) -> tuple[str, str | None]:

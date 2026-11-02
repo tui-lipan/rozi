@@ -75,7 +75,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("Stop")
         self.hook("SessionEnd", reason="other")
         self.assertEqual([self.field("--state", i) for i in range(6)],
-                         ["idle", "working", "working", "blocked", "working", "done"])
+                         ["working", "working", "working", "blocked", "working", "done"])
         self.assertEqual([self.field("--seq", i) for i in range(7)], list(map(str, range(1, 8))))
         self.assertEqual(len({self.field("--integration", i) for i in range(7)}), 1)
         self.assertTrue(self.field("--integration").startswith("codex:"))
@@ -157,7 +157,7 @@ class ActivityTests(unittest.TestCase):
         old = self.field("--integration")
         self.hook("SessionStart", session="cleared", source="clear")
         self.assertNotEqual(old, self.field("--integration"))
-        self.assertEqual(self.field("--state"), "idle")
+        self.assertEqual(self.field("--state"), "working")
 
     def test_subagent_hooks_cannot_change_parent(self):
         self.hook("SessionStart")
@@ -669,7 +669,7 @@ class ShellLaunchTests(unittest.TestCase):
         calls = [line.split() for line in self.log.read_text().splitlines()]
         states = [args[args.index("--state") + 1] if "--state" in args else args[1]
                   for args in calls]
-        self.assertEqual(states, ["idle", "working", "working", "blocked", "working", "done",
+        self.assertEqual(states, ["working", "working", "working", "blocked", "working", "done",
                                   "release"])
         tokens = {args[args.index("--integration") + 1] for args in calls}
         self.assertEqual(len(tokens), 1)

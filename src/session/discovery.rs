@@ -392,7 +392,12 @@ pub enum InstanceLookup {
     Found(String),
     /// No server here answers to it. `unidentified` names live servers that answered without an
     /// instance - an older rozi - any of which may be the one; they are never guessed at.
-    NotFound { unidentified: Vec<String> },
+    /// `other_versions` names servers that refused to talk at all because their protocol differs,
+    /// as one left running across an update does. Any of those may be the one too.
+    NotFound {
+        unidentified: Vec<String>,
+        other_versions: Vec<String>,
+    },
 }
 
 /// The local session whose server is `instance`, for a pane that has to reach its own server and
@@ -415,24 +420,35 @@ pub fn session_with_instance(
                 let mut stream = connect_for_instance_query(&endpoint)?;
                 let answer =
                     query_status_within(&name, &mut stream, None, INSTANCE_QUERY_TIMEOUT).ok()?;
-                matches!(answer.status, DiscoveredSessionStatus::Running { .. })
-                    .then_some((name, answer.instance))
+                Some((name, answer))
             })
         })
         .collect();
     let mut unidentified = Vec::new();
-    for (name, answered) in handles
+    let mut other_versions = Vec::new();
+    for (name, answer) in handles
         .into_iter()
         .filter_map(|handle| handle.join().ok().flatten())
     {
-        match answered {
+        if answer.refusal.as_deref() == Some("protocol-mismatch") {
+            other_versions.push(name);
+            continue;
+        }
+        if !matches!(answer.status, DiscoveredSessionStatus::Running { .. }) {
+            continue;
+        }
+        match answer.instance {
             Some(answered) if &answered == instance => return Ok(InstanceLookup::Found(name)),
             Some(_) => {}
             None => unidentified.push(name),
         }
     }
     unidentified.sort();
-    Ok(InstanceLookup::NotFound { unidentified })
+    other_versions.sort();
+    Ok(InstanceLookup::NotFound {
+        unidentified,
+        other_versions,
+    })
 }
 
 /// Connect for [`session_with_instance`], retrying while the endpoint is busy.

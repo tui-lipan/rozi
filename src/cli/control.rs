@@ -172,8 +172,8 @@ fn run_here_subscribe_cli(
     let context = super::context::verified_caller_context(&request)?;
     if !context.inside_rozi {
         eprintln!(
-            "--here requires a verified caller pane (context: {})",
-            context.status
+            "{}",
+            super::context::here_refusal(&request, &context.status)
         );
         std::process::exit(2);
     }
@@ -658,7 +658,14 @@ fn ask_own_session_endpoint(
 
     let session = match crate::session::discovery::session_with_instance(instance) {
         Ok(InstanceLookup::Found(session)) => session,
-        Ok(InstanceLookup::NotFound { unidentified }) if !unidentified.is_empty() => {
+        Ok(InstanceLookup::NotFound { other_versions, .. }) if !other_versions.is_empty() => {
+            eprintln!(
+                "{}",
+                super::context::other_version_help(&other_versions).unwrap_or_default()
+            );
+            std::process::exit(2);
+        }
+        Ok(InstanceLookup::NotFound { unidentified, .. }) if !unidentified.is_empty() => {
             eprintln!(
                 "this pane's session server did not identify itself; it may be one running an older rozi (`{}`), which must be restarted to take reports from a pane with no UI",
                 unidentified.join("`, `")
@@ -862,8 +869,8 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             let context = super::context::verified_caller_context(&request)?;
             if !context.inside_rozi {
                 eprintln!(
-                    "--here requires a verified caller pane (context: {})",
-                    context.status
+                    "{}",
+                    super::context::here_refusal(&request, &context.status)
                 );
                 std::process::exit(2);
             }

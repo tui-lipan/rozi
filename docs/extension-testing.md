@@ -60,7 +60,8 @@ for extension in \
     tasks \
     hello \
     project-status \
-    agent-board
+    agent-board \
+    test-loop
 do
     "$ROZI_BIN" extensions check "examples/extensions/$extension"
     "$ROZI_BIN" extensions install --link "examples/extensions/$extension"

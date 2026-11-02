@@ -1,0 +1,31 @@
+[extension]
+id = "test-loop"
+title = "Test loop"
+description = "Runs a project's tests when an agent finishes a turn, and asks the agent to fix failures"
+version = "1.0.0"
+api = 1
+
+# These come from [extensions.test-loop] in the config of the host the session runs on. They are not
+# read from the project, so cloning a repository cannot choose a command for this to run.
+[settings]
+# Directories this runs tests in. Nothing runs until you name one.
+roots = []
+# The test command as a program and its arguments, for example ["cargo", "test"].
+command = []
+# How many times to ask an agent to fix a failure before leaving it to you.
+max_attempts = { default = 3, min = 0, max = 20 }
+
+[[actions]]
+id = "run-tests"
+title = "Run tests"
+exec = ["python3", "./bin/test_loop.py", "run-tests"]
+args_schema = { type = "object", required = ["cwd"], additionalProperties = false, properties = { cwd = { type = "string" } } }
+result_schema = { type = "object", required = ["ran", "passed"], properties = { ran = { type = "boolean" }, passed = { type = "boolean" } } }
+deadline_ms = 300000
+concurrency = "singleton"
+
+[[services]]
+name = "watch"
+exec = ["python3", "./bin/test_loop.py", "watch"]
+placement = "session"
+restart = "on-failure"

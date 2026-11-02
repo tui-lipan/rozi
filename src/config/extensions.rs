@@ -2026,6 +2026,7 @@ mod tests {
             "hello",
             "project-status",
             "agent-board",
+            "test-loop",
         ] {
             let extension = check_extension(&root.join(directory));
             assert_eq!(

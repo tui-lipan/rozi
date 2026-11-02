@@ -1152,5 +1152,7 @@ The repository also includes these example extensions:
 - [Snippets](../examples/extensions/snippets/) — saved commands pasted into the focused pane
 - [Tasks](../examples/extensions/tasks/) — `just`, `make`, and `package.json` tasks, with a sidebar
   tab
+- [Test loop](../examples/extensions/test-loop/) — a session service and an action that run a
+  project's tests when an agent finishes a turn, with no UI attached
 
 See [Automation recipes](recipes.md) for smaller building blocks.

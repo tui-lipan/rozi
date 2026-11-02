@@ -183,8 +183,20 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
     Ok(())
 }
 
-pub(crate) fn run_new_detached_session_cli(name: &str, resurrect: bool) -> Result<()> {
-    session::server::create_detached_session(name, resurrect)?;
+pub(crate) fn run_new_detached_session_cli(
+    name: &str,
+    resurrect: bool,
+    remote: Option<&str>,
+) -> Result<()> {
+    let Some(remote) = remote else {
+        session::server::create_detached_session(name, resurrect)?;
+        return Ok(());
+    };
+    let target = session::remote::parse_remote_target(remote)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let config = crate::config::load_config().config.remote;
+    session::remote::create_remote_detached_session(&target, name, resurrect, &config)
+        .map_err(std::io::Error::other)?;
     Ok(())
 }
 

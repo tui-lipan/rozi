@@ -296,11 +296,12 @@ pub(crate) enum SessionsCommand {
         remote: Option<String>,
         config_path: Option<String>,
     },
-    /// `sessions new <NAME> --detach [--no-resurrect]`.
+    /// `sessions new <NAME> --detach [--no-resurrect] [--remote <HOST>]`.
     NewDetached {
         name: String,
         /// `false` for `--no-resurrect`: the server never writes a snapshot.
         resurrect: bool,
+        remote: Option<String>,
         config_path: Option<String>,
     },
     /// `sessions restart <NAME> [--no-resurrect] [--remote <HOST>]`.

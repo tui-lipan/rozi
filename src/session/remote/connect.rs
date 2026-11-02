@@ -407,6 +407,23 @@ pub fn kill_remote_session(
     run_remote_sessions_command(target, config, "kill", &["sessions", "kill", session])
 }
 
+/// Start a named session on the remote host, with no UI, via `rozi sessions new --detach` over ssh.
+pub fn create_remote_detached_session(
+    target: &RemoteTarget,
+    session: &str,
+    resurrect: bool,
+    config: &RemoteConfig,
+) -> Result<(), String> {
+    if !crate::session::discovery::valid_session_name(session) {
+        return Err("invalid session name".to_string());
+    }
+    let mut args = vec!["sessions", "new", session, "--detach"];
+    if !resurrect {
+        args.push("--no-resurrect");
+    }
+    run_remote_sessions_command(target, config, "new", &args)
+}
+
 /// Restart a named session on the remote host via `rozi sessions restart` over ssh.
 pub fn restart_remote_session(
     target: &RemoteTarget,
@@ -479,6 +496,17 @@ fn finished_stderr_tail(handle: thread::JoinHandle<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::RemoteConfig;
+
+    #[test]
+    fn creating_a_remote_session_rejects_a_hostile_name_before_spawning_ssh() {
+        let target = RemoteTarget::Alias("workbox".to_string());
+        let config = RemoteConfig::default();
+        for session in ["dev;touch /tmp/pwned", "dev\nnext", "dev\u{1b}[31m"] {
+            let error = create_remote_detached_session(&target, session, true, &config)
+                .expect_err("hostile session must be rejected before ssh");
+            assert_eq!(error, "invalid session name");
+        }
+    }
 
     #[test]
     fn kill_remote_session_rejects_hostile_session_before_spawning_ssh() {

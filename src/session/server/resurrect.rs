@@ -740,12 +740,16 @@ impl SessionServer {
                 RestoreAction::Type(line) => (None, Some(line)),
                 RestoreAction::Nothing => (None, None),
             };
+            // A typed line needs a shell to read it. A pane launched as the agent itself is the one
+            // that could have both: starting that launch would run a new conversation unasked and
+            // put the line in its prompt.
+            let launch = if typed.is_some() { None } else { saved.launch };
             let result = self.spawn_pane_inner(
                 SpawnRequest {
                     owner: None,
                     pane_id: saved.pane_id,
                     generation,
-                    launch: saved.launch,
+                    launch,
                     agent_resume,
                     cwd: saved.cwd,
                     title: saved.title,
@@ -2513,6 +2517,77 @@ mod tests {
         assert!(text.contains("$ printf restored-command"), "{text:?}");
         assert_eq!(text.matches("restored-command").count(), 1, "{text:?}");
         assert!(server.panes[&1].launch.is_none());
+    }
+
+    /// A pane created by running the agent directly has no shell to hold a line. Starting its launch
+    /// would run a new conversation nobody asked for, and type the resume line into that agent's
+    /// prompt, where pressing Enter sends it to the model.
+    #[cfg(unix)]
+    #[test]
+    fn hold_gives_a_pane_launched_as_the_agent_a_shell_for_its_resume_line() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("launched");
+        let mut server = SessionServer::new_named_with_settings(
+            "held-launch",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.path().join("snapshots")),
+                shell: vec!["/bin/sh".into()],
+                resurrect_foreground: crate::config::ForegroundRestore::Hold,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
+        pane.launch = Some(
+            crate::pane::launch::PaneLaunch::direct(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                format!("touch '{}'; sleep 30", marker.display()),
+            ])
+            .unwrap(),
+        );
+        pane.agent.retained_resume = Some(super::super::RetainedResume {
+            agent: "claude".to_string(),
+            session: "held-conversation".to_string(),
+            reported_at: 1,
+        });
+        server.panes.insert(1, pane);
+        server.mark_dirty();
+        server.snapshot_before_shutdown().unwrap();
+        server.panes.clear();
+
+        assert_eq!(server.restore().unwrap(), 1);
+        assert!(
+            server.panes[&1].launch.is_none(),
+            "this pane is a shell now"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            server.drain_pty_events();
+            server.flush_pending_foreground();
+            let text = server
+                .panes
+                .get_mut(&1)
+                .unwrap()
+                .screen_without_change()
+                .render_snapshot()
+                .text;
+            // The line wraps at the pane's width.
+            if text
+                .replace('\n', "")
+                .contains("claude --resume held-conversation")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no resume line: {text:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !marker.exists(),
+            "`hold` ran what the pane was launched with"
+        );
+        server.panes.clear();
     }
 
     /// A command is typed only once the restored shell says it is reading the terminal. Writing it

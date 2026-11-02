@@ -465,7 +465,27 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
 ///
 /// `None` when the platform cannot answer, which is not an error: callers fall back to `PATH`.
 pub fn current_binary() -> Option<PathBuf> {
-    std::env::current_exe().ok()
+    std::env::current_exe()
+        .ok()
+        .map(|path| runnable_binary(path, std::process::id()))
+}
+
+/// An update can unlink the binary a long-lived server runs from, and Linux then reports it as
+/// `rozi (deleted)`, which nothing can run. A process holding that path must keep reaching this
+/// build rather than the updated one, whose protocol may not match. `/proc/<pid>/exe` still runs it
+/// for as long as this process lives, and everything given the path dies with this process's session.
+#[cfg(target_os = "linux")]
+fn runnable_binary(path: PathBuf, pid: u32) -> PathBuf {
+    if path.exists() {
+        path
+    } else {
+        PathBuf::from(format!("/proc/{pid}/exe"))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn runnable_binary(path: PathBuf, _pid: u32) -> PathBuf {
+    path
 }
 
 /// The state directory, made private to its owner, repairing the permissions if it is not.
@@ -912,6 +932,20 @@ pub fn compress_home(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_binary_an_update_unlinked_is_still_reached_through_its_process() {
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(runnable_binary(exe.clone(), std::process::id()), exe);
+
+        let unlinked = PathBuf::from(format!("{} (deleted)", exe.display()));
+        let runnable = runnable_binary(unlinked, std::process::id());
+        assert_eq!(
+            runnable.canonicalize().unwrap(),
+            exe.canonicalize().unwrap()
+        );
+    }
 
     #[test]
     fn project_root_paths_cover_checkouts_worktrees_and_absence() {

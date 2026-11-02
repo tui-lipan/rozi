@@ -460,7 +460,7 @@ impl SupervisedProcess {
             }
         }
         command.env("ROZI", "1");
-        if let Ok(binary) = std::env::current_exe() {
+        if let Some(binary) = crate::platform::paths::current_binary() {
             command.env("ROZI_BIN", binary);
         }
         command.env("ROZI_SOCKET", &spec.socket_path);

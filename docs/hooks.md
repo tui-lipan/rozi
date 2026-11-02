@@ -61,7 +61,8 @@ Every field is a string:
 
 - `workspace` is one-based.
 - `command` and `cwd` are empty when the pane inherited them.
-- `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`.
+- `focused`, `read_only`, and `self_controller` are `"true"` or `"false"`. `focused` says whether
+  this client had the pane focused, including when a pane exits and closing it moves focus away.
 - `controller` and the status fields are empty when there is no value.
 - `pane-title-changed.title` is the title the pane now reports, after display-text sanitization, and
   is empty when the program cleared it. `previous_title` is what the session last reported and is

@@ -1,8 +1,8 @@
 use crate::config::{ServiceConfig, ServiceLaunch, expand_path};
 use crate::extension_runtime::log::Attached;
 use crate::extension_runtime::supervisor::{
-    INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason, evaluate_spawn_failure,
-    spawn_with_log, terminate_with_log,
+    BackoffPolicy, INITIAL_BACKOFF, MAX_FAILURES, RestartOutcome, StopReason, spawn_with_log,
+    terminate_with_log,
 };
 use crate::platform::command::{CommandGroup, ShellEnv};
 use crate::state::{DormantReason, DormantService, PendingRestart, RunningService, State};
@@ -34,7 +34,12 @@ pub(crate) fn record_spawn_failure(
     detail: &str,
 ) -> Option<String> {
     let hint = log_hint(&config);
-    match evaluate_spawn_failure(config.restart, failures, backoff_delay, Instant::now()) {
+    match BackoffPolicy::default().evaluate_spawn_failure(
+        config.restart,
+        failures,
+        backoff_delay,
+        Instant::now(),
+    ) {
         RestartOutcome::Stop {
             reason: StopReason::NeverRestart,
             ..
@@ -322,7 +327,7 @@ fn reconcile_service_set(
 mod tests {
     use super::*;
     use crate::config::ServiceRestart;
-    use crate::extension_runtime::supervisor::{MAX_BACKOFF, next_backoff};
+    use crate::extension_runtime::supervisor::MAX_BACKOFF;
     use std::collections::BTreeMap;
 
     fn shell(command: impl Into<String>) -> ServiceLaunch {
@@ -472,7 +477,7 @@ mod tests {
         let mut delay = INITIAL_BACKOFF;
         let mut seen = vec![delay];
         for _ in 0..6 {
-            delay = next_backoff(delay);
+            delay = BackoffPolicy::default().next_delay(delay);
             seen.push(delay);
         }
 
@@ -506,7 +511,10 @@ mod tests {
         assert!(message.is_none(), "first failure must not give up");
         let pending = state.services.pending.get("flaky").expect("queued a retry");
         assert_eq!(pending.consecutive_failures, 1);
-        assert_eq!(pending.backoff_delay, next_backoff(INITIAL_BACKOFF));
+        assert_eq!(
+            pending.backoff_delay,
+            BackoffPolicy::default().next_delay(INITIAL_BACKOFF)
+        );
         assert!(state.services.dormant.is_empty());
 
         let message = record_spawn_failure(

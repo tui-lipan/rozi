@@ -27,7 +27,7 @@ pub(crate) use status::pane_runtime_changed;
 pub(crate) fn session_event(
     ctx: &mut Context<crate::app::AppRoot>,
     epoch: u64,
-    event: crate::session::server::events::SessionEvent,
+    event: crate::session::protocol::SessionEvent,
 ) -> Update {
     let Some(attachment) = ctx.state.attachment_for_epoch(epoch) else {
         return Update::none();

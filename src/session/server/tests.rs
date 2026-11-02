@@ -20,8 +20,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         scrollback: 100,
         generation,
         title: None,
-        seen_bell_count: 0,
-        title_watch: Default::default(),
+        event_watch: Default::default(),
         cwd: None,
         launch: None,
         agent_resume: None,
@@ -164,6 +163,7 @@ pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream
         attached_reply(server, id),
         ServerMessage::Attached { .. }
     ));
+    server.flush_session_events();
     clear_outboxes(server, &[id]);
     (id, stream)
 }
@@ -4459,8 +4459,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4634,8 +4633,7 @@ fn duplicate_spawn_is_rejected() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4701,8 +4699,7 @@ fn exited_pane_can_be_respawned() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -4895,8 +4892,7 @@ fn attach_reports_layout_and_panes() {
         scrollback: 100,
         generation: 8,
         title: Some("editor".into()),
-        seen_bell_count: 0,
-        title_watch: Default::default(),
+        event_watch: Default::default(),
         cwd: Some("/repo".into()),
         launch: None,
         agent_resume: None,
@@ -5099,8 +5095,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             scrollback: 100,
             generation: 2,
             title: None,
-            seen_bell_count: 0,
-            title_watch: Default::default(),
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,
@@ -5147,6 +5142,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             .is_none()
     );
 
+    server.flush_session_events();
     let client = server
         .clients
         .iter()
@@ -5185,8 +5181,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 scrollback: 100,
                 generation: id as u64,
                 title: Some(format!("pane-{id}")),
-                seen_bell_count: 0,
-                title_watch: Default::default(),
+                event_watch: Default::default(),
                 cwd: None,
                 launch: Some(if id == 1 {
                     crate::pane::launch::PaneLaunch::Direct {
@@ -8023,6 +8018,7 @@ impl EventParityHarness {
     fn deliver(&mut self) {
         for _ in 0..64 {
             let mut progressed = false;
+            self.server.flush_session_events();
 
             for index in 0..self.clients.len() {
                 let id = self.clients[index].id;
@@ -8225,8 +8221,8 @@ fn is_unscripted_foreground(
 }
 
 /// Strip client-local presentation fields (`focused`, `self_controller`) and normalize `"self"`
-/// layout authorship to `"client"` so events from different attached clients (and, in Milestone 3,
-/// the server event stream) can be compared directly.
+/// layout authorship to `"client"` so events from different attached clients and the server event
+/// stream can be compared directly.
 fn normalize_session_wire_event(mut event: crate::events::WireEvent) -> crate::events::WireEvent {
     event.data.remove("focused");
     event.data.remove("self_controller");
@@ -8364,18 +8360,16 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
 }
 
 #[test]
-fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
+fn session_events_are_the_same_with_zero_one_and_two_clients_attached() {
     crate::test_support::on_large_stack(|| {
-        // Baseline with 0 clients attached: today events are detected client-side, so a headless
-        // session with no UI clients attached emits no subscriber events at all. Milestone 3 moves
-        // emission to the session server so detached sessions produce the same event stream.
+        // With no clients attached nobody receives the events, and the server still records them.
         {
             let mut zero = EventParityHarness::new(0);
             run_session_event_parity_mutations(&mut zero);
             assert!(zero.drain_client_events().is_empty());
             let server_kinds: Vec<crate::events::EventKind> = zero
                 .server
-                .session_events()
+                .session_events
                 .iter()
                 .filter(|event| !is_unscripted_foreground(event.kind, &event.data))
                 .map(|event| event.kind)
@@ -8563,7 +8557,7 @@ fn session_events_across_zero_one_and_two_clients_match_current_baseline() {
 }
 
 #[test]
-fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clients() {
+fn a_controller_spawn_raises_pane_spawned_and_layout_changed_on_every_client() {
     crate::test_support::on_large_stack(|| {
         let mut harness = EventParityHarness::new(2);
         harness.clients[0]
@@ -8576,9 +8570,7 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
         let controller_events = events.remove(0);
         let follower_events = events.remove(0);
 
-        // Today, `pane-spawned` is emitted locally by the client that initiates the split, while
-        // the follower only hears `layout-changed` when the server commits the placement.
-        // Milestone 3 moves `pane-spawned` to the server so followers and headless splits emit it too.
+        // The server raises both, so the client that split and its follower hear the same events.
         let controller_kinds: Vec<_> = controller_events.iter().map(|e| e.event).collect();
         let follower_kinds: Vec<_> = follower_events.iter().map(|e| e.event).collect();
         assert!(controller_kinds.contains(&crate::events::EventKind::PaneSpawned));
@@ -8622,7 +8614,7 @@ fn controller_spawn_emits_pane_spawned_on_spawner_and_layout_changed_on_all_clie
 }
 
 #[test]
-fn shared_pane_bell_is_recorded_once_per_bell() {
+fn shared_pane_bells_are_recorded_once_and_a_burst_coalesces() {
     let mut server = SessionServer::new_named("bell-events");
     server.panes.insert(1, test_pane(1));
     let deliver = |server: &mut SessionServer, bytes: &[u8]| {
@@ -8633,31 +8625,129 @@ fn shared_pane_bell_is_recorded_once_per_bell() {
             TerminalPtyEvent::Output(bytes.to_vec().into()),
         ));
     };
+    let bells = |server: &SessionServer| {
+        server
+            .session_events
+            .iter()
+            .filter(|event| event.kind == crate::events::EventKind::Bell)
+            .count()
+    };
 
     deliver(&mut server, b"\x07");
     deliver(&mut server, b"plain output");
-    let kinds: Vec<_> = server
-        .session_events()
-        .iter()
-        .map(|event| event.kind)
-        .collect();
-    assert_eq!(kinds, vec![crate::events::EventKind::Bell]);
+    assert_eq!(bells(&server), 1, "later output must not ring it again");
     assert_eq!(
-        server.session_events().iter().next().unwrap().data["pane"],
+        server.session_events.iter().next().unwrap().data["pane"],
         "1"
     );
 
     deliver(&mut server, b"\x07\x07");
-    let bells: Vec<_> = server
-        .session_events()
+    assert_eq!(bells(&server), 1, "a burst of bells is one event");
+}
+
+fn session_event_position(
+    messages: &[ServerMessage],
+    kind: crate::events::EventKind,
+) -> Option<usize> {
+    messages.iter().position(
+        |message| matches!(message, ServerMessage::SessionEvent { event } if event.kind == kind),
+    )
+}
+
+/// A hook or subscriber reacting to an event asks its UI about what the event names, so the UI has
+/// to have heard the state change first.
+#[test]
+fn a_ui_hears_a_session_event_after_the_state_it_describes() {
+    crate::test_support::on_large_stack(|| {
+        crate::test_support::isolate_user_dirs();
+        let mut server = SessionServer::new_named_with_settings(
+            "ordering",
+            ServerSettings {
+                shell: test_shell(),
+                command_shell: test_command_shell(),
+                resurrect: false,
+                ..ServerSettings::default()
+            },
+        );
+        let (ui, _ui_stream) = attach_client(&mut server);
+        // A session endpoint only spawns while no client controls the layout.
+        server.process_client_frame(
+            ui,
+            Frame::Control(ClientMessage::SetParked { parked: true }),
+        );
+        let (script, _script_stream) = add_client(&mut server);
+
+        server.process_client_frame(
+            script,
+            Frame::Control(ClientMessage::SessionControl {
+                capabilities: None,
+                session: "ordering".to_string(),
+                protocol_version: PROTOCOL_VERSION,
+                min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+                request: crate::control::ControlRequest {
+                    command: crate::control::ControlCommand::NewPane {
+                        command: Some("true".to_string()),
+                        argv: None,
+                        local_cwd: None,
+                        cwd: None,
+                        title: None,
+                        keep_open: true,
+                        focus: false,
+                        workspace: Some(1),
+                        size: None,
+                    },
+                    source_pane: None,
+                    source_session: None,
+                    extension: None,
+                    caller_context: None,
+                    credential: None,
+                },
+            }),
+        );
+
+        server.flush_session_events();
+        let heard = decode_outbox_controls(server.client(ui).unwrap());
+        let metadata = heard
+            .iter()
+            .position(|message| matches!(message, ServerMessage::PaneMetadata { .. }))
+            .expect("the UI is told about the new pane");
+        let committed = heard
+            .iter()
+            .position(|message| matches!(message, ServerMessage::LayoutCommitted { .. }))
+            .expect("the UI is told the new layout");
+        let spawned = session_event_position(&heard, crate::events::EventKind::PaneSpawned)
+            .expect("pane-spawned reaches the UI");
+        let changed = session_event_position(&heard, crate::events::EventKind::LayoutChanged)
+            .expect("layout-changed reaches the UI");
+        assert!(metadata < spawned, "{heard:?}");
+        assert!(committed < changed, "{heard:?}");
+    });
+}
+
+/// Session-event hooks run on the controller. When the controller leaves, the client taking over
+/// must already know it has when the events about that departure arrive, or no hook runs at all.
+#[test]
+fn the_promoted_controller_knows_before_it_hears_the_old_one_left() {
+    let mut server = SessionServer::new_named("handover");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    server.flush_session_events();
+    clear_outboxes(&mut server, &[second]);
+
+    server.process_client_frame(first, Frame::Control(ClientMessage::Detach));
+    server.flush_session_events();
+
+    let heard = decode_outbox_controls(server.client(second).unwrap());
+    let promoted = heard
         .iter()
-        .filter(|event| event.kind == crate::events::EventKind::Bell)
-        .collect();
-    assert_eq!(
-        bells.len(),
-        2,
-        "two bells in one chunk coalesce to one event"
-    );
+        .position(|message| matches!(message, ServerMessage::ControllerChanged { .. }))
+        .expect("the survivor is promoted");
+    let left = session_event_position(&heard, crate::events::EventKind::ClientLeft)
+        .expect("client-left reaches the survivor");
+    let changed = session_event_position(&heard, crate::events::EventKind::ControllerChanged)
+        .expect("controller-changed reaches the survivor");
+    assert!(promoted < left, "{heard:?}");
+    assert!(promoted < changed, "{heard:?}");
 }
 
 #[test]
@@ -8673,7 +8763,7 @@ fn shared_pane_cwd_change_is_recorded() {
     ));
 
     let changed = server
-        .session_events()
+        .session_events
         .iter()
         .find(|event| event.kind == crate::events::EventKind::PaneCwdChanged)
         .expect("working-directory change is a session event");
@@ -8696,22 +8786,22 @@ fn shared_pane_title_change_is_recorded_once_it_settles() {
     ));
     assert!(
         server
-            .session_events()
+            .session_events
             .iter()
             .all(|event| event.kind != crate::events::EventKind::PaneTitleChanged)
     );
 
     // Age the observation past the settle window instead of sleeping.
     let pane = server.panes.get_mut(&1).unwrap();
-    pane.title_watch = events::PaneTitleWatch::new(None);
-    pane.title_watch.observe(
+    pane.event_watch.title = events::PaneTitleWatch::new(None);
+    pane.event_watch.title.observe(
         Some("editor".to_string()),
         Instant::now() - events::TITLE_SETTLE - Duration::from_millis(1),
     );
     server.flush_pane_titles();
 
     let changed = server
-        .session_events()
+        .session_events
         .iter()
         .find(|event| event.kind == crate::events::EventKind::PaneTitleChanged)
         .expect("settled title is a session event");

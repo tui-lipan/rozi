@@ -1,8 +1,10 @@
 //! One JSON request and response over the existing SSH/binary discovery path.
 //! Transport failures carry data; callers own command-specific diagnostics.
 
-use std::io::{self, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -11,6 +13,9 @@ use super::{
     ssh_base_command, validate_remote_executable_token, validate_remote_target,
 };
 use crate::config::RemoteConfig;
+
+/// How long to wait for ssh's stderr once it has exited.
+const STREAM_STDERR_PATIENCE: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(crate) enum TransportError {
@@ -62,15 +67,8 @@ fn forward_over<Request: Serialize, Reply: DeserializeOwned>(
     request: &Request,
     stdin: Stdin,
 ) -> Result<Reply, TransportError> {
-    validate_remote_target(target).map_err(TransportError::Preflight)?;
-    let resolved = ResolvedRemote::resolve(target, config);
-    let binary = super::binary::resolve(target, config)
-        .map_err(|error| TransportError::Preflight(error.message))?;
-    validate_remote_executable_token(&binary.path).map_err(TransportError::Preflight)?;
+    let mut command = runner_command(target, config, runner_args)?;
     let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
-    let mut command = ssh_base_command(&resolved, config);
-    append_ssh_destination(&mut command, &resolved);
-    append_remote_rozi_command(&mut command, &binary.path, runner_args, binary.family);
     let result = exchange_over(&mut command, &payload, stdin).and_then(|output| {
         if !output.status.success() {
             return Err(TransportError::Failed(output));
@@ -83,59 +81,163 @@ fn forward_over<Request: Serialize, Reply: DeserializeOwned>(
     result
 }
 
-pub(crate) fn stream_forward<Request: Serialize>(
+/// Send one request, read its JSON answer, and hand that answer and the lines after it to
+/// `handle_stream`.
+///
+/// Stdin stays open until `handle_stream` returns: its closing is how the far side learns nobody
+/// wants the stream any more. Lines before the answer that are not one are skipped, since a login
+/// shell can print a banner ahead of it.
+pub(crate) fn stream_forward<Request: Serialize, Reply: DeserializeOwned, T>(
     target: &RemoteTarget,
     config: &RemoteConfig,
     runner_args: &[&str],
     request: &Request,
-    handle_stream: impl FnOnce(
-        &str,
-        io::Lines<io::BufReader<std::process::ChildStdout>>,
-    ) -> Result<(), String>,
-) -> Result<(), TransportError> {
+    handle_stream: impl FnOnce(Reply, StreamLines) -> Result<T, String>,
+) -> Result<T, TransportError> {
+    let mut command = runner_command(target, config, runner_args)?;
+    let mut payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
+    payload.push(b'\n');
+    let (mut runner, mut lines) = StreamRunner::spawn(&mut command)?;
+    if let Err(error) = runner.send(&payload) {
+        runner.abandon();
+        return Err(TransportError::Send(error));
+    }
+    let result = match read_stream_answer(&mut lines) {
+        Ok(Some(reply)) => match handle_stream(reply, lines) {
+            Ok(value) => runner.finish().map(|()| value),
+            Err(message) => {
+                runner.abandon();
+                Err(TransportError::Preflight(message))
+            }
+        },
+        Ok(None) => runner.finish_unanswered(),
+        Err(error) => {
+            runner.abandon();
+            Err(TransportError::Ssh(error))
+        }
+    };
+    if matches!(result, Err(TransportError::Failed(_))) {
+        super::binary::invalidate(target, config);
+    }
+    result
+}
+
+type StreamLines = io::Lines<io::BufReader<std::process::ChildStdout>>;
+
+/// The first line that parses as an answer, or `None` when the output ended without one.
+fn read_stream_answer<Reply: DeserializeOwned>(
+    lines: &mut StreamLines,
+) -> io::Result<Option<Reply>> {
+    for line in lines {
+        if let Ok(reply) = serde_json::from_str(line?.trim()) {
+            return Ok(Some(reply));
+        }
+    }
+    Ok(None)
+}
+
+/// The ssh process behind one stream.
+struct StreamRunner {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stderr: mpsc::Receiver<Vec<u8>>,
+}
+
+impl StreamRunner {
+    fn spawn(command: &mut Command) -> Result<(Self, StreamLines), TransportError> {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(TransportError::Ssh)?;
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+        // Read throughout, so a chatty far side can never block on a pipe nobody is draining.
+        let (stderr_tx, stderr) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut captured);
+            let _ = stderr_tx.send(captured);
+        });
+        let lines = io::BufReader::new(stdout).lines();
+        Ok((
+            Self {
+                child,
+                stdin,
+                stderr,
+            },
+            lines,
+        ))
+    }
+
+    fn send(&mut self, payload: &[u8]) -> io::Result<()> {
+        self.stdin
+            .write_all(payload)
+            .and_then(|()| self.stdin.flush())
+    }
+
+    /// Close stdin, wait for ssh to leave, and collect what it said.
+    fn wait(self) -> Result<Output, TransportError> {
+        let Self {
+            mut child,
+            stdin,
+            stderr,
+        } = self;
+        drop(stdin);
+        let status = child.wait().map_err(TransportError::Ssh)?;
+        Ok(Output {
+            status,
+            stdout: Vec::new(),
+            // A connection master this ssh left behind can hold the pipe open for minutes.
+            stderr: stderr
+                .recv_timeout(STREAM_STDERR_PATIENCE)
+                .unwrap_or_default(),
+        })
+    }
+
+    /// End a stream that was answered. Only one ssh itself cut short ends with a failure status.
+    fn finish(self) -> Result<(), TransportError> {
+        let output = self.wait()?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(TransportError::Failed(output))
+        }
+    }
+
+    /// Say why a stream never got an answer.
+    fn finish_unanswered<T>(self) -> Result<T, TransportError> {
+        let output = self.wait()?;
+        Err(if output.status.success() {
+            TransportError::Answer(AnswerError::Empty)
+        } else {
+            TransportError::Failed(output)
+        })
+    }
+
+    fn abandon(mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The ssh command that runs rozi with `runner_args` on the far host.
+fn runner_command(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    runner_args: &[&str],
+) -> Result<Command, TransportError> {
     validate_remote_target(target).map_err(TransportError::Preflight)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let binary = super::binary::resolve(target, config)
         .map_err(|error| TransportError::Preflight(error.message))?;
     validate_remote_executable_token(&binary.path).map_err(TransportError::Preflight)?;
-    let payload = serde_json::to_vec(request).map_err(TransportError::Encode)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &binary.path, runner_args, binary.family);
-
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(TransportError::Ssh)?;
-
-    let mut stdin = child.stdin.take().expect("piped stdin");
-    stdin.write_all(&payload).map_err(TransportError::Send)?;
-    stdin.write_all(b"\n").map_err(TransportError::Send)?;
-    drop(stdin);
-
-    let stdout = child.stdout.take().expect("piped stdout");
-    use std::io::BufRead;
-    let mut reader = io::BufReader::new(stdout);
-    let mut first_line = String::new();
-    reader
-        .read_line(&mut first_line)
-        .map_err(TransportError::Ssh)?;
-    if first_line.is_empty() {
-        let output = child.wait_with_output().map_err(TransportError::Ssh)?;
-        if !output.status.success() {
-            return Err(TransportError::Failed(output));
-        }
-        return Err(TransportError::Answer(AnswerError::Empty));
-    }
-
-    if let Err(err) = handle_stream(first_line.trim(), reader.lines()) {
-        return Err(TransportError::Preflight(err));
-    }
-
-    let _ = child.wait();
-    Ok(())
+    Ok(command)
 }
 
 #[cfg(all(test, unix))]

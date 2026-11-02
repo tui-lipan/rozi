@@ -30,8 +30,9 @@ mod browse;
 mod capture_waits;
 mod connection;
 mod create;
+mod deployment_worker;
 mod deployments;
-pub mod events;
+mod events;
 mod graphics;
 mod graphics_pacer;
 mod headless;
@@ -54,6 +55,7 @@ pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
 mod runtime;
 mod shutdown;
+mod subscriptions;
 mod waits;
 mod worktree;
 pub(crate) use create::create_detached_session;
@@ -232,13 +234,15 @@ pub struct SessionServer {
     pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
     sleep_policy: power::AgentSleepPolicy,
-    session_subscribers: HashMap<ClientId, headless::SessionSubscriber>,
+    session_subscribers: HashMap<ClientId, subscriptions::SessionSubscriber>,
     /// Extensions this session was asked to run itself. Kept across restarts and removed only when
     /// the session is explicitly deleted.
     deployments: deployments::SessionDeployments,
-    deployment_worker: Option<headless::DeploymentWorker>,
+    deployment_worker: Option<deployment_worker::DeploymentWorker>,
     automation: Option<automation::Automation>,
     notifications: VecDeque<crate::control::SessionNotification>,
+    /// Events recorded but not yet sent to attached UIs. See [`Self::flush_session_events`].
+    undelivered_ui_events: VecDeque<events::SessionEvent>,
     /// The pane mid-spawn, which raises no runtime events until it has been announced.
     spawning_pane: Option<PaneId>,
 }
@@ -347,11 +351,8 @@ pub struct ServerPane {
     output_bytes_sent: u64,
     pub generation: u64,
     pub title: Option<String>,
-    /// How many BELs this pane's screen has seen and the server has already reported, so one bell
-    /// is recorded once rather than on every later output chunk.
-    seen_bell_count: u64,
-    /// Debounced terminal-title tracking for `pane-title-changed`.
-    title_watch: events::PaneTitleWatch,
+    /// What this pane's `bell` and `pane-title-changed` events compare against.
+    event_watch: events::PaneEventWatch,
     /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
     /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
@@ -1778,6 +1779,7 @@ impl SessionServer {
             deployment_worker: None,
             automation: None,
             notifications: VecDeque::new(),
+            undelivered_ui_events: VecDeque::new(),
             spawning_pane: None,
             settings,
         }
@@ -1793,72 +1795,6 @@ impl SessionServer {
     pub(crate) fn set_deployment_root(&mut self, root: PathBuf) {
         self.deployments =
             deployments::SessionDeployments::new(self.session_name.clone(), Some(root));
-    }
-
-    pub fn session_events(&self) -> &events::SessionEventBuffer {
-        &self.session_events
-    }
-
-    pub(super) fn record_session_event(
-        &mut self,
-        kind: events::EventKind,
-        fields: Vec<(&'static str, String)>,
-    ) {
-        if let Some(event) = self.session_events.record(kind, fields).cloned() {
-            let message = ServerMessage::SessionEvent {
-                event: event.clone(),
-            };
-            self.broadcast_control(&message);
-            self.dispatch_session_subscribers(&event);
-        }
-    }
-
-    pub(super) fn is_session_subscriber(&self, client_id: ClientId) -> bool {
-        self.session_subscribers.contains_key(&client_id)
-    }
-
-    fn dispatch_session_subscribers(&mut self, event: &events::SessionEvent) {
-        let max_backlog = self.max_backlog;
-        let targets: Vec<ClientId> = self
-            .session_subscribers
-            .iter()
-            .filter(|(_, sub)| sub.filter.as_ref().is_none_or(|f| f.contains(&event.kind)))
-            .map(|(&id, _)| id)
-            .collect();
-        if targets.is_empty() {
-            return;
-        }
-
-        let msg = ServerMessage::SessionSubscribeRecord {
-            record: events::SessionSubscribeRecord::Event {
-                event: event.clone(),
-            },
-        };
-        let Some(bytes) = encode_control(&msg) else {
-            return;
-        };
-
-        let mut slow = Vec::new();
-        for client_id in targets {
-            let result = self.client_mut(client_id).map(|client| {
-                client.push_delta(Arc::clone(&bytes), SeedDelta::Control, max_backlog, None)
-            });
-            if matches!(result, Some(ClientFrameResult::Overflow)) {
-                slow.push(client_id);
-            }
-        }
-        for client_id in slow {
-            self.session_subscribers.remove(&client_id);
-            let lagged = ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Lagged,
-            };
-            if let Some(bytes) = encode_control(&lagged) {
-                let _ = self
-                    .client_mut(client_id)
-                    .map(|client| client.push_delta(bytes, SeedDelta::Control, usize::MAX, None));
-            }
-            self.set_close_after_flush(client_id);
-        }
     }
 
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
@@ -2278,6 +2214,16 @@ impl ServerPane {
             .title()
             .and_then(crate::pane::sanitize_terminal_title)
             .or_else(|| self.title.clone())
+    }
+
+    /// Note what a chunk of output did to this pane's watched state. `true` means it rang a bell
+    /// worth an event.
+    fn watch_output(&mut self) -> bool {
+        let now = Instant::now();
+        let bell_count = self.screen_without_change().bell_count();
+        let title = self.effective_title();
+        self.event_watch.title.observe(title, now);
+        self.event_watch.ring(bell_count, now)
     }
 
     /// The best *local* cwd known for this pane, suitable for `Command::current_dir` on a

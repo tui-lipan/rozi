@@ -13,7 +13,7 @@
 //! No new transport. This is the SSH path `--remote` attach already uses: saved host config,
 //! connection multiplexing, the discovered remote binary, and the same askpass rules.
 
-use std::io::Read;
+use std::io::{BufRead, Write};
 
 use crate::config::RemoteConfig;
 use crate::control::{ControlRequest, ControlResponse};
@@ -105,17 +105,19 @@ fn control_forward_failure(code: Option<i32>, stderr: &str, session: &str, host:
     format!("remote control failed: {stderr}")
 }
 
-/// `--remote-control <NAME>`: the far side of [`forward_control`].
+/// `--remote-control <NAME>`: the far side of [`forward_control`] and [`forward_control_stream`].
 ///
-/// Reads one JSON [`ControlRequest`] from stdin, runs it against the named local session, and
+/// Reads one JSON [`ControlRequest`] line from stdin, runs it against the named local session, and
 /// writes the [`ControlResponse`] as one JSON line. Whether the command succeeded is carried in
 /// that response, not in this process's exit status: a non-zero exit means the session could not
 /// be reached at all, which is a different thing the caller reports differently.
-pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
+///
+/// A subscription writes its own response and then its records, so it returns `None`.
+pub fn run_remote_control(session: &str) -> Result<Option<ControlResponse>, String> {
     let mut payload = String::new();
     std::io::stdin()
         .lock()
-        .read_to_string(&mut payload)
+        .read_line(&mut payload)
         .map_err(|err| format!("could not read the control request: {err}"))?;
     let mut request: ControlRequest = serde_json::from_str(payload.trim())
         .map_err(|err| format!("could not parse the control request: {err}"))?;
@@ -127,48 +129,33 @@ pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
         request.command,
         crate::control::ControlCommand::Subscribe { .. }
     ) {
-        let (mut stream, response) =
-            crate::session::headless::run_session_subscribe(session, request)
-                .map_err(|err| err.to_string())?;
-        println!("{}", serde_json::to_string(&response).unwrap());
-        use std::io::Write;
-        std::io::stdout().flush().map_err(|e| e.to_string())?;
-        if !response.ok {
-            return Ok(response);
-        }
-        let mut stdout = std::io::stdout().lock();
-        loop {
-            match crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
-                &mut stream,
-            ) {
-                Ok(crate::session::protocol::ServerMessage::SessionSubscribeRecord { record }) => {
-                    let is_lagged = matches!(
-                        record,
-                        crate::session::server::events::SessionSubscribeRecord::Lagged
-                    );
-                    writeln!(stdout, "{}", serde_json::to_string(&record).unwrap())
-                        .map_err(|e| e.to_string())?;
-                    stdout.flush().map_err(|e| e.to_string())?;
-                    if is_lagged {
-                        break;
-                    }
-                }
-                Ok(crate::session::protocol::ServerMessage::Error { code, message }) => {
-                    eprintln!("{code}: {message}");
-                    break;
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    break;
-                }
-                Err(err) => {
-                    return Err(format!("remote subscribe connection error: {err}"));
-                }
-                _ => {}
-            }
-        }
-        return Ok(ControlResponse::empty());
+        run_remote_subscription(session, request)?;
+        return Ok(None);
     }
-    crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
+    crate::session::headless::run_session_control(session, request)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
+fn run_remote_subscription(session: &str, request: ControlRequest) -> Result<(), String> {
+    let (mut stream, response) = crate::session::headless::run_session_subscribe(session, request)
+        .map_err(|err| err.to_string())?;
+    let mut stdout = std::io::stdout().lock();
+    let answer = serde_json::to_string(&response).map_err(|err| err.to_string())?;
+    writeln!(stdout, "{answer}")
+        .and_then(|()| stdout.flush())
+        .map_err(|err| err.to_string())?;
+    if !response.ok {
+        return Ok(());
+    }
+    // The forwarding side holds stdin open for as long as it wants the stream. An idle stream writes
+    // nothing that could fail, so its end is the only way to learn the connection has gone, and
+    // without it this process and its place on the server would outlive the ssh that started them.
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        std::process::exit(0);
+    });
+    crate::session::headless::pump_session_records(&mut stream, &mut stdout)
 }
 
 /// `--remote-call <NAME>`: [`run_remote_control`] for a request that ends with its caller.
@@ -184,19 +171,23 @@ pub fn run_remote_call(session: &str) -> Result<ControlResponse, String> {
     let request: ControlRequest = serde_json::from_str(line.trim())
         .map_err(|err| format!("could not parse the control request: {err}"))?;
     std::thread::spawn(|| {
-        let mut rest = [0u8; 64];
-        while matches!(std::io::stdin().read(&mut rest), Ok(read) if read > 0) {}
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
         std::process::exit(UNREACHABLE_EXIT);
     });
     crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
 }
 
+/// Forward a subscription and copy its records to `out` until it ends.
+///
+/// `Ok(Some(response))` is the session refusing the subscription; `Ok(None)` is a stream that ran
+/// and ended. `Err` means the request never reached a session server or the connection failed.
 pub fn forward_control_stream(
     target: &RemoteTarget,
     session: &str,
     request: &ControlRequest,
     config: &RemoteConfig,
-) -> Result<(), String> {
+    out: &mut impl Write,
+) -> Result<Option<ControlResponse>, String> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
     }
@@ -205,30 +196,24 @@ pub fn forward_control_stream(
         config,
         &["--remote-control", session],
         request,
-        |first_line, lines| {
-            let response: ControlResponse = serde_json::from_str(first_line)
-                .map_err(|e| format!("could not parse initial remote response: {e}"))?;
+        |response: ControlResponse, lines| {
             if !response.ok {
-                if let Some(err) = response.error {
-                    eprintln!("{err}");
-                }
-                std::process::exit(1);
+                return Ok(Some(response));
             }
-            use std::io::Write;
-            let mut stdout = std::io::stdout().lock();
             for line in lines {
-                let line = line.map_err(|e| format!("stream read error: {e}"))?;
-                writeln!(stdout, "{line}").map_err(|e| e.to_string())?;
-                stdout.flush().map_err(|e| e.to_string())?;
+                let line = line.map_err(|err| format!("could not read the stream: {err}"))?;
+                if !crate::session::headless::write_stream_line(out, &line)? {
+                    break;
+                }
             }
-            Ok(())
+            Ok(None)
         },
     )
     .map_err(|error| match error {
         TransportError::Preflight(message) => message,
-        TransportError::Encode(error) => format!("could not encode request: {error}"),
+        TransportError::Encode(error) => format!("could not encode the request: {error}"),
         TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
-        TransportError::Send(error) => format!("could not send request: {error}"),
+        TransportError::Send(error) => format!("could not send the request: {error}"),
         TransportError::Failed(output) => control_forward_failure(
             output.status.code(),
             &String::from_utf8_lossy(&output.stderr),

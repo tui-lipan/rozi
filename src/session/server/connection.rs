@@ -289,6 +289,9 @@ impl SessionServer {
     /// such as Detach must run here too, not when the deferred frame was first received.
     pub(super) fn process_client_control_now(&mut self, id: ClientId, message: ClientMessage) {
         let is_attach = matches!(message, ClientMessage::Attach { .. });
+        if is_attach {
+            self.flush_session_events();
+        }
         // Both answer one question and hang up: neither ever becomes a client, so both
         // skip the attach requirement below and close once the reply has flushed.
         let is_query = matches!(
@@ -907,6 +910,10 @@ impl SessionServer {
                 if let Some(pane) = self.live_pane_mut(owner, pane_id, generation) {
                     if let Some(title) = title {
                         pane.title = Some(title);
+                        if owner.is_none() {
+                            let title = pane.effective_title();
+                            pane.event_watch.title.observe(title, Instant::now());
+                        }
                     }
                     if let Some(cwd) = cwd {
                         pane.cwd = Some(cwd);

@@ -175,17 +175,6 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
     }
 }
 
-/// How a deployment failure reaches a control caller: an argument it can fix, a store it cannot
-/// reach, or a bundle the sender has to look at again.
-fn deployment_error(error: super::deployments::DeployError) -> ControlResponse {
-    use super::deployments::DeployError;
-    let code = match error {
-        DeployError::Invalid(_) | DeployError::Mismatch(_) => ControlErrorCode::InvalidArgument,
-        DeployError::Unavailable(_) => ControlErrorCode::Unavailable,
-    };
-    ControlResponse::error_with(code, error.to_string())
-}
-
 /// Why an attached client may not have its session server run `command` for it, or `None` when it
 /// may.
 ///
@@ -332,11 +321,6 @@ impl ReplyTo {
     pub(super) fn closes(&self) -> bool {
         matches!(self, Self::Headless { .. })
     }
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct SessionSubscriber {
-    pub(super) filter: Option<HashSet<events::EventKind>>,
 }
 
 /// Why a session server cannot accept a request carrying extension provenance.
@@ -549,10 +533,12 @@ impl SessionServer {
                     after,
                 } => Some(self.handle_subscribe_command(
                     client_id,
-                    events.clone(),
-                    *snapshot,
-                    after.clone(),
-                    reply.clone(),
+                    subscriptions::SubscribeOptions {
+                        events: events.clone(),
+                        snapshot: *snapshot,
+                        after: after.clone(),
+                    },
+                    reply,
                 )),
                 _ if request.command.pane_wait().is_some() => {
                     Some(self.register_capture_wait(client_id, request.clone(), reply.clone()))
@@ -583,123 +569,6 @@ impl SessionServer {
         if reply.closes() {
             self.set_close_after_flush(client_id);
         }
-    }
-
-    pub(super) fn handle_subscribe_command(
-        &mut self,
-        client_id: ClientId,
-        events: Vec<String>,
-        snapshot: bool,
-        after: Option<String>,
-        reply: ReplyTo,
-    ) -> Option<ControlResponse> {
-        let filter = if events.is_empty() {
-            None
-        } else {
-            let mut set = HashSet::new();
-            for name in &events {
-                match events::EventKind::parse(name) {
-                    Some(kind) => {
-                        set.insert(kind);
-                    }
-                    None => {
-                        return Some(ControlResponse::error_with(
-                            ControlErrorCode::UnknownEvent,
-                            format!("unknown event `{name}`"),
-                        ));
-                    }
-                }
-            }
-            Some(set)
-        };
-
-        let retained_events = if let Some(after_cursor) = after {
-            let Some((inst_str, seq_str)) = after_cursor.split_once(':') else {
-                return Some(ControlResponse::error_with(
-                    ControlErrorCode::InvalidArgument,
-                    format!("cursor must be INSTANCE:SEQ, got `{after_cursor}`"),
-                ));
-            };
-            let Ok(seq) = seq_str.parse::<u64>() else {
-                return Some(ControlResponse::error_with(
-                    ControlErrorCode::InvalidArgument,
-                    format!("invalid sequence in cursor `{seq_str}`"),
-                ));
-            };
-            let inst = protocol::SessionInstanceId::from(inst_str);
-            match self.session_events.after(&inst, seq) {
-                Ok(events) => Some(events),
-                Err(expired) => {
-                    let mut resp = ControlResponse::error_with(
-                        ControlErrorCode::CursorExpired,
-                        format!(
-                            "cursor expired: current instance is {}, oldest seq is {:?}, latest seq is {}",
-                            expired.current_instance, expired.oldest_seq, expired.latest_seq
-                        ),
-                    );
-                    resp.data = Some(serde_json::to_value(&expired).unwrap_or_default());
-                    return Some(resp);
-                }
-            }
-        } else {
-            None
-        };
-
-        let snapshot_record = if snapshot {
-            let layout_report = self.session_layout_report(None);
-            let layout = match layout_report.data {
-                Some(data) => serde_json::from_value(data).ok(),
-                None => None,
-            };
-            Some(events::SessionSubscribeRecord::Snapshot(
-                events::SessionSubscribeSnapshot {
-                    session_instance: self.instance_id.clone(),
-                    session: self.session_name.clone(),
-                    seq: self.session_events.latest_seq(),
-                    controller: self.controller,
-                    client_count: self.attached_count(),
-                    layout_rev: self.layout_rev,
-                    layout,
-                    panes: self.session_pane_report(),
-                    notifications: self.notifications.iter().cloned().collect(),
-                },
-            ))
-        } else {
-            None
-        };
-
-        self.enqueue(
-            client_id,
-            Target::Sender,
-            reply.message(ControlResponse::empty()),
-        );
-
-        if let Some(record) = snapshot_record {
-            self.enqueue(
-                client_id,
-                Target::Sender,
-                ServerMessage::SessionSubscribeRecord { record },
-            );
-        }
-
-        if let Some(retained) = retained_events {
-            for event in retained {
-                if filter.as_ref().is_none_or(|f| f.contains(&event.kind)) {
-                    self.enqueue(
-                        client_id,
-                        Target::Sender,
-                        ServerMessage::SessionSubscribeRecord {
-                            record: events::SessionSubscribeRecord::Event { event },
-                        },
-                    );
-                }
-            }
-        }
-
-        self.session_subscribers
-            .insert(client_id, SessionSubscriber { filter });
-
-        None
     }
 
     fn run_session_control(
@@ -896,12 +765,8 @@ impl SessionServer {
                 title,
                 level,
             } => self.session_notify(message, title, level),
-            command @ (ControlCommand::ExtensionsDeploy { .. }
-            | ControlCommand::ExtensionsUndeploy { .. }
-            | ControlCommand::ExtensionsStatus) => {
-                deployment_response(&self.deployments, &self.session_name, command)
-            }
-            // Every remaining variant was refused above by `session_control_unsupported`.
+            // Every remaining variant was refused above by `session_control_unsupported`, or is
+            // held for its answer by `serve_control`, as deployments are.
             other => ControlResponse::error(
                 session_control_unsupported(&other).unwrap_or("unsupported control command"),
             ),
@@ -913,7 +778,7 @@ impl SessionServer {
     /// The document is exactly what every client reconciles to, so this is the whole shared answer
     /// with nothing attached. What it cannot say - focus, the active workspace, where a client
     /// draws a pane - is client-local and left out rather than guessed.
-    fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
+    pub(super) fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
         if let Err(response) = crate::control::validate_layout_workspace(workspace) {
             return response;
         }
@@ -1273,7 +1138,7 @@ impl SessionServer {
         })
     }
 
-    fn session_pane_report(&self) -> Vec<PaneInfo> {
+    pub(super) fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
         let mut panes: Vec<PaneInfo> = self
             .panes
@@ -2206,276 +2071,11 @@ struct SessionSpawn {
     size: Option<crate::control::PaneSize>,
 }
 
-fn deployment_response(
-    store: &super::deployments::SessionDeployments,
-    session: &str,
-    command: ControlCommand,
-) -> ControlResponse {
-    match command {
-        ControlCommand::ExtensionsDeploy {
-            id,
-            digest,
-            size,
-            offset,
-            data,
-            last,
-        } => {
-            use base64::Engine as _;
-            let bytes = match base64::engine::general_purpose::STANDARD.decode(data) {
-                Ok(bytes) if bytes.len() <= super::DEPLOY_CHUNK_BYTES => bytes,
-                _ => {
-                    return ControlResponse::error_with(
-                        ControlErrorCode::InvalidArgument,
-                        "invalid or oversized deployment chunk",
-                    );
-                }
-            };
-            match store.append(&id, &digest, size, offset, &bytes, last) {
-                Ok(upload) => ControlResponse::ok(upload),
-                Err(error) => deployment_error(error),
-            }
-        }
-        ControlCommand::ExtensionsUndeploy { id } => match store.undeploy(&id) {
-            Ok(removed) => ControlResponse::ok(crate::control::ExtensionUndeployReport {
-                extension: id,
-                removed,
-            }),
-            Err(error) => deployment_error(error),
-        },
-        ControlCommand::ExtensionsStatus => match store.status() {
-            Ok(deployments) => ControlResponse::ok(crate::control::ExtensionDeploymentReport {
-                session: session.to_string(),
-                deployments,
-            }),
-            Err(error) => deployment_error(error),
-        },
-        _ => unreachable!("deployment worker accepts deployment commands only"),
-    }
-}
-
-struct DeploymentJob {
-    client_id: ClientId,
-    reply: ReplyTo,
-    command: ControlCommand,
-}
-
-struct DeploymentResult {
-    reply: Option<(ClientId, ReplyTo, ControlResponse)>,
-    /// What the session should now be running, when this job could have changed that.
-    prepared: Option<std::result::Result<Vec<super::deployments::PreparedDeployment>, String>>,
-}
-
-/// Whether a job calls for checking what the session runs, which hashes every deployment. A chunk
-/// of an upload changes nothing until the last one, and a large bundle has many. `status` does,
-/// because it is how a tampered bundle comes to light.
-fn job_can_change_automation(command: &ControlCommand) -> bool {
-    !matches!(
-        command,
-        ControlCommand::ExtensionsDeploy { last: false, .. }
-    )
-}
-
-pub(super) struct DeploymentWorker {
-    sender: Option<std::sync::mpsc::SyncSender<DeploymentJob>>,
-    results: std::sync::mpsc::Receiver<DeploymentResult>,
-    thread: Option<std::thread::JoinHandle<()>>,
-    pub(super) pending: usize,
-    pending_clients: std::collections::HashMap<ClientId, usize>,
-}
-
-impl DeploymentWorker {
-    fn start(
-        store: super::deployments::SessionDeployments,
-        session: String,
-        restart: bool,
-    ) -> std::io::Result<Self> {
-        let (sender, requests) = std::sync::mpsc::sync_channel::<DeploymentJob>(8);
-        let (results, receiver) = std::sync::mpsc::channel();
-        let thread = std::thread::Builder::new()
-            .name("session-deployments".into())
-            .spawn(move || {
-                let initial = (if restart {
-                    store.restart_generations()
-                } else {
-                    Ok(())
-                })
-                .and_then(|()| store.prepare())
-                .map_err(|error| error.to_string());
-                if results
-                    .send(DeploymentResult {
-                        reply: None,
-                        prepared: Some(initial),
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                while let Ok(job) = requests.recv() {
-                    let refresh = job_can_change_automation(&job.command);
-                    let response = deployment_response(&store, &session, job.command);
-                    let prepared =
-                        refresh.then(|| store.prepare().map_err(|error| error.to_string()));
-                    if results
-                        .send(DeploymentResult {
-                            reply: Some((job.client_id, job.reply, response)),
-                            prepared,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })?;
-        Ok(Self {
-            sender: Some(sender),
-            results: receiver,
-            thread: Some(thread),
-            pending: 0,
-            pending_clients: Default::default(),
-        })
-    }
-}
-
-impl Drop for DeploymentWorker {
-    fn drop(&mut self) {
-        self.sender.take();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-impl SessionServer {
-    pub(super) fn ensure_deployment_worker(&mut self, restart: bool) -> std::io::Result<()> {
-        if self.deployment_worker.is_none() {
-            self.deployment_worker = Some(DeploymentWorker::start(
-                self.deployments.clone(),
-                self.session_name.clone(),
-                restart,
-            )?);
-        }
-        Ok(())
-    }
-
-    fn submit_deployment(
-        &mut self,
-        client_id: ClientId,
-        reply: ReplyTo,
-        command: ControlCommand,
-    ) -> Option<ControlResponse> {
-        if crate::state::is_ephemeral_session_name(&self.session_name) {
-            return Some(ControlResponse::error_with(
-                ControlErrorCode::NotPermitted,
-                "temporary sessions cannot hold deployments",
-            ));
-        }
-        if self.client_attached(client_id)
-            && self.client_read_only(client_id)
-            && !matches!(command, ControlCommand::ExtensionsStatus)
-        {
-            return Some(ControlResponse::error_with(
-                ControlErrorCode::ReadOnly,
-                "read-only clients cannot change deployments",
-            ));
-        }
-        if let Err(error) = self.ensure_deployment_worker(false) {
-            return Some(ControlResponse::error(format!(
-                "cannot start deployment worker: {error}"
-            )));
-        }
-        let worker = self.deployment_worker.as_mut().expect("worker started");
-        if worker.pending >= 8 {
-            return Some(ControlResponse::error(
-                "deployment worker is busy; retry later",
-            ));
-        }
-        match worker
-            .sender
-            .as_ref()
-            .expect("worker alive")
-            .try_send(DeploymentJob {
-                client_id,
-                reply,
-                command,
-            }) {
-            Ok(()) => {
-                worker.pending += 1;
-                *worker.pending_clients.entry(client_id).or_default() += 1;
-                None
-            }
-            Err(_) => Some(ControlResponse::error(
-                "deployment worker unavailable; retry later",
-            )),
-        }
-    }
-
-    pub(super) fn holds_deployment_reply(&self, client_id: ClientId) -> bool {
-        self.deployment_worker
-            .as_ref()
-            .is_some_and(|worker| worker.pending_clients.contains_key(&client_id))
-    }
-
-    pub(super) fn drain_deployment_results(&mut self) {
-        let responses: Vec<_> = self
-            .deployment_worker
-            .as_mut()
-            .map_or_else(Vec::new, |worker| {
-                let responses: Vec<_> = worker.results.try_iter().collect();
-                for result in &responses {
-                    if let Some((client_id, _, _)) = &result.reply {
-                        worker.pending -= 1;
-                        if let Some(count) = worker.pending_clients.get_mut(client_id) {
-                            *count -= 1;
-                            if *count == 0 {
-                                worker.pending_clients.remove(client_id);
-                            }
-                        }
-                    }
-                }
-                responses
-            });
-        for result in responses {
-            match result.prepared {
-                Some(Ok(prepared)) => self.activate_deployments(prepared),
-                Some(Err(error)) => eprintln!("rozi: session automation unavailable: {error}"),
-                None => {}
-            }
-            if let Some((client_id, reply, mut response)) = result.reply {
-                self.add_service_status(&mut response);
-                self.answer_held(client_id, &reply, response);
-            }
-        }
-        if let Some(automation) = &mut self.automation {
-            automation.poll();
-        }
-    }
-
-    fn add_service_status(&mut self, response: &mut ControlResponse) {
-        let Some(automation) = &mut self.automation else {
-            return;
-        };
-        automation.poll();
-        let Some(data) = response.data.as_mut() else {
-            return;
-        };
-        let Ok(mut report) =
-            serde_json::from_value::<crate::control::ExtensionDeploymentReport>(data.clone())
-        else {
-            return;
-        };
-        for deployment in &mut report.deployments {
-            deployment.services = automation.services(&deployment.extension);
-        }
-        *data = serde_json::to_value(report).expect("deployment status serializes");
-    }
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::control::ControlRequest;
     use crate::layout::shared::{SharedSplitAxis, SharedTree};
-    use crate::session::server::tests::{add_client, decode_outbox_controls};
 
     fn request(command: ControlCommand) -> ControlRequest {
         ControlRequest {
@@ -4924,242 +4524,5 @@ mod tests {
                 "{command:?} needs a sentence, not a code: {reason}"
             );
         }
-    }
-
-    #[test]
-    fn test_session_subscribe_live_events_with_monotonic_seq() {
-        let mut server = SessionServer::new_named("dev");
-        let (client, _stream) = add_client(&mut server);
-        let reply = ReplyTo::StreamingHeadless {
-            capabilities: Capabilities::current(),
-            effective_protocol: PROTOCOL_VERSION,
-        };
-        let response = server.handle_subscribe_command(client, vec![], false, None, reply);
-        assert!(response.is_none());
-        assert!(server.session_subscribers.contains_key(&client));
-
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "1".to_string())],
-        );
-        server.record_session_event(
-            events::EventKind::LayoutChanged,
-            vec![("revision", "1".to_string())],
-        );
-
-        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
-        assert!(matches!(
-            &controls[0],
-            ServerMessage::SessionControlResult { response, .. } if response.ok
-        ));
-
-        match &controls[1] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => {
-                assert_eq!(event.kind, events::EventKind::PaneSpawned);
-                assert_eq!(event.seq, 1);
-                assert_eq!(event.data.get("pane").unwrap(), "1");
-            }
-            other => panic!("expected record 1, got {other:?}"),
-        }
-        match &controls[2] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => {
-                assert_eq!(event.kind, events::EventKind::LayoutChanged);
-                assert_eq!(event.seq, 2);
-                assert_eq!(event.data.get("revision").unwrap(), "1");
-            }
-            other => panic!("expected record 2, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_session_subscribe_snapshot_followed_by_live_events() {
-        let mut server = SessionServer::new_named("dev");
-        pane_with_screen(&mut server, 1, b"hello");
-
-        let (client, _stream) = add_client(&mut server);
-        let reply = ReplyTo::StreamingHeadless {
-            capabilities: Capabilities::current(),
-            effective_protocol: PROTOCOL_VERSION,
-        };
-        let response = server.handle_subscribe_command(client, vec![], true, None, reply);
-        assert!(response.is_none());
-
-        server.record_session_event(
-            events::EventKind::PaneExited,
-            vec![("pane", "1".to_string())],
-        );
-
-        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
-        assert!(matches!(
-            &controls[0],
-            ServerMessage::SessionControlResult { response, .. } if response.ok
-        ));
-
-        match &controls[1] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Snapshot(snap),
-            } => {
-                assert_eq!(snap.session, "dev");
-                assert_eq!(snap.seq, 0);
-                assert_eq!(snap.panes.len(), 1);
-                assert_eq!(snap.panes[0].id, 1);
-            }
-            other => panic!("expected snapshot record, got {other:?}"),
-        }
-
-        match &controls[2] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => {
-                assert_eq!(event.kind, events::EventKind::PaneExited);
-                assert_eq!(event.seq, 1);
-            }
-            other => panic!("expected live event record, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_session_subscribe_after_replay_and_expired_cursor() {
-        let mut server = SessionServer::new_named("dev");
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "1".to_string())],
-        );
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "2".to_string())],
-        );
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "3".to_string())],
-        );
-
-        // Replay after seq 1
-        let (client, _stream) = add_client(&mut server);
-        let reply = ReplyTo::StreamingHeadless {
-            capabilities: Capabilities::current(),
-            effective_protocol: PROTOCOL_VERSION,
-        };
-        let cursor = format!("{}:1", server.instance_id);
-        let response =
-            server.handle_subscribe_command(client, vec![], false, Some(cursor), reply.clone());
-        assert!(response.is_none());
-
-        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
-        assert_eq!(controls.len(), 3);
-        match &controls[1] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => assert_eq!(event.seq, 2),
-            other => panic!("expected event 2, got {other:?}"),
-        }
-        match &controls[2] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => assert_eq!(event.seq, 3),
-            other => panic!("expected event 3, got {other:?}"),
-        }
-
-        // Expired cursor (different session instance)
-        let (client2, _stream2) = add_client(&mut server);
-        let wrong_cursor = "different-instance:1".to_string();
-        let response = server.handle_subscribe_command(
-            client2,
-            vec![],
-            false,
-            Some(wrong_cursor),
-            reply.clone(),
-        );
-        let err = response.expect("must return error for expired cursor");
-        assert!(!err.ok);
-        assert_eq!(err.code, Some(ControlErrorCode::CursorExpired));
-        assert!(!server.session_subscribers.contains_key(&client2));
-    }
-
-    #[test]
-    fn test_session_subscribe_event_filtering() {
-        let mut server = SessionServer::new_named("dev");
-        let (client, _stream) = add_client(&mut server);
-        let reply = ReplyTo::StreamingHeadless {
-            capabilities: Capabilities::current(),
-            effective_protocol: PROTOCOL_VERSION,
-        };
-        let response = server.handle_subscribe_command(
-            client,
-            vec!["pane-spawned".to_string()],
-            false,
-            None,
-            reply,
-        );
-        assert!(response.is_none());
-
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "1".to_string())],
-        );
-        server.record_session_event(
-            events::EventKind::LayoutChanged,
-            vec![("revision", "1".to_string())],
-        );
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "2".to_string())],
-        );
-
-        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
-        assert_eq!(controls.len(), 3);
-        match &controls[1] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => {
-                assert_eq!(event.kind, events::EventKind::PaneSpawned);
-                assert_eq!(event.seq, 1);
-            }
-            other => panic!("expected event 1, got {other:?}"),
-        }
-        match &controls[2] {
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Event { event },
-            } => {
-                assert_eq!(event.kind, events::EventKind::PaneSpawned);
-                assert_eq!(event.seq, 3);
-            }
-            other => panic!("expected event 3, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_session_subscribe_slow_subscriber_lagged() {
-        let mut server = SessionServer::new_named("dev");
-        let (client, _stream) = add_client(&mut server);
-        let reply = ReplyTo::StreamingHeadless {
-            capabilities: Capabilities::current(),
-            effective_protocol: PROTOCOL_VERSION,
-        };
-        let response = server.handle_subscribe_command(client, vec![], false, None, reply);
-        assert!(response.is_none());
-        assert!(server.session_subscribers.contains_key(&client));
-
-        // Make client overflow by setting max_backlog to 0
-        server.max_backlog = 0;
-        server.record_session_event(
-            events::EventKind::PaneSpawned,
-            vec![("pane", "1".to_string())],
-        );
-
-        assert!(!server.session_subscribers.contains_key(&client));
-        assert!(server.client(client).unwrap().close_after_flush);
-
-        let controls = decode_outbox_controls(server.client_mut(client).unwrap());
-        assert!(controls.iter().any(|msg| matches!(
-            msg,
-            ServerMessage::SessionSubscribeRecord {
-                record: events::SessionSubscribeRecord::Lagged,
-            }
-        )));
     }
 }

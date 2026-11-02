@@ -1,9 +1,8 @@
-use super::lease::*;
 use super::pane_events::*;
 use super::status::*;
 use crate::Msg;
 use crate::session::client::SessionClient;
-use crate::session::protocol::{ClientInfo, PaneRuntimeState};
+use crate::session::protocol::PaneRuntimeState;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -600,7 +599,7 @@ fn bell_events_include_focused_for_current_panes() {
         let bell = |pane_id: crate::state::PaneId| {
             let mut data = std::collections::BTreeMap::new();
             data.insert("pane".to_string(), pane_id.to_string());
-            crate::session::server::events::SessionEvent {
+            crate::session::protocol::SessionEvent {
                 session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
                 seq: 1,
                 kind: crate::events::EventKind::Bell,
@@ -1995,41 +1994,6 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
 }
 
 #[test]
-fn roster_diff_emits_joins_and_leaves_with_the_new_count() {
-    let client = |id, label: &str| ClientInfo {
-        id,
-        label: label.to_string(),
-        read_only: false,
-        requesting_control: false,
-        parked: false,
-    };
-    let events = roster_diff_events(
-        &[client(1, "one"), client(2, "two")],
-        &[client(2, "renamed"), client(3, "three")],
-    );
-
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].kind, crate::events::EventKind::ClientJoined);
-    assert_eq!(
-        events[0].fields,
-        vec![
-            ("client_id", "3".into()),
-            ("client_name", "three".into()),
-            ("count", "2".into()),
-        ]
-    );
-    assert_eq!(events[1].kind, crate::events::EventKind::ClientLeft);
-    assert_eq!(
-        events[1].fields,
-        vec![
-            ("client_id", "1".into()),
-            ("client_name", "one".into()),
-            ("count", "2".into()),
-        ]
-    );
-}
-
-#[test]
 fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(crate::AppRoot::default());
@@ -2072,7 +2036,7 @@ fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
         backend
             .update_level(Msg::SessionEvent {
                 epoch,
-                event: crate::session::server::events::SessionEvent {
+                event: crate::session::protocol::SessionEvent {
                     session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
                     seq: 1,
                     kind: crate::events::EventKind::PaneStatusChanged,
@@ -3617,7 +3581,7 @@ fn layout_revisions_do_not_duplicate_server_events() {
             backend
                 .update_level(Msg::SessionEvent {
                     epoch,
-                    event: crate::session::server::events::SessionEvent {
+                    event: crate::session::protocol::SessionEvent {
                         session_instance: crate::session::protocol::SessionInstanceId::for_test(
                             "test",
                         ),
@@ -4193,7 +4157,7 @@ fn runtime_events_say_focused_only_for_the_pane_in_focus_across_namespaces() {
                 backend
                     .update_level(Msg::SessionEvent {
                         epoch,
-                        event: crate::session::server::events::SessionEvent {
+                        event: crate::session::protocol::SessionEvent {
                             session_instance: crate::session::protocol::SessionInstanceId::for_test(
                                 "test",
                             ),
@@ -4236,7 +4200,7 @@ fn background_session_events_keep_their_scope_and_reject_stale_sources() {
                 session: Some(instance.clone()),
             }),
         );
-        let event = crate::session::server::events::SessionEvent {
+        let event = crate::session::protocol::SessionEvent {
             session_instance: instance,
             seq: 1,
             kind: crate::events::EventKind::ForegroundChanged,
@@ -4274,32 +4238,37 @@ fn notification_read_state_is_local_to_each_ui_and_session_instance() {
         let mut first = TestBackend::new(crate::AppRoot::default());
         let mut second = TestBackend::new(crate::AppRoot::default());
         let instance = crate::session::protocol::SessionInstanceId::for_test("notifications");
+        let deliver = |backend: &mut TestBackend<crate::AppRoot>, seq: u64| {
+            backend
+                .update_level(Msg::SessionNotifications {
+                    epoch: backend.state().runtime_epoch,
+                    session_instance: instance.clone(),
+                    session: "work".into(),
+                    notifications: vec![crate::control::SessionNotification {
+                        id: format!("notification-{seq}"),
+                        seq,
+                        level: crate::control::NotifyLevel::Info,
+                        title: None,
+                        message: format!("finished {seq}"),
+                    }],
+                })
+                .unwrap();
+        };
         for backend in [&mut first, &mut second] {
             backend.state_mut().current_mut().session_instance = Some(instance.clone());
-            for _ in 0..2 {
-                backend
-                    .update_level(Msg::SessionNotifications {
-                        epoch: backend.state().runtime_epoch,
-                        session_instance: instance.clone(),
-                        session: "work".into(),
-                        notifications: vec![crate::control::SessionNotification {
-                            id: "notification-5".into(),
-                            seq: 5,
-                            level: crate::control::NotifyLevel::Info,
-                            title: None,
-                            message: "finished".into(),
-                        }],
-                    })
-                    .unwrap();
-                assert_eq!(backend.state().session_notification_cursors[&instance], 5);
-                assert_eq!(backend.state().replaceable_toasts.len(), 1);
-            }
+            // A reconnect replays the inbox: the same notification twice shows once.
+            deliver(backend, 5);
+            deliver(backend, 5);
+            assert_eq!(backend.state().session_notification_cursors[&instance], 5);
+            assert_eq!(backend.state().replaceable_toasts.len(), 1);
         }
-        first
-            .state_mut()
-            .session_notification_cursors
-            .insert(instance.clone(), 8);
+
+        // One UI reading further moves nothing for the other, which still gets it when it arrives.
+        deliver(&mut first, 8);
+        assert_eq!(first.state().session_notification_cursors[&instance], 8);
         assert_eq!(second.state().session_notification_cursors[&instance], 5);
+        deliver(&mut second, 8);
+        assert_eq!(second.state().session_notification_cursors[&instance], 8);
     });
 }
 

@@ -224,58 +224,104 @@ struct SessionTarget {
     remote: Option<String>,
 }
 
-/// Read `--session` and `--remote` from either side of the `extensions` namespace. A target given
-/// before it lives on `cli`; one given after it is collected here.
+/// `--session` and `--remote`, from either side of the `extensions` namespace. A target given before
+/// it lives on `cli`; one given after it is collected here.
+struct SessionTargetFlags {
+    session: Option<String>,
+    flag_target: bool,
+    remote: Option<String>,
+    command: &'static str,
+}
+
+impl SessionTargetFlags {
+    fn new(cli: &CliArgs, command: &'static str) -> Self {
+        Self {
+            session: cli.attach_session.clone(),
+            flag_target: cli.session_flag_target,
+            remote: cli.remote.clone(),
+            command,
+        }
+    }
+
+    /// Take `arg` and its value if it is one of these flags. `Ok(false)` leaves it to the caller.
+    fn accept(
+        &mut self,
+        arg: &str,
+        iter: &mut impl Iterator<Item = String>,
+    ) -> std::result::Result<bool, String> {
+        let command = self.command;
+        match arg {
+            "--session" => {
+                let missing = format!("extensions {command} --session requires a name");
+                if self
+                    .session
+                    .replace(require_value(iter, &missing)?)
+                    .is_some()
+                {
+                    return Err(format!(
+                        "extensions {command} names a session more than once"
+                    ));
+                }
+                self.flag_target = true;
+            }
+            "--remote" => {
+                if self.remote.is_some() {
+                    return Err(format!(
+                        "extensions {command} names a remote host more than once"
+                    ));
+                }
+                let missing = format!("extensions {command} --remote requires a host");
+                let target = require_value(iter, &missing)?;
+                crate::session::remote::parse_remote_target(&target)?;
+                self.remote = Some(target);
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// The session named, or `None` when no flag named anything to address.
+    fn target(self) -> std::result::Result<Option<SessionTarget>, String> {
+        let Some(session) = self.session else {
+            if self.remote.is_some() {
+                return Err(format!(
+                    "extensions {} --remote needs --session <NAME>: deployments belong to a named session",
+                    self.command
+                ));
+            }
+            return Ok(None);
+        };
+        if !self.flag_target {
+            return Err(format!(
+                "`{session}` is a launch target; write `--session {session}` to address that session"
+            ));
+        }
+        Ok(Some(SessionTarget {
+            session,
+            remote: self.remote,
+        }))
+    }
+}
+
+/// The target of a command that accepts nothing else and has no use without one.
 fn session_target(
     cli: &CliArgs,
     iter: &mut impl Iterator<Item = String>,
-    command: &str,
+    command: &'static str,
 ) -> std::result::Result<SessionTarget, String> {
-    let mut session = cli.attach_session.clone();
-    let mut flag_target = cli.session_flag_target;
-    let mut remote = cli.remote.clone();
-    let mut remote_seen = remote.is_some();
+    let mut flags = SessionTargetFlags::new(cli, command);
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--session" => {
-                let name = require_value(iter, &format!("{command} --session requires a name"))?;
-                if session.replace(name).is_some() {
-                    return Err(format!("{command} names a session more than once"));
-                }
-                flag_target = true;
-            }
-            "--remote" => {
-                if remote_seen {
-                    return Err(format!("{command} names a remote host more than once"));
-                }
-                let target = require_value(iter, &format!("{command} --remote requires a host"))?;
-                crate::session::remote::parse_remote_target(&target)?;
-                remote = Some(target);
-                remote_seen = true;
-            }
-            other => {
-                return Err(format!(
-                    "unexpected argument `{other}` after extensions {command}"
-                ));
-            }
-        }
-    }
-    let Some(session) = session else {
-        if remote.is_some() {
+        if !flags.accept(&arg, iter)? {
             return Err(format!(
-                "extensions {command} --remote needs --session <NAME>: deployments belong to a named session"
+                "unexpected argument `{arg}` after extensions {command}"
             ));
         }
-        return Err(format!(
-            "extensions {command} needs --session <NAME>: deployments belong to a session server"
-        ));
-    };
-    if !flag_target {
-        return Err(format!(
-            "`{session}` is a launch target; write `--session {session}` to deploy to that session"
-        ));
     }
-    Ok(SessionTarget { session, remote })
+    flags.target()?.ok_or_else(|| {
+        format!(
+            "extensions {command} needs --session <NAME>: deployments belong to a session server"
+        )
+    })
 }
 
 fn parse_deploy(
@@ -323,58 +369,25 @@ fn parse_status(
     cli: CliArgs,
 ) -> std::result::Result<ParsedCli, String> {
     let mut format = None;
-    let mut session = cli.attach_session.clone();
-    let mut flag_target = cli.session_flag_target;
-    let mut remote = cli.remote.clone();
-    let mut remote_seen = remote.is_some();
+    let mut flags = SessionTargetFlags::new(&cli, "status");
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--json" if format.is_none() => format = Some(ListFormat::Json),
-            "--session" => {
-                let name = require_value(iter, "extensions status --session requires a name")?;
-                if session.replace(name).is_some() {
-                    return Err("extensions status names a session more than once".to_string());
-                }
-                flag_target = true;
-            }
-            "--remote" => {
-                if remote_seen {
-                    return Err("extensions status names a remote host more than once".to_string());
-                }
-                let target = require_value(iter, "extensions status --remote requires a host")?;
-                crate::session::remote::parse_remote_target(&target)?;
-                remote = Some(target);
-                remote_seen = true;
-            }
-            other => {
-                return Err(format!(
-                    "unexpected argument `{other}` after extensions status"
-                ));
-            }
-        }
-    }
-    let (endpoint, command) = match session {
-        None => {
-            if remote.is_some() {
-                return Err(
-                    "extensions status --remote needs --session <NAME>: deployments belong to a named session"
-                        .to_string(),
-                );
-            }
-            (
-                ControlEndpoint::Ui(None),
-                crate::control::ControlCommand::ExtensionRuntimeStatus,
-            )
-        }
-        Some(session) if flag_target => (
-            endpoint_for(&SessionTarget { session, remote }),
-            crate::control::ControlCommand::ExtensionsStatus,
-        ),
-        Some(session) => {
+        if arg == "--json" && format.is_none() {
+            format = Some(ListFormat::Json);
+        } else if !flags.accept(&arg, iter)? {
             return Err(format!(
-                "`{session}` is a launch target; write `--session {session}` to see that session's deployments"
+                "unexpected argument `{arg}` after extensions status"
             ));
         }
+    }
+    let (endpoint, command) = match flags.target()? {
+        None => (
+            ControlEndpoint::Ui(None),
+            crate::control::ControlCommand::ExtensionRuntimeStatus,
+        ),
+        Some(target) => (
+            endpoint_for(&target),
+            crate::control::ControlCommand::ExtensionsStatus,
+        ),
     };
     Ok(ParsedCli::Control(ControlCli {
         config_path: cli.config_path,

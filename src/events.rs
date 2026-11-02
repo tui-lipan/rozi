@@ -1,58 +1,33 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, mpsc};
 
-pub use crate::session::server::events::{EventKind, WireEvent};
+pub use crate::session::protocol::{EventKind, WireEvent};
 
 #[derive(Clone, Debug)]
 pub struct Event {
     pub kind: EventKind,
-    pub fields: Vec<(&'static str, String)>,
-}
-
-fn intern_key(key: &str) -> &'static str {
-    match key {
-        "pane" => "pane",
-        "workspace" => "workspace",
-        "command" => "command",
-        "cwd" => "cwd",
-        "code" => "code",
-        "status" => "status",
-        "reason" => "reason",
-        "previous_status" => "previous_status",
-        "previous_reason" => "previous_reason",
-        "agent" => "agent",
-        "label" => "label",
-        "ref" => "ref",
-        "state" => "state",
-        "previous_state" => "previous_state",
-        "program" => "program",
-        "previous_program" => "previous_program",
-        "pid" => "pid",
-        "client_id" => "client_id",
-        "client_name" => "client_name",
-        "count" => "count",
-        "controller" => "controller",
-        "session" => "session",
-        "previous" => "previous",
-        "revision" => "revision",
-        "author" => "author",
-        "focused" => "focused",
-        "self_controller" => "self_controller",
-        other => Box::leak(other.to_string().into_boxed_str()),
-    }
+    pub fields: Vec<(Cow<'static, str>, String)>,
 }
 
 impl Event {
     pub fn new(kind: EventKind, fields: Vec<(&'static str, String)>) -> Self {
-        Self { kind, fields }
+        Self {
+            kind,
+            fields: fields
+                .into_iter()
+                .map(|(key, value)| (Cow::Borrowed(key), value))
+                .collect(),
+        }
     }
 
+    /// An event as it arrived from a session server, whose field names are not known here.
     pub fn from_map(kind: EventKind, fields: impl IntoIterator<Item = (String, String)>) -> Self {
         Self {
             kind,
             fields: fields
                 .into_iter()
-                .map(|(k, v)| (intern_key(&k), v))
+                .map(|(key, value)| (Cow::Owned(key), value))
                 .collect(),
         }
     }
@@ -63,7 +38,7 @@ impl Event {
             data: self
                 .fields
                 .iter()
-                .map(|(key, value)| ((*key).to_string(), value.clone()))
+                .map(|(key, value)| (key.to_string(), value.clone()))
                 .collect(),
         })
         .expect("event fields serialize")
@@ -180,18 +155,6 @@ pub fn emit(state: &crate::state::State, event: Event) {
         .event_hub
         .publish_scoped(&event, Some(&EventScope::of(state, &event)));
     run_hooks(state, &event);
-}
-
-/// Publish an event to this client's subscribers, but run its hooks only on the current layout
-/// controller. Server-owned transitions reach every client, so this prevents duplicate external
-/// side effects while preserving each client's local `subscribe` stream.
-pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
-    state
-        .event_hub
-        .publish_scoped(&event, Some(&EventScope::of(state, &event)));
-    if state.is_controller() {
-        run_hooks(state, &event);
-    }
 }
 
 pub(crate) fn run_hooks_for_scope(

@@ -28,7 +28,7 @@ pub const CONTROL_API_VERSION: u32 = 1;
 /// third-party software validates against, and no two development builds negotiate with it, so
 /// intermediate commits need no revisions of their own. Any change counts; the common one is a
 /// closed vocabulary such as commands, error codes, or event names gaining a value.
-pub const API_SCHEMA_VERSION: u32 = 8;
+pub const API_SCHEMA_VERSION: u32 = 3;
 
 /// The published JSON Schema, as `rozi api schema` prints it. CI fails when the checked-in file
 /// differs from what the wire types generate, so embedding the file gives every build the schema
@@ -115,7 +115,11 @@ pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
 /// A session server runs deployed actions: `invoke`, `invocation-list`, `invocation-cancel`, and
 /// `actions-list`.
 pub const SESSION_ACTIONS_CAPABILITY: &str = "session-actions";
+/// A session server runs the `placement = "session"` services of what is deployed to it, with no UI
+/// attached, under credentials it issues itself.
 pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
+/// A session server accepts `notify`, keeps a bounded inbox, and includes it in subscription
+/// snapshots.
 pub const SESSION_NOTIFICATIONS_CAPABILITY: &str = "session-notifications";
 
 /// Features this binary exposes to control clients and extension authors.
@@ -1753,7 +1757,7 @@ pub struct ExtensionDeploymentInfo {
     pub services: Vec<SessionServiceStatus>,
     /// Comparison made by the CLI against its installed copy, absent on the session endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_copy: Option<String>,
+    pub local_copy: Option<ExtensionLocalCopy>,
     /// Why the deployment cannot run, when it cannot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -1763,11 +1767,58 @@ pub struct ExtensionDeploymentInfo {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionServiceStatus {
     pub name: String,
-    pub state: String,
+    pub state: SessionServiceState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum SessionServiceState {
+    /// Asked to start; no process has been reported yet.
+    Starting,
+    Running,
+    /// Exited, and waiting out its backoff before the next start.
+    Restarting,
+    /// Not running and not due to start again. `reason` says why.
+    Stopped,
+}
+
+impl SessionServiceState {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Restarting => "restarting",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+/// How a deployment compares with the copy installed where the CLI runs.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum ExtensionLocalCopy {
+    Matches,
+    Differs,
+    NotInstalled,
+    /// Installed, but its files could not be read to compare them.
+    Unavailable,
+}
+
+impl ExtensionLocalCopy {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Matches => "matches",
+            Self::Differs => "differs",
+            Self::NotInstalled => "not-installed",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -3334,7 +3385,22 @@ pub(crate) fn serve_connection(
         // The credential, not the request, says which extension and generation this is.
         request.extension = Some(grant.provenance);
     }
-    if let ControlCommand::Subscribe { events, .. } = &request.command {
+    if let ControlCommand::Subscribe {
+        events,
+        snapshot,
+        after,
+    } = &request.command
+    {
+        if *snapshot || after.is_some() {
+            write_control_response(
+                &mut stream,
+                &ControlResponse::error_with(
+                    ControlErrorCode::InvalidArgument,
+                    "snapshot and after need a session endpoint; a UI keeps no event history",
+                ),
+            );
+            return;
+        }
         run_subscription(
             stream,
             link,

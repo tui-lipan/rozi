@@ -147,10 +147,10 @@ ROZI_CMD=${ROZI_BIN:-rozi}
 ```
 
 `subscribe` prints one JSON object per event until rozi exits. Event fields are under `data`; see
-[Hooks](hooks.md#events-and-fields) for every event. Subscribing to a session endpoint (`rozi --session dev subscribe`)
-streams session-owned events with optional `--snapshot` and `--after INSTANCE:SEQ`; see
-[Session subscriptions](control.md#session-subscriptions). To run a command on an event without keeping a
-script alive, use a [hook](hooks.md) instead.
+[Hooks](hooks.md#events-and-fields) for every event. `rozi --session dev subscribe` streams a
+session's events with no UI attached, in a different record format; see
+[Session subscriptions](control.md#session-subscriptions). To run a command on an event without
+keeping a script alive, use a [hook](hooks.md) instead.
 
 ## Drive a session with no window
 

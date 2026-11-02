@@ -33,20 +33,21 @@ pub(crate) fn run_remote_control_cli(name: &str) -> Result<()> {
 
 /// `--remote-call <NAME>`: run one forwarded action call, for as long as its caller is there.
 pub(crate) fn run_remote_call_cli(name: &str) -> Result<()> {
-    print_remote_answer(session::remote::control::run_remote_call(name))
+    print_remote_answer(session::remote::control::run_remote_call(name).map(Some))
 }
 
 fn print_remote_answer(
-    answer: std::result::Result<crate::control::ControlResponse, String>,
+    answer: std::result::Result<Option<crate::control::ControlResponse>, String>,
 ) -> Result<()> {
     match answer {
-        Ok(response) => {
+        Ok(Some(response)) => {
             println!(
                 "{}",
                 serde_json::to_string(&response).map_err(std::io::Error::other)?
             );
             Ok(())
         }
+        Ok(None) => Ok(()),
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(session::remote::control::UNREACHABLE_EXIT);

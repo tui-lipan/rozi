@@ -33,14 +33,14 @@ pub const UPTIME_RESET_SECS: u64 = 60;
 pub const MAX_FAILURES: u32 = 5;
 
 /// Default poll interval for checking running processes and pending service restarts.
-pub const DEFAULT_SUPERVISOR_TICK: Duration = Duration::from_millis(50);
+const DEFAULT_SUPERVISOR_TICK: Duration = Duration::from_millis(50);
 
 /// How long a finished process's captured output may take to reach end of file.
 const CAPTURE_DRAIN: Duration = Duration::from_secs(2);
 
 /// Environment the supervisor sets for every extension process it starts, and never takes from the
 /// caller.
-pub const OWNED_ENV: &[&str] = &[
+const OWNED_ENV: &[&str] = &[
     "ROZI",
     "ROZI_BIN",
     "ROZI_SOCKET",
@@ -51,7 +51,7 @@ pub const OWNED_ENV: &[&str] = &[
 
 /// Environment a process must not inherit from the supervisor itself: the supervisor may have been
 /// started from inside a pane, and those values describe that pane, not this process.
-pub const INHERITED_ENV_REMOVED: &[&str] = &[
+const INHERITED_ENV_REMOVED: &[&str] = &[
     "ROZI_PANE",
     "ROZI_SESSION_INSTANCE",
     "ROZI_EXTENSION",
@@ -63,12 +63,6 @@ pub const INHERITED_ENV_REMOVED: &[&str] = &[
     crate::config::ACTION_ENV,
     crate::config::INVOCATION_ENV,
 ];
-
-/// The delay after `current`. Every restart path steps the ladder through here so a change to the
-/// curve cannot apply to crashes but miss clean exits, or apply to exits but miss failed spawns.
-pub fn next_backoff(current: Duration) -> Duration {
-    (current * 2).min(MAX_BACKOFF)
-}
 
 /// Parameters governing service restart backoff and dormancy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +85,9 @@ impl Default for BackoffPolicy {
 }
 
 impl BackoffPolicy {
+    /// The delay after `current`. Every restart path steps the ladder through here so a change to
+    /// the curve cannot apply to crashes but miss clean exits, or apply to exits but miss failed
+    /// spawns.
     pub fn next_delay(&self, current: Duration) -> Duration {
         (current * 2).min(self.max)
     }
@@ -220,28 +217,6 @@ pub enum RestartOutcome {
     },
 }
 
-/// Evaluate a service spawn failure against the default [`BackoffPolicy`].
-pub fn evaluate_spawn_failure(
-    restart: ServiceRestart,
-    failures: u32,
-    backoff: Duration,
-    now: Instant,
-) -> RestartOutcome {
-    BackoffPolicy::default().evaluate_spawn_failure(restart, failures, backoff, now)
-}
-
-/// Evaluate a service exit against the default [`BackoffPolicy`].
-pub fn evaluate_exit(
-    restart: ServiceRestart,
-    is_success: bool,
-    started_at: Option<Instant>,
-    failures: u32,
-    backoff: Duration,
-    now: Instant,
-) -> RestartOutcome {
-    BackoffPolicy::default().evaluate_exit(restart, is_success, started_at, failures, backoff, now)
-}
-
 fn verify_process_bundle(directory: &Path) -> Result<(), SpawnFailure> {
     use super::store::{BundleStore, StoreError};
     let digest = directory
@@ -268,6 +243,8 @@ fn verify_process_bundle(directory: &Path) -> Result<(), SpawnFailure> {
 #[derive(Clone, Debug)]
 pub struct ProcessSpec {
     pub bundle_dir: PathBuf,
+    /// The UI's control socket, which becomes `ROZI_SOCKET`. Empty for a session process: it has no
+    /// UI, and finds its session server from `ROZI_SESSION_INSTANCE` instead.
     pub socket_path: PathBuf,
     pub launch: Launch,
     pub cwd: SpawnCwd,
@@ -559,7 +536,7 @@ fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> Option<Vec<u8>> {
     Some(reader.join().unwrap_or_default())
 }
 
-pub fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {
+fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {
     match launch.template().resolve(bundle_dir) {
         LaunchTemplate::Direct(argv) => {
             let Some((program, args)) = argv.split_first() else {
@@ -613,29 +590,17 @@ fn locate(program: &str) -> Option<PathBuf> {
 /// Lifecycle events emitted by [`Supervisor`] to a non-UI or UI host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SupervisorEvent {
-    WorkerSpawned {
-        worker: u64,
-        pid: u32,
-    },
-    WorkerSpawnFailed {
-        worker: u64,
-        failure: SpawnFailure,
-    },
-    WorkerExited {
-        worker: u64,
-        outcome: ExitOutcome,
-    },
-    ServiceSpawned {
+    Spawned {
         name: String,
         pid: u32,
     },
-    ServiceRestartScheduled {
+    RestartScheduled {
         name: String,
         delay: Duration,
         failures: u32,
         detail: String,
     },
-    ServiceStopped {
+    Stopped {
         name: String,
         reason: StopReason,
         failures: u32,
@@ -644,10 +609,13 @@ pub enum SupervisorEvent {
 }
 
 enum CommandMsg {
-    SpawnWorker { worker: u64, spec: ProcessSpec },
-    KillWorker { worker: u64 },
-    StartService { name: String, spec: ServiceSpec },
-    StopService { name: String },
+    StartService {
+        name: String,
+        spec: Box<ServiceSpec>,
+    },
+    StopService {
+        name: String,
+    },
     Shutdown,
 }
 
@@ -663,7 +631,7 @@ enum ManagedServiceState {
     PendingRestart { restart_at: Instant },
 }
 
-/// A background process and service supervisor that runs on its own thread and reports lifecycle
+/// A background service supervisor that runs on its own thread and reports lifecycle
 /// events via a callback without any UI or `tui-lipan` dependencies.
 pub struct Supervisor {
     tx: Mutex<Option<mpsc::Sender<CommandMsg>>>,
@@ -693,21 +661,11 @@ impl Supervisor {
         }
     }
 
-    /// Spawn a one-shot worker process.
-    pub fn spawn_worker(&self, worker: u64, spec: ProcessSpec) -> io::Result<()> {
-        self.send(CommandMsg::SpawnWorker { worker, spec })
-    }
-
-    /// Kill a running one-shot worker process and its process group.
-    pub fn kill_worker(&self, worker: u64) -> io::Result<()> {
-        self.send(CommandMsg::KillWorker { worker })
-    }
-
     /// Start or replace a supervised service.
     pub fn start_service(&self, name: impl Into<String>, spec: ServiceSpec) -> io::Result<()> {
         self.send(CommandMsg::StartService {
             name: name.into(),
-            spec,
+            spec: Box::new(spec),
         })
     }
 
@@ -716,7 +674,7 @@ impl Supervisor {
         self.send(CommandMsg::StopService { name: name.into() })
     }
 
-    /// Stop every managed worker and service and wait for the supervisor thread to exit.
+    /// Stop every managed service and wait for the supervisor thread to exit.
     pub fn shutdown(&self) {
         if let Some(tx) = self.tx.lock().unwrap().take() {
             let _ = tx.send(CommandMsg::Shutdown);
@@ -755,32 +713,10 @@ fn run_supervisor_loop(
     tick: Duration,
     report: impl Fn(SupervisorEvent),
 ) {
-    let mut workers: HashMap<u64, SupervisedProcess> = HashMap::new();
     let mut services: HashMap<String, ManagedService> = HashMap::new();
 
     loop {
         match rx.recv_timeout(tick) {
-            Ok(CommandMsg::SpawnWorker { worker, spec }) => {
-                if let Some(previous) = workers.remove(&worker) {
-                    let _ = previous.kill("stopped by rozi");
-                }
-                match SupervisedProcess::spawn(spec) {
-                    Ok(process) => {
-                        let pid = process.pid();
-                        workers.insert(worker, process);
-                        report(SupervisorEvent::WorkerSpawned { worker, pid });
-                    }
-                    Err(failure) => {
-                        report(SupervisorEvent::WorkerSpawnFailed { worker, failure });
-                    }
-                }
-            }
-            Ok(CommandMsg::KillWorker { worker }) => {
-                if let Some(process) = workers.remove(&worker) {
-                    let outcome = process.kill("stopped by rozi");
-                    report(SupervisorEvent::WorkerExited { worker, outcome });
-                }
-            }
             Ok(CommandMsg::StartService { name, spec }) => {
                 if let Some(previous) = services.remove(&name)
                     && let ManagedServiceState::Running(process) = previous.state
@@ -790,7 +726,7 @@ fn run_supervisor_loop(
                 launch_managed_service(
                     &mut services,
                     name,
-                    spec,
+                    *spec,
                     0,
                     policy.initial,
                     &policy,
@@ -808,19 +744,7 @@ fn run_supervisor_loop(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
 
-        // 1. Poll one-shot workers.
-        let mut exited_workers = Vec::new();
-        for (worker, process) in &mut workers {
-            if let Some(outcome) = process.poll() {
-                exited_workers.push((*worker, outcome));
-            }
-        }
-        for (worker, outcome) in exited_workers {
-            workers.remove(&worker);
-            report(SupervisorEvent::WorkerExited { worker, outcome });
-        }
-
-        // 2. Poll running services and handle exits.
+        // Poll running services and handle exits.
         let mut exited_services = Vec::new();
         for (name, service) in &mut services {
             if let ManagedServiceState::Running(process) = &mut service.state
@@ -853,7 +777,7 @@ fn run_supervisor_loop(
                     service.backoff = next_backoff;
                     service.state = ManagedServiceState::PendingRestart { restart_at };
                     services.insert(name.clone(), service);
-                    report(SupervisorEvent::ServiceRestartScheduled {
+                    report(SupervisorEvent::RestartScheduled {
                         name,
                         delay,
                         failures,
@@ -861,7 +785,7 @@ fn run_supervisor_loop(
                     });
                 }
                 RestartOutcome::Stop { reason, failures } => {
-                    report(SupervisorEvent::ServiceStopped {
+                    report(SupervisorEvent::Stopped {
                         name,
                         reason,
                         failures,
@@ -871,7 +795,7 @@ fn run_supervisor_loop(
             }
         }
 
-        // 3. Respawn services whose restart backoff has elapsed.
+        // Respawn services whose restart backoff has elapsed.
         let now = Instant::now();
         let due: Vec<String> = services
             .iter()
@@ -897,9 +821,6 @@ fn run_supervisor_loop(
         }
     }
 
-    for (_, process) in workers.drain() {
-        let _ = process.kill("stopped: the runtime shut down");
-    }
     for (_, service) in services.drain() {
         if let ManagedServiceState::Running(process) = service.state {
             let _ = process.kill("stopped: the runtime shut down");
@@ -928,7 +849,7 @@ fn launch_managed_service(
                     backoff,
                 },
             );
-            report(SupervisorEvent::ServiceSpawned { name, pid });
+            report(SupervisorEvent::Spawned { name, pid });
         }
         Err(failure) => {
             let detail = failure.to_string();
@@ -949,7 +870,7 @@ fn launch_managed_service(
                             backoff: next_backoff,
                         },
                     );
-                    report(SupervisorEvent::ServiceRestartScheduled {
+                    report(SupervisorEvent::RestartScheduled {
                         name,
                         delay,
                         failures,
@@ -957,7 +878,7 @@ fn launch_managed_service(
                     });
                 }
                 RestartOutcome::Stop { reason, failures } => {
-                    report(SupervisorEvent::ServiceStopped {
+                    report(SupervisorEvent::Stopped {
                         name,
                         reason,
                         failures,
@@ -1162,11 +1083,11 @@ mod tests {
         let stopped = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match rx.recv_timeout(remaining) {
-                Ok(SupervisorEvent::ServiceSpawned { name, .. }) => {
+                Ok(SupervisorEvent::Spawned { name, .. }) => {
                     assert_eq!(name, "crasher.watch");
                     spawned += 1;
                 }
-                Ok(SupervisorEvent::ServiceRestartScheduled {
+                Ok(SupervisorEvent::RestartScheduled {
                     name,
                     failures,
                     delay,
@@ -1175,7 +1096,7 @@ mod tests {
                     assert_eq!(name, "crasher.watch");
                     scheduled.push((failures, delay));
                 }
-                Ok(SupervisorEvent::ServiceStopped {
+                Ok(SupervisorEvent::Stopped {
                     name,
                     reason,
                     failures,
@@ -1184,7 +1105,6 @@ mod tests {
                     assert_eq!(name, "crasher.watch");
                     break (reason, failures, detail);
                 }
-                Ok(other) => panic!("unexpected event: {other:?}"),
                 Err(err) => panic!("timed out waiting for service stop: {err}"),
             }
         };
@@ -1241,7 +1161,7 @@ mod tests {
             .unwrap();
 
         let parent_pid = match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-            SupervisorEvent::ServiceSpawned { pid, .. } => pid,
+            SupervisorEvent::Spawned { pid, .. } => pid,
             other => panic!("expected ServiceSpawned, got {other:?}"),
         };
 
@@ -1272,7 +1192,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn captured_worker_timeout_terminates_process_group_and_returns_partial_stdout() {
+    fn captured_process_timeout_terminates_process_group_and_returns_partial_stdout() {
         let temp = tempfile::tempdir().unwrap();
         let store = BundleStore::open(temp.path().join("bundles")).unwrap();
         let pidfile = temp.path().join("child.pid");
@@ -1282,15 +1202,6 @@ mod tests {
                 "printf 'partial-out'; sleep 300 & echo $! > '{}'; wait",
                 pidfile.display()
             ),
-        );
-
-        let (tx, rx) = mpsc::channel();
-        let supervisor = Supervisor::start_with_policy(
-            BackoffPolicy::default(),
-            Duration::from_millis(10),
-            move |event| {
-                let _ = tx.send(event);
-            },
         );
 
         let mut spec = spec_for(
@@ -1304,26 +1215,22 @@ mod tests {
             timeout_ms: 150,
         });
 
-        supervisor.spawn_worker(42, spec).unwrap();
-        let parent_pid = match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-            SupervisorEvent::WorkerSpawned { worker: 42, pid } => pid,
-            other => panic!("expected WorkerSpawned, got {other:?}"),
-        };
-
-        let outcome = match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-            SupervisorEvent::WorkerExited {
-                worker: 42,
-                outcome,
-            } => outcome,
-            other => panic!("expected WorkerExited, got {other:?}"),
+        let mut process = SupervisedProcess::spawn(spec).unwrap();
+        let parent_pid = process.pid();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let outcome = loop {
+            if let Some(outcome) = process.poll() {
+                break outcome;
+            }
+            assert!(Instant::now() < deadline, "the capture never timed out");
+            std::thread::sleep(Duration::from_millis(10));
         };
         assert!(outcome.timed_out);
         assert!(!outcome.killed);
         assert_eq!(outcome.output.as_deref(), Some("partial-out"));
 
-        let deadline = Instant::now() + Duration::from_secs(5);
         while crate::platform::command::process_is_alive(parent_pid) {
-            assert!(Instant::now() < deadline, "timed-out worker survived");
+            assert!(Instant::now() < deadline, "timed-out process survived");
             std::thread::sleep(Duration::from_millis(10));
         }
         if let Ok(content) = std::fs::read_to_string(&pidfile)
@@ -1332,7 +1239,7 @@ mod tests {
             while crate::platform::command::process_is_alive(grandchild_pid) {
                 assert!(
                     Instant::now() < deadline,
-                    "timed-out worker's child survived"
+                    "timed-out process's child survived"
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }

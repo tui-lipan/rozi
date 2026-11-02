@@ -385,9 +385,6 @@ impl SessionDeployments {
     /// Every deployment, verified now. A record whose files changed or disappeared is reported
     /// unavailable rather than deleted, so the reason survives to the next `status`.
     pub fn status(&self) -> Result<Vec<ExtensionDeploymentInfo>, DeployError> {
-        if self.root.is_none() {
-            self.root()?;
-        }
         let Some(root) = self.existing_root()? else {
             return Ok(Vec::new());
         };
@@ -510,10 +507,10 @@ impl SessionDeployments {
     /// The store's directory if this session has ever written one. Reading must not create it, or
     /// every named session would leave a store behind whether or not anything was deployed.
     fn existing_root(&self) -> Result<Option<PathBuf>, DeployError> {
-        match &self.root {
-            Some(root) if root.is_dir() => self.root().map(Some),
-            _ => Ok(None),
+        if self.root.as_ref().is_some_and(|root| !root.is_dir()) {
+            return Ok(None);
         }
+        self.root().map(Some)
     }
 
     fn root(&self) -> Result<PathBuf, DeployError> {

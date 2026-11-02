@@ -309,7 +309,7 @@ rozi subscribe pane-exited pane-status-changed
 ```
 
 Use `notify` only for results the user cannot already see. Plain `pick` prints the chosen input line
-and `prompt` the entered text; cancellation exits 1. `subscribe` streams `{event,data}` JSON rows. `publish` is a long-lived
+and `prompt` the entered text; cancellation exits 1. `subscribe` streams `{event,data}` JSON rows; `rozi --session <NAME> subscribe [--snapshot | --after INSTANCE:SEQ]` streams a session's typed records with no UI. `publish` is a long-lived
 bidirectional stream: write complete `{"rows":[…]}` snapshots and read `{"activate":"<id>"}`;
 closing it withdraws the rows. Its rows are activities unless it opens with `--kind agent`;
 `status` is an activity too, and only agents appear in `rozi agents`. `switch-workspace` and `move-to-workspace` also require a UI.

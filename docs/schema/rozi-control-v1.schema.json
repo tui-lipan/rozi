@@ -4471,11 +4471,15 @@
           "type": "integer"
         },
         "local_copy": {
-          "description": "Comparison made by the CLI against its installed copy, absent on the session endpoint.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtensionLocalCopy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Comparison made by the CLI against its installed copy, absent on the session endpoint."
         },
         "reason": {
           "description": "Why the deployment cannot run, when it cannot.",
@@ -4594,6 +4598,24 @@
         "complete"
       ],
       "type": "object"
+    },
+    "ExtensionLocalCopy": {
+      "description": "How a deployment compares with the copy installed where the CLI runs.",
+      "oneOf": [
+        {
+          "enum": [
+            "matches",
+            "differs",
+            "not-installed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Installed, but its files could not be read to compare them.",
+          "type": "string"
+        }
+      ]
     },
     "ExtensionProvenance": {
       "description": "Provenance carried automatically by the CLI for a process launched by an extension.\n\nThe opaque generation is a fencing token, not authentication: it rejects processes from a\nretired runtime definition, but another process running as the same user is inside Rozi's trust\nboundary and may be able to observe it.",
@@ -7176,6 +7198,31 @@
       ],
       "type": "object"
     },
+    "SessionServiceState": {
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "starting",
+          "description": "Asked to start; no process has been reported yet.",
+          "type": "string"
+        },
+        {
+          "const": "restarting",
+          "description": "Exited, and waiting out its backoff before the next start.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Not running and not due to start again. `reason` says why.",
+          "type": "string"
+        }
+      ]
+    },
     "SessionServiceStatus": {
       "properties": {
         "name": {
@@ -7196,7 +7243,7 @@
           ]
         },
         "state": {
-          "type": "string"
+          "$ref": "#/$defs/SessionServiceState"
         }
       },
       "required": [
@@ -8475,5 +8522,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 8
+  "x-rozi-schema-version": 3
 }

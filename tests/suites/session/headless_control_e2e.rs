@@ -1187,8 +1187,62 @@ fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
     answering.join().expect("stand-in server thread");
     endpoint.remove_stale();
 
-    let InstanceLookup::NotFound { unidentified } = lookup else {
+    let InstanceLookup::NotFound { unidentified, .. } = lookup else {
         panic!("an unidentified server must never be chosen: {lookup:?}");
     };
     assert!(unidentified.contains(&session), "{unidentified:?}");
+}
+
+/// A server left running across an update refuses to talk at all. It may be the pane's own, so it
+/// is named as such rather than the pane being told its server is gone, and never picked.
+#[test]
+fn a_server_on_another_version_is_reported_and_never_chosen() {
+    let session = crate::common::unique_session_name();
+    let (listener, endpoint) =
+        rozi::session::server::bind_session_socket(&session).expect("bind stand-in server");
+    listener.set_nonblocking(true).expect("non-blocking accept");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let answering = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let Ok(mut stream) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                if rozi::session::protocol::read_frame::<_, rozi::session::protocol::ClientMessage>(
+                    &mut stream,
+                )
+                .is_ok()
+                {
+                    let _ = rozi::session::protocol::write_frame(
+                        &mut stream,
+                        &ServerMessage::Error {
+                            code: "protocol-mismatch".to_string(),
+                            message: "speaks another version".to_string(),
+                        },
+                    );
+                }
+            }
+        })
+    };
+
+    let wanted = rozi::session::protocol::SessionInstanceId::from_env_value("pane-of-an-old-build")
+        .expect("non-empty instance");
+    let lookup = rozi::session::discovery::session_with_instance(&wanted).expect("discovery ran");
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    answering.join().expect("stand-in server thread");
+    endpoint.remove_stale();
+
+    let InstanceLookup::NotFound {
+        unidentified,
+        other_versions,
+    } = lookup
+    else {
+        panic!("a server on another version must never be chosen: {lookup:?}");
+    };
+    assert!(other_versions.contains(&session), "{other_versions:?}");
+    assert!(!unidentified.contains(&session), "{unidentified:?}");
 }

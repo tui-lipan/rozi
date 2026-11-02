@@ -57,6 +57,10 @@ from, and every running session server, keep the old build.
    Restarting ends the programs in its panes.
 3. On Windows, run the install script again if the update needs to replace the launcher.
 
+Until you restart a session, nothing from its panes on the new build reaches it. Agents in those
+panes stop reporting, so their state stops changing, and `rozi --here` fails naming the session that
+needs a restart.
+
 See [What an update restarts](installation.md#what-an-update-restarts).
 
 ### A prebuilt release does not run on my system

@@ -187,7 +187,9 @@ resolved executables; and validation errors.
 
 A session server keeps its own copy of an extension when you deploy one to it. The copy belongs to
 the session: it stays after the last UI detaches, survives the session restarting or being
-resurrected, and is deleted only when the session itself is deleted.
+resurrected, and is deleted only when the session itself is deleted. `rozi sessions new <NAME>` over
+a stopped session starts fresh panes and keeps its deployments; `rozi sessions kill <NAME>` deletes
+them.
 
 ```sh
 rozi extensions deploy git-tools --session work

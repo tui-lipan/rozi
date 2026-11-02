@@ -327,7 +327,8 @@ history shown above the new output. A missing directory, a missing history file,
 fails to start affects only its own pane; the rest of the snapshot still loads.
 
 To discard a snapshot, press `Ctrl+K` twice on its `restorable` row. `rozi sessions new <name>` also
-starts fresh instead of restoring a snapshot with that name.
+starts fresh instead of restoring a snapshot with that name, and keeps any
+[extensions deployed](extensions.md#deploy-to-a-session) to the session.
 
 ### Commands a pane was running
 

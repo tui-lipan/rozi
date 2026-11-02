@@ -159,6 +159,58 @@ fn a_chunked_deployment_survives_an_immediate_server_crash() {
     assert_eq!(report.data.unwrap()["deployments"], serde_json::json!([]));
 }
 
+/// `sessions new` is the way back after a crash. It discards the panes, not what was deployed,
+/// and deleting the session is still what removes those.
+#[test]
+fn starting_a_session_fresh_keeps_its_deployments_and_killing_it_removes_them() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = Bundle::from_files(vec![BundleFile {
+        path: "extension.toml".into(),
+        executable: false,
+        contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n".to_vec(),
+    }])
+    .unwrap();
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    server.kill_for_restart();
+
+    let new_session = |root: &Path| {
+        let done = rozi(root)
+            .args(["sessions", "new", &session, "--detach"])
+            .output()
+            .expect("sessions new");
+        assert!(done.status.success(), "{done:?}");
+    };
+    let deployed = |root: &Path| {
+        let done = rozi(root)
+            .args(["extensions", "status", "--session", &session, "--json"])
+            .output()
+            .expect("extensions status");
+        assert!(done.status.success(), "{done:?}");
+        let reply: ControlResponse = serde_json::from_slice(&done.stdout).unwrap();
+        let report: ExtensionDeploymentReport =
+            serde_json::from_value(reply.data.unwrap()).unwrap();
+        report.deployments.len()
+    };
+    new_session(&root);
+    assert_eq!(deployed(&root), 1, "a fresh start keeps the deployment");
+
+    let killed = rozi(&root)
+        .args(["sessions", "kill", &session])
+        .output()
+        .expect("sessions kill");
+    assert!(killed.status.success(), "{killed:?}");
+    new_session(&root);
+    assert_eq!(deployed(&root), 0, "deleting the session removes it");
+    let killed = rozi(&root)
+        .args(["sessions", "kill", &session])
+        .output()
+        .expect("sessions kill");
+    assert!(killed.status.success(), "{killed:?}");
+}
+
 #[cfg(unix)]
 fn wait_for_text(path: &Path, text: &str) -> String {
     let deadline = std::time::Instant::now() + common::io_timeout();

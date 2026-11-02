@@ -19,6 +19,7 @@ rozi --remote workbox dev
 rozi --remote ssh://user@host:2222
 rozi --remote workbox sessions attach dev
 rozi --remote workbox sessions new review
+rozi sessions new scratch --detach --remote workbox
 rozi sessions list --remote workbox
 rozi sessions restart dev --remote workbox
 rozi sessions kill dev --remote workbox
@@ -194,7 +195,8 @@ program for rozi's own connections. With an older OpenSSH, rozi cannot show prom
 into your agent, or connect once with `ssh <HOST>` to accept its host key.
 
 Interactive command-line runs keep SSH's ordinary terminal prompt: `rozi sessions list --remote`,
-`rozi sessions kill --remote`, and the install prompt shown before launch.
+`rozi sessions new --detach --remote`, `rozi sessions kill --remote`, and the install prompt shown
+before launch.
 
 ## Configure aliases and defaults
 

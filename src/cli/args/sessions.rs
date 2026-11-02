@@ -38,7 +38,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Create a session whose first pane starts in DIR",
             ),
             row(
-                "new <NAME> --detach [--no-resurrect]",
+                "new <NAME> --detach [--no-resurrect] [--remote <HOST>]",
                 "Start without a UI, optionally never saved",
             ),
             row(
@@ -223,8 +223,6 @@ fn parse_new_detached(
         Some("--profile")
     } else if new.cwd.is_some() {
         Some("--cwd")
-    } else if cli.remote.is_some() {
-        Some("--remote")
     } else {
         cli.launch_only_option()
     };
@@ -237,6 +235,7 @@ fn parse_new_detached(
     Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
         name,
         resurrect,
+        remote: cli.remote,
         config_path: cli.config_path,
     }))
 }
@@ -663,10 +662,6 @@ mod tests {
                 "--profile cannot be combined with --detach",
             ),
             (
-                &["--remote", "box", "sessions", "new", "dev", "--detach"][..],
-                "--remote cannot be combined with --detach",
-            ),
-            (
                 &["sessions", "new", "dev", "--detach", "--pick"][..],
                 "--pick cannot be combined with --detach",
             ),
@@ -690,9 +685,25 @@ mod tests {
             Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
                 name,
                 resurrect: true,
+                remote: None,
                 config_path,
             })) if name == "dev" && config_path.as_deref() == Some("c.toml")
         ));
+        for args in [
+            &["--remote", "box", "sessions", "new", "dev", "--detach"][..],
+            &["sessions", "new", "dev", "--detach", "--remote", "box"][..],
+        ] {
+            assert!(
+                matches!(
+                    parse(args),
+                    Ok(ParsedCli::Sessions(SessionsCommand::NewDetached {
+                        remote: Some(host),
+                        ..
+                    })) if host == "box"
+                ),
+                "{args:?}"
+            );
+        }
         for args in [
             &["sessions", "new", "dev", "--detach", "--no-resurrect"][..],
             &["sessions", "new", "dev", "--no-resurrect", "--detach"][..],

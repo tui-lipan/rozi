@@ -1247,10 +1247,11 @@ rozi sessions restart dev
 rozi sessions kill dev
 ```
 
-`sessions list`, `sessions restart`, and `sessions kill` also take `--remote`:
+`sessions list`, `sessions new --detach`, `sessions restart`, and `sessions kill` also take `--remote`:
 
 ```sh
 rozi sessions list --remote workbox
+rozi sessions new scratch --detach --remote workbox
 rozi sessions restart dev --remote workbox
 rozi sessions kill dev --remote workbox
 ```

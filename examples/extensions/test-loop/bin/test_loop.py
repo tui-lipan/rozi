@@ -254,9 +254,17 @@ class Loop:
         self.ledger.save()
         prompt = fix_prompt(result, self.settings.command, record["attempts"], limit)
         reply = self.rozi.prompt(agent["ref"], prompt)
-        if not reply.ok:
-            # A person may have started another turn. The tests run again when it ends.
-            self.rozi.notify(f"{name}: tests fail, and the agent was not asked: {reply.error}", "error")
+        if reply.ok:
+            return
+        # A code is rozi refusing, so nothing was typed and the attempt is unspent. Without one, the
+        # request may have got through, so it stays counted. A person may have started another
+        # turn either way, and the tests run again when it ends.
+        if reply.code is None:
+            self.rozi.notify(f"{name}: tests fail, and asking the agent got no answer: {reply.error}", "error")
+            return
+        record["attempts"] -= 1
+        self.ledger.save()
+        self.rozi.notify(f"{name}: tests fail, and the agent was not asked: {reply.error}", "error")
 
 
 class Stream:

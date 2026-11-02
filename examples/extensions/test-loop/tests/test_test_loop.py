@@ -77,6 +77,10 @@ class LoopTest(unittest.TestCase):
         settings = Settings([str(self.root)], ["make", "test"], max_attempts)
         return Loop(self.rozi, settings, AgentLedger(self.state / "agents-i.json"))
 
+    def assert_attempts(self, expected: int) -> None:
+        (record,) = self.loop.ledger.agents.values()
+        self.assertEqual(record["attempts"], expected)
+
     def test_a_passing_turn_notifies_and_prompts_nobody(self) -> None:
         self.rozi.finish_turn(1)
         self.rozi.test_replies = [passed()]
@@ -176,6 +180,38 @@ class LoopTest(unittest.TestCase):
         (note,) = self.rozi.notes
         self.assertEqual(note[1], "error")
         self.assertIn("agent is blocked", note[0])
+        self.assert_attempts(0)
+
+    def test_refused_prompts_never_use_up_the_attempts(self) -> None:
+        self.rozi.prompt_reply = Reply(False, code="agent-blocked", error="agent is blocked")
+        self.rozi.test_replies = [failed(), failed(), failed()]
+        for completions in (1, 2, 3):
+            self.rozi.finish_turn(completions)
+            self.loop.reconcile()
+        self.assert_attempts(0)
+        self.assertFalse(any("still fail" in note[0] for note in self.rozi.notes))
+
+        self.rozi.prompt_reply = Reply(True)
+        self.rozi.test_replies = [failed()]
+        self.rozi.finish_turn(4)
+        self.loop.reconcile()
+        self.assertIn("attempt 1 of 2", self.rozi.prompts[-1])
+
+    def test_a_refused_attempt_stays_unspent_after_a_restart(self) -> None:
+        self.rozi.finish_turn(1)
+        self.rozi.test_replies = [failed()]
+        self.rozi.prompt_reply = Reply(False, code="agent-blocked", error="agent is blocked")
+        self.loop.reconcile()
+        self.loop = self.make_loop()
+        self.assert_attempts(0)
+
+    def test_a_prompt_with_no_answer_may_have_arrived_so_it_stays_counted(self) -> None:
+        self.rozi.finish_turn(1)
+        self.rozi.test_replies = [failed()]
+        self.rozi.prompt_reply = Reply(False, error="no answer from rozi")
+        self.loop.reconcile()
+        self.assert_attempts(1)
+        self.assertIn("got no answer", self.rozi.notes[0][0])
 
     def test_an_agent_outside_the_roots_is_left_alone(self) -> None:
         self.rozi.cwd = "/somewhere/else"

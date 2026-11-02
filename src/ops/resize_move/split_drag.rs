@@ -794,6 +794,50 @@ mod tests {
             });
         }
 
+        /// Coming back to the press cell is a move like any other. It has to put the divider back
+        /// where it started, not leave it wherever the last move before that put it.
+        #[test]
+        fn a_divider_dragged_back_to_the_press_cell_returns_to_where_it_started() {
+            in_test_stack(|| {
+                for vertical_divider in [true, false] {
+                    let axis = axis(vertical_divider);
+                    let mut backend = two_pane_backend(axis);
+                    let start = first_pane_extent(&mut backend, axis);
+                    let (grab_x, grab_y) = if vertical_divider {
+                        (start.round() as u16, 10)
+                    } else {
+                        (50, pane_leading_row(&mut backend, 2))
+                    };
+                    let at = |offset: u16| {
+                        if vertical_divider {
+                            (grab_x + offset, grab_y)
+                        } else {
+                            (grab_x, grab_y + offset)
+                        }
+                    };
+
+                    backend
+                        .send_mouse(mouse(grab_x, grab_y, MouseKind::Down(MouseButton::Left)))
+                        .expect("press");
+                    for offset in [1, 2, 1, 0] {
+                        let (x, y) = at(offset);
+                        backend
+                            .send_mouse(mouse(x, y, MouseKind::Drag(MouseButton::Left)))
+                            .expect("drag");
+                        assert_eq!(
+                            first_pane_extent(&mut backend, axis),
+                            start + f32::from(offset),
+                            "{axis:?}: {offset} cells from the press"
+                        );
+                    }
+                    backend
+                        .send_mouse(mouse(grab_x, grab_y, MouseKind::Up(MouseButton::Left)))
+                        .expect("release");
+                    assert_eq!(first_pane_extent(&mut backend, axis), start, "{axis:?}");
+                }
+            });
+        }
+
         /// A layout action can end a split drag while the button is still held. The moves that
         /// follow belong to that ended gesture and must leave the divider alone: re-grabbing would
         /// take the moved layout as a new start and apply the whole delta a second time. The next

@@ -48,8 +48,8 @@ When an agent finishes a turn in one of your `roots`:
 
 An agent that is working or waiting for approval is left alone, and its tests run when it stops. If
 one it asked to fix something stops for approval, you get one notification per request, because
-nothing else says so with no UI attached. If the agent can't be asked, or the tests can't be run, you
-get a notification saying why.
+nothing else says so with no UI attached. You also get a notification if that request ends in an
+error. If the agent can't be asked, or the tests can't be run, you get a notification saying why.
 
 The log is outside the project, so an agent that asks before reading such files will stop for
 approval when it starts each fix.

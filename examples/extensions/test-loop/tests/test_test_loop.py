@@ -317,6 +317,64 @@ class LoopTest(unittest.TestCase):
         self.loop.reconcile()
         self.assertEqual(self.waiting_notes(), [])
 
+    def error_notes(self) -> list[str]:
+        return [note for note, _ in self.rozi.notes if "stopped with an error" in note]
+
+    def ask_for_a_fix(self) -> None:
+        self.rozi.test_replies = [failed()]
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.assertEqual(len(self.rozi.prompts), 1)
+
+    def test_an_error_ends_the_request_and_says_so(self) -> None:
+        self.ask_for_a_fix()
+        self.rozi.finish_turn(1, "error")
+        self.loop.reconcile()
+        self.loop.reconcile()
+        self.assertEqual(len(self.error_notes()), 1)
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [], "the turn that blocked is someone else's")
+
+    def test_an_error_it_only_heard_about_still_ends_the_request(self) -> None:
+        # error, then working, then blocked, all before the service looked at the agent list.
+        self.ask_for_a_fix()
+        self.loop.errored.add(test_loop.agent_key(REF))
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(len(self.error_notes()), 1)
+        self.assertEqual(self.waiting_notes(), [])
+
+    def test_an_error_before_the_request_does_not_end_it(self) -> None:
+        # A person's turn errored while the tests were running, before the request went out.
+        self.rozi.test_replies = [failed()]
+        self.rozi.finish_turn(1)
+        self.loop.errored.add(test_loop.agent_key(REF))
+        original = self.rozi.run_tests
+
+        def run_tests_then_error(cwd: str) -> Reply:
+            self.loop.errored.add(test_loop.agent_key(REF))
+            return original(cwd)
+
+        self.rozi.run_tests = run_tests_then_error
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.error_notes(), [])
+        self.assertEqual(len(self.waiting_notes()), 1)
+
+    def test_an_error_on_a_turn_it_did_not_ask_for_is_not_its_business(self) -> None:
+        self.loop.errored.add(test_loop.agent_key(REF))
+        self.rozi.finish_turn(0, "error")
+        self.loop.reconcile()
+        self.assertEqual(self.rozi.notes, [])
+
+    def test_an_error_seen_after_a_restart_ends_the_request(self) -> None:
+        self.ask_for_a_fix()
+        self.rozi.finish_turn(1, "error")
+        self.make_loop().reconcile()
+        self.assertEqual(len(self.error_notes()), 1)
+
     def test_an_agent_it_never_asked_is_not_its_business_when_blocked(self) -> None:
         self.rozi.finish_turn(0, "blocked")
         self.loop.reconcile()
@@ -403,9 +461,23 @@ class HelpersTest(unittest.TestCase):
         self.assertTrue(test_loop.should_wake(event("done")))
         self.assertTrue(test_loop.should_wake(event("idle")))
         self.assertTrue(test_loop.should_wake(event("blocked")))
+        self.assertTrue(test_loop.should_wake(event("error")))
         self.assertFalse(test_loop.should_wake(event("working")))
         self.assertFalse(test_loop.should_wake('{"type":"lagged"}'))
         self.assertFalse(test_loop.should_wake("not json"))
+
+    def test_an_error_event_names_its_agent_however_the_reference_is_written(self) -> None:
+        line = lambda state, ref: json.dumps(  # noqa: E731
+            {"type": "event", "data": {"state": state, "ref": ref}}
+        )
+        # An event carries its reference as JSON text, with its keys in another order.
+        written = '{"pane": {"session_instance": "i", "pane_id": 2, "generation": 2}, "incarnation": 1}'
+        self.assertEqual(test_loop.errored_agent(line("error", written)), test_loop.agent_key(REF))
+        self.assertIsNone(test_loop.errored_agent(line("working", written)))
+        self.assertIsNone(test_loop.errored_agent(line("error", "not json")))
+        self.assertIsNone(test_loop.errored_agent(line("error", "")))
+        self.assertIsNone(test_loop.errored_agent('{"type":"snapshot"}'))
+        self.assertIsNone(test_loop.errored_agent("not json"))
 
     def test_settings_default_to_doing_nothing(self) -> None:
         settings = test_loop.load_settings(None)

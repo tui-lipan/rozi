@@ -376,7 +376,7 @@ conversation.
 | Value | Restoring a pane with a reported conversation |
 | --- | --- |
 | `auto` | Runs the resume command as the pane's first process. If the agent refuses it straight away and declares an [`attach`](agents.md#declare-native-resume-support) command, the pane runs that instead. |
-| `hold` (default) | Types the resume command at the shell's prompt and leaves it there. When the agent declares an [`attach`](agents.md#declare-native-resume-support) command, as Claude Code does for a session still running in the background, the line falls back to it. |
+| `hold` (default) | Types the resume command at the shell's prompt and leaves it there. A pane created to run the agent directly comes back as a shell for this, so nothing runs until you press `Enter`. When the agent declares an [`attach`](agents.md#declare-native-resume-support) command, as Claude Code does for a session still running in the background, the line falls back to it. |
 | `never` | Writes no conversation reference to the snapshot at all. |
 
 If the resume command fails, the pane keeps the agent's error on screen, names the failure, and

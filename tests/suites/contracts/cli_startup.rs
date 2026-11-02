@@ -414,3 +414,92 @@ mod unix {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// `sessions new --detach` is meant for scripts, and a script capturing a command's output reads
+/// until every holder of the pipe has closed it. The server outlives the command by design, so it
+/// must not be one of those holders. Reports which of the two possible waits got stuck.
+#[test]
+fn detached_session_lets_a_capturing_parent_read_to_the_end() {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    const LIMIT: Duration = Duration::from_secs(60);
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let root = rozi::test_support::socket_safe_temp_dir()
+        .join(format!("rozi-cli-capture-{}-{nonce:x}", std::process::id()));
+    rozi::platform::fs_security::ensure_private_dir(&root).unwrap();
+    let session = format!("capture-{}", std::process::id());
+    let rozi = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+        command
+            .args(args)
+            .env("ROZI_CONFIG", root.join("config.toml"))
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("APPDATA", root.join("config"))
+            .env("LOCALAPPDATA", root.join("state"));
+        command
+    };
+
+    let mut create = rozi(&["sessions", "new", &session, "--detach"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = create.stdout.take().unwrap();
+    let mut stderr = create.stderr.take().unwrap();
+    let (captured, capture_ended) = std::sync::mpsc::channel();
+    // The reader stays blocked for as long as a pipe is held, so it cannot run on this thread: the
+    // assertions below have to stop the server first or a failure would leave it running.
+    std::thread::spawn(move || {
+        let (mut out, mut err) = (String::new(), String::new());
+        let _ = stdout.read_to_string(&mut out);
+        let _ = stderr.read_to_string(&mut err);
+        let _ = captured.send((out, err));
+    });
+
+    let deadline = Instant::now() + LIMIT;
+    let status = loop {
+        if let Some(status) = create.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = create.kill();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let capture = capture_ended.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+
+    let panes = rozi(&["--session", &session, "list-panes", "--format", "json"])
+        .output()
+        .unwrap();
+    let killed = rozi(&["sessions", "kill", &session]).output().unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    let status = status.expect("the command itself did not exit");
+    let (_, stderr) = capture.unwrap_or_else(|_| {
+        panic!("the command exited ({status}) but its stdout or stderr was still held open")
+    });
+    assert!(status.success(), "create: {stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&panes.stdout).trim(),
+        r#"{"data":[],"ok":true}"#,
+        "the server must still be running after the capture ended: {}",
+        String::from_utf8_lossy(&panes.stderr)
+    );
+    assert!(
+        killed.status.success(),
+        "kill: {}",
+        String::from_utf8_lossy(&killed.stderr)
+    );
+}

@@ -8499,6 +8499,10 @@ fn session_events_are_the_same_with_zero_one_and_two_clients_attached() {
 
         assert_eq!(one_events[17].data["pane"], "1");
         assert_eq!(one_events[17].data["code"], "0");
+        assert_eq!(
+            one_events[17].data["focused"], "true",
+            "the pane had focus when it exited, even though closing it then moved focus"
+        );
 
         assert_eq!(one_events[18].data["revision"], "6");
         assert_eq!(one_events[18].data["author"], "self");

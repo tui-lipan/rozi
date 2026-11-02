@@ -496,6 +496,9 @@ pub(crate) fn exited(
     let already_closing = pane.closing;
     crate::ops::capture_wait::pane_exited(ctx, pane_id, local);
     let should_close = local || !should_hold_on_exit(hold_on_exit, already_closing);
+    if !local && ctx.state.focused_pane_target() == Some((pane_id, false)) {
+        ctx.state.current_mut().exited_while_focused.push(pane_id);
+    }
     if local {
         crate::events::emit(
             &ctx.state,

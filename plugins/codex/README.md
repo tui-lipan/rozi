@@ -6,7 +6,7 @@ restore a session.
 
 ## Install
 
-Use a Rozi version with `rozi agents report` and `rozi agents release`. You also need Codex 0.164
+Use a Rozi version with `rozi agents report --unless-quiet` and `rozi agents release`. You also need Codex 0.164
 or newer with hooks enabled, which is the default, and Python 3.10 or newer available as `python3`
 on `PATH`. The plugin validates with Codex 0.166.0.
 
@@ -18,7 +18,7 @@ codex plugin add rozi@rozi
 ```
 
 Restart Codex inside a local Rozi pane. Codex asks you to review hooks that are new or changed:
-choose **Trust all and continue**, or review the eleven `rozi` hooks with `/hooks` and trust them
+choose **Trust all and continue**, or review the twelve `rozi` hooks with `/hooks` and trust them
 there. Until you trust them, they do not run. Codex asks again after an update changes them.
 The plugin does not require a Rozi extension or edits to Codex's `config.toml` or `hooks.json`.
 
@@ -44,6 +44,7 @@ each thread's state from the background server and lists every loaded thread as 
 | Codex event | Rozi state |
 | --- | --- |
 | Model request starting, or tool running | `working`, with the native thread ID |
+| Model request fails | Follows Codex's screen while it retries or shows a dialog, then `error` |
 | Approval requested | `blocked` |
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
@@ -55,10 +56,8 @@ each thread's state from the background server and lists every loaded thread as 
 A prompt reports nothing until Codex is about to call the model, because another hook can still
 reject it. A rejected prompt leaves the pane as it was.
 
-Codex has no hook that says a turn has failed for good. A failed model request looks the same
-whether Codex will retry it or not, so after a turn ends in an error, such as a usage limit, the pane
-keeps reporting `working`. Send the next prompt with `rozi agents prompt --allow-working`.
-
+Codex has no hook that says a turn has failed for good, and a failed model request looks the same
+whether Codex will retry it or not. So Rozi holds that report only while the screen shows the turn.
 Codex starts a thread's hooks at its first prompt in a client, not when the client opens or when
 `/resume` switches to the thread. Until you send that prompt, the pane keeps reporting the thread
 it showed before, or uses screen detection when it has shown none.

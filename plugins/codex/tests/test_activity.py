@@ -143,6 +143,28 @@ class ActivityTests(unittest.TestCase):
         self.hook("PreModelRequest")
         self.assertEqual(self.field("--state"), "blocked")
 
+    def test_a_failed_model_request_holds_only_while_the_screen_shows_the_turn(self):
+        self.first_turn()
+        self.hook("PostModelRequest", status="failed", error="Connection refused")
+        args = self.calls[-1][0]
+        self.assertEqual(args[args.index("--state") + 1], "working")
+        self.assertEqual(args[args.index("--unless-quiet") + 1], "error")
+        self.assertEqual(self.field("--reason"), "Turn ended with an API error")
+        self.assertNotIn("Connection refused", str(self.calls))
+
+    def test_a_retry_after_a_failed_request_is_an_ordinary_report(self):
+        self.first_turn()
+        self.hook("PostModelRequest", status="failed", error="Connection refused")
+        self.hook("PreModelRequest")
+        self.assertEqual(self.field("--state"), "working")
+        self.assertNotIn("--unless-quiet", self.calls[-1][0])
+
+    def test_a_model_request_that_worked_says_nothing(self):
+        self.first_turn()
+        count = len(self.calls)
+        self.hook("PostModelRequest", status="completed", error=None)
+        self.assertEqual(len(self.calls), count)
+
     def test_a_prompt_ends_waits_from_the_turn_before_it(self):
         self.first_turn()
         self.permission()
@@ -701,7 +723,7 @@ class ActivityTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
-        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreModelRequest", "PreToolUse",
+        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreModelRequest", "PostModelRequest", "PreToolUse",
                                       "PermissionRequest", "PostToolUse", "PreCompact",
                                       "PostCompact", "Stop", "Interrupt", "SessionEnd"})
         self.assertLess(activity.CLI_TIMEOUT, activity.DELIVERY_BUDGET)

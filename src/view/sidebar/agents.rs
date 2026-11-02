@@ -1910,6 +1910,7 @@ mod tests {
         let reference = integrated.agents[0].reference.clone();
         integrated.terminal.agent_integration =
             Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook-a".into(),
                 identity: AgentIdentity::new("claude", "Claude Code"),
                 reference,
@@ -2509,6 +2510,7 @@ mod tests {
         state: crate::session::protocol::AgentState,
     ) -> Box<crate::session::protocol::AgentIntegrationReport> {
         Box::new(crate::session::protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: AgentIdentity::new("claude", "Claude Code"),
             reference: crate::session::protocol::AgentRef {

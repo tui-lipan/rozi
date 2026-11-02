@@ -6,7 +6,7 @@ It also reports the native conversation ID so Rozi can reopen that conversation 
 
 ## Install
 
-Use a Rozi version with `rozi agents report` and `rozi agents release`. You also need a current
+Use a Rozi version with `rozi agents report --unless-quiet` and `rozi agents release`. You also need a current
 Claude Code with exec-form command hooks and `CLAUDE_PLUGIN_DATA`, and Python 3.10 or newer
 available as `python` on `PATH`. The plugin validates with Claude Code 2.1.286.
 
@@ -40,7 +40,8 @@ selection. The plugin works on its own when you only need activity for the main 
 | Claude Code event | Rozi state |
 | --- | --- |
 | Session starts or resumes | `idle`, with the native conversation ID |
-| Prompt submitted or tool running | `working` |
+| Prompt submitted | `working`, then `idle` if the screen shows another hook rejected it |
+| Tool running | `working` |
 | Permission requested | `blocked` |
 | `AskUserQuestion` or MCP input requested | `blocked` |
 | Tool finishes, fails, or MCP input returns | `working` unless another input wait remains |

@@ -778,6 +778,10 @@ pub enum ControlCommand {
         reason: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         native_session: Option<String>,
+        /// With `working`: the state to fall to once the screen shows the agent has stopped, for
+        /// a reporter that cannot know a later report will follow. `reason` describes that state.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unless_quiet: Option<crate::session::protocol::AgentState>,
         seq: u64,
     },
     /// Withdraw an integration's agent report from a pane.

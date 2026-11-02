@@ -1233,6 +1233,7 @@ fn a_conversation_the_hooks_do_not_follow_raises_the_blocked_edge() {
     let runtime = |behind: &str| PaneRuntimeState {
         rows: vec![row("shown", "idle", true), row("behind", behind, false)],
         integration: Some(Box::new(AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: AgentIdentity::new("claude", "Claude Code"),
             reference: AgentRef::for_test(1, 1, None),
@@ -1354,6 +1355,7 @@ fn a_hook_report_of_a_seen_failure_does_not_raise_it_again() {
         rows: vec![row(status)],
         integration: hooks.map(|state| {
             Box::new(AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook".into(),
                 identity: AgentIdentity::new("codex", "Codex"),
                 reference: AgentRef::for_test(1, 1, None),
@@ -1476,6 +1478,7 @@ fn a_standing_hook_failure_is_not_new_when_its_row_comes_or_goes() {
             .into_iter()
             .collect(),
         integration: Some(Box::new(AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: AgentIdentity::new("codex", "Codex"),
             reference: AgentRef::for_test(1, 1, None),
@@ -1532,6 +1535,7 @@ fn a_standing_failure_is_not_new_when_its_conversation_moves_process() {
     };
     let hook = || {
         Box::new(AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: AgentIdentity::new("claude", "Claude Code"),
             reference: AgentRef::for_test(1, 1, None),
@@ -3256,6 +3260,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
             incarnation: 4,
         };
         runtime.integration = Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-before-attach".into(),
             identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: agent_ref.clone(),

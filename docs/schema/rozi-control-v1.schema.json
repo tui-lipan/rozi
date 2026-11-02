@@ -2154,6 +2154,17 @@
                 "integer",
                 "null"
               ]
+            },
+            "unless_quiet": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `working`: the state to fall to once the screen shows the agent has stopped, for\na reporter that cannot know a later report will follow. `reason` describes that state."
             }
           },
           "required": [
@@ -3856,6 +3867,17 @@
                 "integer",
                 "null"
               ]
+            },
+            "unless_quiet": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentState"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With `working`: the state to fall to once the screen shows the agent has stopped, for\na reporter that cannot know a later report will follow. `reason` describes that state."
             }
           },
           "required": [

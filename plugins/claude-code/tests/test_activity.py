@@ -57,6 +57,16 @@ class ActivityTests(unittest.TestCase):
         args = self.calls[call][0]
         return args[args.index(flag) + 1]
 
+    def test_a_prompt_holds_only_while_the_screen_shows_the_turn(self):
+        # Another hook can reject it, and then no later hook runs.
+        self.hook("SessionStart", source="startup")
+        self.hook("UserPromptSubmit")
+        args = self.calls[-1][0]
+        self.assertEqual(args[args.index("--state") + 1], "working")
+        self.assertEqual(args[args.index("--unless-quiet") + 1], "idle")
+        self.hook("PreToolUse", tool_name="Bash", tool_use_id="exec-1", tool_input={"command": "pwd"})
+        self.assertNotIn("--unless-quiet", self.calls[-1][0])
+
     def test_main_lifecycle_uses_one_token_and_increasing_sequences(self):
         for name in ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolBatch", "Stop", "SessionEnd"):
             self.hook(name)

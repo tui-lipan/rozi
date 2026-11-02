@@ -743,12 +743,14 @@ impl SessionServer {
                 state,
                 reason,
                 native_session,
+                unless_quiet,
                 seq,
             } => self.session_agent_report_update(
                 target,
                 Some(agent),
                 integration,
                 Some((state, reason, native_session)),
+                unless_quiet,
                 seq,
                 broadcasts,
             ),
@@ -756,7 +758,15 @@ impl SessionServer {
                 target,
                 integration,
                 seq,
-            } => self.session_agent_report_update(target, None, integration, None, seq, broadcasts),
+            } => self.session_agent_report_update(
+                target,
+                None,
+                integration,
+                None,
+                None,
+                seq,
+                broadcasts,
+            ),
             ControlCommand::Notify {
                 message,
                 title,
@@ -1660,6 +1670,7 @@ impl SessionServer {
         agent: Option<String>,
         integration: String,
         report: Option<(protocol::AgentState, Option<String>, Option<String>)>,
+        unless_quiet: Option<protocol::AgentState>,
         seq: u64,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) -> ControlResponse {
@@ -1686,6 +1697,7 @@ impl SessionServer {
                 state,
                 reason,
                 native_session,
+                unless_quiet,
                 seq,
             },
         ) {
@@ -2980,6 +2992,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 1,
+                unless_quiet: None,
             })
         };
         let ask = |server: &mut SessionServer, request| {
@@ -3422,6 +3435,7 @@ mod tests {
                 reason: Some("ready".into()),
                 native_session: Some("native-123".into()),
                 seq: 13,
+                unless_quiet: None,
             },
         );
         assert!(accepted.ok);
@@ -3448,6 +3462,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 12,
+                unless_quiet: None,
             },
         );
         assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
@@ -3480,6 +3495,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 1,
+                unless_quiet: None,
             },
         );
         assert!(next.ok, "{next:?}");
@@ -3498,6 +3514,7 @@ mod tests {
                 reason: Some("still working".into()),
                 native_session: None,
                 seq: 2,
+                unless_quiet: None,
             },
         );
         assert!(heartbeat.ok, "{heartbeat:?}");
@@ -3515,6 +3532,7 @@ mod tests {
                 reason: Some("x".repeat(protocol::PANE_STATUS_REASON_MAX_LEN + 10)),
                 native_session: None,
                 seq: 3,
+                unless_quiet: None,
             },
         );
         assert!(blocked.ok, "{blocked:?}");
@@ -3544,6 +3562,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 15,
+                unless_quiet: None,
             },
         );
         assert_eq!(delayed.code, Some(ControlErrorCode::Conflict));
@@ -3614,6 +3633,7 @@ mod tests {
                     reason: None,
                     native_session: Some(native.into()),
                     seq,
+                    unless_quiet: None,
                 },
             )
             .0
@@ -3766,6 +3786,7 @@ mod tests {
                     reason: None,
                     native_session: Some(native.into()),
                     seq,
+                    unless_quiet: None,
                 },
             )
             .0

@@ -774,6 +774,7 @@ mod tests {
                     reason: None,
                     native_session: Some("native-id".into()),
                     seq: 1,
+                    unless_quiet: None,
                 },
                 ControlCommand::AgentRelease {
                     target: None,

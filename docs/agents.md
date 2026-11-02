@@ -437,6 +437,11 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
 - A live report overrides screen detection. Releasing it returns the pane to screen detection.
+- A hook that can't know another report will follow, because a later hook can stop the turn, adds
+  `--unless-quiet idle`, `done`, or `error` to `--state working`. The pane follows screen detection
+  until it reads the agent as idle, then falls to that state, with `--reason` as its reason. So a
+  dialog reads `blocked` in the meantime. The next report replaces it either way. This applies to a
+  report that owns the pane, when the pane lists no agent rows.
 - When the pane also publishes agent rows, a report drives only the row whose conversation matches
   `--native-session`; the other rows stay listed as published.
 - One token owns the pane. Hooks for a conversation running in the background can still report for

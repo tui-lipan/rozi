@@ -196,6 +196,7 @@ pub enum ClientMessage {
         state: Option<super::AgentState>,
         reason: Option<String>,
         native_session: Option<String>,
+        unless_quiet: Option<super::AgentState>,
         seq: u64,
     },
     /// Run one session-owned [`crate::control::ControlCommand`] on behalf of this attached

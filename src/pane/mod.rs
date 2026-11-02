@@ -1805,6 +1805,7 @@ mod tests {
             state: crate::session::protocol::DetectedAgentState::Idle,
         });
         pane.agent_integration = Some(Box::new(crate::session::protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-a".into(),
             identity: crate::session::protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: crate::session::protocol::AgentRef {

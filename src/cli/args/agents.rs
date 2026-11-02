@@ -176,6 +176,7 @@ fn parse_report(
     let mut state = None;
     let mut reason = None;
     let mut native_session = None;
+    let mut unless_quiet = None;
     let mut seq = None;
     let mut iter = args.into_iter();
     while let Some(flag) = iter.next() {
@@ -187,6 +188,10 @@ fn parse_report(
                         .parse()
                         .map_err(|_| "--target requires a numeric pane id".to_string())?,
                 );
+            }
+            "--unless-quiet" => {
+                let value = super::require_value(&mut iter, "--unless-quiet requires a state")?;
+                unless_quiet = Some(parse_report_state(&value)?);
             }
             "--state" => {
                 let value = super::require_value(&mut iter, "--state requires a state")?;
@@ -232,6 +237,7 @@ fn parse_report(
             state: state.ok_or_else(|| "agents report requires --state".to_string())?,
             reason,
             native_session,
+            unless_quiet,
             seq: seq.ok_or_else(|| "agents report requires --seq".to_string())?,
         },
         None,
@@ -677,6 +683,32 @@ mod tests {
             parse_agents_args(vec!["report".into(), "--reason".into()]).unwrap_err(),
             "--reason requires text"
         );
+        let (command, _) = parse_agents_args(
+            [
+                "report",
+                "--agent",
+                "claude",
+                "--integration",
+                "token",
+                "--state",
+                "working",
+                "--unless-quiet",
+                "error",
+                "--seq",
+                "1",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        )
+        .unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentReport {
+                unless_quiet: Some(crate::session::protocol::AgentState::Error),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -949,6 +981,7 @@ mod tests {
                 reason: None,
                 native_session: Some("opaque-123".into()),
                 seq: 42,
+                unless_quiet: None,
             }
         );
     }

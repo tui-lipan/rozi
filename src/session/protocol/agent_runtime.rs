@@ -923,6 +923,7 @@ mod tests {
 
     fn hook_report(native: &str, state: AgentState) -> Box<super::super::AgentIntegrationReport> {
         Box::new(super::super::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-abc".into(),
             identity: AgentIdentity::new("claude", "Claude Code"),
             reference: reference(None, 9),
@@ -996,6 +997,7 @@ mod tests {
         let unnamed = PaneRuntimeState {
             rows: vec![session_row("one", "idle", None)],
             integration: Some(Box::new(super::super::AgentIntegrationReport {
+                unless_quiet: None,
                 native_session: None,
                 ..*hook_report("x", AgentState::Working)
             })),
@@ -1011,6 +1013,7 @@ mod tests {
     fn an_integration_report_alone_speaks_for_the_pane() {
         let runtime = PaneRuntimeState {
             integration: Some(Box::new(super::super::AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook-abc".into(),
                 identity: AgentIdentity::new("claude", "Claude Code"),
                 reference: reference(None, 2),

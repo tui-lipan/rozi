@@ -262,6 +262,61 @@ class LoopTest(unittest.TestCase):
             self.loop.reconcile()
         self.assertEqual(len(self.waiting_notes()), 2)
 
+    def test_a_turn_after_giving_up_is_not_its_business_when_blocked(self) -> None:
+        self.rozi.test_replies = [failed(), failed(), failed()]
+        for completions in (1, 2, 3):
+            self.rozi.finish_turn(completions)
+            self.loop.reconcile()
+        self.assertEqual(len(self.rozi.prompts), 2)
+        self.rozi.finish_turn(3, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [])
+
+    def test_a_turn_after_the_tests_could_not_run_is_not_its_business_when_blocked(self) -> None:
+        self.rozi.test_replies = [failed(), Reply(False, code="invocation-timeout", error="deadline")]
+        for completions in (1, 2):
+            self.rozi.finish_turn(completions)
+            self.loop.reconcile()
+        self.rozi.finish_turn(2, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [])
+
+    def test_a_refused_request_is_not_waiting_for_anything(self) -> None:
+        self.rozi.test_replies = [failed()]
+        self.rozi.prompt_reply = Reply(False, code="agent-working", error="agent is working")
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [])
+
+    def test_a_request_with_no_answer_may_be_the_turn_that_is_waiting(self) -> None:
+        self.rozi.test_replies = [failed()]
+        self.rozi.prompt_reply = Reply(False, error="no answer from rozi")
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(len(self.waiting_notes()), 1)
+
+    def test_a_finished_request_is_over_even_if_the_tests_cannot_run_yet(self) -> None:
+        self.rozi.test_replies = [failed(), Reply(False, code="action-busy")]
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(2)
+        self.loop.reconcile()
+        self.rozi.finish_turn(2, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [])
+
+    def test_a_turn_that_ended_unseen_is_over_when_the_next_one_blocks(self) -> None:
+        self.rozi.test_replies = [failed()]
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(2, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.waiting_notes(), [])
+
     def test_an_agent_it_never_asked_is_not_its_business_when_blocked(self) -> None:
         self.rozi.finish_turn(0, "blocked")
         self.loop.reconcile()

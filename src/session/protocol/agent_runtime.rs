@@ -145,11 +145,12 @@ pub enum AgentAuthority {
 
 /// What the session server tracks about one agent reference beyond the reference itself.
 ///
-/// `completions` counts the runs this incarnation has finished: each time its state went from
-/// working to idle or done. The server counts every transition it makes, so a client comparing
-/// two values learns that a run ended even when it never saw the agent working - a monitor
-/// polling between the two, or a client that was detached at the time. A new incarnation starts
-/// again from zero, which is why the count is only meaningful beside the reference it belongs to.
+/// `completions` counts the runs this incarnation has finished: each time it was working and then
+/// idle or done, with any wait for approval in between. The server counts every transition it
+/// makes, so a client comparing two values learns that a run ended even when it never saw the agent
+/// working - a monitor polling between the two, or a client that was detached at the time. A new
+/// incarnation starts again from zero, which is why the count is only meaningful beside the
+/// reference it belongs to.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentRecord {

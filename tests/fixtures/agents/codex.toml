@@ -22,6 +22,29 @@ screen = '''
   Press enter to continue
 '''
 
+# Captured from Codex 0.166.0 on 2026-11-02 in an unseen repository, nothing pressed. It read as
+# idle, so `agents prompt` typed into it and its Enter answered the question: a script could trust a
+# folder for someone without anyone seeing it ask. Codex asked this in a repository and not in a
+# plain directory.
+[[case]]
+name = "startup-folder-access-dialog"
+state = "blocked"
+screen = '''
+  Folder access
+
+  /tmp/rzl-tl/projects/codex3
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your
+  permission settings. Folder settings can run code automatically, even without a
+  model request. Continue only if you trust these files. Your trust decision will be
+  saved.
+
+› 1. Trust and continue
+  2. Back to Agent Command Center
+
+  enter continue · esc back
+'''
+
 # Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
 # trailing whitespace stripped, home directory replaced by `~`.
 [[case]]

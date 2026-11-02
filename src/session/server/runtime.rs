@@ -125,6 +125,7 @@ impl AgentScratch {
                     identity,
                     incarnation: self.next_incarnation,
                     completions: 0,
+                    run_open: false,
                 },
             );
         }
@@ -141,17 +142,20 @@ impl AgentScratch {
         let incarnation = integration.reference.incarnation;
         let identity = integration.identity.id.clone();
         self.next_incarnation = self.next_incarnation.max(incarnation);
-        let completions = self
+        let (completions, run_open) = self
             .references
             .get(&None)
             .filter(|tracked| tracked.incarnation == incarnation && tracked.identity == identity)
-            .map_or(0, |tracked| tracked.completions);
+            .map_or((0, false), |tracked| {
+                (tracked.completions, tracked.run_open)
+            });
         self.references.insert(
             None,
             TrackedAgentReference {
                 identity,
                 incarnation,
                 completions,
+                run_open,
             },
         );
     }
@@ -161,18 +165,10 @@ impl AgentScratch {
     pub(super) fn agent_states(&self, runtime: &PaneRuntimeState) -> AgentStates {
         protocol::agent_signature(runtime)
             .into_iter()
-            .map(|(slot, identity, state)| {
-                let incarnation = self
-                    .references
-                    .get(&slot)
-                    .filter(|tracked| tracked.identity == identity)
-                    .map(|tracked| tracked.incarnation);
-                AgentStateEntry {
-                    slot,
-                    identity,
-                    incarnation,
-                    state,
-                }
+            .map(|(slot, identity, state)| AgentStateEntry {
+                slot,
+                identity,
+                state,
             })
             .collect()
     }
@@ -180,24 +176,33 @@ impl AgentScratch {
     /// Adopt `runtime`'s agents after a change: renew references, count each run that ended, and
     /// move the summary's change time when any agent's state moved.
     ///
-    /// A run ends when an agent that was working is idle or done under the same reference. That is
-    /// the one definition every client reads, through [`protocol::AgentRecord::completions`]: a
-    /// blocked agent has not finished, and an agent replaced by a new incarnation did not finish
-    /// anything - its successor starts from zero.
+    /// A run starts when an agent is working, and ends when it is next idle or done under the same
+    /// reference, whether or not it stopped for approval on the way. That is the one definition
+    /// every client reads, through [`protocol::AgentRecord::completions`]. A run can end from
+    /// blocked: an approved tool can finish inside [`STATE_SETTLE_GRACE`], so `working` is never
+    /// reported again before the agent stops. A dialog with no work before it is not a run, a
+    /// failed run ends without counting as finished, and an agent replaced by a new incarnation
+    /// did not finish anything - its successor starts from zero.
     pub(super) fn observe(&mut self, before: AgentStates, runtime: &PaneRuntimeState) {
         self.sync_references(runtime);
         let after = self.agent_states(runtime);
         for entry in &after {
-            let ended = before.iter().any(|earlier| {
-                earlier.slot == entry.slot
-                    && earlier.identity == entry.identity
-                    && earlier.incarnation.is_some()
-                    && earlier.incarnation == entry.incarnation
-                    && earlier.state == protocol::AgentState::Working
-                    && entry.state.is_quiescent()
-            });
-            if ended && let Some(tracked) = self.references.get_mut(&entry.slot) {
-                tracked.completions = tracked.completions.saturating_add(1);
+            let Some(tracked) = self
+                .references
+                .get_mut(&entry.slot)
+                .filter(|tracked| tracked.identity == entry.identity)
+            else {
+                continue;
+            };
+            match entry.state {
+                protocol::AgentState::Working => tracked.run_open = true,
+                protocol::AgentState::Blocked => {}
+                state => {
+                    if tracked.run_open && state.is_quiescent() {
+                        tracked.completions = tracked.completions.saturating_add(1);
+                    }
+                    tracked.run_open = false;
+                }
             }
         }
         let semantics = |states: &AgentStates| {
@@ -233,6 +238,7 @@ impl AgentScratch {
                     identity: identity.to_string(),
                     incarnation: self.next_incarnation,
                     completions: 0,
+                    run_open: false,
                 },
             );
         }
@@ -339,8 +345,6 @@ fn integration_has_strong_replacement_evidence(
 pub(super) struct AgentStateEntry {
     slot: Option<protocol::RowKey>,
     identity: String,
-    /// `None` for an agent no reference names yet: one that has only just appeared.
-    incarnation: Option<u64>,
     state: protocol::AgentState,
 }
 
@@ -2909,6 +2913,19 @@ mod tests {
         step(&mut scratch, runtime("claude", Blocked));
         let records = step(&mut scratch, runtime("claude", Idle));
         assert_eq!(records[0].completions, 1, "a dismissed prompt is not a run");
+
+        // An approved tool can finish inside the settle grace, so `working` is never seen again.
+        step(&mut scratch, runtime("claude", Working));
+        step(&mut scratch, runtime("claude", Blocked));
+        let records = step(&mut scratch, runtime("claude", Idle));
+        assert_eq!(records[0].completions, 2, "a run can end from blocked");
+
+        step(&mut scratch, runtime("claude", Blocked));
+        let records = step(&mut scratch, runtime("claude", Idle));
+        assert_eq!(
+            records[0].completions, 2,
+            "and that run is not counted twice"
+        );
 
         step(&mut scratch, runtime("claude", Working));
         let records = step(&mut scratch, runtime("codex", Idle));

@@ -1053,7 +1053,7 @@ fn a_deployed_action_is_callable_again_after_the_server_restarts() {
 [[actions]]
 id = "wait"
 title = "Wait"
-exec = ["sh", "-c", "exec sleep 30"]
+exec = ["sh", "-c", "echo $$ > \"$ROZI_EXTENSION_STATE_DIR/waiting\"; exec sleep 30"]
 {OPEN_SCHEMA}
 [[actions]]
 id = "ping"
@@ -1066,6 +1066,9 @@ exec = ["sh", "-c", "cat > /dev/null; echo \"$ROZI_EXTENSION_GENERATION\""]
     let first = lab.invoke("demo.ping", json!({})).data.unwrap()["result"].clone();
     let _caller = lab.send(invocation("demo.wait", json!({})));
     wait_until("the call", || lab.running().len() == 1);
+    // A call is listed before its process starts. Killing the server in between leaves the forked
+    // child holding the server's listener until it execs, and the new server cannot bind.
+    pid_in(&lab, "waiting");
 
     lab.server.kill_for_restart();
     let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));

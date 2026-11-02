@@ -67,7 +67,7 @@ Every field is a string:
 - `pane-title-changed.title` is the title the pane now reports, after display-text sanitization, and
   is empty when the program cleared it. `previous_title` is what the session last reported and is
   empty when it had none. A title that keeps changing - a spinner, an elapsed clock - fires once
-  when it holds still, not on every frame.
+  when it holds still, not on every frame. A pane that exits reports its last title first.
 - `pane-cwd-changed.cwd` is the pane's new working directory on the session host, and
   `previous_cwd` is the one it left. Both are empty when there is no value. A shell integration
   reports the directory as the program runs, so a command that changes directory without shell

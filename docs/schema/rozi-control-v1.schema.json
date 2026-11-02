@@ -7313,6 +7313,19 @@
             "type"
           ],
           "type": "object"
+        },
+        {
+          "description": "The session stopped cleanly, so nothing more will come. A stream that closes without this or\n[`Self::Lagged`] was cut short.",
+          "properties": {
+            "type": {
+              "const": "ended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
         }
       ]
     },

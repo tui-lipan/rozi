@@ -8,6 +8,9 @@ use super::*;
 use crate::control::{ControlErrorCode, ControlResponse};
 use crate::session::protocol::MAX_FRAME_SIZE;
 
+/// How long a stopping server waits for subscribers to take their last record.
+const SUBSCRIBER_FAREWELL_PATIENCE: Duration = Duration::from_millis(250);
+
 /// A connection that turned into a stream of session records.
 #[derive(Clone, Debug)]
 pub(super) struct SessionSubscriber {
@@ -86,6 +89,38 @@ impl SessionServer {
         self.undelivered_ui_events.push_back(event);
     }
 
+    /// Record a shared pane's exit, the last thing said about it. A title still waiting to settle
+    /// goes first, since nothing can change it now and nothing may follow the exit.
+    pub(super) fn record_pane_exited(&mut self, pane_id: PaneId, code: i32) {
+        let pending = self.panes.get_mut(&pane_id).and_then(|pane| {
+            pane.event_watch.exit_recorded = true;
+            pane.event_watch.title.settle_now()
+        });
+        if let Some((previous, title)) = pending {
+            self.record_pane_title_changed(pane_id, previous, title);
+        }
+        self.record_session_event(
+            events::EventKind::PaneExited,
+            vec![("pane", pane_id.to_string()), ("code", code.to_string())],
+        );
+    }
+
+    pub(super) fn record_pane_title_changed(
+        &mut self,
+        pane_id: PaneId,
+        previous: Option<String>,
+        title: Option<String>,
+    ) {
+        self.record_session_event(
+            events::EventKind::PaneTitleChanged,
+            vec![
+                ("pane", pane_id.to_string()),
+                ("title", title.unwrap_or_default()),
+                ("previous_title", previous.unwrap_or_default()),
+            ],
+        );
+    }
+
     /// Send recorded events to attached UIs, once the state messages they describe are queued.
     ///
     /// An event is recorded where the server's state changes, and the message telling clients about
@@ -135,19 +170,44 @@ impl SessionServer {
         }
     }
 
-    /// Stop streaming to a subscriber that fell behind, and say so as its last record. The record
-    /// goes past the backlog limit, or the reader would never learn why the stream stopped.
+    /// Stop streaming to a subscriber that fell behind, and say so.
     fn end_lagged_subscriber(&mut self, client_id: ClientId) {
+        self.end_subscriber(client_id, events::SessionSubscribeRecord::Lagged);
+    }
+
+    /// Send a subscriber its last record and close it. The record goes past the backlog limit, or
+    /// the reader would never learn why the stream stopped.
+    fn end_subscriber(&mut self, client_id: ClientId, record: events::SessionSubscribeRecord) {
         self.session_subscribers.remove(&client_id);
-        let lagged = ServerMessage::SessionSubscribeRecord {
-            record: events::SessionSubscribeRecord::Lagged,
-        };
-        if let Some(bytes) = encode_control(&lagged)
+        if let Some(bytes) = encode_control(&ServerMessage::SessionSubscribeRecord { record })
             && let Some(client) = self.client_mut(client_id)
         {
             client.push_delta(bytes, SeedDelta::Control, usize::MAX, None);
         }
         self.set_close_after_flush(client_id);
+    }
+
+    /// Tell every subscriber the session has stopped cleanly, as this server's last act. Its process
+    /// exit closes them either way, and only this tells a clean stop from a crash.
+    ///
+    /// A subscriber not reading in time is left to find out the way it would from a crash, rather
+    /// than holding up the shutdown.
+    pub(super) fn end_session_subscribers(&mut self) {
+        let subscribers: Vec<ClientId> = self.session_subscribers.keys().copied().collect();
+        for &client_id in &subscribers {
+            self.end_subscriber(client_id, events::SessionSubscribeRecord::Ended);
+        }
+        let deadline = Instant::now() + SUBSCRIBER_FAREWELL_PATIENCE;
+        loop {
+            self.flush_clients();
+            let waiting = subscribers
+                .iter()
+                .any(|&client_id| self.client_mut(client_id).is_some());
+            if !waiting || Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     /// Answer a `subscribe` request. `None` means the answer has already been queued, followed by
@@ -488,6 +548,53 @@ mod tests {
 
         assert!(server.client(client).is_none(), "the connection is dropped");
         assert!(server.session_subscribers.is_empty());
+    }
+
+    #[test]
+    fn a_stopping_server_tells_its_subscribers_and_lets_them_go() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, mut stream) = subscribe(&mut server, options(&[], false, None));
+
+        server.end_session_subscribers();
+
+        assert!(server.client(client).is_none(), "flushed and closed");
+        let mut received = Vec::new();
+        std::io::Read::read_to_end(&mut stream, &mut received).unwrap();
+        let mut decoder = protocol::FrameDecoder::default();
+        decoder.read_from_status(&mut &received[..]).unwrap();
+        let mut last = None;
+        while let Some(Frame::Control(message)) = decoder.next_frame::<ServerMessage>().unwrap() {
+            last = Some(message);
+        }
+        assert!(
+            matches!(
+                last,
+                Some(ServerMessage::SessionSubscribeRecord {
+                    record: SessionSubscribeRecord::Ended
+                })
+            ),
+            "{last:?}"
+        );
+    }
+
+    /// One stalled reader must not hold up the session's shutdown.
+    #[test]
+    fn a_subscriber_that_does_not_read_cannot_hold_up_a_shutdown() {
+        let mut server = SessionServer::new_named("dev");
+        let (client, _stream) = subscribe(&mut server, options(&[], false, None));
+        let filler = Arc::new(EncodedOutput {
+            bytes: vec![0; 16 * 1024 * 1024],
+            ..Default::default()
+        });
+        server
+            .client_mut(client)
+            .unwrap()
+            .push_delta(filler, SeedDelta::Control, usize::MAX, None);
+
+        let started = Instant::now();
+        server.end_session_subscribers();
+
+        assert!(started.elapsed() < SUBSCRIBER_FAREWELL_PATIENCE * 8);
     }
 
     #[test]

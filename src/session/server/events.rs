@@ -63,13 +63,17 @@ impl PaneTitleWatch {
 
     /// Take a title that has been stable for [`TITLE_SETTLE`], as `(previous, current)`.
     pub(super) fn settle(&mut self, now: Instant) -> Option<(Option<String>, Option<String>)> {
-        let (title, since) = self.pending.as_ref()?;
+        let (_, since) = self.pending.as_ref()?;
         if now.duration_since(*since) < TITLE_SETTLE {
             return None;
         }
-        let title = title.clone();
+        self.settle_now()
+    }
+
+    /// Take a pending title without waiting: its pane has exited, so it can no longer change.
+    pub(super) fn settle_now(&mut self) -> Option<(Option<String>, Option<String>)> {
+        let (title, _) = self.pending.take()?;
         let previous = std::mem::replace(&mut self.reported, title.clone());
-        self.pending = None;
         Some((previous, title))
     }
 }
@@ -83,6 +87,8 @@ pub(super) struct PaneEventWatch {
     /// When `bell` was last recorded, for [`BELL_COALESCE`].
     last_bell: Option<Instant>,
     pub(super) title: PaneTitleWatch,
+    /// `pane-exited` has been recorded, which is the last thing said about a pane.
+    pub(super) exit_recorded: bool,
 }
 
 impl PaneEventWatch {
@@ -93,6 +99,7 @@ impl PaneEventWatch {
             seen_bells,
             last_bell: None,
             title: PaneTitleWatch::new(title),
+            exit_recorded: false,
         }
     }
 
@@ -347,6 +354,21 @@ mod tests {
             watch.settle(start + TITLE_SETTLE + Duration::from_secs(1)),
             None
         );
+    }
+
+    #[test]
+    fn title_watch_settles_at_once_when_told_nothing_can_change_it() {
+        let start = Instant::now();
+        let mut watch = PaneTitleWatch::new(Some("shell".into()));
+        assert_eq!(watch.settle_now(), None, "nothing is waiting");
+
+        watch.observe(Some("final".into()), start);
+
+        assert_eq!(
+            watch.settle_now(),
+            Some((Some("shell".to_string()), Some("final".to_string())))
+        );
+        assert_eq!(watch.settle(start + TITLE_SETTLE), None, "reported once");
     }
 
     #[test]

@@ -263,6 +263,37 @@ fn a_panes_exit_comes_after_everything_its_death_changed() {
     assert!(program_left, "its program left first: {records:?}");
 }
 
+/// A title is held back until it settles, and a pane that exits straight after setting one must
+/// not report it from beyond its exit.
+#[test]
+fn a_title_set_just_before_exiting_is_reported_before_the_exit() {
+    let lab = Lab::start("lasttitle");
+    let (subscriber, _stdin) = Stream::open(lab.on_session(&["subscribe"]));
+    let status = lab
+        .on_session(&[
+            "split",
+            "--argv",
+            "sh",
+            "-c",
+            "printf '\\033]0;final\\007'; exit 0",
+        ])
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "the pane spawned");
+
+    let records = subscriber.until_pane_exits();
+    assert!(
+        records
+            .iter()
+            .any(|record| record["kind"] == "pane-title-changed"
+                && record["data"]["title"] == "final"),
+        "{records:?}"
+    );
+    let tail = subscriber.until_quiet(Duration::from_secs(1));
+    assert!(tail.is_empty(), "said after the exit: {tail:?}");
+}
+
 #[test]
 fn a_refused_subscription_says_why_in_a_form_a_script_can_read() {
     let lab = Lab::start("refused");

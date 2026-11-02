@@ -615,10 +615,7 @@ impl SessionServer {
                         // After the sync: an exit is the last thing said about a pane, and what the
                         // sync finds changed went with it.
                         if owner.is_none() {
-                            self.record_session_event(
-                                events::EventKind::PaneExited,
-                                vec![("pane", id.to_string()), ("code", code.to_string())],
-                            );
+                            self.record_pane_exited(id, code);
                         }
                         self.resolve_agent_waits();
                         let outbound = ServerOutbound::control(ServerMessage::Exited {
@@ -872,10 +869,7 @@ impl SessionServer {
         self.sync_pane_runtime(owner, id, generation);
         if died.is_some() {
             if owner.is_none() {
-                self.record_session_event(
-                    events::EventKind::PaneExited,
-                    vec![("pane", id.to_string()), ("code", code.to_string())],
-                );
+                self.record_pane_exited(id, code);
             }
             self.send_outbound(
                 owner,

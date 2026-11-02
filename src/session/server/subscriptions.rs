@@ -86,6 +86,38 @@ impl SessionServer {
         self.undelivered_ui_events.push_back(event);
     }
 
+    /// Record a shared pane's exit, the last thing said about it. A title still waiting to settle
+    /// goes first, since nothing can change it now and nothing may follow the exit.
+    pub(super) fn record_pane_exited(&mut self, pane_id: PaneId, code: i32) {
+        let pending = self.panes.get_mut(&pane_id).and_then(|pane| {
+            pane.event_watch.exit_recorded = true;
+            pane.event_watch.title.settle_now()
+        });
+        if let Some((previous, title)) = pending {
+            self.record_pane_title_changed(pane_id, previous, title);
+        }
+        self.record_session_event(
+            events::EventKind::PaneExited,
+            vec![("pane", pane_id.to_string()), ("code", code.to_string())],
+        );
+    }
+
+    pub(super) fn record_pane_title_changed(
+        &mut self,
+        pane_id: PaneId,
+        previous: Option<String>,
+        title: Option<String>,
+    ) {
+        self.record_session_event(
+            events::EventKind::PaneTitleChanged,
+            vec![
+                ("pane", pane_id.to_string()),
+                ("title", title.unwrap_or_default()),
+                ("previous_title", previous.unwrap_or_default()),
+            ],
+        );
+    }
+
     /// Send recorded events to attached UIs, once the state messages they describe are queued.
     ///
     /// An event is recorded where the server's state changes, and the message telling clients about

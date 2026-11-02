@@ -966,7 +966,8 @@ A session raises `pane-spawned`, `pane-exited`, `pane-status-changed`, `pane-tit
 `pane-cwd-changed`, `agent-state-changed`, `foreground-changed`, `bell`, `layout-changed`,
 `session-renamed`, `controller-changed`, `client-joined`, and `client-left`. Naming any other event
 is refused, because it describes one UI and only that UI can raise it. A pane's `pane-spawned` comes
-before any other event about it. Panes a session restores when it starts are in `--snapshot`, and
+before any other event about it, and `pane-exited` after every other one, so treat a pane's agents
+as gone once it has exited. Panes a session restores when it starts are in `--snapshot`, and
 raise no `pane-spawned`.
 
 `--after INSTANCE:SEQ` replays the retained events after that point and carries on live. The session

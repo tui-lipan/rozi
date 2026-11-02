@@ -8649,6 +8649,66 @@ fn shared_pane_bells_are_recorded_once_and_a_burst_coalesces() {
     assert_eq!(bells(&server), 1, "a burst of bells is one event");
 }
 
+/// A title still settling when its pane exits has settled, and nothing may follow the exit.
+#[test]
+fn a_title_still_settling_when_its_pane_exits_is_reported_before_the_exit() {
+    let mut server = SessionServer::new_named("exit-title");
+    server.panes.insert(1, test_pane(1));
+    server.handle_event(ServerEvent::Pty(
+        None,
+        1,
+        1,
+        TerminalPtyEvent::Output(b"\x1b]0;final\x07".to_vec().into()),
+    ));
+
+    server.handle_event(ServerEvent::Pty(None, 1, 1, TerminalPtyEvent::Exited(0)));
+    server.flush_pane_titles();
+
+    let events: Vec<_> = server.session_events.iter().collect();
+    let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            crate::events::EventKind::PaneTitleChanged,
+            crate::events::EventKind::PaneExited,
+        ]
+    );
+    assert_eq!(events[0].data["title"], "final");
+}
+
+/// Clients still hear what changes on a dead pane they are showing, but subscribers have already
+/// been told the last thing about it.
+#[test]
+fn nothing_is_recorded_about_a_pane_after_its_exit() {
+    let mut server = SessionServer::new_named("after-exit");
+    let (client, _stream) = attach_client(&mut server);
+    pane_with_session_rows(&mut server, 7);
+    let generation = server.panes[&7].generation;
+    for row in &mut server.panes.get_mut(&7).unwrap().runtime.rows {
+        row.publisher = protocol::qualified_publisher(client, "sessions");
+    }
+    server.handle_event(ServerEvent::Pty(
+        None,
+        7,
+        generation,
+        TerminalPtyEvent::Exited(0),
+    ));
+    let last = server.session_events.iter().last().unwrap();
+    assert_eq!(last.kind, crate::events::EventKind::PaneExited);
+    let exited_at = last.seq;
+
+    let told = server.withdraw_client_rows(client);
+
+    assert!(
+        told.iter().any(|message| matches!(
+            message,
+            ServerMessage::PaneRuntimeChanged { pane_id: 7, .. }
+        )),
+        "the withdrawal is still sent: {told:?}"
+    );
+    assert_eq!(server.session_events.latest_seq(), exited_at);
+}
+
 fn session_event_position(
     messages: &[ServerMessage],
     kind: crate::events::EventKind,

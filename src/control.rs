@@ -1787,7 +1787,8 @@ pub enum ExtensionLocalCopy {
     Matches,
     Differs,
     NotInstalled,
-    /// Installed, but its files could not be read to compare them.
+    /// Installed, but there is no one readable copy to compare: its files could not be read, or
+    /// more than one installation declares the ID.
     Unavailable,
 }
 

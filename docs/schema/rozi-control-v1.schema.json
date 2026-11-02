@@ -4382,7 +4382,7 @@
         },
         {
           "const": "unavailable",
-          "description": "Installed, but its files could not be read to compare them.",
+          "description": "Installed, but there is no one readable copy to compare: its files could not be read, or\nmore than one installation declares the ID.",
           "type": "string"
         }
       ]

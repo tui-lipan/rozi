@@ -709,20 +709,22 @@ pub(crate) fn run_deploy_extension_cli(command: super::args::ExtensionsDeployCli
                 format!("extension `{}` is not installed", command.id),
             )
         })?;
-    if matches!(
-        entry.status,
-        crate::config::ExtensionStatus::Invalid | crate::config::ExtensionStatus::Incompatible
-    ) {
-        return Err(std::io::Error::other(format!(
-            "extension `{}` cannot be deployed: {}",
-            command.id,
-            if entry.errors.is_empty() {
-                entry.status.as_str().to_string()
-            } else {
-                entry.errors.join("; ")
-            }
-        ))
-        .into());
+    match entry.status {
+        crate::config::ExtensionStatus::Loaded | crate::config::ExtensionStatus::Disabled => {}
+        crate::config::ExtensionStatus::Invalid
+        | crate::config::ExtensionStatus::Incompatible
+        | crate::config::ExtensionStatus::Duplicate => {
+            return Err(std::io::Error::other(format!(
+                "extension `{}` cannot be deployed: {}",
+                command.id,
+                if entry.errors.is_empty() {
+                    entry.status.as_str().to_string()
+                } else {
+                    entry.errors.join("; ")
+                }
+            ))
+            .into());
+        }
     }
     let bundle = crate::extension_runtime::bundle::snapshot(std::path::Path::new(&entry.path))
         .map_err(std::io::Error::other)?;
@@ -839,6 +841,10 @@ pub(super) fn compare_deployments_with_local(response: &mut serde_json::Value) {
                 .find(|entry| entry.id.as_deref() == Some(&deployment.extension))
             {
                 None => ExtensionLocalCopy::NotInstalled,
+                // Every installation declaring the ID is a duplicate, and none of them is the copy.
+                Some(entry) if entry.status == crate::config::ExtensionStatus::Duplicate => {
+                    ExtensionLocalCopy::Unavailable
+                }
                 Some(entry) => match crate::extension_runtime::bundle::snapshot(
                     std::path::Path::new(&entry.path),
                 ) {

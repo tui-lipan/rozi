@@ -196,12 +196,14 @@ rozi extensions undeploy git-tools --session work
 ```
 
 `deploy` reads the installed extension this `rozi` validated, so the session receives the files you
-have, not whatever another `rozi` has loaded. A copy that does not match the bundle it was sent as,
-or whose manifest names a different extension, is refused. `status --session` lists each deployment
-with its digest, generation, file count, and the state and process ID of each session service. It
-compares each deployment with the local installed copy and reports `matches`, `differs`,
-`not-installed`, or `unavailable`. A deployment whose files fail verification stays unavailable until
-you redeploy it. `undeploy` removes the record and the files unless another deployment uses the same
+have, not whatever another `rozi` has loaded. It refuses an invalid or incompatible extension, and
+an ID that more than one installation declares. A copy that does not match the bundle it was sent
+as, or whose manifest names a different extension, is refused. `status --session` lists each
+deployment with its digest, generation, file count, and the state and process ID of each session
+service. It compares each deployment with the local installed copy and reports `matches`, `differs`,
+`not-installed`, or `unavailable`, which means the local files could not be read or more than one
+installation declares the ID. A deployment whose files fail verification stays unavailable until you
+redeploy it. `undeploy` removes the record and the files unless another deployment uses the same
 files.
 
 Deployments belong to one named session, so `--session` is required; there is no default session to

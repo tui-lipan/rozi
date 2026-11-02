@@ -15,9 +15,9 @@ use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
 };
 
-fn spawn(session: &str, root: &Path) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_rozi"))
-        .args(["--server", session])
+fn rozi(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
+    command
         .env("ROZI_CONFIG", root.join("config.toml"))
         .env("XDG_RUNTIME_DIR", root)
         .env("XDG_STATE_HOME", root.join("state"))
@@ -25,7 +25,13 @@ fn spawn(session: &str, root: &Path) -> std::process::Child {
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("APPDATA", root.join("config"))
-        .env("LOCALAPPDATA", root.join("state"))
+        .env("LOCALAPPDATA", root.join("state"));
+    command
+}
+
+fn spawn(session: &str, root: &Path) -> std::process::Child {
+    rozi(root)
+        .args(["--server", session])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -587,4 +593,84 @@ fn a_session_credential_is_gated_and_retiring_it_closes_what_it_holds() {
         ControlCommand::ExtensionsUndeploy { id: "demo".into() },
     );
     held.wait_closed();
+}
+
+/// Where a client started by [`rozi`] looks for installed extensions.
+fn extensions_dir(root: &Path) -> std::path::PathBuf {
+    let data = if cfg!(windows) { "state" } else { "data" };
+    root.join(data).join("rozi").join("extensions")
+}
+
+fn install_demo(root: &Path, directory: &str, payload: &str) {
+    let installation = extensions_dir(root).join(directory);
+    std::fs::create_dir_all(&installation).unwrap();
+    std::fs::write(
+        installation.join("extension.toml"),
+        "[extension]\nid = 'demo'\ntitle = 'Demo'\nversion = '1'\napi = 1\n",
+    )
+    .unwrap();
+    std::fs::write(installation.join("payload"), payload).unwrap();
+}
+
+fn deploy_with_cli(root: &Path, session: &str) -> std::process::Output {
+    rozi(root)
+        .args(["extensions", "deploy", "demo", "--session", session])
+        .stdin(Stdio::null())
+        .output()
+        .expect("run extensions deploy")
+}
+
+fn local_copy_from_cli(root: &Path, session: &str) -> rozi::control::ExtensionLocalCopy {
+    let output = rozi(root)
+        .args(["extensions", "status", "--session", session, "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("run extensions status");
+    assert!(output.status.success(), "{output:?}");
+    let response: ControlResponse = serde_json::from_slice(&output.stdout).unwrap();
+    let report: ExtensionDeploymentReport = serde_json::from_value(response.data.unwrap()).unwrap();
+    report.deployments[0].local_copy.expect("compared locally")
+}
+
+/// Two installations declaring one ID contribute nothing to a client, because neither is the
+/// extension the ID names. That has to hold where the code leaves this machine too.
+#[test]
+fn an_ambiguous_extension_id_is_neither_deployed_nor_compared() {
+    use rozi::control::ExtensionLocalCopy;
+
+    let root = private_temp_dir();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    install_demo(&root, "one", "first");
+    install_demo(&root, "two", "second");
+
+    let refused = deploy_with_cli(&root, &session);
+    assert!(!refused.status.success(), "{refused:?}");
+    let reason = String::from_utf8_lossy(&refused.stderr);
+    assert!(reason.contains("duplicate extension id"), "{reason}");
+    let report = ask(
+        &mut server,
+        &root,
+        &session,
+        ControlCommand::ExtensionsStatus,
+    );
+    let report: ExtensionDeploymentReport = serde_json::from_value(report.data.unwrap()).unwrap();
+    assert!(report.deployments.is_empty(), "{report:?}");
+
+    // One installation is unambiguous again. `one` also sorts first, so a comparison that picked
+    // whichever duplicate it reached first would call the second duplicate below a match.
+    std::fs::remove_dir_all(extensions_dir(&root).join("two")).unwrap();
+    let deployed = deploy_with_cli(&root, &session);
+    assert!(deployed.status.success(), "{deployed:?}");
+    assert_eq!(
+        local_copy_from_cli(&root, &session),
+        ExtensionLocalCopy::Matches
+    );
+
+    install_demo(&root, "two", "second");
+    assert_eq!(
+        local_copy_from_cli(&root, &session),
+        ExtensionLocalCopy::Unavailable
+    );
 }

@@ -180,18 +180,57 @@ def fix_prompt(result: dict[str, Any], command: list[str], attempt: int, limit: 
     )
 
 
+def agent_key(reference: dict[str, Any] | str) -> str:
+    """One spelling of an agent's reference: a list gives it as JSON, an event as JSON text."""
+    parsed = json.loads(reference) if isinstance(reference, str) else reference
+    return json.dumps(parsed, sort_keys=True)
+
+
+class ErroredAgents:
+    """Agents the stream saw stop with an error since the service last looked.
+
+    An error raises no completion and the agent may have moved on before the service reads the
+    list, so the state alone can miss it. The stream's thread adds; the service's takes.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.keys: set[str] = set()
+
+    def add(self, key: str) -> None:
+        with self.lock:
+            self.keys.add(key)
+
+    def discard(self, key: str) -> None:
+        with self.lock:
+            self.keys.discard(key)
+
+    def take(self) -> set[str]:
+        with self.lock:
+            taken, self.keys = self.keys, set()
+        return taken
+
+
 class Loop:
-    def __init__(self, rozi: Rozi, settings: Settings, ledger: AgentLedger) -> None:
+    def __init__(
+        self,
+        rozi: Rozi,
+        settings: Settings,
+        ledger: AgentLedger,
+        errored: ErroredAgents | None = None,
+    ) -> None:
         self.rozi = rozi
         self.settings = settings
         self.ledger = ledger
+        self.errored = errored or ErroredAgents()
 
     def reconcile(self) -> None:
         """Handle every agent with a finished turn it has not handled yet."""
         agents = self.rozi.agents()
         if agents is None:
             return  # Asked again on the next wake.
-        current = {json.dumps(agent["ref"], sort_keys=True): agent for agent in agents}
+        errored = self.errored.take()
+        current = {agent_key(agent["ref"]): agent for agent in agents}
         stale = self.ledger.agents.keys() - current.keys()
         for key in stale:
             del self.ledger.agents[key]
@@ -199,6 +238,8 @@ class Loop:
             self.ledger.save()
         for key, agent in current.items():
             record = self.ledger.agents.setdefault(key, {"seen": 0, "attempts": 0, "gave_up": False})
+            if record.get("request_pending") and (key in errored or agent["state"] == "error"):
+                self.note_error(agent, record)
             finished = agent["completions"] > record["seen"]
             # A finished turn ends the request it answered, whatever the agent has started since.
             if finished and record.get("request_pending"):
@@ -209,6 +250,13 @@ class Loop:
                 self.handle_turn(agent, record)
             elif agent["state"] == "blocked":
                 self.note_waiting(agent, record)
+
+    def note_error(self, agent: dict[str, Any], record: dict[str, Any]) -> None:
+        """A request that ended in an error raises no completion, so nothing else ends it."""
+        record["request_pending"] = False
+        self.ledger.save()
+        name = Path(agent.get("cwd") or "agent").name
+        self.rozi.notify(f"{name}: the agent stopped with an error during the fix", "error")
 
     def note_waiting(self, agent: dict[str, Any], record: dict[str, Any]) -> None:
         """Say once per request that the turn this asked for is waiting for approval.
@@ -273,6 +321,8 @@ class Loop:
         # Count the attempt first: a crash here must not type the same request into an agent twice.
         record["attempts"] += 1
         record["request_pending"] = True
+        # Anything the stream heard before now happened before this request existed.
+        self.errored.discard(agent_key(agent["ref"]))
         self.ledger.save()
         prompt = fix_prompt(result, self.settings.command, record["attempts"], limit)
         reply = self.rozi.prompt(agent["ref"], prompt)
@@ -293,8 +343,9 @@ class Loop:
 class Stream:
     """`rozi subscribe`, drained on its own thread so a long test run never makes it fall behind."""
 
-    def __init__(self, program: str, wake: threading.Event) -> None:
+    def __init__(self, program: str, wake: threading.Event, errored: ErroredAgents) -> None:
         self.wake = wake
+        self.errored = errored
         self.process = subprocess.Popen(
             [program, "subscribe", "agent-state-changed", "--snapshot"],
             stdin=subprocess.DEVNULL,
@@ -306,6 +357,9 @@ class Stream:
     def drain(self) -> None:
         assert self.process.stdout is not None
         for line in self.process.stdout:
+            key = errored_agent(line)
+            if key is not None:
+                self.errored.add(key)
             if should_wake(line):
                 self.wake.set()
         self.process.wait()
@@ -323,8 +377,20 @@ def should_wake(line: str) -> bool:
         return False
     if record.get("type") == "snapshot":
         return True
-    stopped = ("done", "idle", "blocked")
+    stopped = ("done", "idle", "blocked", "error")
     return record.get("type") == "event" and record.get("data", {}).get("state") in stopped
+
+
+def errored_agent(line: str) -> str | None:
+    """Which agent an event says stopped with an error, if it says that."""
+    try:
+        record = json.loads(line)
+        data = record.get("data", {})
+        if record.get("type") == "event" and data.get("state") == "error" and data.get("ref"):
+            return agent_key(data["ref"])
+    except (ValueError, AttributeError):
+        pass
+    return None
 
 
 def prune_ledgers(state_dir: Path, now: float) -> None:
@@ -342,9 +408,10 @@ def watch(environ: dict[str, str]) -> int:
     state_dir = Path(environ["ROZI_EXTENSION_STATE_DIR"])
     prune_ledgers(state_dir, time.time())
     ledger = AgentLedger(state_dir / f"agents-{environ['ROZI_SESSION_INSTANCE']}.json")
-    loop = Loop(Rozi(program), load_settings(environ.get("ROZI_EXTENSION_CONFIG")), ledger)
+    errored = ErroredAgents()
+    loop = Loop(Rozi(program), load_settings(environ.get("ROZI_EXTENSION_CONFIG")), ledger, errored)
     wake = threading.Event()
-    stream = Stream(program, wake)
+    stream = Stream(program, wake, errored)
     # Wait for the snapshot, so a turn ending from here on also raises an event this will read.
     wake.wait()
     while True:

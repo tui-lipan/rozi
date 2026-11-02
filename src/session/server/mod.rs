@@ -2435,7 +2435,8 @@ pub fn run_named_session_mode_with_nonce(
     );
     server.endpoint = Some(endpoint);
     if fresh {
-        delete_snapshot(name)?;
+        // Only the snapshot: starting again is not deleting the session, so its deployments stay.
+        server.delete_snapshot()?;
     } else if server.settings.resurrect
         && let Err(err) = server.restore()
     {

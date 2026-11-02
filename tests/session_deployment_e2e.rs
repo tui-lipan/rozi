@@ -159,6 +159,56 @@ fn a_chunked_deployment_survives_an_immediate_server_crash() {
     assert_eq!(report.data.unwrap()["deployments"], serde_json::json!([]));
 }
 
+/// `sessions new` is the way back after a crash. It discards the panes, not what was deployed,
+/// and deleting the session is still what removes those.
+#[test]
+fn starting_a_session_fresh_keeps_its_deployments_and_killing_it_removes_them() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = Bundle::from_files(vec![BundleFile {
+        path: "extension.toml".into(),
+        executable: false,
+        contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n".to_vec(),
+    }])
+    .unwrap();
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+    server.kill_for_restart();
+
+    // What `sessions new` starts, in the foreground so this test owns the process.
+    let start_fresh = |root: &Path| {
+        rozi(root)
+            .args(["--session", &session, "--fresh-server"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start a fresh session server")
+    };
+    let deployed = |server: &mut ServerGuard| {
+        let reply = ask(server, &root, &session, ControlCommand::ExtensionsStatus);
+        let report: ExtensionDeploymentReport =
+            serde_json::from_value(reply.data.unwrap()).unwrap();
+        report.deployments.len()
+    };
+    server.replace_child(start_fresh(&root));
+    assert_eq!(
+        deployed(&mut server),
+        1,
+        "a fresh start keeps the deployment"
+    );
+
+    let killed = rozi(&root)
+        .args(["sessions", "kill", &session])
+        .output()
+        .expect("sessions kill");
+    assert!(killed.status.success(), "{killed:?}");
+    server.kill_for_restart();
+    server.replace_child(start_fresh(&root));
+    assert_eq!(deployed(&mut server), 0, "deleting the session removes it");
+}
+
 #[cfg(unix)]
 fn wait_for_text(path: &Path, text: &str) -> String {
     let deadline = std::time::Instant::now() + common::io_timeout();
@@ -362,7 +412,6 @@ exec sleep 300
     .unwrap()
 }
 
-#[cfg(unix)]
 fn deploy_command(bundle: &Bundle) -> ControlCommand {
     let archive = bundle.archive();
     ControlCommand::ExtensionsDeploy {

@@ -38,6 +38,9 @@ scope = "footer"
 screen = { any_of = [
     "do you trust the contents of this directory",
     "do you trust the files in this folder",
+    # Codex 0.166 asks with "Trust this folder?" above `› 1. Trust and continue`. The option is what
+    # stays inside the footer when a narrow pane wraps the question's long sentence upward.
+    "trust and continue",
 ] }
 
 # An agent asking a *question* rather than for permission. Same thing for a pane - it is waiting

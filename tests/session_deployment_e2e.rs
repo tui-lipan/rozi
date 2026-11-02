@@ -159,6 +159,166 @@ fn a_chunked_deployment_survives_an_immediate_server_crash() {
     assert_eq!(report.data.unwrap()["deployments"], serde_json::json!([]));
 }
 
+fn deployment_count(server: &mut ServerGuard, root: &Path, session: &str) -> usize {
+    let reply = ask(server, root, session, ControlCommand::ExtensionsStatus);
+    let report: ExtensionDeploymentReport = serde_json::from_value(reply.data.unwrap()).unwrap();
+    report.deployments.len()
+}
+
+/// Attach, ask the server to end the session this way, and wait for it to exit.
+fn end_session(server: &mut ServerGuard, root: &Path, session: &str, ending: ClientMessage) {
+    let mut client = connect_when_ready(&subprocess_endpoint(root, session), server.child_mut());
+    client.write_control(&common::attach_message(session, "ender"));
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+    client.write_control(&ending);
+    let deadline = std::time::Instant::now() + common::io_timeout();
+    while server.child_mut().try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server did not exit after {ending:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// A restart ends the panes and keeps what is deployed. Only deleting the session removes that.
+#[test]
+fn a_restart_keeps_deployments_and_a_deletion_removes_them() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    let bundle = Bundle::from_files(vec![BundleFile {
+        path: "extension.toml".into(),
+        executable: false,
+        contents: b"[extension]\nid='demo'\ntitle='Demo'\nversion='1'\napi=1\n".to_vec(),
+    }])
+    .unwrap();
+    ask(&mut server, &root, &session, deploy_command(&bundle));
+
+    end_session(
+        &mut server,
+        &root,
+        &session,
+        ClientMessage::ShutdownForRestart,
+    );
+    server.replace_child(spawn(&session, &root));
+    assert_eq!(deployment_count(&mut server, &root, &session), 1);
+
+    end_session(&mut server, &root, &session, ClientMessage::Shutdown);
+    server.replace_child(spawn(&session, &root));
+    assert_eq!(deployment_count(&mut server, &root, &session), 0);
+}
+
+#[cfg(unix)]
+fn pane_count(root: &Path, session: &str) -> usize {
+    let done = rozi(root)
+        .args(["--session", session, "list-panes", "--format", "json"])
+        .output()
+        .expect("list panes");
+    assert!(done.status.success(), "{done:?}");
+    let reply: ControlResponse = serde_json::from_slice(&done.stdout).unwrap();
+    reply.data.unwrap().as_array().unwrap().len()
+}
+
+#[cfg(unix)]
+fn split_a_pane(root: &Path, session: &str) {
+    let done = rozi(root)
+        .args(["--session", session, "split", "--argv", "sleep", "60"])
+        .output()
+        .expect("split");
+    assert!(done.status.success(), "{done:?}");
+}
+
+/// A stop leaves a snapshot to restore. A restart is what discards it, so the next server has no
+/// panes even though it is free to restore them.
+#[cfg(unix)]
+#[test]
+fn a_stopped_session_restores_its_panes_and_a_restarted_one_does_not() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let mut server = ServerGuard::new(spawn(&session, &root), root.clone());
+    connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    split_a_pane(&root, &session);
+
+    let pid = server.child_mut().id().to_string();
+    let signalled = Command::new("kill")
+        .args(["-TERM", &pid])
+        .status()
+        .expect("signal the server");
+    assert!(signalled.success());
+    server.child_mut().wait().unwrap();
+    server.replace_child(spawn(&session, &root));
+    connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    assert_eq!(pane_count(&root, &session), 1, "a stop keeps the snapshot");
+
+    end_session(
+        &mut server,
+        &root,
+        &session,
+        ClientMessage::ShutdownForRestart,
+    );
+    server.replace_child(spawn(&session, &root));
+    connect_when_ready(&subprocess_endpoint(&root, &session), server.child_mut());
+    assert_eq!(pane_count(&root, &session), 0, "a restart discards it");
+}
+
+/// The command a script runs. Unix only: captured output hangs a detached start on Windows, #308.
+#[cfg(unix)]
+#[test]
+fn sessions_restart_starts_fresh_panes_and_keeps_deployments() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let sessions = |args: &[&str]| {
+        rozi(&root)
+            .arg("sessions")
+            .args(args)
+            .arg(&session)
+            .output()
+            .expect("run a sessions command")
+    };
+
+    let missing = sessions(&["restart"]);
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("is not running"), "{stderr}");
+    assert!(stderr.contains("sessions new"), "{stderr}");
+
+    let created = rozi(&root)
+        .args(["sessions", "new", &session, "--detach"])
+        .output()
+        .expect("sessions new");
+    assert!(created.status.success(), "{created:?}");
+    install_demo(&root, "demo", "payload");
+    // rozi refuses a data directory others can read, and `install_demo` leaves the umask's mode.
+    use std::os::unix::fs::PermissionsExt as _;
+    for directory in [root.join("data"), root.join("data/rozi")] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let deployed = deploy_with_cli(&root, &session);
+    assert!(deployed.status.success(), "{deployed:?}");
+    split_a_pane(&root, &session);
+    assert_eq!(pane_count(&root, &session), 1);
+
+    let restarted = sessions(&["restart"]);
+    assert!(restarted.status.success(), "{restarted:?}");
+    assert_eq!(pane_count(&root, &session), 0, "fresh panes");
+    assert_eq!(
+        local_copy_from_cli(&root, &session),
+        rozi::control::ExtensionLocalCopy::Matches,
+        "the deployment is still there"
+    );
+
+    let killed = sessions(&["kill"]);
+    assert!(killed.status.success(), "{killed:?}");
+    let missing = sessions(&["restart"]);
+    assert!(!missing.status.success(), "a killed session is not running");
+}
+
 /// `sessions new` is the way back after a crash. It discards the panes, not what was deployed,
 /// and deleting the session is still what removes those.
 #[test]
@@ -186,12 +346,7 @@ fn starting_a_session_fresh_keeps_its_deployments_and_killing_it_removes_them() 
             .spawn()
             .expect("start a fresh session server")
     };
-    let deployed = |server: &mut ServerGuard| {
-        let reply = ask(server, &root, &session, ControlCommand::ExtensionsStatus);
-        let report: ExtensionDeploymentReport =
-            serde_json::from_value(reply.data.unwrap()).unwrap();
-        report.deployments.len()
-    };
+    let deployed = |server: &mut ServerGuard| deployment_count(server, &root, &session);
     server.replace_child(start_fresh(&root));
     assert_eq!(
         deployed(&mut server),

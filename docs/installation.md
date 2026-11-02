@@ -170,8 +170,8 @@ An update installs the new build for the next launch; it restarts nothing that i
 
 - The client you updated from keeps the old build until you quit and start rozi again.
 - Each session server keeps its old build until you restart that session with `restart-session`,
-  or by pressing `Ctrl+E` twice in Sessions. Restarting a session ends the programs running in its
-  panes.
+  by pressing `Ctrl+E` twice in Sessions, or with `rozi sessions restart <NAME>`. Restarting a
+  session ends the programs running in its panes.
 - A new client attaches to an old server normally while the session protocol is unchanged. When a
   release raises the protocol, the old server refuses the new client, so restart the session before
   attaching.

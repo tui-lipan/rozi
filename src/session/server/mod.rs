@@ -58,10 +58,24 @@ mod shutdown;
 mod subscriptions;
 mod waits;
 mod worktree;
-pub(crate) use create::create_detached_session;
+pub(crate) use create::{create_detached_session, restart_named_session};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
-pub(crate) use shutdown::{shutdown_named_session, shutdown_named_session_if_present};
+pub(crate) use shutdown::{
+    shutdown_named_session, shutdown_named_session_if_present, stop_named_session_for_restart,
+};
 use worktree::{WorktreeJob, WorktreeWorker};
+
+/// What a stopping server leaves behind under its session's name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShutdownDisposition {
+    /// The server stopped and the session did not: its snapshot and deployments stay, so it can
+    /// be restored.
+    Stop,
+    /// The session starts again with fresh panes: its snapshot goes and its deployments stay.
+    Restart,
+    /// The session is gone: its snapshot and deployments go.
+    Delete,
+}
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -198,7 +212,7 @@ pub struct SessionServer {
     resync_totals: ResyncTotals,
     resurrection_metrics: ResurrectionMetrics,
     shutdown: bool,
-    forget_snapshot: bool,
+    shutdown_disposition: ShutdownDisposition,
     /// Bumped by every change a snapshot must capture. Compared against `snapshot_generation`
     /// rather than cleared, so output arriving while a snapshot is being written cannot be
     /// mistaken for output the snapshot already contains.
@@ -1757,7 +1771,7 @@ impl SessionServer {
             resync_totals: ResyncTotals::default(),
             resurrection_metrics: ResurrectionMetrics::default(),
             shutdown: false,
-            forget_snapshot: false,
+            shutdown_disposition: ShutdownDisposition::Stop,
             dirty_generation: 0,
             snapshot_generation: 0,
             snapshot_worker: None,
@@ -1920,25 +1934,33 @@ impl SessionServer {
         self.deployment_worker.take();
         self.automation.take();
         self.finish_pending_media();
-        // A signal-driven stop must capture the final screen generation before killing PTYs. An
-        // explicit session deletion only waits for an already-started write, then removes it.
-        if self.forget_snapshot {
-            self.finish_snapshots();
-            if let Err(err) = self.delete_snapshot() {
-                eprintln!("rozi: could not delete session snapshot: {err}");
+        // A signal-driven stop must capture the final screen generation before killing PTYs. A
+        // restart or deletion only waits for an already-started write, then removes it.
+        match self.shutdown_disposition {
+            ShutdownDisposition::Stop => {
+                if let Err(err) = self.snapshot_before_shutdown() {
+                    eprintln!("rozi: final session snapshot failed: {err}");
+                }
             }
-            if let Err(err) = self.deployments.remove_all() {
-                eprintln!("rozi: could not delete session deployments: {err}");
+            ShutdownDisposition::Restart | ShutdownDisposition::Delete => {
+                self.finish_snapshots();
+                if let Err(err) = self.delete_snapshot() {
+                    eprintln!("rozi: could not delete session snapshot: {err}");
+                }
             }
-        } else if let Err(err) = self.snapshot_before_shutdown() {
-            eprintln!("rozi: final session snapshot failed: {err}");
+        }
+        if self.shutdown_disposition == ShutdownDisposition::Delete
+            && let Err(err) = self.deployments.remove_all()
+        {
+            eprintln!("rozi: could not delete session deployments: {err}");
         }
         // Before the PTYs are killed, so a recording ends on the session's last screen rather than
         // on every pane exiting.
-        self.finish_recordings_for_shutdown(if self.forget_snapshot {
-            crate::recording::EndReason::SessionEnded
-        } else {
-            crate::recording::EndReason::ServerShutdown
+        self.finish_recordings_for_shutdown(match self.shutdown_disposition {
+            ShutdownDisposition::Stop => crate::recording::EndReason::ServerShutdown,
+            ShutdownDisposition::Restart | ShutdownDisposition::Delete => {
+                crate::recording::EndReason::SessionEnded
+            }
         });
         for pane in self.panes.values() {
             if let Some(pty) = &pane.pty {

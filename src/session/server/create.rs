@@ -83,6 +83,33 @@ pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result
     }
 }
 
+/// Stop a running named session and start it again with fresh panes, keeping its deployments, and
+/// return once the new server answers. A session that is not running is refused, because
+/// `sessions new` is what starts one.
+pub(crate) fn restart_named_session(name: &str, resurrect: bool) -> io::Result<()> {
+    if !crate::session::discovery::valid_session_name(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session name",
+        ));
+    }
+    // Checked first, so this cannot stop a session that it then has no way to start again.
+    if !std::env::current_exe()?.exists() {
+        return Err(io::Error::other(
+            "rozi was updated on disk; run the new binary to restart sessions",
+        ));
+    }
+    if !super::stop_named_session_for_restart(name)? {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Session `{name}` is not running. Start it with: rozi sessions new {name} --detach"
+            ),
+        ));
+    }
+    create_detached_session(name, resurrect)
+}
+
 fn already_running(name: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::AlreadyExists,

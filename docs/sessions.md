@@ -39,6 +39,7 @@ rozi sessions new api --cwd ~/src/api  # first pane starts in ~/src/api
 rozi sessions new scratch --detach    # start in the background, without a UI
 rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions list
+rozi sessions restart dev             # start a running session again with fresh panes
 rozi sessions kill dev
 ```
 
@@ -422,6 +423,12 @@ machine shuts down or the server stops before `sessions kill`, it appears in the
 `Restorable`. Add `--no-resurrect` for throwaway work: the session is never saved, and once its
 server stops there is nothing left to restore.
 
+`rozi sessions restart <NAME>` ends a running session's panes and starts it again without a UI, on
+the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-to-a-session), and
+`--remote <HOST>` restarts a session on another machine. A session started with `--no-resurrect`
+needs the option again here to stay unsaved. A session that isn't running is refused; start it with
+`rozi sessions new <NAME> --detach`.
+
 ```bash
 rozi sessions new tests --detach --no-resurrect
 rozi --session tests split --cwd ~/src/api --argv cargo test
@@ -460,8 +467,8 @@ and removing collaborators.
   [Reconnection and switching](remote.md#reconnection-and-switching).
 - A session server and client must be compatible. After upgrading rozi, restart an incompatible
   named session or update the other end.
-- Restarting a session kills its processes and starts fresh panes. It is not the same as detaching
-  and reattaching.
+- Restarting a session kills its processes and starts fresh panes, and keeps its deployed extensions.
+  It is not the same as detaching and reattaching.
 - A session name belongs to one host. The same name on the local machine and on a remote host
   refers to two different sessions.
 

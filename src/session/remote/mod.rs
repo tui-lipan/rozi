@@ -23,7 +23,7 @@ pub(crate) use bootstrap::ensure_remote_binary_in_ui;
 pub(crate) use bootstrap::{append_remote_rozi_command, append_ssh_destination, ssh_base_command};
 pub use connect::RemoteConnectError;
 pub(crate) use connect::connect_remote_within;
-pub use connect::{connect_remote, kill_remote_session};
+pub use connect::{connect_remote, kill_remote_session, restart_remote_session};
 pub use preamble::{RemotePreamble, read_preamble};
 pub use proxy::run_remote_serve;
 pub use target::{RemoteTarget, parse_remote_target};

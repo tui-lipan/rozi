@@ -179,6 +179,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "List connectable sessions",
             ),
             row(
+                "sessions restart <NAME> [--no-resurrect] [--remote <HOST>]",
+                "Start a running session again with fresh panes",
+            ),
+            row(
                 "sessions kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),

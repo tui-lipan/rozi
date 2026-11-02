@@ -837,7 +837,7 @@ pub(crate) fn restart_discovered_session(
     }
     detach_parked_instance(ctx, &entry.name, entry.remote_target.as_ref());
     let remote_config = ctx.state.config.remote.clone();
-    if let Err(err) = shutdown_discovered_session(&entry, &remote_config) {
+    if let Err(err) = stop_discovered_session_for_restart(&entry, &remote_config) {
         crate::pane::pty_events::notify_error(ctx, "Restart failed", err.to_string());
         return Update::full();
     }
@@ -1062,6 +1062,28 @@ pub(crate) fn shutdown_discovered_session(
         return crate::session::server::delete_snapshot(&entry.name);
     }
     shutdown_session(&entry.name)
+}
+
+/// Make way for a restart. A named session keeps its deployments. A remote one is restarted on its
+/// host, and attaching then finds it running. A temporary session is replaced under a new name, so
+/// it really does end.
+fn stop_discovered_session_for_restart(
+    entry: &DiscoveredSession,
+    remote_config: &crate::config::RemoteConfig,
+) -> std::io::Result<()> {
+    if entry.ephemeral {
+        return shutdown_discovered_session(entry, remote_config);
+    }
+    if let Some(target) = &entry.remote_target {
+        return crate::session::remote::restart_remote_session(
+            target,
+            &entry.name,
+            true,
+            remote_config,
+        )
+        .map_err(std::io::Error::other);
+    }
+    crate::session::server::stop_named_session_for_restart(&entry.name).map(|_| ())
 }
 
 pub(crate) fn shutdown_session(name: &str) -> std::io::Result<()> {

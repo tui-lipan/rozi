@@ -42,6 +42,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Start without a UI, optionally never saved",
             ),
             row(
+                "restart <NAME> [--no-resurrect] [--remote <HOST>]",
+                "Start a running session again with fresh panes",
+            ),
+            row(
                 "kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
@@ -87,7 +91,7 @@ pub(super) fn parse(
         return Ok(ParsedCli::SessionsHelp);
     };
     let spelling = format!("sessions {command}");
-    if matches!(command.as_str(), "watch" | "list" | "kill") {
+    if matches!(command.as_str(), "watch" | "list" | "restart" | "kill") {
         if let Some(option) = cli.launch_only_option() {
             return Err(format!("{option} does not apply to {spelling}"));
         }
@@ -107,9 +111,10 @@ pub(super) fn parse(
         "list" => parse_list(iter, cli.remote, cli.config_path),
         "attach" => parse_attach(iter, cli),
         "new" => parse_new(iter, cli),
+        "restart" => parse_restart(iter, cli.remote, cli.config_path),
         "kill" => parse_kill(iter, cli.remote, cli.config_path),
         other => Err(format!(
-            "unknown sessions command `{other}` (expected list, watch, attach, new, or kill)"
+            "unknown sessions command `{other}` (expected list, watch, attach, new, restart, or kill)"
         )),
     }
 }
@@ -293,6 +298,45 @@ fn parse_list(
     }))
 }
 
+/// `sessions restart <NAME> [--no-resurrect] [--remote <HOST>]`.
+fn parse_restart(
+    iter: &mut impl Iterator<Item = String>,
+    mut remote: Option<String>,
+    config_path: Option<String>,
+) -> std::result::Result<ParsedCli, String> {
+    let name = require_value(iter, "sessions restart requires a session name")?;
+    if !session::discovery::valid_session_name(&name) {
+        return Err("invalid session name".to_string());
+    }
+    let mut resurrect = true;
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--no-resurrect" => resurrect = false,
+            "--remote" => {
+                let target = require_value(
+                    iter,
+                    "sessions restart --remote requires a host alias or ssh:// URL",
+                )?;
+                session::remote::parse_remote_target(&target)?;
+                if remote.replace(target).is_some() {
+                    return Err("sessions restart --remote specified more than once".to_string());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after sessions restart"
+                ));
+            }
+        }
+    }
+    Ok(ParsedCli::Sessions(SessionsCommand::Restart {
+        name,
+        resurrect,
+        remote,
+        config_path,
+    }))
+}
+
 fn parse_kill(
     iter: &mut impl Iterator<Item = String>,
     mut remote: Option<String>,
@@ -373,7 +417,49 @@ mod tests {
         ));
         assert_eq!(
             parse_cli_args(vec!["sessions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown sessions command `lst` (expected list, watch, attach, new, or kill)"
+            "unknown sessions command `lst` (expected list, watch, attach, new, restart, or kill)"
+        );
+    }
+
+    #[test]
+    fn sessions_restart_parses_its_options_and_refuses_the_rest() {
+        assert!(matches!(
+            parse(&["sessions", "restart", "dev"]),
+            Ok(ParsedCli::Sessions(SessionsCommand::Restart {
+                name,
+                resurrect: true,
+                remote: None,
+                ..
+            })) if name == "dev"
+        ));
+        for args in [
+            &["sessions", "restart", "dev", "--remote", "workbox"][..],
+            &["--remote", "workbox", "sessions", "restart", "dev"][..],
+        ] {
+            assert!(matches!(
+                parse(args),
+                Ok(ParsedCli::Sessions(SessionsCommand::Restart { remote: Some(host), .. }))
+                    if host == "workbox"
+            ));
+        }
+        assert!(matches!(
+            parse(&["sessions", "restart", "dev", "--no-resurrect"]),
+            Ok(ParsedCli::Sessions(SessionsCommand::Restart {
+                resurrect: false,
+                ..
+            }))
+        ));
+        assert_eq!(
+            parse(&["sessions", "restart"]).expect_err("needs a name"),
+            "sessions restart requires a session name"
+        );
+        assert_eq!(
+            parse(&["sessions", "restart", "dev;rm"]).expect_err("hostile name"),
+            "invalid session name"
+        );
+        assert_eq!(
+            parse(&["sessions", "restart", "dev", "--detach"]).expect_err("not an option here"),
+            "unexpected argument `--detach` after sessions restart"
         );
     }
 

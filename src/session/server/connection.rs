@@ -1077,12 +1077,16 @@ impl SessionServer {
                 }
             }
             ClientMessage::Detach => Vec::new(),
-            ClientMessage::Shutdown => {
+            message @ (ClientMessage::Shutdown | ClientMessage::ShutdownForRestart) => {
                 if !self.client_attached(client_id) || self.client_read_only(client_id) {
                     return Vec::new();
                 }
                 self.shutdown = true;
-                self.forget_snapshot = true;
+                self.shutdown_disposition = if matches!(message, ClientMessage::Shutdown) {
+                    ShutdownDisposition::Delete
+                } else {
+                    ShutdownDisposition::Restart
+                };
                 for pane in self.panes.values() {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.kill();

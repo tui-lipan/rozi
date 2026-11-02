@@ -404,26 +404,47 @@ pub fn kill_remote_session(
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
     }
+    run_remote_sessions_command(target, config, "kill", &["sessions", "kill", session])
+}
+
+/// Restart a named session on the remote host via `rozi sessions restart` over ssh.
+pub fn restart_remote_session(
+    target: &RemoteTarget,
+    session: &str,
+    resurrect: bool,
+    config: &RemoteConfig,
+) -> Result<(), String> {
+    if !crate::session::discovery::valid_session_name(session) {
+        return Err("invalid session name".to_string());
+    }
+    let mut args = vec!["sessions", "restart", session];
+    if !resurrect {
+        args.push("--no-resurrect");
+    }
+    run_remote_sessions_command(target, config, "restart", &args)
+}
+
+fn run_remote_sessions_command(
+    target: &RemoteTarget,
+    config: &RemoteConfig,
+    verb: &str,
+    args: &[&str],
+) -> Result<(), String> {
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = super::binary::resolve(target, config).map_err(|error| error.message)?;
     validate_remote_executable_token(&remote_bin.path)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
-    append_remote_rozi_command(
-        &mut command,
-        &remote_bin.path,
-        &["sessions", "kill", session],
-        remote_bin.family,
-    );
+    append_remote_rozi_command(&mut command, &remote_bin.path, args, remote_bin.family);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = command
         .output()
-        .map_err(|err| format!("remote sessions kill ssh failed: {err}"))?;
+        .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
     if !output.status.success() {
         super::binary::invalidate(target, config);
         return Err(super::sessions_command_failure(
-            "kill",
+            verb,
             &String::from_utf8_lossy(&output.stderr),
         ));
     }

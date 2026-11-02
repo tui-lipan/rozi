@@ -124,6 +124,7 @@ tempfile = "3.27.0"
 # normal build never compiles it: the schema is a checked-in artifact, not something rozi produces
 # at runtime. See the `schema-gen` feature.
 schemars = { version = "1.2.2", features = ["semver1"], optional = true }
+jsonschema = { version = "0.56", default-features = false }
 
 [features]
 # Visual-review tests that compare headless PNG captures. PNG encoding itself is always built,

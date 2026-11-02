@@ -553,6 +553,8 @@ pub struct PendingAttachedControl {
     /// The attachment the request went out on. An answer arriving on any other is not this one's.
     pub epoch: u64,
     pub reply: AttachedReply,
+    /// The control-socket caller to watch, for a request that ends with it.
+    pub caller: Option<u64>,
 }
 
 /// Who is waiting on a request forwarded to a session server.
@@ -561,6 +563,8 @@ pub enum AttachedReply {
     Control(std::sync::mpsc::Sender<crate::control::ControlResponse>),
     /// One of this UI's own recording commands, answered on screen.
     Action(RecordingAction),
+    /// A deployed action run from the palette, answered on screen.
+    PaletteAction(String),
 }
 
 /// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed

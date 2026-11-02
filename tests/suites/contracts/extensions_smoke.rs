@@ -305,6 +305,7 @@ fn command_visibility_follows_the_extension_generation_inner() {
                 },
                 reply,
                 worker: None,
+                caller: None,
             }))
             .unwrap();
         answer.recv_timeout(Duration::from_secs(5)).unwrap()

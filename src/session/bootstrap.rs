@@ -988,6 +988,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 notifications,
             },
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
+            ServerMessage::SessionActions { actions } => Msg::SessionActions { epoch, actions },
         },
     }
 }

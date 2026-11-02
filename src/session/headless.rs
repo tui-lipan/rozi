@@ -267,6 +267,10 @@ fn reply_timeout(command: &crate::control::ControlCommand) -> Option<Duration> {
         ControlCommand::RecordStart { follow: true, .. } => None,
         // Answered once the file is finished: queued frames written and the file synced.
         ControlCommand::RecordStop { .. } => return Some(RECORDING_STOP_TIMEOUT),
+        // The server ends a call by its deadline, which a caller cannot lengthen past the maximum.
+        ControlCommand::Invoke { timeout_ms, .. } => {
+            Some(crate::control::longest_invoke_ms(*timeout_ms))
+        }
         ControlCommand::AgentWait { timeout_ms, .. } => *timeout_ms,
         ControlCommand::AgentPrompt {
             wait: Some(_),

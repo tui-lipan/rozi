@@ -20,6 +20,8 @@ allow = [
     "MPL-2.0",
 ]
 confidence-threshold = 0.9
+# Pulled in by jsonschema through fluent-uri. A no-attribution MIT, like the 0BSD and CC0 allowed above.
+exceptions = [{ allow = ["MIT-0"], crate = "borrow-or-share" }]
 
 [bans]
 multiple-versions = "allow"

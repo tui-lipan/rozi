@@ -109,6 +109,7 @@ pub(super) struct PreparedDeployment {
     /// The settings its services start with, or why the host's config could not supply them.
     pub settings: Result<String, String>,
     pub services: Vec<crate::config::PlacedService>,
+    pub actions: Vec<crate::config::ExtensionAction>,
 }
 
 impl SessionDeployments {
@@ -188,6 +189,7 @@ impl SessionDeployments {
             };
             prepared.push(PreparedDeployment {
                 services: checked.session_services(),
+                actions: checked.actions.clone(),
                 id,
                 generation: record.generation,
                 directory,

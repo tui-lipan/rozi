@@ -35,6 +35,9 @@ pub const MAX_FAILURES: u32 = 5;
 /// Default poll interval for checking running processes and pending service restarts.
 const DEFAULT_SUPERVISOR_TICK: Duration = Duration::from_millis(50);
 
+/// How long a finished process's captured output may take to reach end of file.
+const CAPTURE_DRAIN: Duration = Duration::from_secs(2);
+
 /// Environment the supervisor sets for every extension process it starts, and never takes from the
 /// caller.
 const OWNED_ENV: &[&str] = &[
@@ -57,6 +60,8 @@ const INHERITED_ENV_REMOVED: &[&str] = &[
     crate::config::STATE_DIR_ENV,
     crate::config::SESSION_NAME_ENV,
     "ROZI_SERVICE",
+    crate::config::ACTION_ENV,
+    crate::config::INVOCATION_ENV,
 ];
 
 /// Parameters governing service restart backoff and dormancy.
@@ -263,10 +268,16 @@ pub struct ExitOutcome {
     pub code: Option<i32>,
     pub killed: bool,
     pub timed_out: bool,
-    pub output: Option<String>,
+    pub output: Option<Vec<u8>>,
 }
 
 impl ExitOutcome {
+    pub fn output_text(&self) -> Option<String> {
+        self.output
+            .as_ref()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    }
+
     pub fn is_success(&self) -> bool {
         !self.killed && !self.timed_out && self.code == Some(0)
     }
@@ -346,23 +357,77 @@ pub fn terminate_with_log(
     }
 }
 
+/// A process that has passed every check and has not started.
+pub struct PreparedProcess {
+    command: Command,
+    extension: String,
+    unit: Option<String>,
+    capture: Option<Capture>,
+}
+
 /// One live process managed inside a [`CommandGroup`] with optional stdout capture and log
 /// routing.
 pub struct SupervisedProcess {
     child: Child,
     group: CommandGroup,
-    // Never written. Held open so the process sees end of file once the supervisor is gone,
-    // however it went.
-    _stdin: Option<ChildStdin>,
+    // Held open unless taken, so the process sees end of file once the supervisor is gone, however
+    // it went.
+    stdin: Option<ChildStdin>,
     started: Instant,
     capture: Option<(Capture, std::thread::JoinHandle<Vec<u8>>)>,
     log: Option<Attached>,
+}
+
+impl PreparedProcess {
+    /// Start the process.
+    pub fn launch(mut self) -> Result<SupervisedProcess, SpawnFailure> {
+        let log = log::open(&self.extension, self.unit.as_deref().unwrap_or("placed"));
+        let (mut child, group, log) =
+            spawn_with_log(&mut self.command, log.as_ref(), self.capture.is_some()).map_err(
+                |error| SpawnFailure::SpawnFailed {
+                    detail: error.to_string(),
+                },
+            )?;
+        let capture = self.capture.map(|capture| {
+            let mut stdout = child.stdout.take().expect("piped stdout");
+            let limit = capture.max_bytes;
+            let reader = std::thread::spawn(move || {
+                let mut collected = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match stdout.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let room = limit.saturating_sub(collected.len());
+                            collected.extend_from_slice(&chunk[..n.min(room)]);
+                        }
+                    }
+                }
+                collected
+            });
+            (capture, reader)
+        });
+        Ok(SupervisedProcess {
+            stdin: child.stdin.take(),
+            child,
+            group,
+            started: Instant::now(),
+            capture,
+            log,
+        })
+    }
 }
 
 impl SupervisedProcess {
     /// Validate `spec`, prepare the extension's state directory, and spawn the child process in
     /// its own [`CommandGroup`].
     pub fn spawn(spec: ProcessSpec) -> Result<Self, SpawnFailure> {
+        Self::prepare(spec)?.launch()
+    }
+
+    /// Everything [`Self::spawn`] does short of starting the process, including verifying its
+    /// bundle, which can take a while.
+    pub fn prepare(spec: ProcessSpec) -> Result<PreparedProcess, SpawnFailure> {
         let os = std::env::consts::OS;
         if !spec.platforms.is_empty() && !spec.platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
@@ -385,22 +450,7 @@ impl SupervisedProcess {
             detail: format!("cannot prepare the extension's state directory: {error}"),
         })?;
         let mut command = build_command(&spec.launch, &spec.bundle_dir)?;
-        match &spec.cwd {
-            SpawnCwd::Bundle { path } => {
-                if !super::bundle::is_contained(path) {
-                    return Err(SpawnFailure::SpawnFailed {
-                        detail: format!("working directory `{path}` is outside the extension"),
-                    });
-                }
-                command.current_dir(spec.bundle_dir.join(path));
-            }
-            SpawnCwd::Host { path } => {
-                if Path::new(path).is_dir() {
-                    command.current_dir(path);
-                }
-            }
-            SpawnCwd::Inherit => {}
-        }
+        set_working_directory(&mut command, &spec.cwd, &spec.bundle_dir)?;
         for key in INHERITED_ENV_REMOVED {
             command.env_remove(key);
         }
@@ -418,41 +468,17 @@ impl SupervisedProcess {
         command.env(crate::config::STATE_DIR_ENV, &state_dir);
         command.env(crate::state::CREDENTIAL_ENV, &spec.credential);
         command.stdin(Stdio::piped());
-
-        let log = log::open(&extension, spec.unit.as_deref().unwrap_or("placed"));
-        let (mut child, group, log) =
-            spawn_with_log(&mut command, log.as_ref(), spec.capture.is_some()).map_err(
-                |error| SpawnFailure::SpawnFailed {
-                    detail: error.to_string(),
-                },
-            )?;
-        let capture = spec.capture.map(|capture| {
-            let mut stdout = child.stdout.take().expect("piped stdout");
-            let limit = capture.max_bytes;
-            let reader = std::thread::spawn(move || {
-                let mut collected = Vec::new();
-                let mut chunk = [0u8; 8192];
-                loop {
-                    match stdout.read(&mut chunk) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let room = limit.saturating_sub(collected.len());
-                            collected.extend_from_slice(&chunk[..n.min(room)]);
-                        }
-                    }
-                }
-                collected
-            });
-            (capture, reader)
-        });
-        Ok(Self {
-            _stdin: child.stdin.take(),
-            child,
-            group,
-            started: Instant::now(),
-            capture,
-            log,
+        Ok(PreparedProcess {
+            command,
+            extension,
+            unit: spec.unit,
+            capture: spec.capture,
         })
+    }
+
+    /// Take the write end of the process's standard input, so it sees end of file once written.
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.stdin.take()
     }
 
     pub fn pid(&self) -> u32 {
@@ -466,9 +492,21 @@ impl SupervisedProcess {
     /// Check whether the process has exited or exceeded its capture timeout. When it has, reaps or
     /// terminates its [`CommandGroup`], finishes its log, and returns the [`ExitOutcome`].
     pub fn poll(&mut self) -> Option<ExitOutcome> {
-        let (code, timed_out) = if let Some((capture, _)) = &self.capture
-            && self.started.elapsed() > Duration::from_millis(capture.timeout_ms)
-        {
+        let expired = self.capture.as_ref().is_some_and(|(capture, _)| {
+            self.started.elapsed() > Duration::from_millis(capture.timeout_ms)
+        });
+        self.finish_if_ended(expired, None)
+    }
+
+    /// [`Self::poll`] against `deadline` in place of the capture's timeout, which counts from the
+    /// spawn. Reading the output stops at `deadline` too, so a process that escaped its group and
+    /// holds the pipe cannot carry the caller past it.
+    pub fn poll_until(&mut self, deadline: Instant) -> Option<ExitOutcome> {
+        self.finish_if_ended(Instant::now() >= deadline, Some(deadline))
+    }
+
+    fn finish_if_ended(&mut self, expired: bool, deadline: Option<Instant>) -> Option<ExitOutcome> {
+        let (code, timed_out) = if expired {
             self.group.terminate(&mut self.child);
             (None, true)
         } else {
@@ -478,7 +516,8 @@ impl SupervisedProcess {
                 Err(_) => (None, false),
             }
         };
-        let output = self.capture.take().map(|(_, reader)| collect(reader));
+        let drain_until = Instant::now() + CAPTURE_DRAIN;
+        let output = self.take_output(deadline.map_or(drain_until, |at| at.min(drain_until)));
         let outcome = ExitOutcome {
             code,
             killed: false,
@@ -494,7 +533,7 @@ impl SupervisedProcess {
     /// Terminate the process and its descendants immediately, recording `note` in its log.
     pub fn kill(mut self, note: &str) -> ExitOutcome {
         terminate_with_log(&mut self.child, &self.group, self.log.as_ref(), note);
-        let output = self.capture.take().map(|(_, reader)| collect(reader));
+        let output = self.take_output(Instant::now() + CAPTURE_DRAIN);
         ExitOutcome {
             code: None,
             killed: true,
@@ -502,10 +541,48 @@ impl SupervisedProcess {
             output,
         }
     }
+
+    fn take_output(&mut self, until: Instant) -> Option<Vec<u8>> {
+        self.capture
+            .take()
+            .and_then(|(_, reader)| collect(reader, until))
+    }
 }
 
-fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> String {
-    String::from_utf8_lossy(&reader.join().unwrap_or_default()).into_owned()
+fn set_working_directory(
+    command: &mut Command,
+    cwd: &SpawnCwd,
+    bundle_dir: &Path,
+) -> Result<(), SpawnFailure> {
+    match cwd {
+        SpawnCwd::Bundle { path } => {
+            if !super::bundle::is_contained(path) {
+                return Err(SpawnFailure::SpawnFailed {
+                    detail: format!("working directory `{path}` is outside the extension"),
+                });
+            }
+            command.current_dir(bundle_dir.join(path));
+        }
+        SpawnCwd::Host { path } => {
+            if Path::new(path).is_dir() {
+                command.current_dir(path);
+            }
+        }
+        SpawnCwd::Inherit => {}
+    }
+    Ok(())
+}
+
+/// What a process captured. `None` when a process that escaped its group still holds the pipe
+/// open: the output never ends, and nothing may wait on it.
+fn collect(reader: std::thread::JoinHandle<Vec<u8>>, until: Instant) -> Option<Vec<u8>> {
+    while !reader.is_finished() {
+        if Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Some(reader.join().unwrap_or_default())
 }
 
 fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {
@@ -1199,7 +1276,7 @@ mod tests {
         };
         assert!(outcome.timed_out);
         assert!(!outcome.killed);
-        assert_eq!(outcome.output.as_deref(), Some("partial-out"));
+        assert_eq!(outcome.output_text().as_deref(), Some("partial-out"));
 
         while crate::platform::command::process_is_alive(parent_pid) {
             assert!(Instant::now() < deadline, "timed-out process survived");

@@ -209,6 +209,11 @@ pub enum ClientMessage {
         request_id: u64,
         request: crate::control::ControlRequest,
     },
+    /// The caller of an [`Self::AttachedControl`] has gone, so stop the action call it started. The
+    /// call still answers `request_id`.
+    CancelAttachedControl {
+        request_id: u64,
+    },
     /// Replace one publisher's rows in the pane, leaving every other publisher's alone. An empty
     /// list withdraws them; once no agent publisher has rows, the pane falls back to screen
     /// detection.
@@ -549,6 +554,10 @@ pub enum ServerMessage {
         session_instance: super::SessionInstanceId,
         session: String,
         notifications: Vec<crate::control::SessionNotification>,
+    },
+    /// The deployed actions a client can offer in its palette, sent on attach and when they change.
+    SessionActions {
+        actions: Vec<crate::control::PaletteAction>,
     },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {

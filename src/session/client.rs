@@ -816,6 +816,11 @@ impl SessionClient {
         });
     }
 
+    /// Stop the action call started by an earlier [`Self::attached_control`].
+    pub fn cancel_attached_control(&self, request_id: u64) {
+        self.send_control(ClientMessage::CancelAttachedControl { request_id });
+    }
+
     /// Ask the host to reload its sleep policy; only a writable controller may do this.
     pub fn reload_sleep_policy(&self) {
         self.send_control(ClientMessage::ReloadSleepPolicy);

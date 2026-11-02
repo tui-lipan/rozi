@@ -789,6 +789,7 @@ mod tests {
                 },
                 reply,
                 worker: None,
+                caller: None,
             }))
             .unwrap();
         response

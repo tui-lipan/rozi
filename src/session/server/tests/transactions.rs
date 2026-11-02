@@ -360,6 +360,7 @@ fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
                 request: request(command.clone()),
                 reply,
                 worker: None,
+                caller: None,
             }))
             .unwrap();
             let response = response.recv().unwrap();

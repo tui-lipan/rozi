@@ -393,6 +393,17 @@ pub(crate) fn handle_control_request(
                 held_sessions: held,
             })
         }
+        ControlCommand::Invoke { .. }
+        | ControlCommand::InvocationList
+        | ControlCommand::InvocationCancel { .. }
+        | ControlCommand::ActionsList => {
+            return crate::ops::attached_control::forward_action(
+                ctx,
+                envelope.request,
+                envelope.reply,
+                envelope.caller,
+            );
+        }
         ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
             return crate::ops::attached_control::forward_agent(
                 ctx,
@@ -2278,6 +2289,7 @@ mod tests {
             },
             reply,
             worker: None,
+            caller: None,
         });
         (message, response)
     }
@@ -2487,6 +2499,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .unwrap();
 
@@ -2518,6 +2531,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .unwrap();
 
@@ -2619,6 +2633,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch writable status request");
             assert!(response.recv().unwrap().ok);
@@ -2657,6 +2672,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch read-only status request");
             let response = response.recv().unwrap();
@@ -2724,6 +2740,7 @@ mod tests {
                 },
                 reply,
                 worker: None,
+                caller: None,
             },
             response,
         )
@@ -2903,6 +2920,7 @@ mod tests {
                             },
                             reply: tx,
                             worker: None,
+                            caller: None,
                         },
                     ))
                     .expect("dispatch notify");
@@ -2929,6 +2947,7 @@ mod tests {
                         },
                         reply: tx,
                         worker: None,
+                        caller: None,
                     },
                 ))
                 .expect("dispatch notify");
@@ -3002,6 +3021,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch send-text at a starting pane");
             assert!(response.recv().unwrap().ok);
@@ -3067,6 +3087,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch send-text at an exited pane");
             let response = response.recv().unwrap();
@@ -3104,6 +3125,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("dispatch list panes");
             let data = response.recv().unwrap().data.unwrap();
@@ -3138,6 +3160,7 @@ mod tests {
                         },
                         reply,
                         worker: None,
+                        caller: None,
                     }))
                     .expect("dispatch layout get");
                 let response = response.recv().unwrap();
@@ -3220,6 +3243,7 @@ mod tests {
                 },
                 reply,
                 worker: None,
+                caller: None,
             }))
             .expect("dispatch control request");
         response.recv().unwrap()
@@ -3999,6 +4023,7 @@ mod tests {
                     },
                     reply,
                     worker: None,
+                    caller: None,
                 }))
                 .expect("update metrics");
             assert_eq!(level, tui_lipan::UpdateLevel::None);
@@ -4064,6 +4089,7 @@ mod tests {
                 },
                 reply,
                 worker: None,
+                caller: None,
             }))
             .expect("dispatch control request");
         response

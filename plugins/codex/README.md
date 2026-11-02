@@ -43,7 +43,7 @@ each thread's state from the background server and lists every loaded thread as 
 
 | Codex event | Rozi state |
 | --- | --- |
-| First prompt of a new or resumed thread | `working`, with the native thread ID |
+| First prompt of a new or resumed thread | `working`, with the native thread ID, once the prompt is submitted |
 | Prompt submitted or tool running | `working` |
 | Approval requested | `blocked` |
 | `request_user_input` question asked | `blocked` |

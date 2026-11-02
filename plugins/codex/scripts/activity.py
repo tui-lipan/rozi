@@ -35,10 +35,14 @@ DELIVERY_BUDGET = 0.9
 SHORT_HOOK_BUDGETS = {"Interrupt": 1.2}
 
 
-def session_start_transition(_event: dict) -> tuple[str, str | None]:
-    # Codex starts a thread's hooks at its first prompt, so a run is already under way. Saying idle
-    # here would end the run screen detection just saw start, and count it as finished.
-    return "working", None
+def session_start_transition(event: dict) -> tuple[str | None, str | None]:
+    """A compaction continues a run. Anything else only starts a lifecycle, and says no state.
+
+    Codex fires this at a thread's first prompt, so idle would end the run screen detection just
+    saw start and count it as finished. Working could stick: another SessionStart hook can stop the
+    turn, and then no later hook runs. UserPromptSubmit is what says a turn really started.
+    """
+    return ("working" if event.get("source") == "compact" else None), None
 
 
 def prompt_transition(_event: dict) -> tuple[str, str | None]:
@@ -179,6 +183,8 @@ def start_run(db: sqlite3.Connection, row: tuple | None, event: dict) -> tuple:
         queue_release(db, row)
     row = ("codex:" + uuid.uuid4().hex, event["session_id"], 0, 0)
     db.execute("INSERT OR REPLACE INTO run VALUES (1, ?, ?, ?, ?)", row)
+    # The previous lifecycle's undelivered state is not this one's to report.
+    db.execute("UPDATE status SET dirty = 0")
     clear_waits(db)
     return row
 
@@ -210,7 +216,9 @@ def current_run(db: sqlite3.Connection, event: dict) -> tuple | None:
 
 
 def queue_release(db: sqlite3.Connection, row: tuple) -> None:
-    db.execute("INSERT OR IGNORE INTO releases VALUES (?, ?)", (row[0], row[2]))
+    # A token that never reported owns nothing to give back.
+    if row[2] > 0:
+        db.execute("INSERT OR IGNORE INTO releases VALUES (?, ?)", (row[0], row[2]))
 
 
 def clear_waits(db: sqlite3.Connection) -> None:
@@ -290,7 +298,7 @@ def open_wait(db: sqlite3.Connection) -> tuple | None:
 
 def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     row = current_run(db, event)
-    if row is None:
+    if row is None or change[0] is None:
         return
     update_blockers(db, event, change)
     blocker = open_wait(db)

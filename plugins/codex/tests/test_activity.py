@@ -57,6 +57,11 @@ class ActivityTests(unittest.TestCase):
     def hook(self, name, session="thread-id", **extra):
         activity.handle({"hook_event_name": name, "session_id": session, **extra}, self.env)
 
+    def first_turn(self, session="thread-id", **extra):
+        """A client's first prompt in a thread: Codex fires both, and only the prompt reports."""
+        self.hook("SessionStart", session=session, **extra)
+        self.hook("UserPromptSubmit", session=session)
+
     def field(self, flag, call=-1):
         args = self.calls[call][0]
         return args[args.index(flag) + 1]
@@ -74,18 +79,57 @@ class ActivityTests(unittest.TestCase):
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.hook("Stop")
         self.hook("SessionEnd", reason="other")
-        self.assertEqual([self.field("--state", i) for i in range(6)],
-                         ["working", "working", "working", "blocked", "working", "done"])
-        self.assertEqual([self.field("--seq", i) for i in range(7)], list(map(str, range(1, 8))))
-        self.assertEqual(len({self.field("--integration", i) for i in range(7)}), 1)
+        self.assertEqual([self.field("--state", i) for i in range(5)],
+                         ["working", "working", "blocked", "working", "done"])
+        self.assertEqual([self.field("--seq", i) for i in range(6)], list(map(str, range(1, 7))))
+        self.assertEqual(len({self.field("--integration", i) for i in range(6)}), 1)
         self.assertTrue(self.field("--integration").startswith("codex:"))
         self.assertEqual(self.field("--agent", 0), "codex")
         self.assertEqual(self.field("--native-session", 0), "thread-id")
         self.assertEqual(self.calls[-1][0][1:3], ["agents", "release"])
         self.assertNotIn("--native-session", self.calls[-1][0])
 
+    def test_a_turn_another_hook_stopped_leaves_the_pane_to_screen_detection(self):
+        # Another SessionStart hook can return `continue: false`, and then Codex runs no later hook
+        # for that turn. Any state said here would outrank the screen with nothing to replace it.
+        self.hook("SessionStart", source="startup")
+        self.assertEqual(self.calls, [])
+        self.hook("SessionStart", source="startup")
+        self.assertEqual(self.calls, [])
+        self.hook("UserPromptSubmit")
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.field("--state"), "working")
+        self.assertEqual(self.field("--native-session"), "thread-id")
+        self.assertEqual(self.field("--seq"), "1")
+
+    def test_a_stopped_turn_in_a_new_thread_still_releases_the_old_one(self):
+        self.first_turn()
+        old = self.field("--integration")
+        self.hook("Stop")
+        count = len(self.calls)
+        self.hook("SessionStart", session="cleared", source="clear")
+        self.assertEqual(len(self.calls), count + 1)
+        self.assertEqual(self.calls[-1][0][1:3], ["agents", "release"])
+        self.assertEqual(self.field("--integration"), old)
+
+    def test_exit_before_any_report_has_nothing_to_release(self):
+        self.hook("SessionStart", source="startup")
+        self.hook("SessionEnd", reason="other")
+        self.assertEqual(self.calls, [])
+
+    def test_an_old_threads_undelivered_state_is_not_reported_for_the_new_one(self):
+        self.first_turn()
+        old = self.field("--integration")
+        with patch.object(activity.subprocess, "run", side_effect=FileNotFoundError("rozi")):
+            with self.assertRaises(FileNotFoundError):
+                self.hook("Stop")
+        self.calls.clear()
+        self.hook("SessionStart", session="cleared", source="clear")
+        self.assertEqual([call[0][1:3] for call in self.calls], [["agents", "release"]])
+        self.assertEqual(self.field("--integration"), old)
+
     def test_exit_tombstone_ignores_late_hooks(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("SessionEnd")
         self.hook("PostToolUse", **BASH)
         self.hook("Stop")
@@ -94,8 +138,8 @@ class ActivityTests(unittest.TestCase):
 
     def test_exit_releases_only_the_thread_on_screen(self):
         # Codex ends every thread a TUI opened when it exits, the earlier ones included.
-        self.hook("SessionStart")
-        self.hook("SessionStart", session="second", source="resume")
+        self.first_turn()
+        self.first_turn(session="second", source="resume")
         self.hook("SessionEnd", session="thread-id")
         self.assertEqual(self.field("--native-session"), "second")
         self.hook("SessionEnd", session="second")
@@ -103,17 +147,17 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--integration"), self.field("--integration", -2))
 
     def test_resume_in_new_process_gets_fresh_token(self):
-        self.hook("SessionStart")
+        self.first_turn()
         old = self.field("--integration")
         self.hook("SessionEnd")
-        self.hook("SessionStart", source="resume")
+        self.first_turn(source="resume")
         self.assertNotEqual(old, self.field("--integration"))
         self.assertEqual(self.field("--seq"), "1")
 
     def test_in_process_resume_releases_old_thread_before_reporting_new_one(self):
-        self.hook("SessionStart")
+        self.first_turn()
         token = self.field("--integration")
-        self.hook("SessionStart", session="new-id", source="resume")
+        self.first_turn(session="new-id", source="resume")
         self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
         self.assertEqual(token, self.field("--integration", -2))
         self.assertNotEqual(token, self.field("--integration"))
@@ -123,8 +167,8 @@ class ActivityTests(unittest.TestCase):
 
     def test_prompt_in_a_thread_started_earlier_claims_the_pane(self):
         # Returning to a thread this TUI already started fires no second SessionStart.
-        self.hook("SessionStart")
-        self.hook("SessionStart", session="second", source="resume")
+        self.first_turn()
+        self.first_turn(session="second", source="resume")
         second = self.field("--integration")
         self.hook("UserPromptSubmit", session="thread-id")
         self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
@@ -138,13 +182,13 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--seq"), "1")
 
     def test_tool_events_from_another_thread_cannot_claim_the_pane(self):
-        self.hook("SessionStart")
+        self.first_turn()
         for name in ("PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt"):
             self.hook(name, session="background", **BASH)
         self.assertEqual(len(self.calls), 1)
 
     def test_compaction_preserves_token_and_working_state(self):
-        self.hook("SessionStart")
+        self.first_turn()
         token = self.field("--integration")
         self.hook("PreCompact", trigger="auto")
         self.hook("SessionStart", source="compact")
@@ -153,14 +197,14 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_clear_starts_a_fresh_token_for_the_new_thread(self):
-        self.hook("SessionStart")
+        self.first_turn()
         old = self.field("--integration")
-        self.hook("SessionStart", session="cleared", source="clear")
+        self.first_turn(session="cleared", source="clear")
         self.assertNotEqual(old, self.field("--integration"))
         self.assertEqual(self.field("--state"), "working")
 
     def test_subagent_hooks_cannot_change_parent(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("UserPromptSubmit")
         self.hook("SubagentStart", agent_id="child", agent_type="default")
         self.hook("SubagentStop", agent_id="child", agent_transcript_path="child.jsonl")
@@ -168,7 +212,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
 
     def test_interrupt_clears_waits_and_reports_idle(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("Interrupt")
@@ -176,7 +220,7 @@ class ActivityTests(unittest.TestCase):
         self.assertNotIn("--reason", self.calls[-1][0])
 
     def test_approved_permission_clears_when_its_call_completes(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.assertEqual(self.field("--state"), "blocked")
@@ -185,7 +229,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_parallel_completion_keeps_the_approval_open(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.hook("PreToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.permission()
@@ -195,7 +239,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_a_call_started_after_the_approval_does_not_hold_it(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("PreToolUse", tool_use_id="later", tool_name="Bash", tool_input={"command": "ls"})
@@ -205,7 +249,7 @@ class ActivityTests(unittest.TestCase):
     def test_network_approval_for_the_same_command_needs_one_completion(self):
         # Codex reports a running command's network access as a second Bash approval carrying
         # the same command and a `network-access` description.
-        self.hook("SessionStart")
+        self.first_turn()
         curl = {"tool_name": "Bash", "tool_input": {"command": "curl https://example.com"}}
         self.hook("PreToolUse", tool_use_id="exec-1", **curl)
         self.permission(**curl)
@@ -216,7 +260,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_mcp_arguments_named_description_are_not_special(self):
-        self.hook("SessionStart")
+        self.first_turn()
         deploy = {"tool_name": "mcp__ops__deploy",
                   "tool_input": {"description": "production deployment", "target": "foo"}}
         self.hook("PreToolUse", tool_use_id="mcp-1", **deploy)
@@ -226,7 +270,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_identical_parallel_calls_need_both_completions(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.hook("PreToolUse", tool_use_id="exec-2", **BASH)
         self.permission()
@@ -237,7 +281,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_approval_without_a_running_call_stays_until_the_turn_ends(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("UserPromptSubmit")
         self.hook("PermissionRequest", tool_name="Bash", tool_input={"command": "ls"})
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
@@ -249,7 +293,7 @@ class ActivityTests(unittest.TestCase):
     def test_write_stdin_approval_waits_for_its_exec_call_across_turns(self):
         # Codex fires no PreToolUse for write_stdin, and the command it writes to can outlive the
         # turn that started it, so only its approval's parent_call_id identifies the call.
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("UserPromptSubmit")
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.hook("Stop")
@@ -264,7 +308,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_write_stdin_approval_ignores_other_running_calls(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.hook("PreToolUse", tool_use_id="exec-2", tool_name="Bash", tool_input={"command": "ls"})
         self.hook("PermissionRequest", tool_name="write_stdin", tool_input={
@@ -275,7 +319,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_denied_permission_clears_when_the_turn_ends(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("Stop")
@@ -285,7 +329,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_nested_codex_in_a_tool_shell_cannot_claim_the_pane(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.env["CODEX_THREAD_ID"] = "thread-id"
         for name in ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"):
             self.hook(name, session="nested")
@@ -294,7 +338,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "done")
 
     def test_question_tool_blocks_until_its_own_completion(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("PreToolUse", tool_name="request_user_input", tool_use_id="question", tool_input={})
         self.assertEqual(self.field("--state"), "blocked")
         self.assertEqual(self.field("--reason"), "Question needs an answer")
@@ -315,7 +359,7 @@ class ActivityTests(unittest.TestCase):
         # A remote pane, or one in a session no window shows, has no ROZI_SOCKET. rozi sends
         # its report to the session server ROZI_SESSION_INSTANCE names, so the hook still reports.
         self.env.pop("ROZI_SOCKET")
-        self.hook("SessionStart")
+        self.first_turn()
         args, kwargs = self.calls[-1]
         self.assertEqual(args[1:3], ["agents", "report"])
         self.assertNotIn("--session", args)
@@ -324,12 +368,12 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["ROZI_SESSION_INSTANCE"], "session-instance")
 
     def test_invalid_thread_id_cannot_claim_pane(self):
-        self.hook("SessionStart", session=None)
+        self.first_turn(session=None)
         self.hook("UserPromptSubmit", session="")
         self.assertEqual(self.calls, [])
 
     def test_cli_uses_literal_argv_and_matching_environment(self):
-        self.hook("SessionStart", session="literal ; $() ż")
+        self.first_turn(session="literal ; $() ż")
         args, kwargs = self.calls[-1]
         self.assertEqual(args[0], self.env["ROZI_BIN"])
         self.assertEqual(self.field("--native-session"), "literal ; $() ż")
@@ -342,13 +386,13 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(kwargs["stderr"], subprocess.PIPE)
 
     def test_prompts_and_tool_input_are_not_reported(self):
-        self.hook("SessionStart")
+        self.first_turn()
         self.hook("UserPromptSubmit", prompt="secret prompt")
         self.permission(tool_input={"command": "echo secret-command"})
         self.assertNotIn("secret", str(self.calls))
 
     def test_timeout_still_persists_sequence(self):
-        self.hook("SessionStart")
+        self.first_turn()
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.hook("UserPromptSubmit")
@@ -356,7 +400,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--seq"), "3")
 
     def test_concurrent_hooks_deliver_in_sequence_order(self):
-        self.hook("SessionStart")
+        self.first_turn()
         original = self.record
 
         def slow_record(args, **kwargs):
@@ -374,7 +418,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(seqs[-1], 5)
 
     def test_twenty_parallel_hooks_preserve_waits_and_deliver_latest_state(self):
-        self.hook("SessionStart")
+        self.first_turn()
         waiting = {"tool_name": "Bash", "tool_input": {"command": "waiting"}}
         self.hook("PreToolUse", tool_use_id="waiting", **waiting)
         events = [
@@ -410,7 +454,7 @@ class ActivityTests(unittest.TestCase):
             db.close()
 
     def test_slow_delivery_does_not_lock_out_a_permission_event(self):
-        self.hook("SessionStart")
+        self.first_turn()
         sending = threading.Event()
         unblock = threading.Event()
         original = self.record
@@ -438,7 +482,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "blocked")
 
     def test_state_lock_longer_than_one_second_retries_without_losing_permission(self):
-        self.hook("SessionStart")
+        self.first_turn()
         path = activity.state_path(self.env)
         owner = activity.open_state(path)
         owner.execute("BEGIN IMMEDIATE")
@@ -466,7 +510,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--seq"), "2")
 
     def test_busy_transaction_rolls_back_before_retrying_the_event(self):
-        self.hook("SessionStart")
+        self.first_turn()
         original = activity.record_event
         attempts = 0
 
@@ -492,7 +536,7 @@ class ActivityTests(unittest.TestCase):
         with patch.object(activity, "persist_once", side_effect=error) as persist, \
              patch.object(activity.time, "monotonic", side_effect=[10, 14]):
             with self.assertRaises(activity.sqlite3.OperationalError):
-                self.hook("SessionStart")
+                self.first_turn()
         self.assertEqual(persist.call_count, 1)
         self.assertEqual(self.calls, [])
 
@@ -510,7 +554,7 @@ class ActivityTests(unittest.TestCase):
     def test_non_lock_database_failure_is_not_retried(self):
         with patch.object(activity, "persist_once", side_effect=activity.sqlite3.OperationalError("disk I/O error")) as persist:
             with self.assertRaises(activity.sqlite3.OperationalError):
-                self.hook("SessionStart")
+                self.first_turn()
         self.assertEqual(persist.call_count, 1)
 
     def test_switch_retries_release_after_timeout_launch_failure_or_nonzero_exit(self):
@@ -520,7 +564,7 @@ class ActivityTests(unittest.TestCase):
         )
         for index, failure in enumerate(failures):
             self.env["ROZI_PANE"] = str(600 + index)
-            self.hook("SessionStart")
+            self.first_turn()
             old_token = self.field("--integration")
             with patch.object(activity.subprocess, "run", side_effect=[failure]):
                 if isinstance(failure, Exception):
@@ -537,10 +581,10 @@ class ActivityTests(unittest.TestCase):
             self.assertEqual(self.field("--state"), "blocked")
 
     def test_timed_out_release_that_reached_server_allows_new_claim(self):
-        self.hook("SessionStart")
+        self.first_turn()
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.hook("SessionStart", session="new-id", source="resume")
+                self.first_turn(session="new-id", source="resume")
         refused = subprocess.CompletedProcess([], 1, stderr="integration token belongs to a retired agent incarnation\n")
         with patch.object(activity.subprocess, "run", side_effect=[refused, subprocess.CompletedProcess([], 0)]):
             self.hook("UserPromptSubmit", session="new-id")
@@ -553,7 +597,7 @@ class ActivityTests(unittest.TestCase):
             db.close()
 
     def test_retry_of_a_timed_out_report_uses_a_newer_sequence(self):
-        self.hook("SessionStart")
+        self.first_turn()
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.hook("UserPromptSubmit")
@@ -567,21 +611,21 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(self.field("--state"), "working")
 
     def test_state_is_separate_for_each_server_and_pane(self):
-        self.hook("SessionStart")
+        self.first_turn()
         first = self.field("--integration")
         self.env["ROZI_SESSION_INSTANCE"] = "another-server"
-        self.hook("SessionStart")
+        self.first_turn()
         self.assertNotEqual(first, self.field("--integration"))
         self.env["ROZI_PANE"] = "8"
-        self.hook("SessionStart")
+        self.first_turn()
         self.assertEqual(len(list(Path(self.temp.name).rglob("*.sqlite3"))), 3)
 
     def test_successive_clients_in_one_pane_share_state_but_not_tokens(self):
         # A client that exited without releasing, such as one that crashed, is released by the
         # next client's first SessionStart in the same pane.
-        self.hook("SessionStart")
+        self.first_turn()
         crashed = self.field("--integration")
-        self.hook("SessionStart", session="next-client")
+        self.first_turn(session="next-client")
         self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
         self.assertEqual(self.field("--integration", -2), crashed)
         self.assertNotEqual(self.field("--integration"), crashed)
@@ -669,8 +713,7 @@ class ShellLaunchTests(unittest.TestCase):
         calls = [line.split() for line in self.log.read_text().splitlines()]
         states = [args[args.index("--state") + 1] if "--state" in args else args[1]
                   for args in calls]
-        self.assertEqual(states, ["working", "working", "working", "blocked", "working", "done",
-                                  "release"])
+        self.assertEqual(states, ["working", "working", "blocked", "working", "done", "release"])
         tokens = {args[args.index("--integration") + 1] for args in calls}
         self.assertEqual(len(tokens), 1)
 

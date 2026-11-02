@@ -555,6 +555,8 @@ struct TrackedAgentReference {
     incarnation: u64,
     /// Runs this incarnation finished; see [`protocol::AgentRecord::completions`].
     completions: u64,
+    /// Whether it has been working since its last run ended. Being blocked leaves this set.
+    run_open: bool,
 }
 
 /// The process a detection sweep named as a pane's agent.

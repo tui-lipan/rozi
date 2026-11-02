@@ -352,6 +352,14 @@ pub fn terminate_with_log(
     }
 }
 
+/// A process checked and ready to start, for a caller with a last word on whether it does.
+pub struct PreparedProcess {
+    command: Command,
+    extension: String,
+    unit: Option<String>,
+    capture: Option<Capture>,
+}
+
 /// One live process managed inside a [`CommandGroup`] with optional stdout capture and log
 /// routing.
 pub struct SupervisedProcess {
@@ -365,10 +373,56 @@ pub struct SupervisedProcess {
     log: Option<Attached>,
 }
 
+impl PreparedProcess {
+    /// Start the process.
+    pub fn launch(mut self) -> Result<SupervisedProcess, SpawnFailure> {
+        let log = log::open(&self.extension, self.unit.as_deref().unwrap_or("placed"));
+        let (mut child, group, log) =
+            spawn_with_log(&mut self.command, log.as_ref(), self.capture.is_some()).map_err(
+                |error| SpawnFailure::SpawnFailed {
+                    detail: error.to_string(),
+                },
+            )?;
+        let capture = self.capture.map(|capture| {
+            let mut stdout = child.stdout.take().expect("piped stdout");
+            let limit = capture.max_bytes;
+            let reader = std::thread::spawn(move || {
+                let mut collected = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match stdout.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let room = limit.saturating_sub(collected.len());
+                            collected.extend_from_slice(&chunk[..n.min(room)]);
+                        }
+                    }
+                }
+                collected
+            });
+            (capture, reader)
+        });
+        Ok(SupervisedProcess {
+            _stdin: child.stdin.take(),
+            child,
+            group,
+            started: Instant::now(),
+            capture,
+            log,
+        })
+    }
+}
+
 impl SupervisedProcess {
     /// Validate `spec`, prepare the extension's state directory, and spawn the child process in
     /// its own [`CommandGroup`].
     pub fn spawn(spec: ProcessSpec) -> Result<Self, SpawnFailure> {
+        Self::prepare(spec)?.launch()
+    }
+
+    /// Everything [`Self::spawn`] does short of starting the process, including verifying its
+    /// bundle, which can take a while.
+    pub fn prepare(spec: ProcessSpec) -> Result<PreparedProcess, SpawnFailure> {
         let os = std::env::consts::OS;
         if !spec.platforms.is_empty() && !spec.platforms.iter().any(|platform| platform == os) {
             return Err(SpawnFailure::UnsupportedPlatform { os: os.to_string() });
@@ -424,40 +478,11 @@ impl SupervisedProcess {
         command.env(crate::config::STATE_DIR_ENV, &state_dir);
         command.env(crate::state::CREDENTIAL_ENV, &spec.credential);
         command.stdin(Stdio::piped());
-
-        let log = log::open(&extension, spec.unit.as_deref().unwrap_or("placed"));
-        let (mut child, group, log) =
-            spawn_with_log(&mut command, log.as_ref(), spec.capture.is_some()).map_err(
-                |error| SpawnFailure::SpawnFailed {
-                    detail: error.to_string(),
-                },
-            )?;
-        let capture = spec.capture.map(|capture| {
-            let mut stdout = child.stdout.take().expect("piped stdout");
-            let limit = capture.max_bytes;
-            let reader = std::thread::spawn(move || {
-                let mut collected = Vec::new();
-                let mut chunk = [0u8; 8192];
-                loop {
-                    match stdout.read(&mut chunk) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let room = limit.saturating_sub(collected.len());
-                            collected.extend_from_slice(&chunk[..n.min(room)]);
-                        }
-                    }
-                }
-                collected
-            });
-            (capture, reader)
-        });
-        Ok(Self {
-            _stdin: child.stdin.take(),
-            child,
-            group,
-            started: Instant::now(),
-            capture,
-            log,
+        Ok(PreparedProcess {
+            command,
+            extension,
+            unit: spec.unit,
+            capture: spec.capture,
         })
     }
 

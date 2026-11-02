@@ -18,7 +18,7 @@ use crate::control::{
     ACTION_PAYLOAD_BYTES, ActionConcurrency, ActionInfo, ControlCommand, ControlErrorCode,
     ControlResponse, InvocationInfo, InvocationResult,
 };
-use crate::extension_runtime::protocol::{Capture, Launch, SpawnCwd};
+use crate::extension_runtime::protocol::{Capture, Launch, SpawnCwd, SpawnFailure};
 use crate::extension_runtime::supervisor::{ProcessSpec, SupervisedProcess};
 
 /// Calls running at once across the whole server. A call past this fails rather than waits: a
@@ -421,9 +421,12 @@ fn run_call(
         ControlErrorCode::InvalidArguments,
         "arguments",
     )?;
+    let spawn_failed =
+        |failure: SpawnFailure| (ControlErrorCode::ActionFailed, failure.to_string());
+    let prepared = SupervisedProcess::prepare(spec).map_err(spawn_failed)?;
+    // After the bundle check, which is slow enough for a short deadline to pass during it.
     check_live(action, deadline, cancel)?;
-    let mut process = SupervisedProcess::spawn(spec)
-        .map_err(|failure| (ControlErrorCode::ActionFailed, failure.to_string()))?;
+    let mut process = prepared.launch().map_err(spawn_failed)?;
     // On its own thread: a process that never reads must still meet its deadline.
     if let Some(mut stdin) = process.take_stdin() {
         std::thread::spawn(move || {

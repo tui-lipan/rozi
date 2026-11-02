@@ -131,6 +131,19 @@ impl Lab {
         response.data.unwrap().as_array().unwrap().clone()
     }
 
+    /// How many processes the extension has started. The log records every launch, including one
+    /// killed before it could leave any other mark.
+    fn launches(&self) -> usize {
+        let logs = self.root.join("data/rozi/extension-logs/demo");
+        std::fs::read_dir(logs).map_or(0, |entries| {
+            entries
+                .flatten()
+                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+                .map(|log| log.matches("started pid").count())
+                .sum()
+        })
+    }
+
     fn state_file(&self, name: &str) -> PathBuf {
         self.root.join("data/rozi/extension-state/demo").join(name)
     }
@@ -378,20 +391,37 @@ exec = ["sh", "-c", "touch \"$ROZI_EXTENSION_STATE_DIR/ran\"; echo 1"]
     });
     assert_eq!(code(&response), Some(ControlErrorCode::InvocationTimeout));
 
-    // The log records every launch, including one killed before it could leave any other mark.
-    let logs = lab.root.join("data/rozi/extension-logs/demo");
-    let launches = || {
-        std::fs::read_dir(&logs).map_or(0, |entries| {
-            entries
-                .flatten()
-                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
-                .map(|log| log.matches("started pid").count())
-                .sum::<usize>()
-        })
-    };
-    assert_eq!(launches(), 0);
+    assert_eq!(lab.launches(), 0);
     assert!(lab.invoke("demo.mark", json!({})).ok);
-    assert_eq!(launches(), 1);
+    assert_eq!(lab.launches(), 1);
+}
+
+#[test]
+fn a_deadline_that_passes_while_the_bundle_is_verified_stops_the_launch() {
+    let mut lab = Lab::new();
+    // Each file is opened and hashed, which takes far longer than the timeout below.
+    let names: Vec<String> = (0..4000).map(|index| format!("file-{index}")).collect();
+    let files: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), "x")).collect();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "mark"
+title = "Mark"
+exec = ["sh", "-c", "echo 1"]
+{OPEN_SCHEMA}"#
+        ),
+        &files,
+    );
+    let response = lab.ask(ControlCommand::Invoke {
+        action: "demo.mark".into(),
+        args: json!({}),
+        timeout_ms: Some(5),
+    });
+    assert_eq!(code(&response), Some(ControlErrorCode::InvocationTimeout));
+    assert_eq!(lab.launches(), 0);
+    assert!(lab.invoke("demo.mark", json!({})).ok);
+    assert_eq!(lab.launches(), 1);
 }
 
 #[test]

@@ -60,14 +60,20 @@ pub(crate) fn session_event(
             | crate::events::EventKind::ForegroundChanged
             | crate::events::EventKind::Bell
     ) {
-        let is_focused = fields
-            .get("pane")
-            .and_then(|p| p.parse().ok())
-            .is_some_and(|id| {
-                epoch == ctx.state.runtime_epoch
-                    && ctx.state.focused_pane_target() == Some((id, false))
-            });
+        let pane = fields.get("pane").and_then(|pane| pane.parse().ok());
+        let is_focused = pane.is_some_and(|id| {
+            attachment.exited_while_focused.contains(&id)
+                || (epoch == ctx.state.runtime_epoch
+                    && ctx.state.focused_pane_target() == Some((id, false)))
+        });
         fields.insert("focused".to_string(), is_focused.to_string());
+        // Its exit is the last thing said about a pane, so nothing further needs the memory.
+        if event.kind == crate::events::EventKind::PaneExited
+            && let Some(id) = pane
+            && let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch)
+        {
+            attachment.exited_while_focused.retain(|pane| *pane != id);
+        }
     }
     if event.kind == crate::events::EventKind::ControllerChanged {
         let is_self = client_id.as_deref().is_some_and(|id| {

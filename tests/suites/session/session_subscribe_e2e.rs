@@ -136,6 +136,15 @@ impl Stream {
         serde_json::from_str(&line).unwrap_or_else(|err| panic!("{line:?} is not JSON: {err}"))
     }
 
+    /// Every record that arrives before the stream has stayed quiet for `quiet`.
+    fn until_quiet(&self, quiet: Duration) -> Vec<Value> {
+        let mut records = Vec::new();
+        while let Ok(line) = self.lines.recv_timeout(quiet) {
+            records.push(serde_json::from_str(&line).unwrap());
+        }
+        records
+    }
+
     /// Records up to and including the pane's exit.
     #[track_caller]
     fn until_pane_exits(&self) -> Vec<Value> {
@@ -224,6 +233,34 @@ fn snapshot_tail_and_resume_agree_with_no_gap_and_no_repeat() {
     let narrowed = filtered.until_pane_exits();
     assert_eq!(kinds(&narrowed), ["pane-exited"]);
     assert_eq!(narrowed[0]["seq"], tail.last().unwrap()["seq"]);
+}
+
+/// A pane's exit is the last thing said about it. Its program goes with it, and that is reported
+/// first. It takes a real process: only a real one can stop being found in the foreground.
+#[test]
+fn a_panes_exit_comes_after_everything_its_death_changed() {
+    let lab = Lab::start("lastword");
+    let (subscriber, _stdin) = Stream::open(lab.on_session(&["subscribe"]));
+    let status = lab
+        .on_session(&["split", "--argv", "sleep", "3"])
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "the pane spawned");
+
+    let mut records = subscriber.until_pane_exits();
+    let exited_at = records.len() - 1;
+    records.extend(subscriber.until_quiet(Duration::from_secs(2)));
+
+    let tail: Vec<_> = records[exited_at + 1..]
+        .iter()
+        .filter(|record| record["data"]["pane"] == records[exited_at]["data"]["pane"])
+        .collect();
+    assert!(tail.is_empty(), "said after the exit: {tail:?}");
+    let program_left = records[..exited_at].iter().any(|record| {
+        record["kind"] == "foreground-changed" && record["data"]["previous_program"] == "sleep"
+    });
+    assert!(program_left, "its program left first: {records:?}");
 }
 
 #[test]

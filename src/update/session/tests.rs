@@ -624,6 +624,64 @@ fn bell_events_include_focused_for_current_panes() {
     });
 }
 
+/// Closing an exited pane moves focus before the events about its death arrive, and those events
+/// still have to say the pane had it.
+#[test]
+fn events_about_a_panes_death_report_the_focus_it_died_with() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
+        let epoch = backend.state().runtime_epoch;
+        let pane_id = backend.state().current().focused_pane.unwrap();
+        let generation = 42;
+        crate::pane::lifecycle::find_pane_mut(backend.state_mut(), pane_id)
+            .unwrap()
+            .pty_generation = generation;
+        let events = backend.state().event_hub.subscribe(None);
+        let event = |kind| {
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("pane".to_string(), pane_id.to_string());
+            Msg::SessionEvent {
+                epoch,
+                event: crate::session::protocol::SessionEvent {
+                    session_instance: crate::session::protocol::SessionInstanceId::for_test("test"),
+                    seq: 1,
+                    kind,
+                    data,
+                },
+            }
+        };
+        let heard_focus = |backend: &mut TestBackend<crate::AppRoot>, kind| {
+            backend.update_level(event(kind)).unwrap();
+            let heard: serde_json::Value = serde_json::from_str(&events.recv().unwrap()).unwrap();
+            assert_eq!(heard["event"], kind.id());
+            heard["data"]["focused"].as_str().unwrap().to_string()
+        };
+
+        backend
+            .update_level(Msg::SessionExited {
+                epoch,
+                pane_id,
+                local: false,
+                generation,
+                code: 0,
+            })
+            .unwrap();
+        backend.state_mut().current_mut().focused_pane = None;
+
+        use crate::events::EventKind;
+        assert_eq!(
+            heard_focus(&mut backend, EventKind::ForegroundChanged),
+            "true"
+        );
+        assert_eq!(heard_focus(&mut backend, EventKind::PaneExited), "true");
+        assert_eq!(
+            heard_focus(&mut backend, EventKind::Bell),
+            "false",
+            "the memory ends with the exit, so a reused id starts clean"
+        );
+    });
+}
+
 #[test]
 fn focused_pane_bell_raises_background_attention_until_a_key_clears_it() {
     crate::test_support::on_large_stack(|| {

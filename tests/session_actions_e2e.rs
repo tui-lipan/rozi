@@ -620,12 +620,12 @@ fn a_process_that_escapes_its_group_cannot_hang_a_call() {
 [[actions]]
 id = "escape"
 title = "Escape"
-exec = ["sh", "-c", "setsid sleep 5 & echo '{{}}'"]
+exec = ["sh", "./escape.sh"]
 {OPEN_SCHEMA}
 [[actions]]
 id = "exited-early"
 title = "Exited early"
-exec = ["sh", "-c", "setsid sleep 5 & echo '{{}}'"]
+exec = ["sh", "./escape.sh"]
 deadline_ms = 100
 {OPEN_SCHEMA}
 [[actions]]
@@ -635,7 +635,17 @@ exec = ["sh", "-c", "setsid sleep 5 & exec sleep 30"]
 deadline_ms = 100
 {OPEN_SCHEMA}"#
         ),
-        &[],
+        // Waits until it has left the group. Exiting sooner would kill it with the group, close
+        // stdout, and make the result a success.
+        &[(
+            "escape.sh",
+            r#"escaped="$ROZI_EXTENSION_STATE_DIR/escaped.$$"
+setsid sh -c ': > "$0"; exec sleep 5' "$escaped" &
+until [ -e "$escaped" ]; do sleep 0.01; done
+rm -f "$escaped"
+echo '{}'
+"#,
+        )],
     );
     let started = Instant::now();
     let response = lab.invoke("demo.escape", json!({}));

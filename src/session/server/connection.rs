@@ -1,5 +1,7 @@
 use super::*;
 
+const CLIENT_READS_PER_TICK: usize = 16;
+
 /// What a client says about itself when it attaches.
 pub(super) struct AttachRequest {
     pub capabilities: Option<protocol::Capabilities>,
@@ -63,30 +65,11 @@ impl SessionServer {
             if client.transport_closed {
                 continue;
             }
-            for _ in 0..16 {
-                match client.decoder.read_from_status(&mut client.stream) {
-                    Ok(protocol::FrameReadStatus::Read(_)) => activity = true,
-                    Ok(protocol::FrameReadStatus::WouldBlock) => break,
-                    Ok(protocol::FrameReadStatus::Eof) | Err(_) => {
-                        activity = true;
-                        dead.push(client.id);
-                        break;
-                    }
-                }
-            }
-            loop {
-                match client.decoder.next_frame::<ClientMessage>() {
-                    Ok(Some(frame)) => {
-                        activity = true;
-                        inbound.push((client.id, frame));
-                    }
-                    Ok(None) => break,
-                    Err(_) => {
-                        activity = true;
-                        dead.push(client.id);
-                        break;
-                    }
-                }
+            let (client_activity, closed) =
+                Self::read_client_frames(client, CLIENT_READS_PER_TICK, &mut inbound);
+            activity |= client_activity;
+            if closed {
+                dead.push(client.id);
             }
         }
 
@@ -97,6 +80,43 @@ impl SessionServer {
             self.disconnect_after_controls(id);
         }
         activity
+    }
+
+    /// Read up to `max_reads` chunks from a client and decode every complete frame. Returns whether
+    /// anything happened and whether the connection has ended or broken the protocol.
+    pub(super) fn read_client_frames(
+        client: &mut ClientConn,
+        max_reads: usize,
+        inbound: &mut Vec<(ClientId, Frame<ClientMessage>)>,
+    ) -> (bool, bool) {
+        let mut activity = false;
+        let mut closed = false;
+        for _ in 0..max_reads {
+            match client.decoder.read_from_status(&mut client.stream) {
+                Ok(protocol::FrameReadStatus::Read(_)) => activity = true,
+                Ok(protocol::FrameReadStatus::WouldBlock) => break,
+                Ok(protocol::FrameReadStatus::Eof) | Err(_) => {
+                    activity = true;
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        loop {
+            match client.decoder.next_frame::<ClientMessage>() {
+                Ok(Some(frame)) => {
+                    activity = true;
+                    inbound.push((client.id, frame));
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    activity = true;
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        (activity, closed)
     }
 
     pub(super) fn disconnect_after_controls(&mut self, id: ClientId) {

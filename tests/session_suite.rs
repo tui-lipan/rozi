@@ -27,5 +27,8 @@ mod session_protocol_smoke;
 #[cfg(unix)]
 #[path = "suites/session/session_scrollback.rs"]
 mod session_scrollback;
+#[cfg(unix)]
+#[path = "suites/session/session_subscribe_e2e.rs"]
+mod session_subscribe_e2e;
 #[path = "suites/session/session_worktree.rs"]
 mod session_worktree;

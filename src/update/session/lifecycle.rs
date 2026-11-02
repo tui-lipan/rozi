@@ -528,13 +528,6 @@ pub(crate) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -
         crate::ops::session::discovery::relabel_listed_session(ctx, &previous, row);
     }
     crate::session::record_last_session(ctx.state.current().remote_target.as_ref(), &session);
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::SessionRenamed,
-            vec![("session", session.clone()), ("previous", previous)],
-        ),
-    );
     // An ephemeral session becoming named flips the "Name/Rename session" palette label.
     ctx.state.commands_dirty = true;
     // The new name is already rendered in the workbar session badge by the time this returns.

@@ -13,10 +13,11 @@
 //! No new transport. This is the SSH path `--remote` attach already uses: saved host config,
 //! connection multiplexing, the discovered remote binary, and the same askpass rules.
 
-use std::io::Read;
+use std::io::{BufRead, Write};
 
 use crate::config::RemoteConfig;
 use crate::control::{ControlRequest, ControlResponse};
+use crate::session::headless::StreamEnd;
 
 use super::json_transport::{self, TransportError};
 use super::target::RemoteTarget;
@@ -93,17 +94,19 @@ fn control_forward_failure(code: Option<i32>, stderr: &str, session: &str, host:
     format!("remote control failed: {stderr}")
 }
 
-/// `--remote-control <NAME>`: the far side of [`forward_control`].
+/// `--remote-control <NAME>`: the far side of [`forward_control`] and [`forward_control_stream`].
 ///
-/// Reads one JSON [`ControlRequest`] from stdin, runs it against the named local session, and
+/// Reads one JSON [`ControlRequest`] line from stdin, runs it against the named local session, and
 /// writes the [`ControlResponse`] as one JSON line. Whether the command succeeded is carried in
 /// that response, not in this process's exit status: a non-zero exit means the session could not
 /// be reached at all, which is a different thing the caller reports differently.
-pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
+///
+/// A subscription writes its own response and then its records, so it returns `None`.
+pub fn run_remote_control(session: &str) -> Result<Option<ControlResponse>, String> {
     let mut payload = String::new();
     std::io::stdin()
         .lock()
-        .read_to_string(&mut payload)
+        .read_line(&mut payload)
         .map_err(|err| format!("could not read the control request: {err}"))?;
     let mut request: ControlRequest = serde_json::from_str(payload.trim())
         .map_err(|err| format!("could not parse the control request: {err}"))?;
@@ -111,12 +114,131 @@ pub fn run_remote_control(session: &str) -> Result<ControlResponse, String> {
     if let Ok(cwd) = std::env::current_dir() {
         request.command.resolve_output_against(&cwd);
     }
-    crate::session::headless::run_session_control(session, request).map_err(|err| err.to_string())
+    if matches!(
+        request.command,
+        crate::control::ControlCommand::Subscribe { .. }
+    ) {
+        run_remote_subscription(session, request)?;
+        return Ok(None);
+    }
+    crate::session::headless::run_session_control(session, request)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
+fn run_remote_subscription(session: &str, request: ControlRequest) -> Result<(), String> {
+    let (mut stream, response) = crate::session::headless::run_session_subscribe(session, request)
+        .map_err(|err| err.to_string())?;
+    let mut stdout = std::io::stdout().lock();
+    let answer = serde_json::to_string(&response).map_err(|err| err.to_string())?;
+    writeln!(stdout, "{answer}")
+        .and_then(|()| stdout.flush())
+        .map_err(|err| err.to_string())?;
+    if !response.ok {
+        return Ok(());
+    }
+    // The forwarding side holds stdin open for as long as it wants the stream. An idle stream writes
+    // nothing that could fail, so its end is the only way to learn the connection has gone, and
+    // without it this process and its place on the server would outlive the ssh that started them.
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        std::process::exit(0);
+    });
+    // However it ended, the records said so: a stream cut short is one with no last record, which
+    // the forwarding side recognises. A failure here is only for one that cannot be said that way.
+    crate::session::headless::pump_session_records(&mut stream, &mut stdout).map(|_| ())
+}
+
+/// What became of a forwarded subscription.
+#[derive(Debug)]
+pub enum RemoteStream {
+    /// The session refused it.
+    Refused(ControlResponse),
+    /// It ran, and stopped like this.
+    Stopped(StreamEnd),
+}
+
+/// Forward a subscription and copy its records to `out` until it stops.
+///
+/// `Err` means the request never reached a session server or the connection failed.
+pub fn forward_control_stream(
+    target: &RemoteTarget,
+    session: &str,
+    request: &ControlRequest,
+    config: &RemoteConfig,
+    out: &mut impl Write,
+) -> Result<RemoteStream, String> {
+    if !crate::session::discovery::valid_attach_target(session) {
+        return Err("invalid session name".to_string());
+    }
+    json_transport::stream_forward(
+        target,
+        config,
+        &["--remote-control", session],
+        request,
+        |response: ControlResponse, lines| {
+            if !response.ok {
+                return Ok(RemoteStream::Refused(response));
+            }
+            copy_stream(lines, out).map(RemoteStream::Stopped)
+        },
+    )
+    .map_err(|error| match error {
+        TransportError::Preflight(message) => message,
+        TransportError::Encode(error) => format!("could not encode the request: {error}"),
+        TransportError::Ssh(error) => format!("remote control ssh failed: {error}"),
+        TransportError::Send(error) => format!("could not send the request: {error}"),
+        TransportError::Failed(output) => control_forward_failure(
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+            session,
+            &target.display_label(),
+        ),
+        TransportError::Answer(_) => "no response from remote rozi".to_string(),
+    })
+}
+
+/// Copy forwarded record lines to `out`, reading from them how the stream stopped.
+fn copy_stream(
+    lines: impl Iterator<Item = std::io::Result<String>>,
+    out: &mut impl Write,
+) -> Result<StreamEnd, String> {
+    for line in lines {
+        let line = line.map_err(|err| format!("could not read the stream: {err}"))?;
+        if !crate::session::headless::write_stream_line(out, &line)? {
+            return Ok(StreamEnd::ReaderGone);
+        }
+        let end = serde_json::from_str(&line)
+            .ok()
+            .as_ref()
+            .and_then(crate::session::headless::stream_end_of);
+        if let Some(end) = end {
+            return Ok(end);
+        }
+    }
+    Ok(StreamEnd::Cut)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forwarded_stream_says_how_it_stopped() {
+        let copied = |lines: &[&str]| {
+            let mut out = Vec::new();
+            let end = copy_stream(lines.iter().map(|line| Ok(line.to_string())), &mut out);
+            (end.unwrap(), String::from_utf8(out).unwrap())
+        };
+        let event = r#"{"type":"event","session_instance":"i","seq":1,"kind":"bell","data":{}}"#;
+
+        assert_eq!(copied(&[event]).0, StreamEnd::Cut);
+        assert_eq!(copied(&[]).0, StreamEnd::Cut);
+        assert_eq!(copied(&[event, r#"{"type":"ended"}"#]).0, StreamEnd::Ended);
+        let (end, written) = copied(&[event, r#"{"type":"lagged"}"#, "ignored"]);
+        assert_eq!(end, StreamEnd::Lagged);
+        assert_eq!(written.lines().count(), 2, "the last record is forwarded");
+    }
 
     #[test]
     fn a_hostile_session_name_never_reaches_ssh() {

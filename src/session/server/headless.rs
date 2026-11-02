@@ -115,7 +115,8 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordList
-        | ControlCommand::RecordMark { .. } => None,
+        | ControlCommand::RecordMark { .. }
+        | ControlCommand::Subscribe { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -162,9 +163,6 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         }
         ControlCommand::AgentsOverview | ControlCommand::AgentGo { .. } => Some(
             "only a UI knows other sessions and hosts; a session server knows its own agents (`agents list`)",
-        ),
-        ControlCommand::Subscribe { .. } => Some(
-            "subscribe streams UI events; a session server does not raise them (poll `list-panes` for pane state)",
         ),
         ControlCommand::ExtensionRuntimeStatus => {
             Some("extension runtimes belong to a UI; a session server runs no extension processes")
@@ -230,6 +228,12 @@ pub(super) enum ReplyTo {
         capabilities: Capabilities,
         effective_protocol: u32,
     },
+    /// A streaming headless connection (such as [`ControlCommand::Subscribe`]), kept open across
+    /// multiple frames.
+    StreamingHeadless {
+        capabilities: Capabilities,
+        effective_protocol: u32,
+    },
     /// An attached client's [`ClientMessage::AttachedControl`]; the connection carries on.
     Attached { request_id: u64 },
 }
@@ -264,6 +268,10 @@ impl ReplyTo {
             Self::Headless {
                 capabilities,
                 effective_protocol,
+            }
+            | Self::StreamingHeadless {
+                capabilities,
+                effective_protocol,
             } => ServerMessage::SessionControlResult {
                 capabilities: Some(capabilities.clone()),
                 effective_protocol: *effective_protocol,
@@ -280,7 +288,7 @@ impl ReplyTo {
     /// connection, which holds one answer at most.
     pub(super) fn hold_id(&self) -> u64 {
         match self {
-            Self::Headless { .. } => 0,
+            Self::Headless { .. } | Self::StreamingHeadless { .. } => 0,
             Self::Attached { request_id } => *request_id,
         }
     }
@@ -371,9 +379,16 @@ impl SessionServer {
                 },
             )];
         }
-        let reply = ReplyTo::Headless {
-            capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
-            effective_protocol: effective,
+        let reply = if matches!(request.command, ControlCommand::Subscribe { .. }) {
+            ReplyTo::StreamingHeadless {
+                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                effective_protocol: effective,
+            }
+        } else {
+            ReplyTo::Headless {
+                capabilities: protocol::Capabilities::negotiated(capabilities.as_ref()),
+                effective_protocol: effective,
+            }
         };
         self.serve_control(client_id, &reply, request)
     }
@@ -470,6 +485,19 @@ impl SessionServer {
                     client_id,
                     request.command.clone(),
                     reply.clone(),
+                )),
+                ControlCommand::Subscribe {
+                    events,
+                    snapshot,
+                    after,
+                } => Some(self.handle_subscribe_command(
+                    client_id,
+                    subscriptions::SubscribeOptions {
+                        events: events.clone(),
+                        snapshot: *snapshot,
+                        after: after.clone(),
+                    },
+                    reply,
                 )),
                 _ if request.command.pane_wait().is_some() => {
                     Some(self.register_capture_wait(client_id, request.clone(), reply.clone()))
@@ -702,7 +730,7 @@ impl SessionServer {
     /// The document is exactly what every client reconciles to, so this is the whole shared answer
     /// with nothing attached. What it cannot say - focus, the active workspace, where a client
     /// draws a pane - is client-local and left out rather than guessed.
-    fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
+    pub(super) fn session_layout_report(&self, workspace: Option<usize>) -> ControlResponse {
         if let Err(response) = crate::control::validate_layout_workspace(workspace) {
             return response;
         }
@@ -1062,7 +1090,7 @@ impl SessionServer {
         })
     }
 
-    fn session_pane_report(&self) -> Vec<PaneInfo> {
+    pub(super) fn session_pane_report(&self) -> Vec<PaneInfo> {
         let workspaces = self.layout_workspace_index();
         let mut panes: Vec<PaneInfo> = self
             .panes
@@ -1570,17 +1598,8 @@ impl SessionServer {
             );
         };
         match self.apply_pane_status(None, id, generation, status, reason) {
-            Ok(Some(state)) => {
-                broadcasts.push((
-                    Target::Broadcast,
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id: id,
-                        local: false,
-                        generation,
-                        agents: self.agent_records(None, id),
-                        state,
-                    },
-                ));
+            Ok(Some(message)) => {
+                broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),
@@ -1623,17 +1642,8 @@ impl SessionServer {
                 seq,
             },
         ) {
-            Ok(Some(state)) => {
-                broadcasts.push((
-                    Target::Broadcast,
-                    ServerMessage::PaneRuntimeChanged {
-                        pane_id: id,
-                        local: false,
-                        generation,
-                        agents: self.agent_records(None, id),
-                        state,
-                    },
-                ));
+            Ok(Some(message)) => {
+                broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()
             }
             Ok(None) => ControlResponse::empty(),
@@ -2755,7 +2765,7 @@ mod tests {
         // Nobody was attached when it arrived. The server keeps the report on the pane, so a
         // window that attaches afterwards is told it rather than having missed a broadcast.
         let (late, _stream) = super::super::tests::add_client(&mut server);
-        let attached = server.handle_message(
+        server.handle_message(
             late,
             ClientMessage::Attach {
                 capabilities: None,
@@ -2768,14 +2778,15 @@ mod tests {
                 expected_server_nonce: None,
             },
         );
-        let reported = attached.iter().find_map(|(_, message)| match message {
+        let attached = super::super::tests::attached_reply(&server, late);
+        let reported = match &attached {
             ServerMessage::Attached { panes, .. } => panes
                 .iter()
                 .find(|meta| meta.pane_id == 7)
                 .and_then(|meta| meta.runtime.integration.as_ref())
                 .map(|report| report.state),
             _ => None,
-        });
+        };
         assert_eq!(reported, Some(protocol::AgentState::Working));
     }
 
@@ -4251,7 +4262,6 @@ mod tests {
                 kind: Default::default(),
                 name: None,
             },
-            ControlCommand::Subscribe { events: Vec::new() },
             ControlCommand::CaptureUi {
                 render: crate::control::CaptureRender::Png,
                 scale: None,

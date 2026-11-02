@@ -147,8 +147,10 @@ ROZI_CMD=${ROZI_BIN:-rozi}
 ```
 
 `subscribe` prints one JSON object per event until rozi exits. Event fields are under `data`; see
-[Hooks](hooks.md#events-and-fields) for every event. To run a command on an event without keeping a
-script alive, use a [hook](hooks.md) instead.
+[Hooks](hooks.md#events-and-fields) for every event. `rozi --session dev subscribe` streams a
+session's events with no UI attached, in a different record format; see
+[Session subscriptions](control.md#session-subscriptions). To run a command on an event without
+keeping a script alive, use a [hook](hooks.md) instead.
 
 ## Drive a session with no window
 
@@ -164,7 +166,7 @@ rozi --session dev capture-pane --target 3 --scrollback full --format text
 
 With `--session`, always name the pane with `--target`; the script's own `ROZI_PANE` belongs to a
 different session. A pane addressing its own session passes `--target "$ROZI_PANE"`. Commands that
-need a screen — `focus`, `run-action`, `notify`, `pick`, `prompt`, `subscribe`, and switching workspaces —
+need a screen — `focus`, `run-action`, `notify`, `pick`, `prompt`, and switching workspaces —
 say so instead of running. Add `--remote <HOST>` to reach a session on another machine. See
 [Two endpoints](control.md#two-endpoints).
 

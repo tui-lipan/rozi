@@ -750,6 +750,14 @@ pub enum ServerMessage {
     RecordingEnded {
         stopped: crate::control::RecordingStopped,
     },
+    /// Authoritative session event emitted by the session server.
+    SessionEvent {
+        event: crate::session::protocol::SessionEvent,
+    },
+    /// Typed record streamed to a session subscriber.
+    SessionSubscribeRecord {
+        record: crate::session::protocol::SessionSubscribeRecord,
+    },
 }
 
 /// One acknowledged step of a bounded attachment upload.

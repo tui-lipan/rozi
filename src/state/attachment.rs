@@ -116,6 +116,11 @@ pub struct Attachment {
     /// Structural closes deferred while this attachment is parked. Applied after it returns to the
     /// foreground and regains layout control.
     pub pending_background_closes: Vec<(PaneId, u64)>,
+    /// Shared panes that had focus when they exited, whose `pane-exited` has not arrived yet.
+    ///
+    /// A session event follows the state it describes, and closing an exited pane moves focus, so
+    /// by the time the events about its death arrive the pane no longer looks focused.
+    pub(crate) exited_while_focused: Vec<PaneId>,
     /// Latest pending terminal size per `(local, pane)`. This outlives a transport reconnect so an
     /// unchanged viewport is still delivered after the new client is installed.
     pub pending_resizes: HashMap<(bool, PaneId), (u16, u16)>,
@@ -191,6 +196,7 @@ impl Attachment {
             remote_drag: None,
             remote_drag_snap: Cell::new(None),
             pending_background_closes: Vec::new(),
+            exited_while_focused: Vec::new(),
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
             resize_flush_generation: 0,

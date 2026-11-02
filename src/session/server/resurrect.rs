@@ -2610,6 +2610,7 @@ mod tests {
             scrollback: 100,
             generation: 1,
             title: None,
+            event_watch: Default::default(),
             cwd: None,
             launch: None,
             agent_resume: None,

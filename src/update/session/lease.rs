@@ -8,7 +8,7 @@ pub(crate) fn controller_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     controller: Option<ClientId>,
-    reason: ControllerChangeReason,
+    _reason: ControllerChangeReason,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         update_background_controller(&mut ctx.state, epoch, controller);
@@ -31,20 +31,6 @@ pub(crate) fn controller_changed(
     // controller killed with a pane still lifted - so the pane falls back into the authoritative
     // layout instead of hanging over it for the rest of the session.
     snap_cleared_remote_drag(&mut ctx.state, cleared_remote_drag);
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::ControllerChanged,
-            vec![
-                (
-                    "controller",
-                    controller.map(|id| id.to_string()).unwrap_or_default(),
-                ),
-                ("self_controller", now_controller.to_string()),
-                ("reason", controller_change_reason_id(reason).to_string()),
-            ],
-        ),
-    );
     apply_controller_transition(ctx, was_controller, now_controller, controller);
     flush_controller_pending_resizes(ctx, was_controller, now_controller);
     ctx.state.commands_dirty = true;
@@ -141,22 +127,12 @@ pub(crate) fn clients_changed(
         }
         return Update::none();
     }
-    let roster_events = ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .map(|shared| roster_diff_events(&shared.clients, &clients))
-        .unwrap_or_default();
     // The lock state lives in the workbar chip (`CTRL LOCK` / `FOLLOW LOCK`), which flips with this
     // assignment, so the transition needs no separate announcement.
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.clients = clients;
         shared.input_locked = input_locked;
         shared.allow_takeover = allow_takeover;
-    }
-    for event in roster_events {
-        crate::events::emit(&ctx.state, event);
     }
     ctx.state.commands_dirty = true;
     Update::full()
@@ -227,45 +203,4 @@ pub(crate) fn evicted(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -
         },
     );
     update
-}
-
-pub(crate) fn controller_change_reason_id(reason: ControllerChangeReason) -> &'static str {
-    match reason {
-        ControllerChangeReason::Released => "released",
-        ControllerChangeReason::Expired => "expired",
-        ControllerChangeReason::Granted => "granted",
-    }
-}
-
-pub(crate) fn roster_diff_events(
-    previous: &[ClientInfo],
-    current: &[ClientInfo],
-) -> Vec<crate::events::Event> {
-    let count = current.len().to_string();
-    let mut events = Vec::new();
-    for client in current {
-        if !previous.iter().any(|existing| existing.id == client.id) {
-            events.push(crate::events::Event::new(
-                crate::events::EventKind::ClientJoined,
-                vec![
-                    ("client_id", client.id.to_string()),
-                    ("client_name", client.label.clone()),
-                    ("count", count.clone()),
-                ],
-            ));
-        }
-    }
-    for client in previous {
-        if !current.iter().any(|existing| existing.id == client.id) {
-            events.push(crate::events::Event::new(
-                crate::events::EventKind::ClientLeft,
-                vec![
-                    ("client_id", client.id.to_string()),
-                    ("client_name", client.label.clone()),
-                    ("count", count.clone()),
-                ],
-            ));
-        }
-    }
-    events
 }

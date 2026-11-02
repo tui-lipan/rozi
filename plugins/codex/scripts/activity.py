@@ -16,6 +16,9 @@ import uuid
 
 
 EVENT_STATES = {
+    # The first sign a turn was admitted. Hooks can still stop one before this, at SessionStart and
+    # at UserPromptSubmit, and then no later hook runs, so a state said there would never be replaced.
+    "PreModelRequest": ("working", None),
     "PostToolUse": ("working", None),
     "PreCompact": ("working", None),
     "PostCompact": ("working", None),
@@ -35,12 +38,18 @@ DELIVERY_BUDGET = 0.9
 SHORT_HOOK_BUDGETS = {"Interrupt": 1.2}
 
 
-def session_start_transition(event: dict) -> tuple[str, str | None]:
-    return ("working" if event.get("source") == "compact" else "idle"), None
+def session_start_transition(event: dict) -> tuple[str | None, str | None]:
+    """A compaction continues a run. Anything else only starts a lifecycle, and says no state.
+
+    Codex fires this at a thread's first prompt, so idle would end the run screen detection just
+    saw start and count it as finished.
+    """
+    return ("working" if event.get("source") == "compact" else None), None
 
 
-def prompt_transition(_event: dict) -> tuple[str, str | None]:
-    return "working", None
+def prompt_transition(_event: dict) -> tuple[str | None, str | None]:
+    """A prompt can still be rejected, so it can claim the pane but says no state."""
+    return None, None
 
 
 def tool_transition(event: dict) -> tuple[str, str | None]:
@@ -177,6 +186,8 @@ def start_run(db: sqlite3.Connection, row: tuple | None, event: dict) -> tuple:
         queue_release(db, row)
     row = ("codex:" + uuid.uuid4().hex, event["session_id"], 0, 0)
     db.execute("INSERT OR REPLACE INTO run VALUES (1, ?, ?, ?, ?)", row)
+    # The previous lifecycle's undelivered state is not this one's to report.
+    db.execute("UPDATE status SET dirty = 0")
     clear_waits(db)
     return row
 
@@ -208,7 +219,9 @@ def current_run(db: sqlite3.Connection, event: dict) -> tuple | None:
 
 
 def queue_release(db: sqlite3.Connection, row: tuple) -> None:
-    db.execute("INSERT OR IGNORE INTO releases VALUES (?, ?)", (row[0], row[2]))
+    # A token that never reported owns nothing to give back.
+    if row[2] > 0:
+        db.execute("INSERT OR IGNORE INTO releases VALUES (?, ?)", (row[0], row[2]))
 
 
 def clear_waits(db: sqlite3.Connection) -> None:
@@ -291,6 +304,8 @@ def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     if row is None:
         return
     update_blockers(db, event, change)
+    if change[0] is None:
+        return
     blocker = open_wait(db)
     state, reason = ("blocked", blocker[0]) if blocker else change
     released = state == "release"

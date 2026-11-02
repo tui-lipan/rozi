@@ -1,0 +1,26 @@
+source = "capture"
+captured_at = "2026-11-02"
+notes = "Devin CLI 3000.11.234, signed out, 88x39 pane, first launch in an unseen directory"
+
+# The only screen a signed-out Devin CLI shows, nothing pressed. It read as idle, so `agents prompt`
+# would type into it, and its Enter would choose how to sign in. mise's install output above it is cut.
+[[case]]
+name = "startup-sign-in"
+state = "blocked"
+screen = '''
+⠀⣴⣾⣶⡄⠀⠀⠀⠀
+⠀⠛⠿⠟⠻⣶⣾⣶⡄  Devin CLI
+⠀⣤⣶⣦⣴⠿⢿⠿⠃  v3000.11.234
+⠀⠻⢿⠿⠃⠀⠀⠀⠀
+
+ How would you like to log in?
+
+ ❭ 1 Log in with browser
+     Recommended for most users
+   2 Paste a token manually
+     For SSH or remote sessions without browser access
+   3 Log in with Windsurf for Enterprise
+     For enterprise customers only
+
+ ↑↓ select · ↵ confirm · esc cancel
+'''

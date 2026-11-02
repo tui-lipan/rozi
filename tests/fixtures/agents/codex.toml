@@ -66,6 +66,62 @@ screen = '''
   enter continue · esc use session · ^c quit
 '''
 
+# Captured from Codex 0.166.0 on 2026-11-02 with a trusted plugin's script changed, nothing pressed; with
+# it unchanged Codex does not ask. So any update to a plugin with hooks can put this in front of a pane.
+# It read as idle, so `agents prompt` typed into it and its Enter chose an option. Its title is empty,
+# and its footer hint differs from the folder access dialog's.
+[[case]]
+name = "hooks-need-review-dialog"
+state = "blocked"
+screen = '''
+  Hooks need review
+  10 hooks are new or changed.
+  Hooks can run outside the sandbox after you trust them.
+
+
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+
+  enter confirm · esc skip
+'''
+
+# Captured from Codex 0.166.0 on 2026-11-02 on gpt-6-luna at 88x39, in a read-only sandbox, nothing
+# pressed. Hooks report this state only under `--no-daemon`, so for a plain `codex` only detection
+# says the pane is waiting, and nothing in this screen's text does: the title carries it alone. Read
+# as idle, `agents prompt` would type into the dialog and its Enter would run the command. The
+# transcript above the prompt is cut.
+[[case]]
+name = "approval-to-run-a-command"
+state = "blocked"
+title = "[ . ] Action Required | Create marker.txt | cxa"
+screen = '''
+› Create an empty file named marker.txt in this directory with the touch command. Do
+  nothing else.
+
+
+• The filesystem is read-only here, so I’m requesting the required write access to run
+  exactly touch marker.txt in this directory.
+
+• Running touch marker.txt
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I create marker.txt here with the requested touch command?
+
+  $ touch marker.txt
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `touch marker.txt` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
+'''
+
 # Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
 # trailing whitespace stripped, home directory replaced by `~`.
 [[case]]

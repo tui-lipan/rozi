@@ -271,13 +271,14 @@ match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
 argv = ["codex", "resume", "{session}"]
 reported = ["codex", "resume", "--no-daemon", "{session}"]
 
-# Codex's startup choosers end in the same hint, whatever they ask: `enter continue · esc back` under
-# its folder access question, `enter continue · esc use session` under its resume directory one.
-# Footer-scoped so a transcript quoting it cannot pin the pane blocked.
+# Codex's startup choosers end in a hint, whatever they ask: `enter continue · esc back` under its
+# folder access question, `enter continue · esc use session` under its resume directory one, and
+# `enter confirm · esc skip` under its hook review. Footer-scoped so a transcript quoting one cannot
+# pin the pane blocked.
 [[agents.states]]
 state = "blocked"
 scope = "footer"
-screen = { any_of = ["enter continue ·"] }
+screen = { any_of = ["enter continue ·", "enter confirm · esc skip"] }
 
 [[agents]]
 id = "pi"
@@ -310,15 +311,33 @@ label = "Cursor Agent"
 # in its argv is the only thing that names it.
 match = { names = ["cursor", "cursor-agent"], paths = ["cursor-agent"] }
 
+# Signed out, this line is nearly all it draws, and any key starts the sign-in.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["press any key to log in"] }
+
 [[agents]]
 id = "devin"
 label = "Devin CLI"
 match = { names = ["devin", "devin-cli"] }
 
+# The closing line of its sign-in chooser.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["↵ confirm · esc cancel"] }
+
 [[agents]]
 id = "antigravity"
 label = "Antigravity"
 match = { names = ["agy", "antigravity", "antigravity-cli"] }
+
+# Its startup trust dialog names nothing the shared vocabulary knows.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["do you trust the contents of this project?"] }
 
 [[agents]]
 id = "cline"
@@ -343,6 +362,12 @@ screen = { regex = true, any_of = ["(?m)^\\s*[\\x{2800}-\\x{28ff}]"] }
 id = "omp"
 label = "OMP"
 match = { names = ["omp"] }
+
+# The closing line of its first-run setup chooser.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["ctrl+c exit setup"] }
 
 [[agents]]
 id = "mastracode"
@@ -369,6 +394,12 @@ id = "kiro"
 label = "Kiro CLI"
 match = { names = ["kiro", "kiro-cli"] }
 
+# Its sign-in prompt.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["press enter to continue to the browser"] }
+
 # Kiro spells its state out instead of animating it: the prompt hint under the transcript reads
 # `Kiro is working · Type to steer · Ctrl+S to queue` for the whole turn and reverts to `ask a
 # question or describe a task` afterwards. There is no spinner and no interrupt hint, so nothing in
@@ -391,6 +422,12 @@ match = { names = ["droid"] }
 id = "amp"
 label = "Amp"
 match = { names = ["amp", "amp-local"] }
+
+# Its sign-in question, whose `[(y)es, (n)o]` is not the shared `[y/n]`.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["would you like to log in to amp?"] }
 
 [[agents]]
 id = "grok"

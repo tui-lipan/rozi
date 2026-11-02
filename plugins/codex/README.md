@@ -6,9 +6,9 @@ restore a session.
 
 ## Install
 
-Use a Rozi version with `rozi agents report` and `rozi agents release`. You also need Codex 0.160
+Use a Rozi version with `rozi agents report` and `rozi agents release`. You also need Codex 0.164
 or newer with hooks enabled, which is the default, and Python 3.10 or newer available as `python3`
-on `PATH`. The plugin validates with Codex 0.160.0.
+on `PATH`. The plugin validates with Codex 0.166.0.
 
 Add this repository as a Codex plugin marketplace and install the plugin:
 
@@ -18,7 +18,7 @@ codex plugin add rozi@rozi
 ```
 
 Restart Codex inside a local Rozi pane. Codex asks you to review hooks that are new or changed:
-choose **Trust all and continue**, or review the ten `rozi` hooks with `/hooks` and trust them
+choose **Trust all and continue**, or review the eleven `rozi` hooks with `/hooks` and trust them
 there. Until you trust them, they do not run. Codex asks again after an update changes them.
 The plugin does not require a Rozi extension or edits to Codex's `config.toml` or `hooks.json`.
 
@@ -43,8 +43,7 @@ each thread's state from the background server and lists every loaded thread as 
 
 | Codex event | Rozi state |
 | --- | --- |
-| First prompt of a new or resumed thread | `idle`, with the native thread ID, then `working` |
-| Prompt submitted or tool running | `working` |
+| Model request starting, or tool running | `working`, with the native thread ID |
 | Approval requested | `blocked` |
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
@@ -52,6 +51,13 @@ each thread's state from the background server and lists every loaded thread as 
 | Turn finishes | `done` |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
+
+A prompt reports nothing until Codex is about to call the model, because another hook can still
+reject it. A rejected prompt leaves the pane as it was.
+
+Codex has no hook that says a turn has failed for good. A failed model request looks the same
+whether Codex will retry it or not, so after a turn ends in an error, such as a usage limit, the pane
+keeps reporting `working`. Send the next prompt with `rozi agents prompt --allow-working`.
 
 Codex starts a thread's hooks at its first prompt in a client, not when the client opens or when
 `/resume` switches to the thread. Until you send that prompt, the pane keeps reporting the thread
@@ -126,7 +132,7 @@ python3 -m unittest discover -s plugins/codex/tests -v
 For a live check, launch Codex with the plugin inside a Rozi pane. From another pane run
 `rozi agents list --format json`. Confirm these transitions:
 
-1. Submit a prompt. The pane reports the native thread ID and its state becomes `working`.
+1. Submit a prompt. The pane reports the native thread ID and its state becomes `working` when the model request starts.
 2. Request a command that needs approval. Its state becomes `blocked`, and returns to `working`
    once the approved command finishes.
 3. Let the response finish. Its state becomes `done`.

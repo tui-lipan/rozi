@@ -163,3 +163,14 @@ screen = '''
 ───────────────────────────────────────────────────────────────────────────────────────────
  esc to close · ↑↓ to navigate · ↵ to select · Tab to edit
 '''
+
+# Captured from Kiro CLI 2.37.1 on 2026-11-02, signed out, nothing pressed. It read as idle, so
+# `agents prompt` would type into it, and its Enter would open a browser.
+[[case]]
+name = "startup-sign-in"
+state = "blocked"
+screen = '''
+Welcome to Kiro CLI, let's get you signed in!
+
+Press enter to continue to the browser or esc to cancel
+'''

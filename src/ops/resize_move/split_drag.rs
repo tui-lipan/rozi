@@ -847,6 +847,77 @@ mod tests {
             });
         }
 
+        /// Grab the T where the left column's divider meets the main divider, then pull it up the
+        /// main divider, onto the right column's divider and past it. Lining the two dividers up
+        /// merges two junctions into one and drops a strip, so the handful of hitboxes the view
+        /// builds changes shape in the middle of the gesture - none of which may end it.
+        #[test]
+        fn a_junction_drag_survives_crossing_another_divider() {
+            in_test_stack(|| {
+                let tree = *split(
+                    SplitAxis::Horizontal,
+                    split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                    Box::new(DwindleTree::Split {
+                        axis: SplitAxis::Vertical,
+                        ratio: 0.3,
+                        first: leaf(3),
+                        second: leaf(4),
+                    }),
+                );
+                let mut backend = backend_with(&tree);
+                let junction_row = pane_leading_row(&mut backend, 2);
+                let target_row = pane_leading_row(&mut backend, 4);
+                let start = spans(&mut backend, SplitAxis::Vertical);
+                let lower_top = |spans: &[Span]| spans.iter().find(|s| s.0 == 2).expect("pane 2").1;
+                let start_top = lower_top(&start);
+                // Two rows past the other divider, still short of the minimum ratio.
+                let travel = i32::from(junction_row - target_row) + 2;
+                assert!(travel > 2, "the dividers must start apart");
+
+                backend
+                    .send_mouse(mouse(50, junction_row, MouseKind::Down(MouseButton::Left)))
+                    .expect("press");
+                for step in 1..=travel {
+                    let row = (i32::from(junction_row) - step) as u16;
+                    backend
+                        .send_mouse(mouse(50, row, MouseKind::Drag(MouseButton::Left)))
+                        .expect("drag");
+                    assert_eq!(
+                        lower_top(&spans(&mut backend, SplitAxis::Vertical)),
+                        start_top - step as f32,
+                        "the divider stopped following the pointer after {step} of {travel} rows"
+                    );
+                    assert_eq!(
+                        backend.pointer_shape(),
+                        Some(PointerShape::Move),
+                        "the drag must keep its cursor after {step} of {travel} rows"
+                    );
+                }
+                let held = backend.capture_frame();
+                backend
+                    .send_mouse(mouse(
+                        50,
+                        (i32::from(junction_row) - travel) as u16,
+                        MouseKind::Up(MouseButton::Left),
+                    ))
+                    .expect("release");
+                backend.render();
+                assert!(
+                    backend.capture_frame() == held,
+                    "holding a strip must not change what the layout paints"
+                );
+                assert!(
+                    backend.state().split_drag.is_none(),
+                    "the release must close the gesture"
+                );
+                assert_eq!(
+                    backend.pointer_shape_at(20, (i32::from(junction_row) - travel) as u16),
+                    Some(PointerShape::NsResize),
+                    "the strips must be back for the next gesture"
+                );
+            });
+        }
+
         /// A junction moves exactly one divider per axis - the segment under the drag origin -
         /// and keeps that pair for the whole gesture.
         #[test]

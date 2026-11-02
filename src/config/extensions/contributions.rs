@@ -152,11 +152,12 @@ pub(super) fn build(
     }
     // A settings table naming nothing installed is a typo or a leftover from an extension that was
     // removed. Being disabled is not enough to earn this warning: the extension is still there, and
-    // the settings are waiting for it to come back.
+    // the settings are waiting for it to come back. A session on this host may also have it deployed
+    // with nothing installed, and reads these settings then, which this load cannot see.
     for id in user_settings.keys() {
         if !installed_ids.contains(id) {
             warnings.push(format!(
-                "`[extensions.{id}]` configures no installed extension; ignored"
+                "`[extensions.{id}]` configures no installed extension; ignored unless a session here has it deployed"
             ));
         }
     }

@@ -309,6 +309,10 @@ struct SnapshotAgentResume {
     agent: String,
     session: String,
     reported_at: u64,
+    /// See [`RetainedResume::reported`]. A snapshot from before this was recorded reads as not
+    /// reported, which reopens the conversation the way it always did.
+    #[serde(default)]
+    reported: bool,
 }
 
 /// The conversation a restored pane resumes.
@@ -337,6 +341,7 @@ fn agent_resume(pane: &ServerPane) -> Option<SnapshotAgentResume> {
         agent: resume.agent,
         session: resume.session,
         reported_at: resume.reported_at,
+        reported: resume.reported,
     })
 }
 
@@ -374,6 +379,7 @@ pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
             agent,
             session,
             reported_at,
+            reported: false,
         });
     }
     report.and_then(|report| {
@@ -381,6 +387,7 @@ pub(super) fn live_agent_resume(pane: &ServerPane) -> Option<RetainedResume> {
             agent: report.identity.id.clone(),
             session: report.native_session.clone()?,
             reported_at: report.reported_at_unix_ms,
+            reported: true,
         })
     })
 }
@@ -878,7 +885,11 @@ impl SessionServer {
             return None;
         }
         let definition = self.settings.agents.by_id(&saved.agent)?;
-        let argv = definition.resume_command(&saved.session)?;
+        let argv = if saved.reported {
+            definition.reported_resume_command(&saved.session)?
+        } else {
+            definition.resume_command(&saved.session)?
+        };
         let launch = crate::pane::launch::PaneLaunch::direct(argv).ok()?;
         // One conversation, one pane. Two panes reopening the same agent session would leave both
         // writing into one history, and neither of them is the one the user was talking to.
@@ -2063,6 +2074,7 @@ mod tests {
                 agent: agent.to_string(),
                 session: session.to_string(),
                 reported_at: 42,
+                reported: false,
             }),
             cwd: None,
             keep_open: false,
@@ -2119,6 +2131,53 @@ mod tests {
             }
             _ => panic!("a resumable conversation must outrank the observed foreground command"),
         }
+    }
+
+    /// How Rozi learned of a conversation decides who owns it. Codex's hooks only run in a client
+    /// that owns its thread, and it has to keep doing so for them to go on reporting. A thread some
+    /// other program published lives on the shared background server, which is what to reconnect to.
+    #[test]
+    fn a_conversation_resumes_the_way_rozi_learned_of_it() {
+        let server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let argv = |reported: bool| {
+            let mut saved = saved_pane("codex", "thread", None);
+            saved.agent_resume.as_mut().unwrap().reported = reported;
+            match action(&server, &saved, &mut std::collections::HashSet::new()) {
+                RestoreAction::ResumeAgent(resume) => {
+                    resume.launch.argv().unwrap_or_default().to_vec()
+                }
+                _ => panic!("a resumable conversation must resume"),
+            }
+        };
+        assert_eq!(
+            argv(true),
+            ["codex", "resume", "--no-daemon", "thread"].map(String::from)
+        );
+        assert_eq!(argv(false), ["codex", "resume", "thread"].map(String::from));
+    }
+
+    /// The fact the restore needs has to survive being saved, from both ways of learning it.
+    #[test]
+    fn a_snapshot_records_how_a_conversation_was_learned() {
+        let mut server = restore_server(crate::config::ForegroundRestore::Auto, true);
+        let mut pane = running("codex", &[], protocol::PaneCommandPhase::Executing);
+        pane.agent.retained_resume = Some(RetainedResume {
+            agent: "codex".to_string(),
+            session: "thread".to_string(),
+            reported_at: 1,
+            reported: true,
+        });
+        server.panes.insert(1, pane);
+        let job = server.capture_snapshot(Instant::now()).expect("capture");
+        assert!(job.meta.panes[0].agent_resume.as_ref().unwrap().reported);
+
+        let old: SnapshotAgentResume =
+            serde_json::from_str(r#"{"agent":"codex","session":"thread","reported_at":1}"#)
+                .unwrap();
+        assert!(
+            !old.reported,
+            "a snapshot from before this reads as not reported"
+        );
     }
 
     /// `hold` is an instruction that nothing runs unasked. Reopening a conversation is something

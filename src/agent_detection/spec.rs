@@ -48,6 +48,8 @@ pub struct AgentResumeCommandSpec {
     pub argv: Vec<String>,
     /// What to run when `argv` is refused because the conversation is still running elsewhere.
     pub attach: Vec<String>,
+    /// What to run instead of `argv` for a conversation the agent's own hooks reported.
+    pub reported: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -183,24 +185,28 @@ pub fn build_definitions(
             .into_iter()
             .filter_map(|state| build_state_rule(state, &noun, &id, warnings))
             .collect();
-        let (resume_argv, attach_argv) = match spec.resume {
+        let (resume_argv, attach_argv, reported_resume_argv) = match spec.resume {
             Some(AgentResumeSpec::Command(resume)) => {
                 let argv = validate_resume_argv(resume.argv, &noun, &id, warnings);
                 let attach = argv
                     .as_ref()
                     .and_then(|_| validate_attach_argv(resume.attach, &noun, &id, warnings));
-                (argv, attach)
+                let reported = argv
+                    .as_ref()
+                    .and_then(|_| validate_reported_argv(resume.reported, &noun, &id, warnings));
+                (argv, attach, reported)
             }
-            Some(AgentResumeSpec::Disabled(false)) => (None, None),
+            Some(AgentResumeSpec::Disabled(false)) => (None, None, None),
             Some(AgentResumeSpec::Disabled(true)) => {
                 warnings.push(format!(
                     "Ignored {noun} `{id}` resume capability: use a resume table or `resume = false`"
                 ));
-                (None, None)
+                (None, None, None)
             }
             None => (
                 inherited.and_then(|definition| definition.resume_argv.clone()),
                 inherited.and_then(|definition| definition.attach_argv.clone()),
+                inherited.and_then(|definition| definition.reported_resume_argv.clone()),
             ),
         };
 
@@ -217,6 +223,7 @@ pub fn build_definitions(
             states,
             resume_argv,
             attach_argv,
+            reported_resume_argv,
         });
     }
     built
@@ -254,6 +261,27 @@ fn validate_attach_argv(
     } else {
         warnings.push(format!(
             "Ignored {noun} `{id}` resume `attach`: it must be non-empty and contain `{{session}}` or `{{short_session}}` exactly once as a whole non-program argument"
+        ));
+        None
+    }
+}
+
+/// The optional `reported` command. Leaving it out is fine; an invalid one is dropped on its own,
+/// and plain resume still works.
+fn validate_reported_argv(
+    argv: Vec<String>,
+    noun: &str,
+    id: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    if argv.is_empty() {
+        return None;
+    }
+    if has_one_placeholder(&argv, &["{session}"]) {
+        Some(argv)
+    } else {
+        warnings.push(format!(
+            "Ignored {noun} `{id}` resume `reported`: it must be non-empty and contain `{{session}}` exactly once as a whole argument other than the program"
         ));
         None
     }
@@ -431,6 +459,53 @@ mod tests {
     }
 
     #[test]
+    fn a_reported_resume_command_is_optional_and_checked_on_its_own() {
+        let agent = |reported: &str| {
+            build(
+                &format!(
+                    r#"
+                    [[agents]]
+                    id = "mca"
+                    match = {{ names = ["mca"] }}
+                    [agents.resume]
+                    argv = ["mca", "--resume", "{{session}}"]
+                    {reported}
+                    "#
+                ),
+                AgentOrigin::Config,
+            )
+        };
+        let command = |parts: &[&str]| Some(parts.iter().map(|part| part.to_string()).collect());
+
+        let (built, warnings) = agent(r#"reported = ["mca", "--own", "{session}"]"#);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            built[0].reported_resume_command("id"),
+            command(&["mca", "--own", "id"])
+        );
+        assert_eq!(
+            built[0].resume_command("id"),
+            command(&["mca", "--resume", "id"])
+        );
+
+        let (built, warnings) = agent("");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            built[0].reported_resume_command("id"),
+            command(&["mca", "--resume", "id"]),
+            "an agent with one way to resume uses it for both"
+        );
+
+        let (built, warnings) = agent(r#"reported = ["mca", "--own"]"#);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(
+            built[0].reported_resume_command("id"),
+            command(&["mca", "--resume", "id"]),
+            "an invalid one leaves plain resume working"
+        );
+    }
+
+    #[test]
     fn resume_session_is_one_opaque_argv_element() {
         let (built, warnings) = build(
             r#"
@@ -537,6 +612,7 @@ mod tests {
             states: Vec::new(),
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
             attach_argv: None,
+            reported_resume_argv: None,
         }];
         let built = build_definitions(
             parse(
@@ -578,6 +654,7 @@ mod tests {
             states: Vec::new(),
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
             attach_argv: None,
+            reported_resume_argv: None,
         }];
         let built = build_definitions(
             parse(

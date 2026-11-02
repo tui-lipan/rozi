@@ -205,6 +205,10 @@ pub struct AgentDefinition {
     /// What reaches a conversation `resume_argv` refuses because it is still running elsewhere.
     /// `{session}` is the whole reference and `{short_session}` its first eight characters.
     pub attach_argv: Option<Vec<String>>,
+    /// What reopens a conversation the agent's own hooks reported, when that differs from
+    /// `resume_argv`. Such a conversation belongs to the client that reported it, and reopening it
+    /// has to leave hooks able to keep reporting.
+    pub reported_resume_argv: Option<Vec<String>>,
 }
 
 /// Put the session reference into the whole-argument placeholders of `argv`.
@@ -233,6 +237,14 @@ impl AgentDefinition {
         self.resume_argv
             .as_ref()
             .map(|argv| fill_session(argv, session))
+    }
+
+    /// [`Self::resume_command`] for a conversation the agent's own hooks reported.
+    pub fn reported_resume_command(&self, session: &str) -> Option<Vec<String>> {
+        self.reported_resume_argv
+            .as_ref()
+            .map(|argv| fill_session(argv, session))
+            .or_else(|| self.resume_command(session))
     }
 
     pub fn attach_command(&self, session: &str) -> Option<Vec<String>> {
@@ -356,6 +368,7 @@ mod tests {
             states,
             resume_argv: None,
             attach_argv: None,
+            reported_resume_argv: None,
         }
     }
 

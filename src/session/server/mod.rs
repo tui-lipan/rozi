@@ -547,6 +547,8 @@ pub struct RetainedResume {
     pub agent: String,
     pub session: String,
     pub reported_at: u64,
+    /// Learned from the agent's own hooks, rather than from a row another program published.
+    pub reported: bool,
 }
 
 #[derive(Debug)]

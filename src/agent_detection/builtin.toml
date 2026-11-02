@@ -263,8 +263,13 @@ screen = { any_of = [
 id = "codex"
 label = "Codex"
 match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
+# Hooks only run in a client started with `--no-daemon`, so a conversation they reported is that
+# client's. A plain `codex resume` hands it to the shared background server, where hooks have no pane
+# to report to: the next restore then has no conversation to reopen, and starts a new one. Any other
+# conversation Rozi knows of already lives on that server, which a plain resume reconnects to.
 [agents.resume]
 argv = ["codex", "resume", "{session}"]
+reported = ["codex", "resume", "--no-daemon", "{session}"]
 
 [[agents]]
 id = "pi"

@@ -3593,6 +3593,7 @@ mod tests {
             agent: "claude".into(),
             session: "abc".into(),
             reported_at: 1,
+            reported: false,
         };
         let detected = |id: &str| {
             Some(DetectedAgent {

@@ -146,6 +146,21 @@ mod tests {
         }
     }
 
+    /// Codex's hooks only run under `--no-daemon`, and resuming without it stops them reporting.
+    #[test]
+    fn a_codex_conversation_its_hooks_reported_resumes_without_the_daemon() {
+        let catalog = catalog();
+        let codex = catalog.by_id("codex").expect("built-in agent exists");
+        assert_eq!(
+            codex.reported_resume_command("thread id"),
+            Some(
+                ["codex", "resume", "--no-daemon", "thread id"]
+                    .map(String::from)
+                    .to_vec()
+            )
+        );
+    }
+
     /// Both halves of detection in one call, the way a pane's first poll runs them.
     fn detect(
         catalog: &AgentCatalog,

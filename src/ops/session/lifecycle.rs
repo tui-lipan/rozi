@@ -839,6 +839,10 @@ pub(crate) fn restart_discovered_session(
     let remote_config = ctx.state.config.remote.clone();
     if let Err(err) = stop_discovered_session_for_restart(&entry, &remote_config) {
         crate::pane::pty_events::notify_error(ctx, "Restart failed", err.to_string());
+        // The row was out of date, so show what is there now.
+        if err.kind() == std::io::ErrorKind::NotFound {
+            return refresh_session_picker(ctx);
+        }
         return Update::full();
     }
     if let Some(target) = entry.remote_target.as_ref() {
@@ -1083,7 +1087,15 @@ fn stop_discovered_session_for_restart(
         )
         .map_err(std::io::Error::other);
     }
-    crate::session::server::stop_named_session_for_restart(&entry.name).map(|_| ())
+    // The row may be out of date. With no server to replace there is nothing to restart, and
+    // attaching would restore the session's snapshot rather than give it fresh panes.
+    if !crate::session::server::stop_named_session_for_restart(&entry.name)? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Session `{}` is not running", entry.name),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn shutdown_session(name: &str) -> std::io::Result<()> {

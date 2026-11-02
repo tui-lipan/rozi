@@ -1708,6 +1708,43 @@ fn activating_restorable_session_autostarts_its_server() {
     });
 }
 
+/// The row said running, and the server stopped before the restart got there. Attaching now would
+/// restore its snapshot, which is the opposite of what a restart asks for.
+#[test]
+fn restarting_a_session_that_has_since_stopped_does_not_attach_to_it() {
+    crate::test_support::on_large_stack(|| {
+        use crate::AppRoot;
+        use crate::Msg;
+        use tui_lipan::TestBackend;
+
+        let name = format!("stale-row-{}", std::process::id());
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.state_mut().session_picker =
+            Some(SessionPickerState::new(vec![session_row(&name, None)]));
+        backend.state_mut().show_session_picker = true;
+
+        for press in ["arm", "confirm"] {
+            backend
+                .dispatch(Msg::SessionPickerRestartSelected)
+                .unwrap_or_else(|err| panic!("{press} the restart: {err:?}"));
+        }
+
+        assert!(
+            backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .is_none_or(|pending| pending.request.name != name),
+            "a session with no server has nothing to restart, and starting one would restore it"
+        );
+        assert!(
+            backend.state().show_session_picker,
+            "the picker stays open, so Enter remains the way to restore"
+        );
+    });
+}
+
 #[test]
 fn restart_is_inert_for_a_restorable_session() {
     crate::test_support::on_large_stack(|| {

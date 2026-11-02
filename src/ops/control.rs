@@ -164,6 +164,15 @@ pub(crate) fn handle_control_request(
         ControlCommand::ExtensionRuntimeStatus => {
             ControlResponse::ok(crate::ops::placement::status_report(&ctx.state))
         }
+        // A UI has no session server's deployment store. `extensions deploy`, `undeploy`, and a
+        // status that named a session are routed there by the CLI; reaching these here means the
+        // caller addressed a UI directly.
+        ControlCommand::ExtensionsDeploy { .. }
+        | ControlCommand::ExtensionsUndeploy { .. }
+        | ControlCommand::ExtensionsStatus => ControlResponse::error_with(
+            crate::control::ControlErrorCode::Unsupported,
+            "extension deployments belong to a session server; pass `--session <NAME>`",
+        ),
         ControlCommand::AgentGet { target } => match resolve_agent(ctx, &target) {
             Ok(agent) => ControlResponse::ok(agent),
             Err(response) => response,

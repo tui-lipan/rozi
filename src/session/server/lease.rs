@@ -531,6 +531,9 @@ impl SessionServer {
         id: ClientId,
         promotion_reason: ControllerChangeReason,
     ) {
+        if let Some(automation) = &mut self.automation {
+            automation.forget_client(id);
+        }
         self.forget_media_barriers(id);
         self.clear_browse_requests(id);
         self.remove_agent_waits(id);

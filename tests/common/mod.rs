@@ -169,6 +169,30 @@ impl TestConnection {
         self.stream.flush().expect("flush raw client bytes");
     }
 
+    /// Read and discard until the server closes this connection, failing if it never does.
+    pub(crate) fn wait_closed(&mut self) {
+        let deadline = Instant::now() + io_timeout();
+        let mut scratch = [0u8; 16 * 1024];
+        while Instant::now() < deadline {
+            match self.stream.read(&mut scratch) {
+                Ok(0) => return,
+                Ok(_) => continue,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue;
+                }
+                Err(_) => return,
+            }
+        }
+        panic!("the server did not close this connection");
+    }
+
     /// Read and discard whatever the server has sent, briefly.
     ///
     /// An attached client that stops reading is not a passive observer: the server queues its

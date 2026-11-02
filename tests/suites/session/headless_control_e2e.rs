@@ -704,11 +704,6 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
         ui_only(ControlCommand::RunAction {
             action: "toggle-float".to_string(),
         }),
-        ui_only(ControlCommand::Notify {
-            message: "hi".to_string(),
-            title: None,
-            level: rozi::control::NotifyLevel::Info,
-        }),
         // The CLI attaches extension provenance from the environment. A session server cannot check
         // the fencing token, so it declines to act on the extension's behalf at all.
         (

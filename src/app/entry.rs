@@ -121,6 +121,10 @@ pub fn run() -> Result<()> {
                 return cli::run_logs_extension_cli(&id, unit.as_deref(), lines);
             }
         },
+        cli::ParsedCli::ExtensionsDeploy(command) => {
+            apply_config_path(command.config_path.clone());
+            return cli::run_deploy_extension_cli(command);
+        }
         cli::ParsedCli::ExtensionsHelp => {
             cli::print_extensions_help();
             return Ok(());
@@ -319,6 +323,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::WorktreesHelp
         | cli::ParsedCli::AgentsHelp
         | cli::ParsedCli::Extensions(_)
+        | cli::ParsedCli::ExtensionsDeploy(_)
         | cli::ParsedCli::ExtensionsHelp
         | cli::ParsedCli::ExtensionsCheckHelp
         | cli::ParsedCli::ExtensionsInstallHelp

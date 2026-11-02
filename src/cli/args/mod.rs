@@ -116,6 +116,16 @@ pub(crate) struct NewSession {
     pub(crate) worktree_checkouts: Option<Vec<String>>,
 }
 
+/// `extensions deploy`: a bundle is too large for one control request, so the CLI streams it in
+/// chunks to the named session and prints the final answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExtensionsDeployCli {
+    pub(crate) id: String,
+    pub(crate) session: String,
+    pub(crate) remote: Option<String>,
+    pub(crate) config_path: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlCli {
     pub(crate) config_path: Option<String>,
@@ -230,6 +240,7 @@ pub(crate) enum ParsedCli {
     AgentsHelp,
     Sessions(SessionsCommand),
     Extensions(ExtensionsCommand),
+    ExtensionsDeploy(ExtensionsDeployCli),
     SessionsHelp,
     Worktrees(WorktreesCli),
     WorktreesHelp,
@@ -491,7 +502,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--here" => cli.here = true,
             "context" => return context::parse(&mut iter, cli, socket),
             "worktrees" => return worktrees::parse(&mut iter, &mut cli),
-            "extensions" => return extensions::parse(&mut iter, cli.config_path),
+            "extensions" => return extensions::parse(&mut iter, cli),
             "--server" => {
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --server".to_string());
@@ -1044,6 +1055,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     after: after.clone(),
                 };
                 let endpoint = control_endpoint(&cli, socket, &command)?;
+                let endpoint = own_session_endpoint(
+                    endpoint,
+                    &mut control_request(command),
+                    std::env::var_os("ROZI_SOCKET").is_some_and(|value| !value.is_empty()),
+                );
                 if !endpoint.is_session() && (snapshot || after.is_some()) {
                     return Err(
                         "--snapshot and --after require a session endpoint (--session)".to_string(),
@@ -1881,6 +1897,14 @@ pub(super) fn own_session_endpoint(
     request: &mut control::ControlRequest,
     ui_socket_in_env: bool,
 ) -> ControlEndpoint {
+    if endpoint == ControlEndpoint::Ui(None)
+        && request.credential.as_deref().is_some_and(|token| {
+            token.starts_with(crate::extension_runtime::SESSION_CREDENTIAL_PREFIX)
+        })
+        && let Some(instance) = request.source_session.clone()
+    {
+        return ControlEndpoint::OwnSession(instance);
+    }
     if endpoint != ControlEndpoint::Ui(None) || ui_socket_in_env {
         return endpoint;
     }

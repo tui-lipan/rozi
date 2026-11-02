@@ -90,6 +90,39 @@ impl RuntimeConnection {
         link: CommandLink<Msg>,
         hub: EventHub,
     ) -> Arc<Self> {
+        let report_host = host.clone();
+        let report_link = link.clone();
+        let report = move |event| {
+            report_link.send(Msg::ExtensionRuntime {
+                host: report_host.clone(),
+                epoch,
+                event,
+            });
+        };
+        let serve = move |connection: IpcConnection, done: Box<dyn FnOnce() + Send>| {
+            let link = link.clone();
+            let hub = hub.clone();
+            std::thread::spawn(move || {
+                crate::control::serve_connection(
+                    connection,
+                    link,
+                    hub,
+                    RequestOrigin::Bridged { runtime: epoch },
+                );
+                done();
+            });
+        };
+        Self::connect(host, remote, report, serve)
+    }
+
+    /// Connect to `host`'s runtime on a background thread without any UI dependencies, reporting
+    /// [`RuntimeEvent`]s through `report` and delegating bridged control connections to `serve`.
+    pub fn connect(
+        host: HostKey,
+        remote: crate::config::RemoteConfig,
+        report: impl Fn(RuntimeEvent) + Send + 'static,
+        serve: impl Fn(IpcConnection, Box<dyn FnOnce() + Send>) + Send + 'static,
+    ) -> Arc<Self> {
         let writer: SharedWriter = Arc::new(Mutex::new(None));
         let undelivered = Arc::new(AtomicUsize::new(0));
         let connection = Arc::new(Self {
@@ -99,13 +132,6 @@ impl RuntimeConnection {
         std::thread::Builder::new()
             .name("rozi-extension-runtime".to_string())
             .spawn(move || {
-                let report = |event| {
-                    link.send(Msg::ExtensionRuntime {
-                        host: host.clone(),
-                        epoch,
-                        event,
-                    })
-                };
                 let channel = match &host {
                     HostKey::Local => open_local(),
                     HostKey::Remote(target) => open_remote(target, &remote),
@@ -119,19 +145,6 @@ impl RuntimeConnection {
                     }
                 };
                 report(RuntimeEvent::Ready(hello));
-                let serve = |connection: IpcConnection, done: Box<dyn FnOnce() + Send>| {
-                    let link = link.clone();
-                    let hub = hub.clone();
-                    std::thread::spawn(move || {
-                        crate::control::serve_connection(
-                            connection,
-                            link,
-                            hub,
-                            RequestOrigin::Bridged { runtime: epoch },
-                        );
-                        done();
-                    });
-                };
                 let ended = relay(reader, &writer, serve, &report, &undelivered);
                 if let Some(connection) = writer.lock().unwrap().take() {
                     let _ = connection.shutdown(std::net::Shutdown::Both);

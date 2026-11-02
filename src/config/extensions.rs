@@ -288,6 +288,19 @@ pub(crate) struct DiscoveredExtension {
     placements: Option<placement::ExtensionPlacements>,
 }
 
+impl DiscoveredExtension {
+    pub(crate) fn session_services(&self) -> Vec<placement::PlacedService> {
+        self.placements.as_ref().map_or_else(Vec::new, |placed| {
+            placed
+                .services
+                .iter()
+                .filter(|service| service.placement == placement::Placement::Session)
+                .cloned()
+                .collect()
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ExtensionScan {
     pub(crate) extensions: Vec<DiscoveredExtension>,

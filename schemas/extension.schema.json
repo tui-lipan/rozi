@@ -197,10 +197,11 @@
               "client",
               "active-session",
               "each-host",
-              "each-session"
+              "each-session",
+              "session"
             ],
             "default": "client",
-            "description": "Where, and how many, instances run: one on the client; one on the active session's host; one on every host with an attached session; or one per attached session, on its host."
+            "description": "Where services run. Session services require explicit deployment and keep running without attached clients."
           },
           "session_scope": {
             "enum": [

@@ -148,10 +148,15 @@ impl InstallSource {
 }
 
 /// Classify the running executable using one consistent process-environment snapshot.
+///
+/// This asks where the binary was installed, not how to run it, so it reads the path itself. An
+/// update can unlink it, and `rozi (deleted)` still sits under its install's directory, whereas the
+/// path [`paths::current_binary`] hands out for running it then does not.
 pub fn detect_current() -> InstallSource {
     let platform_env = PlatformEnv::from_process();
     let source_env = SourceEnv::from_platform_env(&platform_env);
-    paths::current_binary()
+    std::env::current_exe()
+        .ok()
         .map(|executable| InstallSource::detect(&executable, &source_env))
         .unwrap_or(InstallSource::Unknown)
 }
@@ -223,6 +228,17 @@ mod tests {
     fn managed_layout_is_recognised_before_any_other_channel() {
         let exe = Path::new("/home/dev/.local/share/rozi/versions/0.1.0/rozi");
         assert_eq!(InstallSource::detect(exe, &env()), InstallSource::Managed);
+    }
+
+    #[test]
+    fn a_binary_an_update_unlinked_keeps_its_channel() {
+        let cargo = Path::new("/home/dev/.cargo/bin/rozi (deleted)");
+        assert_eq!(InstallSource::detect(cargo, &env()), InstallSource::Cargo);
+        let managed = Path::new("/home/dev/.local/share/rozi/versions/0.1.0/rozi (deleted)");
+        assert_eq!(
+            InstallSource::detect(managed, &env()),
+            InstallSource::Managed
+        );
     }
 
     #[test]

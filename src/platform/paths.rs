@@ -463,6 +463,9 @@ fn fallback_runtime_dir_in(temp_dir: PathBuf, owner: &str) -> PathBuf {
 /// and each one fails as a bare `command not found` deep inside a user's pipeline. Handing out the
 /// path removes the assumption.
 ///
+/// This is a path to run, not a statement of where the binary is installed. After an update it may
+/// name this process rather than any install.
+///
 /// `None` when the platform cannot answer, which is not an error: callers fall back to `PATH`.
 pub fn current_binary() -> Option<PathBuf> {
     std::env::current_exe()

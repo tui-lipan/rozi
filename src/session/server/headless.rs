@@ -747,11 +747,15 @@ impl SessionServer {
                 seq,
             } => self.session_agent_report_update(
                 target,
-                Some(agent),
-                integration,
-                Some((state, reason, native_session)),
-                unless_quiet,
-                seq,
+                runtime::AgentIntegrationUpdate {
+                    agent: Some(agent),
+                    integration,
+                    state: Some(state),
+                    reason,
+                    native_session,
+                    unless_quiet,
+                    seq,
+                },
                 broadcasts,
             ),
             ControlCommand::AgentRelease {
@@ -760,11 +764,15 @@ impl SessionServer {
                 seq,
             } => self.session_agent_report_update(
                 target,
-                None,
-                integration,
-                None,
-                None,
-                seq,
+                runtime::AgentIntegrationUpdate {
+                    agent: None,
+                    integration,
+                    state: None,
+                    reason: None,
+                    native_session: None,
+                    unless_quiet: None,
+                    seq,
+                },
                 broadcasts,
             ),
             ControlCommand::Notify {
@@ -1667,11 +1675,7 @@ impl SessionServer {
     fn session_agent_report_update(
         &mut self,
         target: Option<PaneId>,
-        agent: Option<String>,
-        integration: String,
-        report: Option<(protocol::AgentState, Option<String>, Option<String>)>,
-        unless_quiet: Option<protocol::AgentState>,
-        seq: u64,
+        update: runtime::AgentIntegrationUpdate,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) -> ControlResponse {
         let id = match self.session_target_pane(target) {
@@ -1684,23 +1688,7 @@ impl SessionServer {
                 format!("pane {id} not found"),
             );
         };
-        let (state, reason, native_session) = report.map_or((None, None, None), |report| {
-            (Some(report.0), report.1, report.2)
-        });
-        match self.apply_agent_integration(
-            None,
-            id,
-            generation,
-            runtime::AgentIntegrationUpdate {
-                agent,
-                integration,
-                state,
-                reason,
-                native_session,
-                unless_quiet,
-                seq,
-            },
-        ) {
+        match self.apply_agent_integration(None, id, generation, update) {
             Ok(Some(message)) => {
                 broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()

@@ -563,7 +563,6 @@ fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// A fallback only makes sense for a run said to be going, and has to say it stopped.
 fn validate_unless_quiet(
     state: Option<protocol::AgentState>,
@@ -587,6 +586,7 @@ fn validate_unless_quiet(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_integration_report(
     session_instance: protocol::SessionInstanceId,
     pane_id: PaneId,

@@ -202,6 +202,21 @@ class Loop:
             # An agent that is working again, or waiting on someone, comes back here when it stops.
             if agent["completions"] > record["seen"] and agent["state"] in ("done", "idle"):
                 self.handle_turn(agent, record)
+            elif agent["state"] == "blocked":
+                self.note_waiting(agent, record)
+
+    def note_waiting(self, agent: dict[str, Any], record: dict[str, Any]) -> None:
+        """Say once per request that an agent this asked to fix something is waiting for approval.
+
+        With no UI attached nothing else tells anyone, and the fix stops there until someone looks.
+        """
+        attempts = record["attempts"]
+        if not attempts or record.get("noted_wait") == attempts:
+            return
+        record["noted_wait"] = attempts
+        self.ledger.save()
+        name = Path(agent.get("cwd") or "agent").name
+        self.rozi.notify(f"{name}: the agent is waiting for approval to continue the fix")
 
     def handle_turn(self, agent: dict[str, Any], record: dict[str, Any]) -> None:
         cwd = agent.get("cwd")
@@ -230,7 +245,7 @@ class Loop:
 
     def on_pass(self, name: str, record: dict[str, Any]) -> None:
         attempts = record["attempts"]
-        record.update(attempts=0, gave_up=False)
+        record.update(attempts=0, gave_up=False, noted_wait=0)
         self.ledger.save()
         after = f" after {attempts} fix attempts" if attempts else ""
         self.rozi.notify(f"{name}: tests pass{after}")
@@ -293,14 +308,15 @@ class Stream:
 
 
 def should_wake(line: str) -> bool:
-    """The first record, a snapshot, proves the stream is live. After it, only a turn's end counts."""
+    """The first record, a snapshot, proves the stream is live. After it, only an agent stopping counts."""
     try:
         record = json.loads(line)
     except ValueError:
         return False
     if record.get("type") == "snapshot":
         return True
-    return record.get("type") == "event" and record.get("data", {}).get("state") in ("done", "idle")
+    stopped = ("done", "idle", "blocked")
+    return record.get("type") == "event" and record.get("data", {}).get("state") in stopped
 
 
 def prune_ledgers(state_dir: Path, now: float) -> None:

@@ -220,6 +220,53 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(self.rozi.test_runs, [])
         self.assertEqual(self.rozi.notes, [])
 
+    def waiting_notes(self) -> list[str]:
+        return [note for note, _ in self.rozi.notes if "waiting for approval" in note]
+
+    def test_an_agent_it_asked_says_once_per_request_that_it_is_waiting(self) -> None:
+        self.rozi.test_replies = [failed(), failed()]
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.loop.reconcile()
+        self.assertEqual(len(self.waiting_notes()), 1)
+
+        self.rozi.finish_turn(1, "working")
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(len(self.waiting_notes()), 1, "another approval in the same request")
+
+        self.rozi.finish_turn(2)
+        self.loop.reconcile()
+        self.rozi.finish_turn(2, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(len(self.waiting_notes()), 2, "a new request")
+
+    def test_a_restart_does_not_repeat_the_waiting_note(self) -> None:
+        self.rozi.test_replies = [failed()]
+        self.rozi.finish_turn(1)
+        self.loop.reconcile()
+        self.rozi.finish_turn(1, "blocked")
+        self.loop.reconcile()
+        self.make_loop().reconcile()
+        self.assertEqual(len(self.waiting_notes()), 1)
+
+    def test_a_note_is_due_again_after_the_tests_pass(self) -> None:
+        self.rozi.test_replies = [failed(), passed(), failed()]
+        for completions in (1, 2, 3):
+            self.rozi.finish_turn(completions)
+            self.loop.reconcile()
+            self.rozi.finish_turn(completions, "blocked")
+            self.loop.reconcile()
+        self.assertEqual(len(self.waiting_notes()), 2)
+
+    def test_an_agent_it_never_asked_is_not_its_business_when_blocked(self) -> None:
+        self.rozi.finish_turn(0, "blocked")
+        self.loop.reconcile()
+        self.assertEqual(self.rozi.notes, [])
+
     def test_a_gone_agent_is_forgotten(self) -> None:
         self.rozi.finish_turn(1)
         self.rozi.test_replies = [passed()]
@@ -295,11 +342,12 @@ class RunTestsActionTest(unittest.TestCase):
 
 
 class HelpersTest(unittest.TestCase):
-    def test_only_the_snapshot_and_a_turns_end_wake_the_service(self) -> None:
+    def test_only_the_snapshot_and_an_agent_stopping_wake_the_service(self) -> None:
         event = lambda state: json.dumps({"type": "event", "data": {"state": state}})  # noqa: E731
         self.assertTrue(test_loop.should_wake('{"type":"snapshot"}'))
         self.assertTrue(test_loop.should_wake(event("done")))
         self.assertTrue(test_loop.should_wake(event("idle")))
+        self.assertTrue(test_loop.should_wake(event("blocked")))
         self.assertFalse(test_loop.should_wake(event("working")))
         self.assertFalse(test_loop.should_wake('{"type":"lagged"}'))
         self.assertFalse(test_loop.should_wake("not json"))

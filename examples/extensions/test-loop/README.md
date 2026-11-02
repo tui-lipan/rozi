@@ -47,7 +47,12 @@ When an agent finishes a turn in one of your `roots`:
   more requests until the tests pass.
 
 An agent that is working or waiting for approval is left alone, and its tests run when it stops. If
-the agent can't be asked, or the tests can't be run, you get a notification saying why.
+one it asked to fix something stops for approval, you get one notification per request, because
+nothing else says so with no UI attached. If the agent can't be asked, or the tests can't be run, you
+get a notification saying why.
+
+The log is outside the project, so an agent that asks before reading such files will stop for
+approval when it starts each fix.
 
 ## Run the tests yourself
 

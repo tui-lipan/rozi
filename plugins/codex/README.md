@@ -49,12 +49,13 @@ each thread's state from the background server and lists every loaded thread as 
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
 | Compaction | `working`, keeping the same integration token |
-| Turn finishes | `done` |
+| Turn finishes | `done` about two seconds later, or `blocked` if Codex opens a dialog first |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
 
-Codex opens some dialogs with no hook, such as its offer to switch models after a turn. The pane
-keeps its reported state, and `rozi agents prompt` refuses to type into them.
+Codex opens some dialogs with no hook, such as its offer to switch models after a turn, so a turn
+that finished waits for the screen before it reads `done`. `rozi agents prompt` refuses to type into
+those dialogs whatever the pane reports.
 
 A prompt reports nothing until Codex is about to call the model, because another hook can still
 reject it. A rejected prompt leaves the pane as it was.
@@ -137,7 +138,7 @@ For a live check, launch Codex with the plugin inside a Rozi pane. From another 
 1. Submit a prompt. The pane reports the native thread ID and its state becomes `working` when the model request starts.
 2. Request a command that needs approval. Its state becomes `blocked`, and returns to `working`
    once the approved command finishes.
-3. Let the response finish. Its state becomes `done`.
+3. Let the response finish. Its state becomes `done` about two seconds later.
 4. Run `/compact`. Reporting continues with the same token.
 5. Run `/new` and submit a prompt. The pane reports the new thread ID.
 6. Exit Codex. Its report is released and its activity disappears when the process exits.

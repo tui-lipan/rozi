@@ -6620,6 +6620,33 @@ fn a_later_report_drops_the_fallback_of_the_one_before_it() {
 }
 
 #[test]
+fn a_turn_that_ended_falls_to_done_once_the_screen_is_quiet_and_not_through_a_dialog() {
+    use protocol::{AgentState, DetectedAgentState};
+    let mut server = SessionServer::new_named("dev");
+    pane_with_agent(&mut server);
+    assert!(report_unless_quiet(&mut server, AgentState::Working, AgentState::Done, 1).ok);
+    assert_eq!(reported(&server).0, AgentState::Working, "not done yet");
+
+    screen_reads(&mut server, DetectedAgentState::Blocked);
+    assert_eq!(reported(&server).0, AgentState::Blocked);
+    assert_eq!(completions(&server), 0);
+
+    screen_reads(&mut server, DetectedAgentState::Idle);
+    assert_eq!(reported(&server).0, AgentState::Done);
+    assert_eq!(completions(&server), 1);
+}
+
+#[test]
+fn a_turn_that_ended_is_not_held_back_on_a_pane_with_no_screen_to_read() {
+    use protocol::{AgentState, DetectedAgentState};
+    let mut server = SessionServer::new_named("dev");
+    pane_with_session_rows(&mut server, 7);
+    assert!(report_unless_quiet(&mut server, AgentState::Working, AgentState::Done, 1).ok);
+    screen_reads(&mut server, DetectedAgentState::Working);
+    assert_eq!(reported(&server).0, AgentState::Done);
+}
+
+#[test]
 fn a_pane_listing_agent_rows_keeps_its_report_because_no_screen_speaks_for_it() {
     use protocol::{AgentState, DetectedAgentState};
     let mut server = SessionServer::new_named("dev");

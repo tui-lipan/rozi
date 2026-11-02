@@ -82,7 +82,8 @@ class ActivityTests(unittest.TestCase):
         self.hook("Stop")
         self.hook("SessionEnd", reason="other")
         self.assertEqual([self.field("--state", i) for i in range(5)],
-                         ["working", "working", "blocked", "working", "done"])
+                         ["working", "working", "blocked", "working", "working"])
+        self.assertEqual(self.field("--unless-quiet", 4), "done")
         self.assertEqual([self.field("--seq", i) for i in range(6)], list(map(str, range(1, 7))))
         self.assertEqual(len({self.field("--integration", i) for i in range(6)}), 1)
         self.assertTrue(self.field("--integration").startswith("codex:"))
@@ -117,7 +118,7 @@ class ActivityTests(unittest.TestCase):
         count = len(self.calls)
         self.hook("UserPromptSubmit")
         self.assertEqual(len(self.calls), count)
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
         self.hook("PreModelRequest")
         self.assertEqual(self.field("--state"), "working")
 
@@ -362,7 +363,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.assertEqual(self.field("--state"), "blocked")
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
 
     def test_write_stdin_approval_waits_for_its_exec_call_across_turns(self):
         # Codex fires no PreToolUse for write_stdin, and the command it writes to can outlive the
@@ -397,7 +398,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
         self.hook("UserPromptSubmit")
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.assertEqual(self.field("--state"), "working")
@@ -409,7 +410,7 @@ class ActivityTests(unittest.TestCase):
             self.hook(name, session="nested")
         self.assertEqual(len(self.calls), 1)
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
 
     def test_question_tool_blocks_until_its_own_completion(self):
         self.first_turn()
@@ -788,7 +789,7 @@ class ShellLaunchTests(unittest.TestCase):
         calls = [line.split() for line in self.log.read_text().splitlines()]
         states = [args[args.index("--state") + 1] if "--state" in args else args[1]
                   for args in calls]
-        self.assertEqual(states, ["working", "working", "blocked", "working", "done", "release"])
+        self.assertEqual(states, ["working", "working", "blocked", "working", "working", "release"])
         tokens = {args[args.index("--integration") + 1] for args in calls}
         self.assertEqual(len(tokens), 1)
 

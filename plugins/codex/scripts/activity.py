@@ -23,7 +23,9 @@ EVENT_STATES = {
     "PreCompact": ("working", None),
     "PostCompact": ("working", None),
     "PermissionRequest": ("blocked", "Permission required"),
-    "Stop": ("done", None),
+    # Codex opens dialogs after this hook returns, such as its offer to switch models. Saying done
+    # now would release anything waiting on it into the moment before one opens.
+    "Stop": ("working|done", None),
     "Interrupt": ("idle", None),
     "SessionEnd": ("release", None),
 }

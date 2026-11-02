@@ -447,6 +447,9 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   until it reads the agent as idle, then falls to that state, with `--reason` as its reason. So a
   dialog reads `blocked` in the meantime. The next report replaces it either way. This applies to a
   report that owns the pane, when the pane lists no agent rows.
+- `--unless-quiet done` is for a hook that knows the turn ended but not whether a dialog opens next.
+  The state becomes `done` about two seconds later, unless a dialog is up. With no screen to read, it
+  doesn't wait for one, and a screen that keeps reading as working holds it for at most ten seconds.
 - When the pane also publishes agent rows, a report drives only the row whose conversation matches
   `--native-session`; the other rows stay listed as published.
 - One token owns the pane. Hooks for a conversation running in the background can still report for

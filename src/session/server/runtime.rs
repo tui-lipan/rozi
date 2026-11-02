@@ -54,6 +54,10 @@ pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
 /// prompt still clears within a beat. The cost is one-directional by design: a run that really has
 /// stopped reports it a moment late, which is worth far more than a state that oscillates.
 pub(super) const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
+/// How long a report falling back to `done` waits on a screen that keeps reading as working. The
+/// agent said the turn ended, so a screen that goes on animating, such as for a background job,
+/// must not hold that back for good.
+const QUIET_DONE_LIMIT: Duration = Duration::from_secs(10);
 
 /// How long after an agent is first named that its screen cannot yet say it is working.
 ///
@@ -1089,7 +1093,12 @@ impl SessionServer {
                         integration,
                         RowReport {
                             native_session,
-                            state,
+                            // No screen speaks for a row, and this says the turn ended.
+                            state: if unless_quiet == Some(protocol::AgentState::Done) {
+                                protocol::AgentState::Done
+                            } else {
+                                state
+                            },
                             reason: reason
                                 .as_deref()
                                 .and_then(|reason| clean_text(reason, PANE_STATUS_REASON_MAX_LEN)),
@@ -1656,9 +1665,14 @@ fn compute_runtime_state(
         foreground_job.as_ref(),
         process_refreshed,
     );
+    // An agent's rows say what its pane reads as, so then no screen speaks for the report.
+    let screen_reading = crate::session::protocol::agent_rows_with_integration(&pane.runtime)
+        .is_empty()
+        .then_some(detected_agent.as_ref())
+        .flatten();
     let integration = settle_quiet_report(
         pane.runtime.integration.clone(),
-        detected_agent.as_ref(),
+        screen_reading,
         crate::runtime_metrics::unix_time_millis(),
     );
 
@@ -2726,6 +2740,10 @@ fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
 /// the report waits out the same grace itself, for a screen that has not yet drawn the new turn.
 /// A dialog can open with no hook to say so, and typing into one answers it, so until then the
 /// report also says what the screen says: blocked while a dialog is up, working after it.
+///
+/// A fallback to `done` is the agent's own word that the turn ended, and only the chance of a
+/// dialog holds it back. So it doesn't need a screen to agree: with none to read it falls once the
+/// grace has passed, and it waits on one reading as working only for [`QUIET_DONE_LIMIT`].
 fn settle_quiet_report(
     report: Option<Box<protocol::AgentIntegrationReport>>,
     detected: Option<&DetectedAgent>,
@@ -2739,17 +2757,27 @@ fn settle_quiet_report(
     let reading = detected
         .filter(|detected| detected.agent.id == report.identity.id)
         .map(|detected| detected.state);
-    let grace_passed = now_unix_ms.saturating_sub(report.reported_at_unix_ms)
-        >= STATE_SETTLE_GRACE.as_millis() as u64;
-    match reading {
-        Some(DetectedAgentState::Blocked) => report.state = protocol::AgentState::Blocked,
-        Some(DetectedAgentState::Working) => report.state = protocol::AgentState::Working,
-        Some(DetectedAgentState::Idle) if grace_passed => {
-            let fallback = report.unless_quiet.take().expect("checked above");
-            report.state = fallback.state;
-            report.reason = fallback.reason;
+    let elapsed = now_unix_ms.saturating_sub(report.reported_at_unix_ms);
+    let grace_passed = elapsed >= STATE_SETTLE_GRACE.as_millis() as u64;
+    let finished = report
+        .unless_quiet
+        .as_ref()
+        .is_some_and(|fallback| fallback.state == protocol::AgentState::Done);
+    let falls = match reading {
+        Some(DetectedAgentState::Blocked) => {
+            report.state = protocol::AgentState::Blocked;
+            false
         }
-        _ => {}
+        Some(DetectedAgentState::Working) => {
+            report.state = protocol::AgentState::Working;
+            finished && elapsed >= QUIET_DONE_LIMIT.as_millis() as u64
+        }
+        Some(DetectedAgentState::Idle) => grace_passed,
+        None => finished && grace_passed,
+    };
+    if falls && let Some(fallback) = report.unless_quiet.take() {
+        report.state = fallback.state;
+        report.reason = fallback.reason;
     }
     Some(report)
 }
@@ -3002,7 +3030,31 @@ mod tests {
             state(settle_quiet_report(report(1000), Some(&idle), 1000 + grace)),
             AgentState::Idle
         );
-        // No reading, or another program's, says nothing about this agent.
+        // A turn that ended waits only so long on a screen that goes on reading as working.
+        let finished = |at| {
+            let mut report = report(at).unwrap();
+            report.unless_quiet.as_mut().unwrap().state = AgentState::Done;
+            Some(report)
+        };
+        let working = detected("claude", protocol::DetectedAgentState::Working);
+        let limit = QUIET_DONE_LIMIT.as_millis() as u64;
+        assert_eq!(
+            state(settle_quiet_report(finished(0), Some(&working), limit - 1)),
+            AgentState::Working
+        );
+        assert_eq!(
+            state(settle_quiet_report(finished(0), Some(&working), limit)),
+            AgentState::Done
+        );
+        assert_eq!(
+            state(settle_quiet_report(finished(1000), None, 1000 + grace - 1)),
+            AgentState::Working
+        );
+        assert_eq!(
+            state(settle_quiet_report(finished(1000), None, 1000 + grace)),
+            AgentState::Done
+        );
+        // Anything but `done` is a guess: no reading, or another program's, can't confirm it.
         assert_eq!(
             state(settle_quiet_report(report(0), None, 1000 + grace)),
             AgentState::Working

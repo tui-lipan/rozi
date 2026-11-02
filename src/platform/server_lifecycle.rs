@@ -5,7 +5,8 @@
 //!
 //! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix starts a
 //!   new process session and closes all three stdio streams; Windows additionally passes
-//!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
+//!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console, and
+//!   stops this process's own stdio handles reaching the server by inheritance.
 //! - [`DetachedServer`] - the spawned server's handle. Dropping it never kills the server, but on
 //!   Unix it hands the still-running child to a single shared reaper thread, so the server's exit
 //!   is reaped rather than left behind as a zombie for the client's whole lifetime.
@@ -26,11 +27,11 @@
 //!   children with it).
 //!
 //! The Windows half is written against documented API contracts and is compiled and linted on
-//! `windows-latest` in CI, but nothing exercises it: this module's own tests are `cfg(unix)`, and
-//! the situations these functions exist for - a job reaping live ConPTY children when a server is
-//! killed or crashes, and the console-control events a clean detach depends on - are not states the
-//! suite puts any host into. Treat a change here as unproven until it has been run by hand on a
-//! Windows console.
+//! `windows-latest` in CI. Integration tests run the detached spawn there, but this module's own
+//! tests are `cfg(unix)`, and the situations the other functions exist for - a job reaping live
+//! ConPTY children when a server is killed or crashes, and the console-control events a clean detach
+//! depends on - are not states the suite puts any host into. Treat a change to those as unproven
+//! until it has been run by hand on a Windows console.
 
 use std::io;
 use std::path::Path;
@@ -91,6 +92,7 @@ fn spawn_server_child(
         use windows_sys::Win32::System::Threading::{
             CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, DETACHED_PROCESS,
         };
+        withhold_own_stdio_from_children();
         let base = DETACHED_PROCESS | CREATE_NO_WINDOW;
         match spawn_server_with_flags(exe, name, start, base | CREATE_BREAKAWAY_FROM_JOB) {
             Ok(child) => Ok(child),
@@ -269,6 +271,35 @@ fn configure_detached_server(command: &mut std::process::Command) {
                 Err(io::Error::last_os_error())
             }
         });
+    }
+}
+
+/// Stop this process's own stdio handles reaching its children by inheritance.
+///
+/// `Command::spawn` creates every Windows child with `bInheritHandles`, which hands it each
+/// inheritable handle in this process whatever its `Stdio` says. A parent capturing this process's
+/// output gave it inheritable pipe handles, so a server would keep those pipes open for its whole
+/// life and the parent's read would never end. `Stdio::inherit()` is unaffected, because it
+/// duplicates the handle for the child instead of relying on this flag.
+///
+/// A failure leaves the handle as it was, and the only cost is the wait described above, so it is
+/// not worth refusing to start a server over.
+#[cfg(windows)]
+fn withhold_own_stdio_from_children() {
+    use windows_sys::Win32::Foundation::{
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
+    for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        unsafe {
+            let handle = GetStdHandle(stream);
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
     }
 }
 

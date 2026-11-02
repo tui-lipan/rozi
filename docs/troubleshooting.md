@@ -53,8 +53,8 @@ from, and every running session server, keep the old build.
 
 1. Quit rozi and start it again to run the new client.
 2. Restart each session that should use the new build: in Sessions (`Ctrl+A`, then `s`), press
-   `Ctrl+E` twice on it, or run the `restart-session` action. Restarting ends the programs in its
-   panes.
+   `Ctrl+E` twice on it, run the `restart-session` action, or run `rozi sessions restart <NAME>`.
+   Restarting ends the programs in its panes.
 3. On Windows, run the install script again if the update needs to replace the launcher.
 
 See [What an update restarts](installation.md#what-an-update-restarts).

@@ -188,6 +188,23 @@ pub(crate) fn run_new_detached_session_cli(name: &str, resurrect: bool) -> Resul
     Ok(())
 }
 
+pub(crate) fn run_restart_session_cli(
+    name: &str,
+    resurrect: bool,
+    remote: Option<&str>,
+) -> Result<()> {
+    let Some(remote) = remote else {
+        session::server::restart_named_session(name, resurrect)?;
+        return Ok(());
+    };
+    let target = session::remote::parse_remote_target(remote)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let config = crate::config::load_config().config.remote;
+    session::remote::restart_remote_session(&target, name, resurrect, &config)
+        .map_err(std::io::Error::other)?;
+    Ok(())
+}
+
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     if !session::discovery::valid_attach_target(name) {
         return Err(

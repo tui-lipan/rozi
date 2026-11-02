@@ -20,6 +20,7 @@ rozi --remote ssh://user@host:2222
 rozi --remote workbox sessions attach dev
 rozi --remote workbox sessions new review
 rozi sessions list --remote workbox
+rozi sessions restart dev --remote workbox
 rozi sessions kill dev --remote workbox
 ```
 
@@ -301,8 +302,8 @@ For development or CI:
 ### Version compatibility
 
 Your rozi and the rozi on the host must speak the same session protocol. When a release changes it,
-its release notes say so: update both ends, then restart the named sessions running on the host.
-Releases that keep the protocol work with each other, and updating the client alone does not
+its release notes say so: update both ends, then restart the named sessions running on the host
+with `rozi sessions restart <NAME> --remote <HOST>`. Releases that keep the protocol work with each other, and updating the client alone does not
 restart remote sessions.
 
 ## Understand the client and server boundary
@@ -331,7 +332,7 @@ runs there starts in `rozi`'s own directory rather than the remote pane's. An ex
 [place](writing-extensions.md#run-on-the-session-host) a contribution on the session's host instead: rozi
 then runs it on the remote machine, over a separate SSH connection, from a copy of the extension's
 files, and relays its requests back to your client. `rozi extensions status` shows what runs where.
-`rozi sessions list --remote`, `rozi sessions kill --remote`, and `rozi worktrees --remote` each run
+`rozi sessions list --remote`, `rozi sessions restart --remote`, `rozi sessions kill --remote`, and `rozi worktrees --remote` each run
 as a separate SSH command. Quote `~` in their paths so your local shell does not expand it.
 
 A new remote pane has `SSH_CONNECTION` set to your current connection. On a Linux host with a systemd user session, it also gets

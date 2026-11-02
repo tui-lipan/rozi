@@ -1243,13 +1243,15 @@ rozi sessions new api --cwd ~/src/api
 rozi sessions new scratch --detach
 rozi sessions new tests --detach --no-resurrect
 rozi sessions list
+rozi sessions restart dev
 rozi sessions kill dev
 ```
 
-`sessions list` and `sessions kill` also take `--remote`:
+`sessions list`, `sessions restart`, and `sessions kill` also take `--remote`:
 
 ```sh
 rozi sessions list --remote workbox
+rozi sessions restart dev --remote workbox
 rozi sessions kill dev --remote workbox
 ```
 

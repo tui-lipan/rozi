@@ -303,6 +303,14 @@ pub(crate) enum SessionsCommand {
         resurrect: bool,
         config_path: Option<String>,
     },
+    /// `sessions restart <NAME> [--no-resurrect] [--remote <HOST>]`.
+    Restart {
+        name: String,
+        /// `false` for `--no-resurrect`: the new server never writes a snapshot.
+        resurrect: bool,
+        remote: Option<String>,
+        config_path: Option<String>,
+    },
     Kill {
         name: String,
         remote: Option<String>,

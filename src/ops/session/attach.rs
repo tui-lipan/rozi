@@ -579,6 +579,16 @@ pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>) -> Update {
     offer_session_picker_or_launcher(ctx)
 }
 
+/// A named session comes back under its name, with its deployments. A temporary session is replaced
+/// under a new name, so it really does end.
+fn end_server_for_restart(client: &crate::session::client::SessionClient, ephemeral: bool) {
+    if ephemeral {
+        client.shutdown();
+    } else {
+        client.shutdown_for_restart();
+    }
+}
+
 /// Shut the current session's server down and immediately recreate it, keeping the client attached
 /// to the replacement. Distinct from kill (which leaves the client sessionless).
 pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
@@ -592,7 +602,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::flush_layout_commit(ctx);
     crate::ops::exit::mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
-        client.shutdown();
+        end_server_for_restart(&client, ephemeral);
     }
     if let Some(target) = remote_target.as_ref() {
         crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &name, target);
@@ -1172,7 +1182,27 @@ pub(crate) fn disconnect_host(
 #[cfg(test)]
 mod tests {
     use crate::config::RemoteConfig;
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
     use crate::state::AttachPrompting;
+
+    /// A named session's restart must not delete what is deployed to it.
+    #[test]
+    fn restarting_keeps_a_named_session_and_ends_a_temporary_one() {
+        let (client, sent) = SessionClient::test_channel();
+        super::end_server_for_restart(&client, false);
+        assert!(matches!(
+            sent.try_recv(),
+            Ok(ClientOutbound::Control(ClientMessage::ShutdownForRestart))
+        ));
+
+        let (client, sent) = SessionClient::test_channel();
+        super::end_server_for_restart(&client, true);
+        assert!(matches!(
+            sent.try_recv(),
+            Ok(ClientOutbound::Control(ClientMessage::Shutdown))
+        ));
+    }
 
     /// A reconnect nobody asked for must not open an SSH dialog over the session, even with
     /// `batch_mode = false`; one the user asked for keeps the configured choice.

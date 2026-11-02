@@ -16,6 +16,34 @@ enum Retirement {
     TimedOut,
 }
 
+/// What stopping the server is for, which decides what stays under the session's name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ending {
+    /// Delete the session: its snapshot and deployments go too.
+    Delete,
+    /// Something starts under this name next. Its deployments stay, and a server stopped any way
+    /// but the protocol leaves a snapshot for that start to discard.
+    Restart,
+}
+
+impl Ending {
+    fn message(self) -> ClientMessage {
+        match self {
+            Self::Delete => ClientMessage::Shutdown,
+            Self::Restart => ClientMessage::ShutdownForRestart,
+        }
+    }
+
+    /// Discard the snapshot and deployments if this ending deletes them. Forgetting them is what
+    /// makes this a deletion, so a restart leaves both alone.
+    fn forget_session(self, name: &str) -> Option<io::Error> {
+        match self {
+            Self::Delete => super::delete_snapshot(name).err(),
+            Self::Restart => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum EndpointProbe {
     Retired,
@@ -49,15 +77,33 @@ pub(crate) fn shutdown_named_session_if_present(name: &str) -> io::Result<bool> 
         return Ok(false);
     }
 
-    shutdown_existing_named_session(&endpoint, name)?;
+    shutdown_existing_named_session(&endpoint, name, Ending::Delete)?;
     Ok(true)
 }
 
-fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Result<()> {
+/// Stop a named session's server so it can start again under the same name, keeping its
+/// deployments. Reports whether a server was there to stop.
+///
+/// A server this build cannot talk to, such as one left running across an update, is stopped by
+/// its process instead, the same fallback a kill uses.
+pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<bool> {
+    let endpoint = super::session_endpoint(name)?;
+    if !path_entry_exists(endpoint.path())? {
+        return Ok(false);
+    }
+    shutdown_existing_named_session(&endpoint, name, Ending::Restart)?;
+    Ok(true)
+}
+
+fn shutdown_existing_named_session(
+    endpoint: &IpcEndpoint,
+    name: &str,
+    ending: Ending,
+) -> io::Result<()> {
     let mut stream = match endpoint.connect() {
         Ok(stream) => stream,
         Err(connect_error) => {
-            return handle_connect_failure(endpoint, name, connect_error);
+            return handle_connect_failure(endpoint, name, connect_error, ending);
         }
     };
 
@@ -65,15 +111,15 @@ fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Re
     let graceful = (|| {
         stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
         stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
-        graceful_shutdown(&mut stream, name)
+        graceful_shutdown(&mut stream, name, ending)
     })();
 
     let graceful_error = match graceful {
         Ok(()) => {
-            // Delete while the old server is still live. Its Shutdown path also forgets the
+            // Delete while the old server is still live. Its shutdown path also forgets the
             // snapshot, and no same-name replacement can start until this server retires its
             // endpoint.
-            let snapshot_error = super::delete_snapshot(name).err();
+            let snapshot_error = ending.forget_session(name);
             // Keep the authenticated connection open until the server retires so Shutdown remains
             // associated with a live attached client throughout delivery. Dropping immediately
             // makes the final control frame race the peer-EOF teardown under load.
@@ -93,7 +139,7 @@ fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Re
         // Without a local peer pid there is no safe forced-termination path. Do not unlink a live
         // endpoint or pretend an incompatible live server was stopped.
         return match probe_endpoint(endpoint, None)? {
-            EndpointProbe::Retired => cleanup_stale_session(endpoint, name),
+            EndpointProbe::Retired => cleanup_stale_session(endpoint, name, ending),
             EndpointProbe::Live | EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
                 Err(io::Error::other(format!(
                     "could not shut down session {name:?}: {graceful_error}; peer pid unavailable"
@@ -108,7 +154,7 @@ fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Re
     // an endpoint that cannot report its peer) must be left completely alone.
     match probe_endpoint(endpoint, Some(server_pid))? {
         EndpointProbe::Live => crate::platform::server_lifecycle::terminate_server(server_pid),
-        EndpointProbe::Retired => return cleanup_stale_session(endpoint, name),
+        EndpointProbe::Retired => return cleanup_stale_session(endpoint, name, ending),
         EndpointProbe::Recreated => return Err(recreated_server_error(name)),
         EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
             return Err(io::Error::other(format!(
@@ -117,7 +163,7 @@ fn shutdown_existing_named_session(endpoint: &IpcEndpoint, name: &str) -> io::Re
         }
     }
     match wait_for_retirement(endpoint, Some(server_pid))? {
-        Retirement::Retired => cleanup_stale_session(endpoint, name),
+        Retirement::Retired => cleanup_stale_session(endpoint, name, ending),
         Retirement::Recreated => Err(recreated_server_error(name)),
         Retirement::TimedOut => Err(io::Error::new(
             io::ErrorKind::TimedOut,
@@ -140,9 +186,10 @@ fn handle_connect_failure(
     endpoint: &IpcEndpoint,
     name: &str,
     connect_error: io::Error,
+    ending: Ending,
 ) -> io::Result<()> {
     match probe_endpoint(endpoint, None)? {
-        EndpointProbe::Retired => cleanup_stale_session(endpoint, name),
+        EndpointProbe::Retired => cleanup_stale_session(endpoint, name, ending),
         EndpointProbe::Live | EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
             Err(io::Error::new(
                 connect_error.kind(),
@@ -155,7 +202,7 @@ fn handle_connect_failure(
     }
 }
 
-fn cleanup_stale_session(endpoint: &IpcEndpoint, name: &str) -> io::Result<()> {
+fn cleanup_stale_session(endpoint: &IpcEndpoint, name: &str, ending: Ending) -> io::Result<()> {
     // Bind the endpoint before deleting any snapshot. This claims the stale name while the old
     // server is gone; a replacement that appeared in the meantime makes the bind fail instead of
     // letting a later unlink remove its endpoint. Keep the claim alive while removing the registry
@@ -167,7 +214,7 @@ fn cleanup_stale_session(endpoint: &IpcEndpoint, name: &str) -> io::Result<()> {
             format!("could not claim stale endpoint for session {name:?}: {error}"),
         )
     })?;
-    let snapshot_error = super::delete_snapshot(name).err();
+    let snapshot_error = ending.forget_session(name);
     endpoint.remove_stale();
     snapshot_error.map_or(Ok(()), Err)
 }
@@ -233,7 +280,7 @@ fn retirement_timeout_error(name: &str) -> io::Error {
     )
 }
 
-fn graceful_shutdown(stream: &mut IpcConnection, name: &str) -> io::Result<()> {
+fn graceful_shutdown(stream: &mut IpcConnection, name: &str, ending: Ending) -> io::Result<()> {
     protocol::write_frame(
         stream,
         &protocol::attach_message(
@@ -245,7 +292,7 @@ fn graceful_shutdown(stream: &mut IpcConnection, name: &str) -> io::Result<()> {
     )?;
     match protocol::read_frame::<_, ServerMessage>(stream)? {
         ServerMessage::Attached { .. } => {
-            protocol::write_frame(stream, &ClientMessage::Shutdown)?;
+            protocol::write_frame(stream, &ending.message())?;
             stream.flush()
         }
         other => Err(io::Error::new(

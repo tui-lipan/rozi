@@ -487,8 +487,12 @@ impl SessionClient {
                 if writer_shutdown_signal.load(Ordering::Relaxed) {
                     break;
                 }
-                let ends_the_server =
-                    matches!(&message, ClientOutbound::Control(ClientMessage::Shutdown));
+                let ends_the_server = matches!(
+                    &message,
+                    ClientOutbound::Control(
+                        ClientMessage::Shutdown | ClientMessage::ShutdownForRestart
+                    )
+                );
                 let result = match message {
                     ClientOutbound::Control(message) => {
                         let result = protocol::write_frame(&mut stream, &message);
@@ -947,7 +951,17 @@ impl SessionClient {
     /// final handle leaves the queued request and socket with the writer. The writer closes its
     /// side after attempting `Shutdown`; the reader closes when the server goes away.
     pub fn shutdown(&self) {
-        self.send_control(ClientMessage::Shutdown);
+        self.end_server(ClientMessage::Shutdown);
+    }
+
+    /// [`Self::shutdown`] for a session about to start again under this name: its panes and
+    /// snapshot end and its deployments stay.
+    pub fn shutdown_for_restart(&self) {
+        self.end_server(ClientMessage::ShutdownForRestart);
+    }
+
+    fn end_server(&self, message: ClientMessage) {
+        self.send_control(message);
         if let Some(transport) = &self.transport {
             if !self.transport_failed.load(Ordering::Acquire) {
                 transport.shutdown_requested.store(true, Ordering::Release);

@@ -349,7 +349,11 @@ pub enum ClientMessage {
     /// Ask for an immediate server-owned resource sample.
     RequestRuntimeMetrics,
     Detach,
+    /// Delete the session: end its panes and discard its snapshot and deployments.
     Shutdown,
+    /// End the session's panes and discard its snapshot, leaving its deployments for whatever
+    /// starts under this name next.
+    ShutdownForRestart,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

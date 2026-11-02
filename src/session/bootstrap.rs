@@ -455,8 +455,41 @@ fn may_restart_after_protocol_skew(policy: RemoteAttachPolicy) -> bool {
     !policy.reconnect && !policy.existing_only
 }
 
-/// Version-skew recovery: kill the incompatible remote server, then try once more. Backing off and
-/// retrying the same server would never negotiate, so this path does not loop.
+/// Replace an incompatible remote server, keeping what is deployed to its session.
+///
+/// A temporary session cannot hold deployments, and a host's rozi too old to restart a session is
+/// too old to have any, so both can simply be killed.
+fn replace_incompatible_remote_server(
+    target: &super::remote::RemoteTarget,
+    name: &str,
+    remote_config: &crate::config::RemoteConfig,
+) -> Result<(), String> {
+    if crate::state::is_ephemeral_session_name(name) {
+        return super::remote::kill_remote_session(target, name, remote_config);
+    }
+    match super::remote::restart_remote_session(target, name, true, remote_config) {
+        Err(message) if remote_rozi_cannot_restart(&message) => {
+            super::remote::kill_remote_session(target, name, remote_config)
+        }
+        result => result,
+    }
+}
+
+fn remote_rozi_cannot_restart(message: &str) -> bool {
+    message.contains("unknown sessions command `restart`")
+}
+
+/// The retry after replacing a server. A restart leaves the session running, so an attempt that
+/// insisted on creating it must now join it.
+fn policy_after_replacing_server(policy: RemoteAttachPolicy) -> RemoteAttachPolicy {
+    RemoteAttachPolicy {
+        create_only: false,
+        ..policy
+    }
+}
+
+/// Version-skew recovery: replace the incompatible remote server, then try once more. Backing off
+/// and retrying the same server would never negotiate, so this path does not loop.
 #[allow(clippy::too_many_arguments)]
 fn attach_remote_after_skew(
     epoch: u64,
@@ -468,13 +501,13 @@ fn attach_remote_after_skew(
     link: &CommandLink<Msg>,
     message: String,
 ) {
-    match super::remote::kill_remote_session(target, name, remote_config) {
+    match replace_incompatible_remote_server(target, name, remote_config) {
         Ok(()) => {
             match try_attach_remote(
                 epoch,
                 name,
                 read_only,
-                policy,
+                policy_after_replacing_server(policy),
                 target,
                 remote_config,
                 None,
@@ -495,11 +528,11 @@ fn attach_remote_after_skew(
                 }
             }
         }
-        Err(kill_err) => {
+        Err(restart_err) => {
             link.send(Msg::SessionAttachFailed {
                 epoch,
                 message: format!(
-                    "Remote attach to `{name}` failed: {message} (restart also failed: {kill_err})"
+                    "Remote attach to `{name}` failed: {message} (restart also failed: {restart_err})"
                 ),
             });
         }
@@ -1003,6 +1036,39 @@ mod tests {
         assert!(existing_remote_session_missing(true, true, false));
         assert!(!existing_remote_session_missing(true, false, false));
         assert!(!existing_remote_session_missing(false, true, true));
+    }
+
+    #[test]
+    fn only_a_rozi_that_does_not_know_restart_falls_back_to_killing() {
+        let old_rozi = crate::session::remote::sessions_command_failure(
+            "restart",
+            "unknown sessions command `restart` (expected list, watch, attach, new, or kill)\n",
+        );
+        assert!(remote_rozi_cannot_restart(&old_rozi), "{old_rozi}");
+        for other in [
+            "ssh: Connection refused",
+            "Session `dev` is not running. Start it with: rozi sessions new dev --detach",
+            "could not shut down session \"dev\": timed out",
+        ] {
+            let failure = crate::session::remote::sessions_command_failure("restart", other);
+            assert!(
+                !remote_rozi_cannot_restart(&failure),
+                "killing would delete the session's deployments: {failure}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_retry_after_replacing_a_server_joins_what_the_restart_started() {
+        let create = RemoteAttachPolicy::new(
+            crate::state::AttachMode::Create,
+            crate::state::AttachPrompting::Allowed,
+        );
+        assert!(create.create_only);
+        let retry = policy_after_replacing_server(create);
+        assert!(!retry.create_only);
+        assert_eq!(retry.may_install, create.may_install);
+        assert_eq!(retry.existing_only, create.existing_only);
     }
 
     #[test]

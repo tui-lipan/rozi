@@ -1850,6 +1850,9 @@ pub struct ExtensionDeploymentUpload {
     pub complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generation: Option<u64>,
+    /// The session already runs these files with these settings, so nothing was restarted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unchanged: bool,
 }
 
 /// `extensions-undeploy`: whether anything was removed.

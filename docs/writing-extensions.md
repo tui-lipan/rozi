@@ -541,9 +541,13 @@ A session runs at most 8 calls at once; another call fails instead of waiting. S
 
 A call ends when it reaches its deadline, when its caller disconnects, when someone runs
 `rozi invocation cancel`, when the extension is redeployed or undeployed, or when the session is
-renamed. Its process and
-everything it started are killed. A process that detaches itself from its group and keeps stdout
-open fails the call, so close stdout in anything you leave behind.
+renamed. The deadline covers the whole call, from the request until its result has been checked,
+so starting the process and reading its output use up the same time.
+
+When a call ends, its process and the processes it started that are still in its process group are
+killed. On Windows, that is everything it started. A process that detaches itself from its group,
+for example with `setsid`, can outlive the call. If it also keeps stdout open, the call fails, or
+times out if its deadline comes first, so close stdout in anything you leave behind.
 
 An action that accepts `{}` appears in the command palette of UIs attached to that session, except
 read-only ones. The palette calls it with `{}` and reports whether it finished.

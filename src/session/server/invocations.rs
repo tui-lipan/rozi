@@ -180,9 +180,11 @@ impl Invocations {
             .push((crate::config::ACTION_ENV.into(), action.info.id.clone()));
         spec.env
             .push((crate::config::INVOCATION_ENV.into(), id.clone()));
+        let deadline = now + allowed;
         spec.capture = Some(Capture {
             // One past the limit tells a result that is too long from one that just fits.
             max_bytes: ACTION_PAYLOAD_BYTES + 1,
+            // Not what ends the call: `run_call` holds it to `deadline`, which started earlier.
             timeout_ms: u64::try_from(allowed.as_millis()).unwrap_or(u64::MAX),
         });
         let cancel = Arc::new(AtomicBool::new(false));
@@ -200,7 +202,14 @@ impl Invocations {
         let spawned = std::thread::Builder::new()
             .name("rozi-action".into())
             .spawn(move || {
-                let result = run_call(spec, &schemas, &request.args, args, &thread_cancel);
+                let result = run_call(
+                    spec,
+                    &schemas,
+                    &request.args,
+                    args,
+                    deadline,
+                    &thread_cancel,
+                );
                 let _ = sender.send(Finished {
                     id: thread_id,
                     result,
@@ -216,7 +225,7 @@ impl Invocations {
             Running {
                 info,
                 extension,
-                deadline: now + allowed,
+                deadline,
                 cancel,
                 credential,
                 caller: Some((request.client, request.reply)),
@@ -377,11 +386,33 @@ fn check_schema(
         .map_err(|error| (code, format!("{what} do not match the schema: {error}")))
 }
 
+/// Refuse to go on with a call that was cancelled or has passed its deadline.
+fn check_live(
+    action: &ActionInfo,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<(), (ControlErrorCode, String)> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err((
+            ControlErrorCode::InvocationCancelled,
+            "the call was cancelled".to_string(),
+        ));
+    }
+    if Instant::now() >= deadline {
+        return Err((
+            ControlErrorCode::InvocationTimeout,
+            format!("`{}` passed its deadline", action.id),
+        ));
+    }
+    Ok(())
+}
+
 fn run_call(
     spec: ProcessSpec,
     action: &ActionInfo,
     args: &serde_json::Value,
     encoded_args: Vec<u8>,
+    deadline: Instant,
     cancel: &AtomicBool,
 ) -> CallResult {
     check_schema(
@@ -390,6 +421,7 @@ fn run_call(
         ControlErrorCode::InvalidArguments,
         "arguments",
     )?;
+    check_live(action, deadline, cancel)?;
     let mut process = SupervisedProcess::spawn(spec)
         .map_err(|failure| (ControlErrorCode::ActionFailed, failure.to_string()))?;
     // On its own thread: a process that never reads must still meet its deadline.
@@ -406,17 +438,12 @@ fn run_call(
                 "the call was cancelled".to_string(),
             ));
         }
-        if let Some(outcome) = process.poll() {
+        if let Some(outcome) = process.poll_until(deadline) {
             break outcome;
         }
         std::thread::sleep(POLL);
     };
-    if outcome.timed_out {
-        return Err((
-            ControlErrorCode::InvocationTimeout,
-            format!("`{}` passed its deadline", action.id),
-        ));
-    }
+    check_live(action, deadline, cancel)?;
     if !outcome.is_success() {
         return Err((
             ControlErrorCode::ActionFailed,
@@ -451,6 +478,7 @@ fn run_call(
         ControlErrorCode::InvalidResult,
         "results",
     )?;
+    check_live(action, deadline, cancel)?;
     Ok(result)
 }
 

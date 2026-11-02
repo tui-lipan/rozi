@@ -477,9 +477,21 @@ impl SupervisedProcess {
     /// Check whether the process has exited or exceeded its capture timeout. When it has, reaps or
     /// terminates its [`CommandGroup`], finishes its log, and returns the [`ExitOutcome`].
     pub fn poll(&mut self) -> Option<ExitOutcome> {
-        let (code, timed_out) = if let Some((capture, _)) = &self.capture
-            && self.started.elapsed() > Duration::from_millis(capture.timeout_ms)
-        {
+        let expired = self.capture.as_ref().is_some_and(|(capture, _)| {
+            self.started.elapsed() > Duration::from_millis(capture.timeout_ms)
+        });
+        self.finish_if_ended(expired, None)
+    }
+
+    /// [`Self::poll`] against `deadline` in place of the capture's timeout, which counts from the
+    /// spawn. Reading the output stops at `deadline` too, so a process that escaped its group and
+    /// holds the pipe cannot carry the caller past it.
+    pub fn poll_until(&mut self, deadline: Instant) -> Option<ExitOutcome> {
+        self.finish_if_ended(Instant::now() >= deadline, Some(deadline))
+    }
+
+    fn finish_if_ended(&mut self, expired: bool, deadline: Option<Instant>) -> Option<ExitOutcome> {
+        let (code, timed_out) = if expired {
             self.group.terminate(&mut self.child);
             (None, true)
         } else {
@@ -489,7 +501,12 @@ impl SupervisedProcess {
                 Err(_) => (None, false),
             }
         };
-        let output_bytes = self.capture.take().and_then(|(_, reader)| collect(reader));
+        let drain_until = Instant::now() + CAPTURE_DRAIN;
+        let drain_until = deadline.map_or(drain_until, |deadline| deadline.min(drain_until));
+        let output_bytes = self
+            .capture
+            .take()
+            .and_then(|(_, reader)| collect(reader, drain_until));
         let output = output_bytes
             .as_ref()
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
@@ -509,7 +526,11 @@ impl SupervisedProcess {
     /// Terminate the process and its descendants immediately, recording `note` in its log.
     pub fn kill(mut self, note: &str) -> ExitOutcome {
         terminate_with_log(&mut self.child, &self.group, self.log.as_ref(), note);
-        let output_bytes = self.capture.take().and_then(|(_, reader)| collect(reader));
+        let drain_until = Instant::now() + CAPTURE_DRAIN;
+        let output_bytes = self
+            .capture
+            .take()
+            .and_then(|(_, reader)| collect(reader, drain_until));
         let output = output_bytes
             .as_ref()
             .map(|bytes| String::from_utf8_lossy(bytes).into_owned());
@@ -525,10 +546,9 @@ impl SupervisedProcess {
 
 /// What a process captured. `None` when a process that escaped its group still holds the pipe
 /// open: the output never ends, and nothing may wait on it.
-fn collect(reader: std::thread::JoinHandle<Vec<u8>>) -> Option<Vec<u8>> {
-    let deadline = Instant::now() + CAPTURE_DRAIN;
+fn collect(reader: std::thread::JoinHandle<Vec<u8>>, until: Instant) -> Option<Vec<u8>> {
     while !reader.is_finished() {
-        if Instant::now() >= deadline {
+        if Instant::now() >= until {
             return None;
         }
         std::thread::sleep(Duration::from_millis(5));

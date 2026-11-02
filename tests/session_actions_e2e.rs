@@ -315,7 +315,7 @@ exec = ["sleep", "30"]
 }
 
 #[test]
-fn a_deadline_kills_the_whole_process_tree() {
+fn a_deadline_kills_the_process_group() {
     let mut lab = Lab::new();
     lab.deploy(
         &format!(
@@ -355,6 +355,43 @@ wait
     });
     assert_eq!(code(&response), Some(ControlErrorCode::InvocationTimeout));
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_call_past_its_deadline_never_starts() {
+    let mut lab = Lab::new();
+    lab.deploy(
+        &format!(
+            r#"
+[[actions]]
+id = "mark"
+title = "Mark"
+exec = ["sh", "-c", "touch \"$ROZI_EXTENSION_STATE_DIR/ran\"; echo 1"]
+{OPEN_SCHEMA}"#
+        ),
+        &[],
+    );
+    let response = lab.ask(ControlCommand::Invoke {
+        action: "demo.mark".into(),
+        args: json!({}),
+        timeout_ms: Some(0),
+    });
+    assert_eq!(code(&response), Some(ControlErrorCode::InvocationTimeout));
+
+    // The log records every launch, including one killed before it could leave any other mark.
+    let logs = lab.root.join("data/rozi/extension-logs/demo");
+    let launches = || {
+        std::fs::read_dir(&logs).map_or(0, |entries| {
+            entries
+                .flatten()
+                .map(|entry| std::fs::read_to_string(entry.path()).unwrap_or_default())
+                .map(|log| log.matches("started pid").count())
+                .sum::<usize>()
+        })
+    };
+    assert_eq!(launches(), 0);
+    assert!(lab.invoke("demo.mark", json!({})).ok);
+    assert_eq!(launches(), 1);
 }
 
 #[test]
@@ -550,6 +587,18 @@ fn a_process_that_escapes_its_group_cannot_hang_a_call() {
 id = "escape"
 title = "Escape"
 exec = ["sh", "-c", "setsid sleep 5 & echo '{{}}'"]
+{OPEN_SCHEMA}
+[[actions]]
+id = "exited-early"
+title = "Exited early"
+exec = ["sh", "-c", "setsid sleep 5 & echo '{{}}'"]
+deadline_ms = 100
+{OPEN_SCHEMA}
+[[actions]]
+id = "still-running"
+title = "Still running"
+exec = ["sh", "-c", "setsid sleep 5 & exec sleep 30"]
+deadline_ms = 100
 {OPEN_SCHEMA}"#
         ),
         &[],
@@ -562,6 +611,23 @@ exec = ["sh", "-c", "setsid sleep 5 & echo '{{}}'"]
         "{:?}",
         started.elapsed()
     );
+
+    // Waiting for the held output counts against the deadline. Two seconds is how long that wait
+    // lasts when nothing shortens it, so an answer sooner than that did not sit through it.
+    for action in ["demo.exited-early", "demo.still-running"] {
+        let started = Instant::now();
+        let response = lab.invoke(action, json!({}));
+        assert_eq!(
+            code(&response),
+            Some(ControlErrorCode::InvocationTimeout),
+            "{action}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{action}: {:?}",
+            started.elapsed()
+        );
+    }
 }
 
 #[test]

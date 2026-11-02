@@ -227,8 +227,8 @@ impl SessionServer {
         let settled_settings = match &command {
             ControlCommand::ExtensionsDeploy { id, last: true, .. } => self
                 .automation
-                .as_ref()
-                .and_then(|automation| automation.settled_settings(id)),
+                .as_mut()
+                .and_then(|automation| automation.settled_settings_now(id)),
             _ => None,
         };
         let worker = self.deployment_worker.as_mut().expect("worker started");

@@ -1956,6 +1956,7 @@ impl SessionServer {
         if let Some(endpoint) = &self.endpoint {
             endpoint.remove_stale();
         }
+        self.end_session_subscribers();
         Ok(())
     }
 

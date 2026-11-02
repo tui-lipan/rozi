@@ -794,11 +794,13 @@ The CLI prints one typed record per line:
 {"type":"snapshot","session_instance":"4a2b","session":"dev","seq":42,"controller":1,"client_count":2,"layout_rev":3,"panes":[]}
 {"type":"event","session_instance":"4a2b","seq":43,"kind":"pane-spawned","data":{"pane":"2"}}
 {"type":"lagged"}
+{"type":"ended"}
 ```
 
 A cursor the session cannot honour fails with error code `cursor-expired`, whose `data` holds
 `current_instance`, `oldest_seq`, and `latest_seq`. A subscriber that falls behind receives a
-`lagged` record and the connection closes. See
+`lagged` record and the connection closes. A session that stops cleanly sends `ended`. A stream
+that closes with neither was cut off. See
 [Session subscriptions](control.md#session-subscriptions) for the events and retention.
 
 ## Picker stream

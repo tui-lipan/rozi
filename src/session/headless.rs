@@ -165,30 +165,49 @@ pub(crate) fn write_stream_line(
     }
 }
 
-/// Write a session subscription's records to `out`, one JSON object per line, until it ends.
-///
-/// The session closing, a `lagged` record, and whoever reads `out` going away all end the stream
-/// normally. `Err` is a failure a caller should report.
+/// How a session subscription's stream stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamEnd {
+    /// The session said it stopped cleanly.
+    Ended,
+    /// The session said this subscriber fell too far behind.
+    Lagged,
+    /// Whoever reads the output has gone.
+    ReaderGone,
+    /// The connection closed with no last word: the session crashed or the link was cut.
+    Cut,
+}
+
+/// The end a record announces, if it is a stream's last.
+pub fn stream_end_of(
+    record: &crate::session::protocol::SessionSubscribeRecord,
+) -> Option<StreamEnd> {
+    use crate::session::protocol::SessionSubscribeRecord as Record;
+    match record {
+        Record::Ended => Some(StreamEnd::Ended),
+        Record::Lagged => Some(StreamEnd::Lagged),
+        Record::Snapshot(_) | Record::Event { .. } => None,
+    }
+}
+
+/// Write a session subscription's records to `out`, one JSON object per line, until it stops.
+/// `Err` is a failure on the connection or writing the output.
 pub fn pump_session_records(
     stream: &mut IpcConnection,
     out: &mut impl std::io::Write,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<StreamEnd, String> {
     use std::io::ErrorKind;
 
     loop {
         match protocol::read_frame::<_, ServerMessage>(stream) {
             Ok(ServerMessage::SessionSubscribeRecord { record }) => {
-                let lagged = matches!(
-                    record,
-                    crate::session::protocol::SessionSubscribeRecord::Lagged
-                );
                 let line = serde_json::to_string(&record)
                     .map_err(|err| format!("could not encode a record: {err}"))?;
                 if !write_stream_line(out, &line)? {
-                    return Ok(());
+                    return Ok(StreamEnd::ReaderGone);
                 }
-                if lagged {
-                    return Ok(());
+                if let Some(end) = stream_end_of(&record) {
+                    return Ok(end);
                 }
             }
             Ok(ServerMessage::Error { code, message }) => return Err(format!("{code}: {message}")),
@@ -199,7 +218,7 @@ pub fn pump_session_records(
                     ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
                 ) =>
             {
-                return Ok(());
+                return Ok(StreamEnd::Cut);
             }
             Err(err) => return Err(format!("subscription failed: {err}")),
         }

@@ -648,8 +648,15 @@ impl SessionServer {
     ) -> ServerMessage {
         let agents = self.agent_records(owner, pane_id);
         // A pane being spawned has not been announced, and `pane-spawned` already carries what its
-        // first runtime state would report. Nothing about a pane may reach a subscriber before it.
-        if let Some(baseline) = baseline.filter(|_| self.spawning_pane != Some(pane_id)) {
+        // first runtime state would report. Nothing about a pane may reach a subscriber before it,
+        // or after its exit: clients still showing a dead pane hear the change below.
+        let silent = self.spawning_pane == Some(pane_id)
+            || owner.is_none()
+                && self
+                    .panes
+                    .get(&pane_id)
+                    .is_some_and(|pane| pane.event_watch.exit_recorded);
+        if let Some(baseline) = baseline.filter(|_| !silent) {
             for (kind, fields) in baseline.into_events(&state, &agents) {
                 self.record_session_event(kind, fields);
             }
@@ -1260,14 +1267,7 @@ impl SessionServer {
             }
         }
         for (pane_id, previous, title) in settled {
-            self.record_session_event(
-                events::EventKind::PaneTitleChanged,
-                vec![
-                    ("pane", pane_id.to_string()),
-                    ("title", title.unwrap_or_default()),
-                    ("previous_title", previous.unwrap_or_default()),
-                ],
-            );
+            self.record_pane_title_changed(pane_id, previous, title);
         }
     }
 

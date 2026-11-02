@@ -271,6 +271,14 @@ match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
 argv = ["codex", "resume", "{session}"]
 reported = ["codex", "resume", "--no-daemon", "{session}"]
 
+# Codex's startup choosers end in the same hint, whatever they ask: `enter continue · esc back` under
+# its folder access question, `enter continue · esc use session` under its resume directory one.
+# Footer-scoped so a transcript quoting it cannot pin the pane blocked.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["enter continue ·"] }
+
 [[agents]]
 id = "pi"
 label = "Pi"

@@ -45,6 +45,27 @@ screen = '''
   enter continue · esc back
 '''
 
+# Captured from Codex 0.166.0 on 2026-11-02, resuming a conversation from another directory, nothing
+# pressed. It read as idle, so `agents prompt` would type into it, and its Enter would choose a
+# directory. Two of the options save a permanent preference. Rozi's own restores can reach it: a
+# resume runs where the pane restored to, and the conversation may have moved since.
+[[case]]
+name = "resume-working-directory-dialog"
+state = "blocked"
+screen = '''
+  Working directory · resume
+
+  Session = latest cwd recorded in the resumed session
+  Current = your current working directory
+
+› 1. Use session directory (/tmp/rzl-tl/projects/cnd1)
+  2. Use current directory (/tmp/rzl-tl/projects/cdd1)
+  3. Always use session directory
+  4. Always use current directory
+
+  enter continue · esc use session · ^c quit
+'''
+
 # Captured while the agent's question tool held the pane. The transcript above the chooser is cut;
 # trailing whitespace stripped, home directory replaced by `~`.
 [[case]]

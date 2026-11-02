@@ -211,6 +211,18 @@ impl Automation {
         }
     }
 
+    /// The settings an extension is running with, if it is all running. A deployment of the same
+    /// files with these settings would change nothing, and with anything stopped it still would.
+    pub fn settled_settings(&self, id: &str) -> Option<String> {
+        let extension = self.extensions.get(id)?;
+        extension
+            .services
+            .iter()
+            .all(|service| service.state == SessionServiceState::Running)
+            .then(|| extension.settings.clone().ok())
+            .flatten()
+    }
+
     pub fn services(&self, id: &str) -> Vec<SessionServiceStatus> {
         self.extensions
             .get(id)

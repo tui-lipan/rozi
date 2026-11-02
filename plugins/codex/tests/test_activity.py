@@ -58,9 +58,10 @@ class ActivityTests(unittest.TestCase):
         activity.handle({"hook_event_name": name, "session_id": session, **extra}, self.env)
 
     def first_turn(self, session="thread-id", **extra):
-        """A client's first prompt in a thread: Codex fires both, and only the prompt reports."""
+        """A client's first turn in a thread, up to the first hook that says a state."""
         self.hook("SessionStart", session=session, **extra)
         self.hook("UserPromptSubmit", session=session)
+        self.hook("PreModelRequest", session=session)
 
     def field(self, flag, call=-1):
         args = self.calls[call][0]
@@ -74,6 +75,7 @@ class ActivityTests(unittest.TestCase):
     def test_main_lifecycle_uses_one_token_and_increasing_sequences(self):
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit")
+        self.hook("PreModelRequest")
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
@@ -97,10 +99,57 @@ class ActivityTests(unittest.TestCase):
         self.hook("SessionStart", source="startup")
         self.assertEqual(self.calls, [])
         self.hook("UserPromptSubmit")
+        self.hook("PreModelRequest")
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.field("--state"), "working")
         self.assertEqual(self.field("--native-session"), "thread-id")
         self.assertEqual(self.field("--seq"), "1")
+
+    def test_a_rejected_prompt_says_no_state(self):
+        # Hooks can reject a prompt beside this one, which still runs, and then no later hook runs.
+        self.hook("SessionStart", source="startup")
+        self.hook("UserPromptSubmit")
+        self.assertEqual(self.calls, [])
+
+    def test_a_rejected_prompt_after_a_finished_turn_leaves_it_finished(self):
+        self.first_turn()
+        self.hook("Stop")
+        count = len(self.calls)
+        self.hook("UserPromptSubmit")
+        self.assertEqual(len(self.calls), count)
+        self.assertEqual(self.field("--state"), "done")
+        self.hook("PreModelRequest")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_a_rejected_prompt_in_another_thread_still_claims_the_pane(self):
+        self.first_turn()
+        old = self.field("--integration")
+        self.hook("UserPromptSubmit", session="second")
+        self.assertEqual(self.calls[-1][0][1:3], ["agents", "release"])
+        self.assertEqual(self.field("--integration"), old)
+        self.hook("PreModelRequest", session="second")
+        self.assertEqual(self.field("--native-session"), "second")
+        self.assertEqual(self.field("--state"), "working")
+
+    def test_a_model_request_in_another_thread_cannot_claim_the_pane(self):
+        self.first_turn()
+        count = len(self.calls)
+        self.hook("PreModelRequest", session="background")
+        self.assertEqual(len(self.calls), count)
+
+    def test_a_model_request_keeps_an_open_question_blocked(self):
+        self.first_turn()
+        self.hook("PreToolUse", tool_name="request_user_input", tool_use_id="ask-1", tool_input={})
+        self.hook("PreModelRequest")
+        self.assertEqual(self.field("--state"), "blocked")
+
+    def test_a_prompt_ends_waits_from_the_turn_before_it(self):
+        self.first_turn()
+        self.permission()
+        self.assertEqual(self.field("--state"), "blocked")
+        self.hook("UserPromptSubmit")
+        self.hook("PreModelRequest")
+        self.assertEqual(self.field("--state"), "working")
 
     def test_a_stopped_turn_in_a_new_thread_still_releases_the_old_one(self):
         self.first_turn()
@@ -171,6 +220,7 @@ class ActivityTests(unittest.TestCase):
         self.first_turn(session="second", source="resume")
         second = self.field("--integration")
         self.hook("UserPromptSubmit", session="thread-id")
+        self.hook("PreModelRequest", session="thread-id")
         self.assertEqual(self.calls[-2][0][1:3], ["agents", "release"])
         self.assertEqual(self.field("--integration", -2), second)
         self.assertEqual(self.field("--native-session"), "thread-id")
@@ -178,6 +228,7 @@ class ActivityTests(unittest.TestCase):
 
     def test_prompt_without_a_start_claims_the_pane(self):
         self.hook("UserPromptSubmit")
+        self.hook("PreModelRequest")
         self.assertEqual(self.field("--state"), "working")
         self.assertEqual(self.field("--seq"), "1")
 
@@ -205,8 +256,9 @@ class ActivityTests(unittest.TestCase):
 
     def test_subagent_hooks_cannot_change_parent(self):
         self.first_turn()
-        self.hook("UserPromptSubmit")
+        self.hook("PreModelRequest")
         self.hook("SubagentStart", agent_id="child", agent_type="default")
+        self.hook("PreModelRequest", agent_id="child")
         self.hook("SubagentStop", agent_id="child", agent_transcript_path="child.jsonl")
         self.hook("Stop", agent_id="child")
         self.assertEqual(len(self.calls), 2)
@@ -395,7 +447,7 @@ class ActivityTests(unittest.TestCase):
         self.first_turn()
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.hook("UserPromptSubmit")
+                self.hook("PreModelRequest")
         self.hook("Stop")
         self.assertEqual(self.field("--seq"), "3")
 
@@ -600,7 +652,7 @@ class ActivityTests(unittest.TestCase):
         self.first_turn()
         with patch.object(activity.subprocess, "run", side_effect=subprocess.TimeoutExpired("rozi", 0.75)):
             with self.assertRaises(subprocess.TimeoutExpired):
-                self.hook("UserPromptSubmit")
+                self.hook("PreModelRequest")
         path = activity.state_path(self.env)
         db = activity.open_state(path)
         try:
@@ -649,7 +701,7 @@ class ActivityTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
-        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreToolUse",
+        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreModelRequest", "PreToolUse",
                                       "PermissionRequest", "PostToolUse", "PreCompact",
                                       "PostCompact", "Stop", "Interrupt", "SessionEnd"})
         self.assertLess(activity.CLI_TIMEOUT, activity.DELIVERY_BUDGET)
@@ -704,6 +756,7 @@ class ShellLaunchTests(unittest.TestCase):
         call = {"tool_use_id": "exec-1", **BASH}
         self.run_hook("SessionStart", source="startup")
         self.run_hook("UserPromptSubmit", prompt="test")
+        self.run_hook("PreModelRequest")
         self.run_hook("PreToolUse", **call)
         self.run_hook("PermissionRequest", tool_name="Bash", tool_input={
             **BASH["tool_input"], "description": "Do you approve running cargo test?"})

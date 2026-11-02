@@ -16,6 +16,9 @@ import uuid
 
 
 EVENT_STATES = {
+    # The first sign a turn was admitted. Hooks can still stop one before this, at SessionStart and
+    # at UserPromptSubmit, and then no later hook runs, so a state said there would never be replaced.
+    "PreModelRequest": ("working", None),
     "PostToolUse": ("working", None),
     "PreCompact": ("working", None),
     "PostCompact": ("working", None),
@@ -39,14 +42,14 @@ def session_start_transition(event: dict) -> tuple[str | None, str | None]:
     """A compaction continues a run. Anything else only starts a lifecycle, and says no state.
 
     Codex fires this at a thread's first prompt, so idle would end the run screen detection just
-    saw start and count it as finished. Working could stick: another SessionStart hook can stop the
-    turn, and then no later hook runs. UserPromptSubmit is what says a turn really started.
+    saw start and count it as finished.
     """
     return ("working" if event.get("source") == "compact" else None), None
 
 
-def prompt_transition(_event: dict) -> tuple[str, str | None]:
-    return "working", None
+def prompt_transition(_event: dict) -> tuple[str | None, str | None]:
+    """A prompt can still be rejected, so it can claim the pane but says no state."""
+    return None, None
 
 
 def tool_transition(event: dict) -> tuple[str, str | None]:
@@ -298,9 +301,11 @@ def open_wait(db: sqlite3.Connection) -> tuple | None:
 
 def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     row = current_run(db, event)
-    if row is None or change[0] is None:
+    if row is None:
         return
     update_blockers(db, event, change)
+    if change[0] is None:
+        return
     blocker = open_wait(db)
     state, reason = ("blocked", blocker[0]) if blocker else change
     released = state == "release"

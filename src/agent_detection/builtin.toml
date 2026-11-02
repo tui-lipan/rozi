@@ -263,8 +263,21 @@ screen = { any_of = [
 id = "codex"
 label = "Codex"
 match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
+# Hooks only run in a client started with `--no-daemon`, so a conversation they reported is that
+# client's. A plain `codex resume` hands it to the shared background server, where hooks have no pane
+# to report to: the next restore then has no conversation to reopen, and starts a new one. Any other
+# conversation Rozi knows of already lives on that server, which a plain resume reconnects to.
 [agents.resume]
 argv = ["codex", "resume", "{session}"]
+reported = ["codex", "resume", "--no-daemon", "{session}"]
+
+# Codex's startup choosers end in the same hint, whatever they ask: `enter continue · esc back` under
+# its folder access question, `enter continue · esc use session` under its resume directory one.
+# Footer-scoped so a transcript quoting it cannot pin the pane blocked.
+[[agents.states]]
+state = "blocked"
+scope = "footer"
+screen = { any_of = ["enter continue ·"] }
 
 [[agents]]
 id = "pi"

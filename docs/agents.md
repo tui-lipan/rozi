@@ -288,6 +288,16 @@ the prompt is `argv || attach`, so the shell tries `attach` when resuming fails.
 such as Nushell or Windows PowerShell 5.1, gets the `argv` command alone. With `auto`, rozi runs `attach` in the same pane
 when `argv` fails within a few seconds. Claude Code declares `attach` for its background sessions.
 
+An agent whose hooks only run in some kinds of client can declare what keeps them running. rozi uses
+`reported` instead of `argv` for a conversation the agent's own hooks reported, so that the reopened
+client goes on reporting. Codex uses it, because its hooks only run with `--no-daemon`:
+
+```toml
+[agents.resume]
+argv = ["codex", "resume", "{session}"]
+reported = ["codex", "resume", "--no-daemon", "{session}"]
+```
+
 An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.
 

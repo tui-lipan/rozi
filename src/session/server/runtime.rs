@@ -1579,6 +1579,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.detected_agent != current.detected_agent
         || candidate.agent_launch != current.agent_launch
         || candidate.work_started_at != current.work_started_at
+        || candidate.integration != current.integration
 }
 
 /// Whether runtime metadata used to reconstruct an observed foreground command changed.

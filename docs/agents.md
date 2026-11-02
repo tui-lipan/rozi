@@ -176,8 +176,12 @@ Each `[[agents.states]]` rule accepts:
 | `scope` | `all`, the default, or `footer`; screen rules only |
 | `screen` | Pattern group matched against visible terminal text |
 | `title` | Pattern group matched against the terminal title |
+| `outranks_reports` | `true` to refuse `agents prompt` when this `blocked` rule matches, even if a report says the agent is ready |
 
 Set exactly one of `screen` or `title`.
+
+Use `outranks_reports` only for a dialog no hook announces, whose text can't appear in a transcript
+on the same lines. A wrong match refuses prompts on a healthy agent.
 
 `scope = "footer"` reads only the last eight non-empty lines of the screen. Use it for spinners,
 interrupt hints, and prompt controls that may also appear in transcript text. An unrecognized
@@ -436,7 +440,8 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - A released token cannot claim the pane again. Late hooks from an old process fail with `conflict`,
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
-- A live report overrides screen detection. Releasing it returns the pane to screen detection.
+- A live report overrides screen detection, apart from a rule set with `outranks_reports`. Releasing
+  it returns the pane to screen detection.
 - A hook that can't know another report will follow, because a later hook can stop the turn, adds
   `--unless-quiet idle`, `done`, or `error` to `--state working`. The pane follows screen detection
   until it reads the agent as idle, then falls to that state, with `--reason` as its reason. So a

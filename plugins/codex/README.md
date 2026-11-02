@@ -53,6 +53,9 @@ each thread's state from the background server and lists every loaded thread as 
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
 
+Codex opens some dialogs with no hook, such as its offer to switch models after a turn. The pane
+keeps its reported state, and `rozi agents prompt` refuses to type into them.
+
 A prompt reports nothing until Codex is about to call the model, because another hook can still
 reject it. A rejected prompt leaves the pane as it was.
 

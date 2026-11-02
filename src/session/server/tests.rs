@@ -6433,7 +6433,10 @@ fn a_report_that_may_never_be_replaced_follows_the_screen_until_it_is_quiet() {
             allow_working: true,
         },
     );
-    assert!(!refused.ok, "{refused:?}");
+    assert_eq!(
+        refused.code,
+        Some(crate::control::ControlErrorCode::AgentBlocked)
+    );
 
     screen_reads(&mut server, DetectedAgentState::Working);
     assert_eq!(reported(&server).0, AgentState::Working);
@@ -6448,6 +6451,122 @@ fn a_report_that_may_never_be_replaced_follows_the_screen_until_it_is_quiet() {
     // Decided: it no longer follows the screen.
     screen_reads(&mut server, DetectedAgentState::Blocked);
     assert_eq!(reported(&server).0, AgentState::Error);
+}
+
+/// Clients drop a runtime update that doesn't advance the sequence, so a report that changes by
+/// itself has to advance it, whatever else stays the same.
+#[test]
+fn a_report_following_the_screen_advances_the_sequence_clients_require() {
+    use protocol::{AgentState, DetectedAgentState};
+    for (fallback, reading, expected) in [
+        (AgentState::Idle, DetectedAgentState::Idle, AgentState::Idle),
+        (AgentState::Done, DetectedAgentState::Idle, AgentState::Done),
+        (
+            AgentState::Error,
+            DetectedAgentState::Idle,
+            AgentState::Error,
+        ),
+        (
+            AgentState::Error,
+            DetectedAgentState::Blocked,
+            AgentState::Blocked,
+        ),
+    ] {
+        let mut server = SessionServer::new_named("dev");
+        pane_with_agent(&mut server);
+        assert!(report_unless_quiet(&mut server, AgentState::Working, fallback, 1).ok);
+        // A first recompute fills in the rest of this test's pane. The grace holds the report.
+        let generation = server.panes[&7].generation;
+        server.sync_pane_runtime(None, 7, generation);
+        assert_eq!(reported(&server).0, AgentState::Working);
+        let before = server.panes[&7].runtime.sequence;
+        screen_reads(&mut server, reading);
+        assert_eq!(reported(&server).0, expected);
+        assert!(
+            server.panes[&7].runtime.sequence > before,
+            "{fallback:?} on {reading:?}"
+        );
+
+        let settled = server.panes[&7].runtime.sequence;
+        screen_reads(&mut server, reading);
+        assert_eq!(
+            server.panes[&7].runtime.sequence, settled,
+            "nothing changed"
+        );
+    }
+}
+
+fn prompt_for(server: &mut SessionServer) -> crate::control::ControlResponse {
+    agent_control(
+        server,
+        crate::control::ControlCommand::AgentPrompt {
+            target: crate::control::AgentTarget::Pane(7),
+            prompt: "typed".into(),
+            wait: None,
+            timeout_ms: None,
+            capture: None,
+            allow_working: true,
+        },
+    )
+}
+
+fn pane_reporting(server: &mut SessionServer, agent: &str, screen: &str) {
+    pane_with_agent(server);
+    let pane = server.panes.get_mut(&7).unwrap();
+    pane.agent.identity = Some(agent.into());
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new(agent, agent).into(),
+        state: protocol::DetectedAgentState::Idle,
+    });
+    pane.screen_mut().resize(40, 100);
+    pane.screen_without_change()
+        .process_bytes(screen.as_bytes());
+    let response = agent_control(
+        server,
+        crate::control::ControlCommand::AgentReport {
+            target: Some(7),
+            agent: agent.into(),
+            integration: "client".into(),
+            state: protocol::AgentState::Done,
+            reason: None,
+            native_session: Some("origin".into()),
+            unless_quiet: None,
+            seq: 1,
+        },
+    );
+    assert!(response.ok, "{response:?}");
+}
+
+#[test]
+fn a_dialog_no_hook_announces_refuses_a_prompt_a_report_would_allow() {
+    use crate::control::ControlErrorCode;
+    let chooser = "  Approaching rate limits\r\n\r\n\u{203a} 1. Switch\r\n  2. Keep\r\n\r\n  enter select \u{b7} esc back\r\n";
+    let mut server = SessionServer::new_named("dev");
+    pane_reporting(&mut server, "codex", chooser);
+    assert_eq!(
+        prompt_for(&mut server).code,
+        Some(ControlErrorCode::AgentBlocked)
+    );
+
+    // No dialog: the report decides, as it always has.
+    let mut server = SessionServer::new_named("dev");
+    pane_reporting(
+        &mut server,
+        "codex",
+        "\u{203a} Ask Codex to do anything\r\n",
+    );
+    assert_ne!(
+        prompt_for(&mut server).code,
+        Some(ControlErrorCode::AgentBlocked)
+    );
+
+    // A blocked phrase quoted on a pane whose rules don't outrank reports does not stop it.
+    let mut server = SessionServer::new_named("dev");
+    pane_reporting(&mut server, "claude", "do you want to proceed?\r\n");
+    assert_ne!(
+        prompt_for(&mut server).code,
+        Some(ControlErrorCode::AgentBlocked)
+    );
 }
 
 #[test]

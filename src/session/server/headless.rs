@@ -1321,6 +1321,35 @@ impl SessionServer {
         Ok(reference)
     }
 
+    /// Read now rather than from the last poll: a dialog can open just after the report that said
+    /// the agent was ready, and the Enter of a prompt typed into it would answer it.
+    fn refuse_unannounced_dialog(
+        &mut self,
+        pane_id: PaneId,
+    ) -> std::result::Result<(), ControlResponse> {
+        let agents = self.settings.agents.clone();
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return Ok(());
+        };
+        let Some(definition) = pane
+            .agent
+            .identity
+            .as_deref()
+            .and_then(|id| agents.by_id(id))
+        else {
+            return Ok(());
+        };
+        let title = pane.effective_title().unwrap_or_default();
+        let screen = pane.screen_without_change().snapshot();
+        if crate::agent_detection::dialog_outranks_reports(definition, screen.as_ref(), &title) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::AgentBlocked,
+                "agent is showing a dialog; refusing to type into it",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_prompt_authority(
         &self,
         client_id: ClientId,
@@ -1379,6 +1408,9 @@ impl SessionServer {
             Ok(reference) => reference,
             Err(response) => return Some(response),
         };
+        if let Err(response) = self.refuse_unannounced_dialog(reference.pane.pane_id) {
+            return Some(response);
+        }
         let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {
             Ok(bytes) => bytes,
             Err(response) => return Some(response),

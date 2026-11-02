@@ -1087,14 +1087,40 @@ pub struct SnapshotSummary {
     pub panes: usize,
 }
 
+/// Every session that can come back, most recent first.
+///
+/// A server can crash before it has saved anything, and a session with nothing in it may never have
+/// anything to save. What is deployed to one is still on disk, and still trusted code, so it is
+/// listed with no panes until someone reopens or deletes it.
 pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
+    let mut summaries = saved_snapshot_summaries();
+    for (session, deployed_at_unix_ms) in super::deployments::sessions_with_deployments() {
+        if summaries.iter().any(|summary| summary.session == session) {
+            continue;
+        }
+        summaries.push(SnapshotSummary {
+            session,
+            saved_at: deployed_at_unix_ms / 1000,
+            origin: crate::session::origin::SessionOrigin::default(),
+            panes: 0,
+        });
+    }
+    summaries.sort_by(|a, b| {
+        b.saved_at
+            .cmp(&a.saved_at)
+            .then_with(|| a.session.cmp(&b.session))
+    });
+    summaries
+}
+
+fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
     let Some(root) = default_snapshot_dir() else {
         return Vec::new();
     };
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
-    let mut snapshots = entries
+    entries
         .flatten()
         .filter_map(|entry| {
             // Identity is the directory the snapshot is *published* under, not the name recorded
@@ -1114,13 +1140,7 @@ pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
                 panes: meta.panes.len(),
             })
         })
-        .collect::<Vec<_>>();
-    snapshots.sort_by(|a, b| {
-        b.saved_at
-            .cmp(&a.saved_at)
-            .then_with(|| a.session.cmp(&b.session))
-    });
-    snapshots
+        .collect()
 }
 
 /// Whether `name` has a snapshot discovery would list as restorable.

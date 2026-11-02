@@ -176,39 +176,37 @@ fn starting_a_session_fresh_keeps_its_deployments_and_killing_it_removes_them() 
     ask(&mut server, &root, &session, deploy_command(&bundle));
     server.kill_for_restart();
 
-    let new_session = |root: &Path| {
-        let done = rozi(root)
-            .args(["sessions", "new", &session, "--detach"])
-            .output()
-            .expect("sessions new");
-        assert!(done.status.success(), "{done:?}");
+    // What `sessions new` starts, in the foreground so this test owns the process.
+    let start_fresh = |root: &Path| {
+        rozi(root)
+            .args(["--session", &session, "--fresh-server"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start a fresh session server")
     };
-    let deployed = |root: &Path| {
-        let done = rozi(root)
-            .args(["extensions", "status", "--session", &session, "--json"])
-            .output()
-            .expect("extensions status");
-        assert!(done.status.success(), "{done:?}");
-        let reply: ControlResponse = serde_json::from_slice(&done.stdout).unwrap();
+    let deployed = |server: &mut ServerGuard| {
+        let reply = ask(server, &root, &session, ControlCommand::ExtensionsStatus);
         let report: ExtensionDeploymentReport =
             serde_json::from_value(reply.data.unwrap()).unwrap();
         report.deployments.len()
     };
-    new_session(&root);
-    assert_eq!(deployed(&root), 1, "a fresh start keeps the deployment");
+    server.replace_child(start_fresh(&root));
+    assert_eq!(
+        deployed(&mut server),
+        1,
+        "a fresh start keeps the deployment"
+    );
 
     let killed = rozi(&root)
         .args(["sessions", "kill", &session])
         .output()
         .expect("sessions kill");
     assert!(killed.status.success(), "{killed:?}");
-    new_session(&root);
-    assert_eq!(deployed(&root), 0, "deleting the session removes it");
-    let killed = rozi(&root)
-        .args(["sessions", "kill", &session])
-        .output()
-        .expect("sessions kill");
-    assert!(killed.status.success(), "{killed:?}");
+    server.kill_for_restart();
+    server.replace_child(start_fresh(&root));
+    assert_eq!(deployed(&mut server), 0, "deleting the session removes it");
 }
 
 #[cfg(unix)]

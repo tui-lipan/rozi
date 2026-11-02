@@ -21,6 +21,7 @@ const UI_STACK_BYTES: usize = 32 * 1024 * 1024;
 const _: () = assert!(UI_STACK_BYTES >= 16 * 1024 * 1024);
 
 fn main() -> ExitCode {
+    end_quietly_when_stdout_closes();
     match on_ui_thread(rozi::app::run) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -31,6 +32,34 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Exit without a crash report when whatever was reading stdout has gone, as in `rozi --version |
+/// head -1`.
+///
+/// Rust ignores `SIGPIPE`, so `println!` panics on a closed pipe, and every command prints that way.
+/// Nothing is wrong by then and nobody is left to read any more, so this ends the process, with the
+/// same success a subscription reports when its reader goes away. Every other panic carries on.
+fn end_quietly_when_stdout_closes() {
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if info.payload_as_str().is_some_and(is_closed_stdout) {
+            std::process::exit(0);
+        }
+        report(info);
+    }));
+}
+
+/// Whether a panic message is `println!` finding stdout closed. The error is read by its number, so
+/// this holds whatever words the platform and its language use for it.
+fn is_closed_stdout(message: &str) -> bool {
+    message
+        .strip_prefix("failed printing to stdout: ")
+        .and_then(|error| error.rsplit_once("(os error "))
+        .and_then(|(_, code)| code.strip_suffix(')')?.parse().ok())
+        .is_some_and(|code| {
+            std::io::Error::from_raw_os_error(code).kind() == std::io::ErrorKind::BrokenPipe
+        })
 }
 
 /// Run `body` on a thread with [`UI_STACK_BYTES`] of stack and hand back what it returned.
@@ -80,6 +109,28 @@ mod tests {
     #[test]
     fn a_lost_stderr_does_not_panic_while_reporting_the_runtime_error() {
         report_runtime_error(&mut BrokenStderr, &"terminal disconnected");
+    }
+
+    /// Only a closed stdout is an ordinary ending. Anything else has to stay a crash.
+    #[test]
+    fn only_a_closed_stdout_ends_a_panic_quietly() {
+        #[cfg(unix)]
+        assert!(is_closed_stdout(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        #[cfg(windows)]
+        assert!(is_closed_stdout(
+            "failed printing to stdout: The pipe is being closed. (os error 232)"
+        ));
+
+        for message in [
+            "failed printing to stdout: Input/output error (os error 5)",
+            "failed printing to stderr: Broken pipe (os error 32)",
+            "failed printing to stdout: no number here",
+            "ui panicked",
+        ] {
+            assert!(!is_closed_stdout(message), "{message}");
+        }
     }
 
     #[test]

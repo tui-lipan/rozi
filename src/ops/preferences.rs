@@ -155,6 +155,8 @@ pub(crate) fn toggle_workbar_powerline(ctx: &mut Context<AppRoot>) -> Update {
 pub(crate) fn toggle_animations(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
     persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
+    // A moving copy highlight follows the master switch.
+    ctx.set_clipboard_config(crate::app::clipboard_config(&ctx.state.config));
     Update::full()
 }
 

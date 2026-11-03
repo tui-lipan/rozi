@@ -30,12 +30,34 @@ pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
             config::RightClickClipboardAction::CopyOrPaste => RightClickAction::CopyOrPaste,
         },
         enable_osc52: config.clipboard.enable_osc52,
+        copy_feedback: copy_feedback(config),
         ..ClipboardConfig::default()
     }
 }
 
+/// The copy highlight, with moving effects held to a plain flash while animations are off.
+fn copy_feedback(config: &Config) -> CopyFeedback {
+    let effect = match config.clipboard.copy_feedback {
+        config::CopyFeedback::Off => CopyFeedbackEffect::Off,
+        config::CopyFeedback::Flash => CopyFeedbackEffect::Flash,
+        _ if !config.animations.enabled => CopyFeedbackEffect::Flash,
+        config::CopyFeedback::Fade => CopyFeedbackEffect::Fade,
+        config::CopyFeedback::Scan => CopyFeedbackEffect::Scan,
+        config::CopyFeedback::Pulse => CopyFeedbackEffect::Pulse,
+    };
+    CopyFeedback::new(effect)
+        .on_select(config.clipboard.copy_feedback_on_select)
+        .clear_selection(config.clipboard.clear_selection_after_copy)
+}
+
+/// How long a copy highlight that rozi starts itself stays on screen; zero when there is none.
 pub(crate) fn clipboard_copy_feedback_duration(config: &Config) -> Duration {
-    clipboard_config(config).copy_feedback.duration
+    let feedback = copy_feedback(config);
+    if feedback.is_visible() {
+        feedback.duration
+    } else {
+        Duration::ZERO
+    }
 }
 
 /// Point config loading at `--config <PATH>` before any command reads it.
@@ -473,6 +495,48 @@ mod tests {
         assert_eq!(runtime.middle_click_paste, PasteSource::Clipboard);
         assert_eq!(runtime.right_click_action, RightClickAction::CopyOrPaste);
         assert!(!runtime.enable_osc52);
+    }
+
+    #[test]
+    fn copy_feedback_maps_to_framework_config() {
+        let mut config = Config::default();
+        let runtime = clipboard_config(&config).copy_feedback;
+        assert_eq!(runtime.effect, CopyFeedbackEffect::Flash);
+        assert!(!runtime.on_select);
+        assert!(!runtime.clear_selection);
+
+        config.clipboard.copy_feedback = config::CopyFeedback::Scan;
+        config.clipboard.copy_feedback_on_select = true;
+        config.clipboard.clear_selection_after_copy = true;
+        let runtime = clipboard_config(&config).copy_feedback;
+        assert_eq!(runtime.effect, CopyFeedbackEffect::Scan);
+        assert_eq!(
+            runtime.duration,
+            CopyFeedbackEffect::Scan.default_duration()
+        );
+        assert!(runtime.on_select);
+        assert!(runtime.clear_selection);
+        assert_eq!(clipboard_copy_feedback_duration(&config), runtime.duration);
+    }
+
+    #[test]
+    fn copy_feedback_holds_still_while_animations_are_off() {
+        let mut config = Config::default();
+        config.animations.enabled = false;
+        for (setting, expected) in [
+            (config::CopyFeedback::Fade, CopyFeedbackEffect::Flash),
+            (config::CopyFeedback::Scan, CopyFeedbackEffect::Flash),
+            (config::CopyFeedback::Pulse, CopyFeedbackEffect::Flash),
+            (config::CopyFeedback::Off, CopyFeedbackEffect::Off),
+        ] {
+            config.clipboard.copy_feedback = setting;
+            assert_eq!(
+                clipboard_config(&config).copy_feedback.effect,
+                expected,
+                "{setting:?}"
+            );
+        }
+        assert_eq!(clipboard_copy_feedback_duration(&config), Duration::ZERO);
     }
 
     #[test]

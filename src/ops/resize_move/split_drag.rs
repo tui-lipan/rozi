@@ -933,7 +933,7 @@ mod tests {
                     );
                     assert_eq!(
                         backend.pointer_shape(),
-                        Some(PointerShape::Move),
+                        Some(PointerShape::AllScroll),
                         "the drag must keep its cursor after {step} of {travel} rows"
                     );
                 }

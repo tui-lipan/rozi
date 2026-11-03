@@ -2307,7 +2307,7 @@ fn resize_junction_element(
         }))
         .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
-        .pointer_shape(PointerShape::Move)
+        .pointer_shape(PointerShape::AllScroll)
 }
 
 /// Pane representatives for the horizontal and vertical splits a junction drag moves, chosen from

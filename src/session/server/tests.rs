@@ -7825,15 +7825,11 @@ fn local_presentation_interest_and_acknowledgements_are_owner_scoped() {
     assert_eq!(server.graphics_presenter(7, 12, Some(first)), None);
 }
 
-/// What a pane's child prints for `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`, spawned through the
-/// server's own PTY configuration with `env` applied afterwards, as a pane's environment is.
-fn child_terminal_program(env: &[(&str, &str)]) -> String {
+/// Everything a pane's child running `script` prints, spawned through the server's own PTY
+/// configuration with `env` applied afterwards, as a pane's environment is.
+fn pane_child_output(script: &str, env: &[(&str, &str)]) -> String {
     let launch = crate::pane::launch::PaneLaunch::Direct {
-        argv: vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            r#"printf '[%s|%s]' "$TERM_PROGRAM" "$TERM_PROGRAM_VERSION""#.to_string(),
-        ],
+        argv: vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()],
     };
     let mut config = pty_config(Some(&launch), &[], &[]);
     for (key, value) in env {
@@ -7853,12 +7849,31 @@ fn child_terminal_program(env: &[(&str, &str)]) -> String {
             TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_) => break,
         }
     }
-    let output = String::from_utf8_lossy(&output).into_owned();
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+/// What a pane's child prints for `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`.
+fn child_terminal_program(env: &[(&str, &str)]) -> String {
+    let output = pane_child_output(
+        r#"printf '[%s|%s]' "$TERM_PROGRAM" "$TERM_PROGRAM_VERSION""#,
+        env,
+    );
     let start = output
         .find('[')
         .expect("child printed its terminal program");
     let end = output[start..].find(']').expect("complete line") + start;
     output[start + 1..end].to_string()
+}
+
+/// `Ctrl+S`, and `Ctrl+Shift+S` in the legacy key encoding, is XOFF. With `IXON` set, it pauses
+/// all output from the pane until `Ctrl+Q`, and the pane looks frozen.
+#[test]
+fn a_pane_starts_without_output_flow_control() {
+    let output = pane_child_output("stty -a", &[]);
+    assert!(
+        output.split_whitespace().any(|flag| flag == "-ixon"),
+        "stty -a: {output:?}"
+    );
 }
 
 #[test]

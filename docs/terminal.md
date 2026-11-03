@@ -11,6 +11,11 @@ terminal for its name and version gets `rozi` and that same version. Each pane r
 server, so it keeps running in a named session after you detach. See [Core concepts](core-concepts.md#sessions-and-clients) and
 [Sessions](sessions.md).
 
+On Linux and macOS, panes start with XON/XOFF flow control turned off. `Ctrl+S` and `Ctrl+Shift+S`
+reach the program in the pane as a key instead of pausing its output until `Ctrl+Q`. Bash, for
+example, uses the key for forward history search. A program that needs flow control can turn it back
+on with `stty ixon`.
+
 ## Choose the shell and starting directory
 
 The `[shell]` setting chooses the interactive shell, and `cwd` sets the fallback working directory.

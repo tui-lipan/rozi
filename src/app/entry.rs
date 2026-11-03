@@ -183,8 +183,8 @@ pub fn run() -> Result<()> {
             cli::print_version();
             return Ok(());
         }
-        cli::ParsedCli::ReleaseNotes => {
-            ops::release_notes::print_embedded();
+        cli::ParsedCli::ReleaseNotes(version) => {
+            ops::release_notes::print_embedded(version.as_ref());
             return Ok(());
         }
         cli::ParsedCli::ApiDescribe => return cli::run_api_describe_cli(),
@@ -329,7 +329,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::RecordHelp
         | cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
-        | cli::ParsedCli::ReleaseNotes
+        | cli::ParsedCli::ReleaseNotes(_)
         | cli::ParsedCli::ApiDescribe
         | cli::ParsedCli::ApiSchema
         | cli::ParsedCli::ApiCommands

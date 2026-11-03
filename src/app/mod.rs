@@ -54,8 +54,9 @@ pub struct AppRoot {
     /// startup and for the periodic ones after it. Integration apps keep their session/control
     /// workers but must never reach GitHub, whatever `[updates]` says.
     update_checks: bool,
-    /// This build's release notes, and whether this launch shows them once the client is idle.
-    release_notes: Option<(ops::release_notes::ReleaseNotes, bool)>,
+    /// The release notes this build carries, and whether this launch shows them once the client is
+    /// idle.
+    release_notes: Option<(ops::release_notes::WhatsNew, bool)>,
     /// Whether this launch welcomes a first install once a session is on screen. Integration apps
     /// turn it off: their scripted keys would land on the card instead of the panes.
     welcome: bool,
@@ -107,10 +108,13 @@ impl AppRoot {
         startup_session: StartupSession,
     ) -> Self {
         // First, while the state directory still shows whether rozi ran here before.
-        let notes = ops::release_notes::embedded();
-        let startup =
-            ops::release_notes::record_startup(notes.is_some() && config.updates.release_notes);
-        let release_notes = notes.map(|notes| (notes, startup.notes_due));
+        let startup = ops::release_notes::record_startup(config.updates.release_notes);
+        // Only news is worth the automatic showing: a release without notes of its own still shows
+        // the ones before it, but not again to someone who already ran them.
+        let release_notes = ops::release_notes::embedded(startup.last_ran.clone()).map(|notes| {
+            let due = startup.notes_due && notes.new_count() > 0;
+            (notes, due)
+        });
         let welcome = ops::welcome::due_at_startup(startup.first_install);
         let sidebar_memory = ops::sidebar_memory::load().unwrap_or_else(|error| {
             startup_messages.push(format!("Could not read remembered sidebars: {error}"));

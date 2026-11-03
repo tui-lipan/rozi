@@ -656,7 +656,7 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     if action == Action::ShowReleaseNotes
         && let Some(notes) = state.release_notes.as_ref()
     {
-        return format!("What's new in rozi v{}", notes.version);
+        return format!("What's new in rozi v{}", notes.release(0).version);
     }
     if action == Action::RenameSession {
         // An ephemeral (or not-yet-attached) session carries no user-facing name, so this command

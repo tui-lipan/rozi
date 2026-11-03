@@ -499,7 +499,7 @@ These settings apply on reload and are also in the General category of Settings.
 | `check` | bool | `true` | Looks for a newer release shortly after a client starts, then every `interval_hours`. Off, rozi never contacts the release host or the usage counter on its own. |
 | `interval_hours` | integer | `6` | Hours between re-checks in a client that stays open. Minimum `1`; lower values are clamped with a warning. |
 | `count_usage` | bool | `true` | Adds this install to the anonymous weekly [usage count](usage-count.md) during these checks. Has no effect while `check` is off. |
-| `release_notes` | bool | `true` | Shows the new release's notes once, the first time rozi starts after an update. Works offline and while `check` is off. See [Release notes](#release-notes). |
+| `release_notes` | bool | `true` | Shows the notes of the releases since the version you last ran once, the first time rozi starts after an update. Works offline and while `check` is off. See [Release notes](#release-notes). |
 
 `rozi update --check` checks on demand, whether or not `check` is on. Turning `check` back on
 schedules the next check one interval later, not immediately.
@@ -526,12 +526,23 @@ host, or when rozi was installed from a distribution package or in a way it does
 
 ### Release notes
 
-The first time rozi starts after an update, a `What's new · rozi vX.Y.Z` dialog shows that release's
-notes at startup, and only one client shows it. A first install skips it, and so does going back to
-an older version.
+The first time rozi starts after an update, a `What's new · rozi` dialog shows the release notes
+at startup, and only one client shows it. A first install skips it, and so does going back to an
+older version.
 
-Press `Enter` to close the dialog or `Ctrl+L` to open the release page on GitHub. **What's new in
-rozi vX.Y.Z** (`release-notes`) in the command palette shows the notes again at any time.
+The dialog has a tab for each of the latest releases with notes, up to seven, newest first. It
+opens on the newest, and its header counts the releases that came out since the version you last
+ran, such as `3 new releases since v0.0.37`, so the notes of releases you skipped are one tab away.
+
+| Key | Action |
+| --- | --- |
+| `Tab`, `→` | Next, older release |
+| `Shift+Tab`, `←` | Previous, newer release |
+| `Ctrl+L` | Open the shown release's page on GitHub |
+| `Enter` | Close the dialog |
+
+**What's new in rozi vX.Y.Z** (`release-notes`) in the command palette shows the notes again at
+any time.
 
 The notes are part of the release archives published on GitHub. A rozi built from source, such as
 with `cargo install rozi`, has none, so it shows neither the dialog nor the command.

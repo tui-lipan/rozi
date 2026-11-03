@@ -1,9 +1,9 @@
-//! What's new: the notes of the release this build is, shown once after rozi updates to it and
-//! from Commands for as long as the build runs.
+//! What's new: the notes of the release this build is and of the releases before it, shown once
+//! after rozi updates and from Commands for as long as the build runs.
 //!
-//! The notes are compiled in by `build.rs` from the release workflow's generated notes, so showing
-//! them needs no network and works with `[updates] check` off. Builds made anywhere else carry
-//! none, and then nothing here appears.
+//! The notes are compiled in by `build.rs` from the release workflow's generated notes and the
+//! published notes of earlier releases, so showing them needs no network and works with
+//! `[updates] check` off. Builds made anywhere else carry none, and then nothing here appears.
 
 use std::fs;
 use std::io::Write;
@@ -20,6 +20,8 @@ use crate::state::Mode;
 
 /// What the release workflow handed `build.rs`; empty for every other build.
 const EMBEDDED: &str = include_str!(concat!(env!("OUT_DIR"), "/release-notes.md"));
+/// Earlier releases' notes, as `(version, notes)`; empty for every build but a release.
+const EARLIER: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/earlier-release-notes.rs"));
 
 /// Under the state directory: the versions that ran here, and the releases whose notes were shown.
 const NOTES_DIR: &str = "release-notes";
@@ -55,26 +57,98 @@ impl ReleaseNotes {
     }
 }
 
-/// This build's notes, if it carries any.
-pub(crate) fn embedded() -> Option<ReleaseNotes> {
-    ReleaseNotes::new(env!("CARGO_PKG_VERSION"), EMBEDDED)
+/// The releases What's new shows: this build's, when it carries notes, and the ones before it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WhatsNew {
+    /// Newest first, never empty, and none newer than the running version.
+    pub(crate) releases: Vec<ReleaseNotes>,
+    running: Version,
+    /// The newest version that started a client here before this one, if any did.
+    pub(crate) last_ran: Option<Version>,
 }
 
-/// `rozi --release-notes`: write what this build embeds, byte for byte and without a trailing
-/// newline, because the release workflow compares it with the file it handed `build.rs`.
-pub(crate) fn print_embedded() {
+impl WhatsNew {
+    /// `releases` in the order the dialog shows them, or `None` when none of them is one to show.
+    pub(crate) fn new(
+        releases: impl IntoIterator<Item = ReleaseNotes>,
+        running: Version,
+        last_ran: Option<Version>,
+    ) -> Option<Self> {
+        let mut releases = releases
+            .into_iter()
+            .filter(|notes| notes.version <= running)
+            .collect::<Vec<_>>();
+        releases.sort_by(|a, b| b.version.cmp(&a.version));
+        releases.dedup_by(|a, b| a.version == b.version);
+        (!releases.is_empty()).then_some(Self {
+            releases,
+            running,
+            last_ran,
+        })
+    }
+
+    /// Whether `version` came out after the version that ran here before this one. Without a
+    /// record of one, only the running release is new.
+    pub(crate) fn is_new(&self, version: &Version) -> bool {
+        self.last_ran
+            .as_ref()
+            .map_or(*version == self.running, |last| version > last)
+    }
+
+    /// How many releases this machine had not run before this launch. They lead the list.
+    pub(crate) fn new_count(&self) -> usize {
+        self.releases
+            .iter()
+            .take_while(|notes| self.is_new(&notes.version))
+            .count()
+    }
+
+    /// The release a tab index names, clamped to the list.
+    pub(crate) fn release(&self, index: usize) -> &ReleaseNotes {
+        &self.releases[index.min(self.releases.len() - 1)]
+    }
+}
+
+/// The notes this build carries, given the version that ran here before it.
+pub(crate) fn embedded(last_ran: Option<Version>) -> Option<WhatsNew> {
+    let running = Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
+    let releases = ReleaseNotes::new(env!("CARGO_PKG_VERSION"), EMBEDDED)
+        .into_iter()
+        .chain(
+            EARLIER
+                .iter()
+                .filter_map(|(version, markdown)| ReleaseNotes::new(version, markdown)),
+        );
+    WhatsNew::new(releases, running, last_ran)
+}
+
+/// `rozi --release-notes [VERSION]`: write what this build embeds for `version`, or for itself
+/// when none is given, byte for byte and without a trailing newline, because the release workflow
+/// compares it with the file it handed `build.rs`. A version it carries no notes for prints
+/// nothing.
+pub(crate) fn print_embedded(version: Option<&Version>) {
+    let notes = match version.map(Version::to_string) {
+        None => EMBEDDED,
+        Some(version) if version == env!("CARGO_PKG_VERSION") => EMBEDDED,
+        Some(version) => EARLIER
+            .iter()
+            .find(|(earlier, _)| *earlier == version)
+            .map_or("", |(_, notes)| notes),
+    };
     let mut stdout = std::io::stdout().lock();
-    let _ = stdout.write_all(EMBEDDED.as_bytes());
+    let _ = stdout.write_all(notes.as_bytes());
     let _ = stdout.flush();
 }
 
 /// What [`record_startup`] found about this launch.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Startup {
     /// No rozi has run here before: the state directory did not exist yet.
     pub(crate) first_install: bool,
-    /// Show this build's notes once the client is idle.
+    /// Show this build's notes once the client is idle, if they hold anything new.
     pub(crate) notes_due: bool,
+    /// The newest version that started a client here before this one.
+    pub(crate) last_ran: Option<Version>,
 }
 
 /// Record that this version started a client, and decide whether this launch should show its notes
@@ -98,19 +172,23 @@ pub(crate) fn record_startup(show_notes: bool) -> Startup {
 fn record_startup_in(state_dir: &Path, running: &Version, show_notes: bool) -> Startup {
     let first_install = !state_dir.exists();
     let dir = state_dir.join(NOTES_DIR);
+    let ran = recorded_versions(&dir.join(RAN_DIR)).collect::<Vec<_>>();
     // A downgrade does not replay older notes: everything up to the newest version run is old news.
-    let downgrade = recorded_versions(&dir.join(RAN_DIR)).any(|ran| ran > *running);
+    let downgrade = ran.iter().any(|ran| ran > running);
+    let last_ran = ran.into_iter().filter(|ran| ran < running).max();
     record(&dir.join(RAN_DIR), running);
     if first_install {
         record(&dir.join(SHOWN_DIR), running);
         return Startup {
             first_install,
             notes_due: false,
+            last_ran,
         };
     }
     Startup {
         first_install,
         notes_due: show_notes && !downgrade && !marker(&dir.join(SHOWN_DIR), running).exists(),
+        last_ran,
     }
 }
 
@@ -168,7 +246,7 @@ pub(crate) fn show_if_due(ctx: &mut Context<AppRoot>) -> bool {
         .state
         .release_notes
         .as_ref()
-        .map(|notes| notes.version.clone())
+        .map(|notes| notes.running.clone())
     else {
         return false;
     };
@@ -180,12 +258,13 @@ pub(crate) fn show_if_due(ctx: &mut Context<AppRoot>) -> bool {
     true
 }
 
+/// Open What's new on its newest release.
 pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     let Some(version) = ctx
         .state
         .release_notes
         .as_ref()
-        .map(|notes| notes.version.clone())
+        .map(|notes| notes.running.clone())
     else {
         return Update::none();
     };
@@ -194,6 +273,7 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>) -> Update {
     if std::mem::take(&mut ctx.state.release_notes_due) {
         claim(&version);
     }
+    ctx.state.release_notes_tab = 0;
     ctx.state.show_release_notes = true;
     ctx.state.keybindings = None;
     ctx.state.show_palette = false;
@@ -226,12 +306,32 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
+/// Show the release at `index`, newest first.
+pub(crate) fn select_tab(ctx: &mut Context<AppRoot>, index: usize) -> Update {
+    let Some(count) = ctx
+        .state
+        .release_notes
+        .as_ref()
+        .map(|notes| notes.releases.len())
+    else {
+        return Update::none();
+    };
+    if !ctx.state.show_release_notes || index >= count {
+        return Update::none();
+    }
+    ctx.state.release_notes_tab = index;
+    request_release_notes_focus(ctx);
+    Update::full()
+}
+
+/// Open the shown release's page.
 pub(crate) fn open_page(ctx: &mut Context<AppRoot>) -> Update {
+    let tab = ctx.state.release_notes_tab;
     let Some(url) = ctx
         .state
         .release_notes
         .as_ref()
-        .and_then(ReleaseNotes::page_url)
+        .and_then(|notes| notes.release(tab).page_url())
     else {
         return Update::none();
     };
@@ -270,11 +370,104 @@ mod tests {
     /// packaged binary through `rozi --release-notes`.
     #[test]
     fn a_build_without_release_notes_embeds_none() {
-        if option_env!("ROZI_RELEASE_NOTES").is_some_and(|path| !path.is_empty()) {
+        let handed = |variable: Option<&str>| variable.is_some_and(|path| !path.is_empty());
+        if handed(option_env!("ROZI_RELEASE_NOTES"))
+            || handed(option_env!("ROZI_EARLIER_RELEASE_NOTES"))
+        {
             return;
         }
         assert_eq!(EMBEDDED, "");
-        assert_eq!(embedded(), None);
+        assert!(EARLIER.is_empty());
+        assert_eq!(embedded(None), None);
+    }
+
+    fn notes(text: &str) -> ReleaseNotes {
+        ReleaseNotes::new(text, "## Fixed\n- Something.\n").unwrap()
+    }
+
+    fn versions(whats_new: &WhatsNew) -> Vec<String> {
+        whats_new
+            .releases
+            .iter()
+            .map(|notes| notes.version.to_string())
+            .collect()
+    }
+
+    /// The releases a build carries read newest first, once each, and never ahead of the build:
+    /// a release built from an older tag has no business showing what came after it.
+    #[test]
+    fn releases_read_newest_first_up_to_the_running_version() {
+        let whats_new = WhatsNew::new(
+            [
+                notes("0.0.38"),
+                notes("0.0.41"),
+                notes("0.0.40"),
+                notes("0.0.42"),
+                notes("0.0.40"),
+                notes("0.0.9"),
+            ],
+            version("0.0.41"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            versions(&whats_new),
+            ["0.0.41", "0.0.40", "0.0.38", "0.0.9"]
+        );
+        assert_eq!(whats_new.release(0).version, version("0.0.41"));
+        assert_eq!(whats_new.release(99).version, version("0.0.9"));
+        assert_eq!(
+            WhatsNew::new([notes("0.0.42")], version("0.0.41"), None),
+            None
+        );
+    }
+
+    /// What came out after the version that ran here before is new; with no such record, only
+    /// the running release is. A release whose own notes are empty still shows the ones before it.
+    #[test]
+    fn releases_after_the_last_version_run_are_new() {
+        let all = [notes("0.0.41"), notes("0.0.40"), notes("0.0.38")];
+        let after = |last: Option<&str>| {
+            WhatsNew::new(all.clone(), version("0.0.41"), last.map(version))
+                .unwrap()
+                .new_count()
+        };
+        assert_eq!(after(Some("0.0.37")), 3);
+        assert_eq!(after(Some("0.0.39")), 2);
+        assert_eq!(after(Some("0.0.40")), 1);
+        assert_eq!(after(None), 1);
+
+        let without_own = WhatsNew::new(
+            [notes("0.0.40"), notes("0.0.38")],
+            version("0.0.41"),
+            Some(version("0.0.39")),
+        )
+        .unwrap();
+        assert_eq!(without_own.new_count(), 1);
+        let caught_up = WhatsNew::new(
+            [notes("0.0.40")],
+            version("0.0.41"),
+            Some(version("0.0.40")),
+        )
+        .unwrap();
+        assert_eq!(caught_up.new_count(), 0);
+        let unknown = WhatsNew::new([notes("0.0.40")], version("0.0.41"), None).unwrap();
+        assert_eq!(unknown.new_count(), 0);
+    }
+
+    /// The version that ran before this one is the newest older one, whichever order they ran in,
+    /// and the running version itself never counts, however often it started.
+    #[test]
+    fn the_last_version_run_is_the_newest_older_one() {
+        let root = tempfile::tempdir().unwrap();
+        let state_dir = root.path().join("rozi");
+        let last = |running: &str| record_startup_in(&state_dir, &version(running), true).last_ran;
+
+        assert_eq!(last("1.0.0"), None);
+        assert_eq!(last("1.2.0"), Some(version("1.0.0")));
+        assert_eq!(last("1.2.0"), Some(version("1.0.0")));
+        assert_eq!(last("1.1.0"), Some(version("1.0.0")));
+        assert_eq!(last("1.5.0"), Some(version("1.2.0")));
     }
 
     /// Start `running` against `state_dir`, as a client whose build has notes and shows them.
@@ -357,9 +550,18 @@ mod app_tests {
         });
         let state = backend.state_mut();
         state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
-        state.release_notes = ReleaseNotes::new(version, NOTES);
+        state.release_notes = only(version, NOTES);
         state.commands_dirty = true;
         backend
+    }
+
+    /// What's new for a build that carries its own notes and none before it.
+    fn only(version: &str, markdown: &'static str) -> Option<WhatsNew> {
+        WhatsNew::new(
+            ReleaseNotes::new(version, markdown),
+            Version::parse(version).unwrap(),
+            None,
+        )
     }
 
     fn frame(backend: &mut TestBackend<AppRoot>) -> String {
@@ -432,6 +634,78 @@ mod app_tests {
         });
     }
 
+    /// A build carrying earlier releases shows one tab each, newest first, and says how many came
+    /// out since the version that ran here before. Tab and the arrows step through them, wrapping,
+    /// while the notes keep focus, and the dialog opens on the newest again.
+    #[test]
+    fn earlier_releases_read_as_tabs_newest_first() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = backend_with("9.9.6");
+            let long: String = (1..=60)
+                .map(|n| format!("- Newest change number {n}.\n"))
+                .collect();
+            backend.state_mut().release_notes = WhatsNew::new(
+                [
+                    ReleaseNotes::new("9.9.3", "## Changed\n- Oldest change.\n"),
+                    ReleaseNotes::new("9.9.6", format!("## Added\n{long}").leak()),
+                    ReleaseNotes::new("9.9.5", "## Fixed\n- Middle fix.\n"),
+                ]
+                .into_iter()
+                .flatten(),
+                Version::parse("9.9.6").unwrap(),
+                Some(Version::parse("9.9.4").unwrap()),
+            );
+            backend
+                .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
+                .unwrap();
+            let shown = frame(&mut backend);
+            let title = row_of(&shown, "What's new · rozi");
+            let title_row = shown.lines().nth(title).unwrap();
+            assert!(!title_row.contains("v9.9.6"), "{shown}");
+            assert!(title_row.contains("2 new releases since v9.9.4"), "{shown}");
+            let tabs = shown.lines().nth(row_of(&shown, "v9.9.6")).unwrap();
+            let at = |label: &str| tabs.find(label).unwrap_or_else(|| panic!("{shown}"));
+            assert!(
+                at("v9.9.6") < at("v9.9.5") && at("v9.9.5") < at("v9.9.3"),
+                "{shown}"
+            );
+            assert!(shown.contains("Newest change number 1."), "{shown}");
+            assert!(!shown.contains("Middle fix."), "{shown}");
+
+            press(&mut backend, KeyCode::End);
+            assert!(
+                frame(&mut backend).contains("Newest change number 60."),
+                "the newest release scrolls"
+            );
+            let steps = [
+                (KeyCode::Right, 1, "Middle fix."),
+                (KeyCode::Tab, 2, "Oldest change."),
+                (KeyCode::Right, 0, "Newest change number 1."),
+                (KeyCode::Left, 2, "Oldest change."),
+                (KeyCode::Left, 1, "Middle fix."),
+            ];
+            for (key, tab, text) in steps {
+                press(&mut backend, key);
+                let shown = frame(&mut backend);
+                assert_eq!(backend.state().release_notes_tab, tab, "{key:?}\n{shown}");
+                assert!(shown.contains(text), "{key:?}\n{shown}");
+                assert_eq!(
+                    backend.focused_key().map(|key| key.as_ref()),
+                    Some(crate::view::release_notes_key())
+                );
+            }
+
+            press(&mut backend, KeyCode::Enter);
+            assert!(!backend.state().show_release_notes);
+            backend
+                .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
+                .unwrap();
+            let reopened = frame(&mut backend);
+            assert_eq!(backend.state().release_notes_tab, 0);
+            assert!(reopened.contains("Newest change number 1."), "{reopened}");
+        });
+    }
+
     /// Notes taller than the dialog scroll under a hint row that stays on screen.
     #[test]
     fn long_notes_scroll_and_keep_the_hints() {
@@ -440,8 +714,7 @@ mod app_tests {
             let long: String = (1..=60)
                 .map(|n| format!("- Change number {n} fixed something users noticed.\n"))
                 .collect();
-            backend.state_mut().release_notes =
-                ReleaseNotes::new("9.9.3", format!("## Fixed\n{long}").leak());
+            backend.state_mut().release_notes = only("9.9.3", format!("## Fixed\n{long}").leak());
             backend
                 .dispatch(Msg::RunAction(Action::ShowReleaseNotes))
                 .unwrap();

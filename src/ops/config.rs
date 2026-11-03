@@ -382,7 +382,8 @@ pub(crate) fn open_file_in_editor(
         crate::pane::pty_events::notify_error(
             ctx,
             "Editor not found",
-            format!("`{command}` is not available\nSet $EDITOR"),
+            crate::pane::pty_events::ToastBody::new(format!("`{command}` is not available"))
+                .hint("Set `$EDITOR`"),
         );
         return Update::none();
     }

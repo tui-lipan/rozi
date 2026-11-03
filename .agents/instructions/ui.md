@@ -16,6 +16,10 @@
   `Stale lock`, `Passed`, `Connecting…`. Actions are lowercase verbs: hover replacements, footer
   hints, and `again to …` cues. Counts and provenance are lowercase phrases (`2 panes`,
   `from web`). Names, paths, custom statuses, and extension text keep their own spelling.
+- In toast text, wrap a name the user can type or look for (a command, session, host, or config
+  key) in backticks: the toast shows it in the accent color without them. Put what the user should
+  do about a message in `ToastBody::new(message).hint(...)`, not on a second line of the message;
+  the hint is muted so the message reads first. Show paths with `ToastBody::verbatim`.
 - Join description fields with ` · `, status first. A session elsewhere is `session@host`.
 - `src/view/vocabulary.rs` is the one source for session, host, checkout, and PR status words,
   markers, verbs, counts, and separators. Add a word there rather than spelling it in a view, and

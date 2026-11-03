@@ -113,7 +113,7 @@ exec /bin/sh -c "$*"
         assert!(commands.contains("--remote-serve-existing"), "{commands}");
         let frame = std::fs::read_to_string(root.path().join("frame.md")).unwrap();
         assert!(
-            frame.contains("Session `missing` is not running on the remote host"),
+            frame.contains("Session missing is not running on the remote host"),
             "{frame}"
         );
         assert!(

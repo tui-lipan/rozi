@@ -778,7 +778,7 @@ pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
          It sends no ID and no personal data.\n\
          \n\
          First count  tomorrow at the earliest\n\
-         Opt out      [updates] count_usage = false\n\
+         Opt out      `[updates] count_usage = false`\n\
          Details      click this notice",
         "[updates]\ncount_usage = false",
         Msg::OpenUsageCountDocs,
@@ -1140,12 +1140,8 @@ mod tests {
             );
             let toast = last_toast(&backend);
             assert!(toast.starts_with("Anonymous usage count"), "{toast}");
-            assert!(toast.contains("[updates] count_usage = false"), "{toast}");
+            assert!(toast.contains("`[updates] count_usage = false`"), "{toast}");
             assert!(toast.ends_with("click this notice"), "{toast}");
-            assert!(
-                !toast.contains('`'),
-                "toasts render text, not markdown: {toast}"
-            );
         });
     }
 

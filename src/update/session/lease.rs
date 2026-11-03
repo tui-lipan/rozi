@@ -160,7 +160,10 @@ pub(crate) fn control_requested(ctx: &mut Context<AppRoot>, epoch: u64, from: Cl
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
         .unwrap_or_else(|| "grant from Collaborators".to_string());
-    crate::pane::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
+    crate::pane::pty_events::notify_info(
+        ctx,
+        crate::pane::pty_events::ToastBody::new(format!("{who} requests layout control")).hint(how),
+    );
     ctx.state.commands_dirty = true;
     Update::full()
 }

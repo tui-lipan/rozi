@@ -27,8 +27,9 @@ RELEASE_METADATA_PATHS = {
     "docs/installation.md",
 }
 SUMMARY_MAX_CHARS = 4_000
-# Earlier releases a build embeds next to its own notes, for What's new to show as tabs.
-EARLIER_RELEASES = 6
+# Earlier releases a build embeds next to its own notes, for What's new to show as tabs. The dialog
+# shows at most seven, so a release without notes of its own still fills them.
+EARLIER_RELEASES = 7
 PLAIN_TAG_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 # Reviewer-facing sections that never reach the notes, whichever section a PR uses for its summary.
 NON_RELEASE_SECTIONS = {

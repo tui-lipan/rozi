@@ -31,6 +31,9 @@ const RAN_DIR: &str = "ran";
 /// One empty file per release whose notes a client showed, or that a first install skipped. Created
 /// with `create_new`, so it is also the claim that lets one client of several show them.
 const SHOWN_DIR: &str = "shown";
+/// The most releases What's new shows, which is what fits on its tab row. The release workflow
+/// embeds this many earlier releases, so a release without notes of its own still fills it.
+const MAX_RELEASES: usize = 7;
 
 /// The notes one release carries, as Markdown.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +63,8 @@ impl ReleaseNotes {
 /// The releases What's new shows: this build's, when it carries notes, and the ones before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WhatsNew {
-    /// Newest first, never empty, and none newer than the running version.
+    /// Newest first, never empty, at most [`MAX_RELEASES`], and none newer than the running
+    /// version.
     pub(crate) releases: Vec<ReleaseNotes>,
     running: Version,
     /// The newest version below this one that started a client here, if any did. Not necessarily
@@ -81,6 +85,7 @@ impl WhatsNew {
             .collect::<Vec<_>>();
         releases.sort_by(|a, b| b.version.cmp(&a.version));
         releases.dedup_by(|a, b| a.version == b.version);
+        releases.truncate(MAX_RELEASES);
         (!releases.is_empty()).then_some(Self {
             releases,
             running,
@@ -417,6 +422,21 @@ mod tests {
         );
         assert_eq!(whats_new.release(0).version, version("0.0.41"));
         assert_eq!(whats_new.release(99).version, version("0.0.9"));
+
+        // Seven earlier releases fill the row whether or not this one has notes of its own.
+        let earlier = (34..=40).map(|patch| notes(&format!("0.0.{patch}")));
+        let with_own = WhatsNew::new(
+            earlier.clone().chain([notes("0.0.41")]),
+            version("0.0.41"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(versions(&with_own).len(), MAX_RELEASES);
+        assert_eq!(versions(&with_own)[0], "0.0.41");
+        assert_eq!(versions(&with_own)[6], "0.0.35");
+        let without_own = WhatsNew::new(earlier, version("0.0.41"), None).unwrap();
+        assert_eq!(versions(&without_own).len(), MAX_RELEASES);
+        assert_eq!(versions(&without_own)[6], "0.0.34");
         assert_eq!(
             WhatsNew::new([notes("0.0.42")], version("0.0.41"), None),
             None

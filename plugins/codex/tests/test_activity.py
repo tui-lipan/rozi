@@ -828,12 +828,12 @@ class TurnEndTests(HookTestCase):
         self.assertEqual(self.field("--state"), "idle")
 
     def test_a_line_still_being_written_is_read_once_it_is_whole(self):
-        line = turn_record("task_complete", "turn-1")
-        self.transcript.write_text(line[:10])
+        line = turn_record("task_complete", "turn-1").encode()
+        self.transcript.write_bytes(line[:10])
         self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"), (None, 0))
-        self.transcript.write_text(line)
+        self.transcript.write_bytes(line)
         self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"),
-                         ("task_complete", len(line.encode())))
+                         ("task_complete", len(line)))
 
     def test_with_nothing_to_watch_the_stop_is_the_last_word(self):
         self.first_turn()

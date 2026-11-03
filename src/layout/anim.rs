@@ -443,12 +443,14 @@ pub enum SessionAnimationStyle {
     /// A portal opens from the centre, revealing the incoming session over the outgoing one.
     #[default]
     Portal,
+    /// A left-to-right wave wipes the outgoing session away, the incoming one resolving behind it.
+    Wave,
 }
 
 impl SessionAnimationStyle {
     /// Cycle order for the Settings row.
     pub fn all() -> &'static [Self] {
-        &[Self::Off, Self::Fade, Self::Portal]
+        &[Self::Off, Self::Fade, Self::Portal, Self::Wave]
     }
 
     /// Config token and persisted value.
@@ -457,6 +459,7 @@ impl SessionAnimationStyle {
             Self::Off => "off",
             Self::Fade => "fade",
             Self::Portal => "portal",
+            Self::Wave => "wave",
         }
     }
 
@@ -465,6 +468,7 @@ impl SessionAnimationStyle {
             Self::Off => "Off",
             Self::Fade => "Fade",
             Self::Portal => "Portal",
+            Self::Wave => "Wave",
         }
     }
 
@@ -473,6 +477,7 @@ impl SessionAnimationStyle {
             "off" => Some(Self::Off),
             "fade" => Some(Self::Fade),
             "portal" => Some(Self::Portal),
+            "wave" => Some(Self::Wave),
             _ => None,
         }
     }
@@ -1025,6 +1030,9 @@ pub fn sidebar_transition(animations: WindowAnimationConfig) -> TransitionConfig
 ///
 /// The portal has a whole screen to cross, so it takes the full geometry duration on the pane
 /// Portal's own curve.
+///
+/// The wave crosses the screen and then lets its wake settle behind it, so it takes four times
+/// `geometry_ms` (880 ms by default). Its progress is linear: the wave shapes its own motion.
 pub fn session_reveal_transition(animations: WindowAnimationConfig) -> Option<TransitionConfig> {
     let config = match animations.session {
         SessionAnimationStyle::Off => return None,
@@ -1036,6 +1044,10 @@ pub fn session_reveal_transition(animations: WindowAnimationConfig) -> Option<Tr
             duration: animations.geometry_duration,
             easing: builtin_animation(PaneAnimationStyle::Portal).open_curve,
         },
+        SessionAnimationStyle::Wave => TransitionConfig {
+            duration: animations.geometry_duration * 4,
+            easing: Easing::Linear,
+        },
     };
     (animations.enabled && !config.duration.is_zero()).then_some(config)
 }
@@ -1043,6 +1055,12 @@ pub fn session_reveal_transition(animations: WindowAnimationConfig) -> Option<Tr
 /// The portal is open when [`session_reveal_transition`] runs for a portal.
 pub fn session_portal_enabled(animations: WindowAnimationConfig) -> bool {
     animations.session == SessionAnimationStyle::Portal
+        && session_reveal_transition(animations).is_some()
+}
+
+/// The wave runs when [`session_reveal_transition`] runs for a wave.
+pub fn session_wave_enabled(animations: WindowAnimationConfig) -> bool {
+    animations.session == SessionAnimationStyle::Wave
         && session_reveal_transition(animations).is_some()
 }
 

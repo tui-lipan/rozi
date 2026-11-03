@@ -484,7 +484,7 @@ pub(crate) struct SessionReveal {
     /// Opacity of the session content layer (workbar and workspace) over the outgoing session
     /// beneath it, heading for `1.0`. Below 1 only while a fade reveal is running.
     pub(crate) opacity: Fade,
-    /// How far the portal has opened, `1.0` when there is no portal to draw.
+    /// How far the portal has opened or the wave has crossed, `1.0` when neither is drawn.
     pub(crate) portal: anim::PanePaintMotion,
 }
 
@@ -539,7 +539,7 @@ pub(crate) fn session_reveal(ctx: &Context<AppRoot>) -> SessionReveal {
             },
             portal: anim::PanePaintMotion::Fixed(1.0),
         },
-        anim::SessionAnimationStyle::Portal => SessionReveal {
+        anim::SessionAnimationStyle::Portal | anim::SessionAnimationStyle::Wave => SessionReveal {
             opacity: Fade::settled(),
             portal: motion,
         },
@@ -718,6 +718,7 @@ pub(crate) fn session_layer_exit(animations: anim::WindowAnimationConfig) -> Exi
                 .opacity(anim::SESSION_PORTAL_RECEDE)
                 .easing(Easing::EaseInQuad)
         }
+        // The wave wipes the outgoing session away, so it holds whole like a fade's.
         Some(fade) => ExitAnimation::new(millis(hold + fade.duration)).keep_opacity(),
         None => ExitAnimation::new(millis(hold)).easing(Easing::EaseInQuad),
     }
@@ -1139,6 +1140,69 @@ mod tests {
         });
     }
 
+    /// The real layer stack under a wave switch: the outgoing session is retained beneath the
+    /// incoming one and the wave wipes it away from the left. A quarter of the way through, the
+    /// left columns already show the new session while the right ones still show the old.
+    #[test]
+    fn a_wave_switch_wipes_the_old_session_away_from_the_left() {
+        in_stack(|| {
+            let mut old = two_panes(1);
+            old.state_mut().config.animations.session = anim::SessionAnimationStyle::Wave;
+            old.render();
+            let before = symbols(&old);
+            {
+                let state = old.state_mut();
+                state.attachment = crate::state::Attachment::new();
+                state.runtime_epoch = 99;
+                state.current_mut().epoch = 99;
+                state.session_view_revision += 1;
+            }
+            old.render();
+            let duration = reveal_duration(&old);
+            old.advance(duration / 4);
+            let early = symbols(&old);
+            old.advance(duration + Duration::from_secs(1));
+            let after = symbols(&old);
+
+            let width = usize::from(VIEWPORT_W);
+            let column = |index: usize| (index % width) as f32 / width as f32;
+            let changed: Vec<usize> = (0..before.len())
+                .filter(|&index| before[index] != after[index])
+                .collect();
+            let left: Vec<usize> = changed
+                .iter()
+                .copied()
+                .filter(|&i| column(i) < 0.15)
+                .collect();
+            let right: Vec<usize> = changed
+                .iter()
+                .copied()
+                .filter(|&i| column(i) > 0.8)
+                .collect();
+            assert!(
+                !left.is_empty() && !right.is_empty(),
+                "the two sessions must differ at both edges"
+            );
+            for index in left {
+                assert_eq!(
+                    early[index], after[index],
+                    "left cell {index} shows the new session"
+                );
+            }
+            for index in right {
+                assert_eq!(
+                    early[index], before[index],
+                    "right cell {index} still shows the old one"
+                );
+            }
+            assert_eq!(
+                duration,
+                old.state().config.animations.geometry_duration * 4,
+                "the wave runs four times geometry_ms"
+            );
+        });
+    }
+
     /// Switching straight back to the session just left, while its layer is still retained beneath
     /// the one that replaced it: the portal opens over the outgoing session again rather than the
     /// revived layer surfacing from under it.
@@ -1208,6 +1272,7 @@ mod tests {
         for style in [
             anim::SessionAnimationStyle::Off,
             anim::SessionAnimationStyle::Fade,
+            anim::SessionAnimationStyle::Wave,
         ] {
             in_stack(move || {
                 let mut backend = two_panes(1);

@@ -328,7 +328,7 @@ pane raises the alert again.
 | `sidebar` | bool | `true` | Animates sidebar movement. |
 | `workspace` | bool | `true` | Slides workspace content horizontally when switching. In Settings: General › Animations › Workspace switching. |
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
-| `session` | string or bool | `"portal"` | `"portal"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
+| `session` | string or bool | `"portal"` | `"portal"`, `"wave"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
 | `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge in 280 ms and sends it back out in 180 ms; Fade fades it in place in 150 ms and out in 100 ms. With either, the other toasts glide to make room or close a gap. Off shows and removes toasts at once. In Settings: General › Animations › Toasts. The animation master switch also disables it. |
@@ -345,6 +345,11 @@ switch sessions, when a session finishes connecting, or when you drop to the lau
 
 - `"portal"` opens a portal from the center onto the new session while the previous one recedes
   behind it, over `geometry_ms`. The ring uses the theme's accent colors.
+- `"wave"` sweeps a glowing wave from left to right that wipes the previous session away, with the
+  new session resolving in its wake, over four times `geometry_ms` (880 ms by default). The wave
+  uses the theme's focused-border and informational colors; with a theme that follows the
+  terminal palette, it draws a solid band instead of a gradient. Pictures in panes appear as the
+  front passes them.
 - `"fade"` crossfades from the previous session to the new one in place, over one and a half
   times `geometry_ms` (330 ms by default). Images in panes appear at full strength rather than
   fading with the text.

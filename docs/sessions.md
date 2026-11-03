@@ -165,7 +165,7 @@ gives up layout control; returning to it takes control again when no other clien
 An untouched temporary session is discarded when you switch away. A temporary session you have used
 stays in the background.
 
-When you switch sessions, a portal opens onto the incoming one. To use a fade instead or turn the effect off, change
+When you switch sessions, a portal opens onto the incoming one. To use a wave or a fade instead, or turn the effect off, change
 **Settings** › General › Animations › Session switching, or `session` in
 [`[animations]`](configuration.md#animations).
 

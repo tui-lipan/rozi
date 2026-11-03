@@ -6,6 +6,7 @@ mod overlays;
 mod pane;
 pub(crate) mod pane_particles;
 mod pane_reveal;
+mod session_wave;
 pub(crate) mod sidebar;
 pub(crate) mod vocabulary;
 mod which_key;
@@ -295,22 +296,33 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     // backdrop undimming well before the session it opened has resolved in, and one `Animated`
     // runs one transition. The retained outgoing layer carries its own dim inside it, so it is not
     // dimmed twice. Every level is recursion the whole view tree carries, so these two are all.
-    let session_layer: Element = if crate::layout::anim::session_portal_enabled(animations) {
-        // The portal composites the dimmed content over the retained outgoing layer.
+    let portal = crate::layout::anim::session_portal_enabled(animations);
+    let session_layer: Element = if portal || crate::layout::anim::session_wave_enabled(animations)
+    {
+        // The portal and the wave composite the dimmed content over the retained outgoing layer.
         let content = if holding {
             empty()
         } else {
             dimmed_content().into()
         };
-        Animated::new(pane_reveal::session_portal_scope(
-            content,
-            reveal.portal,
-            pane_reveal::SessionPortalRing::from_theme(theme),
-        ))
-        .height(Length::Flex(1))
-        .transition(crate::layout::anim::instant_transition())
-        .auto_exit(exit)
-        .into()
+        let scope = if portal {
+            pane_reveal::session_portal_scope(
+                content,
+                reveal.portal,
+                pane_reveal::SessionPortalRing::from_theme(theme),
+            )
+        } else {
+            session_wave::session_wave_scope(
+                content,
+                reveal.portal,
+                session_wave::SessionWavePalette::from_theme(theme),
+            )
+        };
+        Animated::new(scope)
+            .height(Length::Flex(1))
+            .transition(crate::layout::anim::instant_transition())
+            .auto_exit(exit)
+            .into()
     } else {
         let layer = if holding {
             Animated::new(empty()).transition(crate::layout::anim::instant_transition())

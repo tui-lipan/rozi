@@ -746,8 +746,9 @@ class ActivityTests(HookTestCase):
         self.assertEqual(hooks["Interrupt"][0]["hooks"][0]["timeout"], 3)
 
 
-def turn_record(kind, turn):
-    return json.dumps({"type": "event_msg", "payload": {"type": kind, "turn_id": turn}}) + "\n"
+def turn_record(kind, turn, **extra):
+    payload = {"type": kind, "turn_id": turn, **extra}
+    return json.dumps({"type": "event_msg", "payload": payload}) + "\n"
 
 
 class TurnEndTests(HookTestCase):
@@ -776,9 +777,9 @@ class TurnEndTests(HookTestCase):
         session, turn, transcript, offset = self.spawned[-1][3:7]
         activity.watch_turn(self.env, session, turn, Path(transcript), int(offset))
 
-    def codex_writes(self, kind):
+    def codex_writes(self, kind, **extra):
         with open(self.transcript, "a") as file:
-            file.write(turn_record(kind, "turn-1"))
+            file.write(turn_record(kind, "turn-1", **extra))
 
     def test_the_turn_ends_once_codex_has_written_so(self):
         self.first_turn()
@@ -833,21 +834,37 @@ class TurnEndTests(HookTestCase):
         self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"), (None, 0))
         self.transcript.write_bytes(line)
         self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"),
-                         ("task_complete", len(line)))
+                         ({"type": "task_complete", "turn_id": "turn-1"}, len(line)))
 
-    def test_with_nothing_to_watch_the_stop_is_the_last_word(self):
+    def test_with_nothing_to_watch_the_turn_is_never_confirmed(self):
         self.first_turn()
         self.hook("Stop", turn_id="turn-1")
         self.hook("Stop", turn_id="turn-1", transcript_path=str(self.transcript) + ".missing")
         self.assertEqual(self.spawned, [])
-        self.assertIn("--ended", self.calls[-1][0])
         self.assertEqual(self.field("--unless-quiet"), "done")
+        self.assertFalse(any("--ended" in args for args, _ in self.calls))
 
-    def test_a_watcher_that_cannot_start_leaves_the_stop_the_last_word(self):
+    def test_a_watcher_that_cannot_start_leaves_the_turn_unconfirmed(self):
         self.first_turn()
         with patch.object(activity.subprocess, "Popen", side_effect=OSError("no python")):
             self.stop()
+        self.assertEqual(self.field("--unless-quiet"), "done")
+        self.assertFalse(any("--ended" in args for args, _ in self.calls))
+
+    def test_a_turn_that_failed_for_good_ends_in_error(self):
+        self.first_turn()
+        self.hook("PostModelRequest", status="failed")
+        self.stop()
+        self.codex_writes("task_complete", error={"message": "Model not supported"})
+        self.watch()
         self.assertIn("--ended", self.calls[-1][0])
+        self.assertEqual((self.field("--state"), self.field("--unless-quiet")), ("working", "error"))
+        self.assertEqual(self.field("--reason"), "Model not supported")
+
+    def test_a_failure_without_a_message_still_ends_in_error(self):
+        self.assertEqual(activity.turn_ended_change({"error": {"code": 500}}),
+                         ("working|error|ended", "Turn ended with an error"))
+        self.assertEqual(activity.turn_ended_change({"error": None}), ("working|done|ended", None))
 
 
 @unittest.skipIf(os.name == "nt" or not shutil.which("sh") or not shutil.which("python3"),

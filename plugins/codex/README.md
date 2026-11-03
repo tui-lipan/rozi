@@ -56,8 +56,10 @@ each thread's state from the background server and lists every loaded thread as 
 A turn isn't over when this plugin's `Stop` hook runs: another `Stop` hook can still be running, and
 can send the turn on, and Codex opens some dialogs with no hook, such as its offer to switch models.
 So the plugin leaves a small background process to read Codex's thread transcript until Codex
-records that the turn ended. That process then reports the end and exits, and it also exits once a
-newer report replaces the turn. A turn reads `done` only after that and after its screen goes quiet.
+records that the turn ended. That process then reports the end, as `error` if Codex records that the
+turn failed, and exits. It also exits once a newer report replaces the turn. A turn reads `done`
+only after that and after its screen goes quiet. Without a transcript to read, a pane listing agent
+rows keeps the turn `working` until the next report.
 `rozi agents prompt` refuses to type into those dialogs whatever the pane reports.
 
 A prompt reports nothing until Codex is about to call the model, because another hook can still

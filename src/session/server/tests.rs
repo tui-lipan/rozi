@@ -6678,6 +6678,24 @@ fn report_turn_end(
     ended: bool,
     seq: u64,
 ) -> crate::control::ControlResponse {
+    report_turn_end_as(
+        server,
+        token,
+        native,
+        protocol::AgentState::Done,
+        ended,
+        seq,
+    )
+}
+
+fn report_turn_end_as(
+    server: &mut SessionServer,
+    token: &str,
+    native: &str,
+    fallback: protocol::AgentState,
+    ended: bool,
+    seq: u64,
+) -> crate::control::ControlResponse {
     agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
@@ -6685,9 +6703,9 @@ fn report_turn_end(
             agent: "claude".into(),
             integration: token.into(),
             state: protocol::AgentState::Working,
-            reason: None,
+            reason: (fallback == protocol::AgentState::Error).then(|| "It failed".into()),
             native_session: Some(native.into()),
-            unless_quiet: Some(protocol::AgentState::Done),
+            unless_quiet: Some(fallback),
             ended,
             seq,
         },
@@ -6728,6 +6746,17 @@ fn a_pane_with_no_screen_to_read_holds_a_turn_until_the_agent_confirms_it_ended(
         "at once, not at a poll"
     );
     assert_eq!(completions(&server), 1);
+
+    // A turn the agent confirms failed ends in error, and did not finish.
+    assert!(report_turn_end(&mut server, "client", "origin", false, 3).ok);
+    assert_eq!(reported(&server).0, AgentState::Working);
+    let failed = report_turn_end_as(&mut server, "client", "origin", AgentState::Error, true, 4);
+    assert!(failed.ok);
+    assert_eq!(
+        reported(&server),
+        (AgentState::Error, Some("It failed".to_string()))
+    );
+    assert_eq!(completions(&server), 1);
 }
 
 #[test]
@@ -6764,6 +6793,11 @@ fn a_row_holds_a_turn_until_the_agent_confirms_it_ended() {
     assert_eq!(status(&server), "working");
     assert!(report_turn_end(&mut server, "fork-hooks", "background", true, 4).ok);
     assert_eq!(status(&server), "done");
+
+    assert!(report_turn_end(&mut server, "fork-hooks", "background", false, 5).ok);
+    let error = AgentState::Error;
+    assert!(report_turn_end_as(&mut server, "fork-hooks", "background", error, true, 6).ok);
+    assert_eq!(status(&server), "error");
 }
 
 /// The agent confirms a turn ended before it opens a dialog, so a screen still decides.
@@ -6803,15 +6837,14 @@ fn a_confirmed_end_still_waits_for_the_screen_when_there_is_one() {
 }
 
 #[test]
-fn only_a_fallback_to_done_can_be_confirmed() {
+fn only_a_fallback_can_be_confirmed() {
     use protocol::AgentState;
     let mut server = SessionServer::new_named("dev");
     pane_with_agent(&mut server);
     for (state, fallback) in [
         (AgentState::Working, None),
         (AgentState::Done, None),
-        (AgentState::Working, Some(AgentState::Idle)),
-        (AgentState::Working, Some(AgentState::Error)),
+        (AgentState::Error, None),
     ] {
         let response = agent_control(
             &mut server,

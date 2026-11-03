@@ -51,15 +51,26 @@ def watchable(event: dict) -> bool:
             and os.path.isfile(transcript))
 
 
-def stop_transition(event: dict) -> tuple[str, str | None]:
+def stop_transition(_event: dict) -> tuple[str, str | None]:
     """The turn may have ended, but another Stop hook can still be running, and can send it on.
 
     Codex writes that the turn ended to its transcript only once every Stop hook has returned, so a
-    watcher confirms it from there. Without a transcript to watch, this is the last word.
-    Codex also opens dialogs after that, such as its offer to switch models, so the pane follows its
-    screen before it reads done either way.
+    watcher confirms it from there. Without one, nothing confirms it, and a pane with no screen to
+    read stays working rather than finish a turn that may go on. Codex also opens dialogs after the
+    turn ends, such as its offer to switch models, so the pane follows its screen either way.
     """
-    return ("working|done", None) if watchable(event) else ("working|done|ended", None)
+    return "working|done", None
+
+
+def turn_ended_change(payload: dict) -> tuple[str, str | None]:
+    """Codex records a turn that failed for good as completed, with the error it ended on."""
+    error = payload.get("error")
+    if not error:
+        return "working|done|ended", None
+    message = error.get("message") if isinstance(error, dict) else error
+    if not isinstance(message, str) or not message.strip():
+        message = "Turn ended with an error"
+    return "working|error|ended", message
 
 
 def session_start_transition(event: dict) -> tuple[str | None, str | None]:
@@ -357,7 +368,7 @@ def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     if change[0] is None:
         return
     db.execute("DELETE FROM ending")
-    if name == "Stop" and change[0] == "working|done":
+    if name == "Stop" and watchable(event):
         db.execute("INSERT INTO ending VALUES (1, ?)", (event["turn_id"],))
     blocker = open_wait(db)
     state, reason = ("blocked", blocker[0]) if blocker else change
@@ -496,32 +507,27 @@ def handle(event: dict, env: dict[str, str]) -> None:
         return
     path = state_path(env)
     watch_from = None
-    if change[0] == "working|done":
+    if event["hook_event_name"] == "Stop" and watchable(event):
         # Measured before this hook returns: Codex writes that the turn ended only after that.
         try:
             watch_from = os.path.getsize(event["transcript_path"])
         except OSError:
-            change = ("working|done|ended", None)
+            pass
     # State persistence has its own retry budget. Delivery gets only its separate, smaller
     # budget after the event has committed, and never extends a failed persistence attempt.
     db = persist_event(path, event, change)
     try:
-        if watch_from is not None and not start_watcher(env, event, watch_from):
-            # Nothing would confirm it, so this is the last word after all.
-            db.close()
-            db = persist_event(path, ended_event(event), ("working|done|ended", None))
+        if watch_from is not None:
+            start_watcher(env, event, watch_from)
         flush_pending(db, path, env)
     finally:
         db.close()
 
 
-def ended_event(event: dict) -> dict:
-    return {"hook_event_name": TURN_ENDED, "session_id": event["session_id"],
-            "turn_id": event["turn_id"]}
 
-
-def start_watcher(env: dict[str, str], event: dict, offset: int) -> bool:
-    """Outlive this hook, which Codex waits on before it can end the turn."""
+def start_watcher(env: dict[str, str], event: dict, offset: int) -> None:
+    """Outlive this hook, which Codex waits on before it can end the turn. A watcher that cannot
+    start leaves the turn unconfirmed, never confirmed early."""
     args = [sys.executable, os.path.abspath(__file__), "--watch-turn", event["session_id"],
             event["turn_id"], event["transcript_path"], str(offset)]
     options = {"start_new_session": True}
@@ -532,12 +538,11 @@ def start_watcher(env: dict[str, str], event: dict, offset: int) -> bool:
         subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True, **options)
     except OSError:
-        return False
-    return True
+        pass
 
 
-def turn_outcome(transcript: Path, offset: int, turn: str) -> tuple[str | None, int]:
-    """Whether Codex has written that `turn` completed or was aborted since `offset`, and the
+def turn_outcome(transcript: Path, offset: int, turn: str) -> tuple[dict | None, int]:
+    """What Codex has written since `offset` about `turn` completing or being aborted, and the
     offset to read from next. A line still being written is left for the next read."""
     with open(transcript, "rb") as file:
         file.seek(offset)
@@ -554,7 +559,7 @@ def turn_outcome(transcript: Path, offset: int, turn: str) -> tuple[str | None, 
         if (record.get("type") == "event_msg" and isinstance(payload, dict)
                 and payload.get("turn_id") == turn
                 and payload.get("type") in {"task_complete", "turn_aborted"}):
-            return payload["type"], offset
+            return payload, offset
     return None, offset
 
 
@@ -569,10 +574,10 @@ def still_ending(path: Path, turn: str) -> bool:
         return is_lock_error(error)
 
 
-def confirm_turn_end(env: dict[str, str], session: str, turn: str) -> None:
+def confirm_turn_end(env: dict[str, str], session: str, turn: str, change: tuple) -> None:
     path = state_path(env)
-    event = ended_event({"session_id": session, "turn_id": turn})
-    db = persist_event(path, event, ("working|done|ended", None))
+    event = {"hook_event_name": TURN_ENDED, "session_id": session, "turn_id": turn}
+    db = persist_event(path, event, change)
     try:
         # No later hook may come to deliver what one attempt leaves behind.
         for _ in range(CONFIRM_ATTEMPTS):
@@ -592,8 +597,8 @@ def watch_turn(env: dict[str, str], session: str, turn: str, transcript: Path,
     checked = time.monotonic()
     while time.monotonic() < deadline:
         outcome, offset = turn_outcome(transcript, offset, turn)
-        if outcome == "task_complete":
-            confirm_turn_end(env, session, turn)
+        if outcome is not None and outcome["type"] == "task_complete":
+            confirm_turn_end(env, session, turn, turn_ended_change(outcome))
             return
         # An interrupted turn is Interrupt's to report.
         if outcome is not None:

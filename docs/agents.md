@@ -452,8 +452,8 @@ rozi --session dev agents release --target "$ROZI_PANE" \
   goes quiet, or `blocked` while a dialog is up, so another hook still running holds it back if the
   agent's screen shows that. With no screen to read, such as a report for an agent row or a pane
   listing agent rows, it stays `working` until a report adds `--ended`.
-- Add `--ended` to `--unless-quiet done` once the agent has confirmed the turn ended. With no screen
-  to read, the state becomes `done` at once. When there is a screen, it still decides, because a
+- Add `--ended` to `--unless-quiet` once the agent has confirmed the turn ended in that state. With
+  no screen to read, the state changes at once. When there is a screen, it still decides, because a
   dialog can open after a turn ends.
 - When the pane also publishes agent rows, a report drives only the row whose conversation matches
   `--native-session`; the other rows stay listed as published.

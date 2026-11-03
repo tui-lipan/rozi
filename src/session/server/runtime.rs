@@ -360,7 +360,7 @@ pub(super) struct AgentIntegrationUpdate {
     pub reason: Option<String>,
     pub native_session: Option<String>,
     pub unless_quiet: Option<protocol::AgentState>,
-    /// With `unless_quiet` of `done`: the agent has confirmed the turn ended.
+    /// With `unless_quiet`: the agent has confirmed the turn ended, in that state.
     pub ended: bool,
     pub seq: u64,
 }
@@ -571,10 +571,10 @@ fn validate_unless_quiet(
     unless_quiet: Option<protocol::AgentState>,
     ended: bool,
 ) -> IntegrationResult<()> {
-    if ended && unless_quiet != Some(protocol::AgentState::Done) {
+    if ended && unless_quiet.is_none() {
         return Err((
             "invalid-argument",
-            "--ended only applies to --unless-quiet done".to_string(),
+            "--ended only applies with --unless-quiet".to_string(),
         ));
     }
     let Some(fallback) = unless_quiet else {
@@ -662,12 +662,7 @@ fn build_integration_report(
     // report that said it might have ended.
     let reported_at_unix_ms = previous
         .filter(|previous| {
-            ended
-                && previous.integration == integration
-                && previous
-                    .unless_quiet
-                    .as_ref()
-                    .is_some_and(|fallback| fallback.state == protocol::AgentState::Done)
+            ended && previous.integration == integration && previous.unless_quiet.is_some()
         })
         .map_or_else(crate::runtime_metrics::unix_time_millis, |previous| {
             previous.reported_at_unix_ms
@@ -1123,10 +1118,9 @@ impl SessionServer {
                             native_session,
                             // No screen speaks for a row, so only the agent's confirmation that
                             // the turn ended can end it: another hook may still send it on.
-                            state: if unless_quiet == Some(protocol::AgentState::Done) && ended {
-                                protocol::AgentState::Done
-                            } else {
-                                state
+                            state: match unless_quiet {
+                                Some(fallback) if ended => fallback,
+                                _ => state,
                             },
                             reason: reason
                                 .as_deref()
@@ -2786,10 +2780,10 @@ fn screen_reading<'a>(
 /// A dialog can open with no hook to say so, and typing into one answers it, so until then the
 /// report also says what the screen says: blocked while a dialog is up, working after it.
 ///
-/// A fallback to `done` waits on a screen reading as working however long that takes: another
-/// hook on the same event can still be running, and can send the turn on. With no screen to read,
-/// which happens on a pane listing agent rows, only the agent's confirmation that the turn ended
-/// lets it fall, and then it falls at once.
+/// A screen reading as working holds the report however long that takes: another hook on the same
+/// event can still be running, and can send the turn on. With no screen to read, which happens on a
+/// pane listing agent rows, only the agent's confirmation that the turn ended lets it fall, and then
+/// it falls at once.
 fn settle_quiet_report(
     report: Option<Box<protocol::AgentIntegrationReport>>,
     detected: Option<&DetectedAgent>,
@@ -2808,7 +2802,7 @@ fn settle_quiet_report(
     let ended = report
         .unless_quiet
         .as_ref()
-        .is_some_and(|fallback| fallback.state == protocol::AgentState::Done && fallback.ended);
+        .is_some_and(|fallback| fallback.ended);
     let falls = match reading {
         Some(DetectedAgentState::Blocked) => {
             report.state = protocol::AgentState::Blocked;

@@ -548,8 +548,8 @@ pub struct QuietFallback {
     pub state: super::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// With `done`: the agent has confirmed the turn ended. Without it, a fallback to `done` is
-    /// only provisional, so with no screen to read the report holds `working` until it arrives.
+    /// The agent has confirmed the turn ended. Without it the fallback is only provisional, so
+    /// with no screen to read the report holds `working` until a confirmation arrives.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ended: bool,
 }

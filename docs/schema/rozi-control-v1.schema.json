@@ -2124,7 +2124,7 @@
               "type": "string"
             },
             "ended": {
-              "description": "With `unless_quiet` of `done`: the agent has confirmed the turn ended, so a report no\nscreen speaks for falls to `done` instead of holding `working`.",
+              "description": "With `unless_quiet`: the agent has confirmed the turn ended, so a report no screen\nspeaks for falls to that state instead of holding `working`.",
               "type": "boolean"
             },
             "integration": {
@@ -3841,7 +3841,7 @@
               "type": "string"
             },
             "ended": {
-              "description": "With `unless_quiet` of `done`: the agent has confirmed the turn ended, so a report no\nscreen speaks for falls to `done` instead of holding `working`.",
+              "description": "With `unless_quiet`: the agent has confirmed the turn ended, so a report no screen\nspeaks for falls to that state instead of holding `working`.",
               "type": "boolean"
             },
             "integration": {

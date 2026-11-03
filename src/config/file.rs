@@ -2844,6 +2844,7 @@ on_open = { send = "danger\n" }
         );
         for (value, expected) in [
             ("\"Fade\"", SessionAnimationStyle::Fade),
+            ("\"wave\"", SessionAnimationStyle::Wave),
             ("\"off\"", SessionAnimationStyle::Off),
             ("false", SessionAnimationStyle::Off),
             ("true", SessionAnimationStyle::Portal),

@@ -247,7 +247,7 @@ enabled = true
 pane_open_style = "portal"   # off, scale, slide, portal, scan, or particles
 pane_close_style = "particles"
 workspace_ms = 160      # 0 switches workspaces instantly
-session = "portal"      # fade, portal, or off
+session = "portal"      # portal, wave, fade, or off
 toast = "slide"         # slide, fade, or off
 ```
 

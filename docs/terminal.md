@@ -66,7 +66,7 @@ pressed the prefix. Mouse-aware editors and other terminal apps keep working nor
 | Prefix, then left-drag | Move a pane |
 | Prefix, then right-drag | Resize a pane |
 | Drag a tiled split boundary | Resize the split |
-| Drag a workspace tab onto another | Swap the two workspaces |
+| Drag a workspace tab along the workbar | Move the workspace there |
 
 When you drag after pressing the prefix, the which-key strip hides during the drag. The `PREFIX`
 badge stays until you release the button, which also ends the prefix.

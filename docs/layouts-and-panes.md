@@ -231,8 +231,9 @@ rozi has nine workspaces.
 
 Bare `n` renames the workspace; `N` renames the focused pane.
 
-To swap two workspaces with the mouse, drag one workspace tab onto another. The two trade numbers,
-and you stay on the workspace you dragged.
+To move a workspace with the mouse, drag its tab along the workbar. The tabs it passes make room
+while you drag. On release the workspace takes that slot, the workspaces in between move one slot
+over and take new numbers, and you stay on the workspace you dragged.
 
 Each workspace keeps its own layout, name, focused pane, and pane order. An empty workspace stays
 available and offers to start a shell. Profiles save workspace names and layouts. In a named

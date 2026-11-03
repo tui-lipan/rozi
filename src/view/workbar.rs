@@ -903,8 +903,8 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .caps(tab_caps)
         .show_close_buttons(false)
         .show_overflow_controls(false)
-        // Dropping a tab on another swaps the two workspaces, so the drop lands on the tab under
-        // the pointer and nothing moves until the button is released.
+        // Dropping a tab moves its workspace to that slot. The bar previews the move while dragging,
+        // and the workspaces themselves only move once the button is released.
         .reorder_mode(DragReorderMode::OnDrop)
         .style(
             Style::new()
@@ -934,7 +934,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
         )
         .on_reorder(ctx.link().callback(|event: DraggableTabReorderEvent| {
-            Msg::RunAction(Action::SwapWorkspaces(event.from, event.to))
+            Msg::RunAction(Action::MoveWorkspace(event.from, event.to))
         }))
         .into()
 }

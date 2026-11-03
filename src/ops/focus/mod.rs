@@ -2573,24 +2573,69 @@ mod tests {
     }
 
     #[test]
-    fn swapping_two_background_workspaces_leaves_the_view_alone() {
+    fn moving_a_background_workspace_leaves_the_view_alone() {
         let mut state = state_with_tiled(&[1, 2]);
         state.current_mut().workspaces[1].name = Some("logs".to_string());
         state.current_mut().workspaces[1].layout_kind = LayoutKind::Master;
+        state.current_mut().workspaces[2].name = Some("docs".to_string());
+        state.current_mut().workspaces[3].name = Some("mail".to_string());
         state.current_mut().active_workspace = 0;
         state.current_mut().focused_pane = Some(2);
 
-        swap_workspaces(&mut state, 1, 3);
+        move_workspace(&mut state, 1, 3);
 
         assert_eq!(state.current().active_workspace, 0);
         assert_eq!(state.current().focused_pane, Some(2));
         assert!(workspace_holds(&state, 0, 1));
-        assert_eq!(state.current().workspaces[3].name.as_deref(), Some("logs"));
+        let names: Vec<_> = state.current().workspaces[1..=3]
+            .iter()
+            .map(|workspace| workspace.name.as_deref())
+            .collect();
+        assert_eq!(
+            names,
+            [Some("docs"), Some("mail"), Some("logs")],
+            "the workspaces between shift back a slot to make room"
+        );
         assert_eq!(
             state.current().workspaces[3].layout_kind,
             LayoutKind::Master
         );
-        assert_eq!(state.current().workspaces[1].name, None);
+    }
+
+    /// Moving the fifth workspace to the front puts it first and pushes every other one back a slot,
+    /// rather than trading the first workspace to the back. Whatever is on screen stays on screen,
+    /// under its new number.
+    #[test]
+    fn moving_a_workspace_forward_shifts_the_others_and_the_view_follows_its_content() {
+        let mut state = state_with_tiled(&[1, 2]);
+        for (slot, name) in ["one", "two", "three", "four", "five"].iter().enumerate() {
+            state.current_mut().workspaces[slot].name = Some((*name).to_string());
+        }
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
+
+        move_workspace(&mut state, 4, 0);
+
+        let names: Vec<_> = state.current().workspaces[..5]
+            .iter()
+            .map(|workspace| workspace.name.as_deref().unwrap_or_default())
+            .collect();
+        assert_eq!(names, ["five", "one", "two", "three", "four"]);
+        assert_eq!(state.current().active_workspace, 1);
+        assert!(workspace_holds(&state, 1, 2));
+        assert_eq!(state.current().focused_pane, Some(2));
+
+        move_workspace(&mut state, 1, 4);
+        let names: Vec<_> = state.current().workspaces[..5]
+            .iter()
+            .map(|workspace| workspace.name.as_deref().unwrap_or_default())
+            .collect();
+        assert_eq!(names, ["five", "two", "three", "four", "one"]);
+        assert_eq!(
+            state.current().active_workspace,
+            4,
+            "the dragged workspace keeps the view"
+        );
     }
 
     #[test]

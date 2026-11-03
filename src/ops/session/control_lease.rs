@@ -55,7 +55,7 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<AppRoot>) -> bool {
         ctx,
         crate::state::ToastChannel::LayoutControl,
         None,
-        crate::pane::pty_events::ToastBody::new(format!("Layout controlled by {who}")).hint(how),
+        crate::pane::pty_events::ToastBody::new(format!("Layout controlled by `{who}`")).hint(how),
     );
     true
 }

@@ -556,7 +556,7 @@ pub(crate) fn apply_host_discovery(
                 }
             }
             if !auto_open {
-                crate::pane::pty_events::notify_info(ctx, format!("Connected to {label}"));
+                crate::pane::pty_events::notify_info(ctx, format!("Connected to `{label}`"));
                 return Update::full();
             }
             let resume = ctx
@@ -606,7 +606,7 @@ pub(crate) fn apply_host_discovery(
             let reason = crate::session::discovery::probe_failure_reason(&error);
             crate::pane::pty_events::notify_error(
                 ctx,
-                format!("Could not connect to {label}"),
+                format!("Could not connect to `{label}`"),
                 reason,
             );
             Update::full()
@@ -802,7 +802,7 @@ pub(crate) fn submit_host_form(ctx: &mut Context<AppRoot>) -> Update {
         let label = target.display_label();
         crate::pane::pty_events::notify_info(
             ctx,
-            format!("Added {label} — press Enter to open once the current host answers"),
+            format!("Added `{label}` — press Enter to open once the current host answers"),
         );
         crate::ops::focus::request_remote_picker_focus(ctx);
         return Update::full();

@@ -83,7 +83,7 @@ fn apply_controller_transition(
             ctx,
             crate::state::ToastChannel::LayoutControl,
             None,
-            format!("Layout control taken by {who}"),
+            format!("Layout control taken by `{who}`"),
         );
     } else if !was_controller && now_controller {
         // No toast: the workbar chip flips to CTRL, and unlike losing control (which another client
@@ -162,7 +162,8 @@ pub(crate) fn control_requested(ctx: &mut Context<AppRoot>, epoch: u64, from: Cl
         .unwrap_or_else(|| "grant from Collaborators".to_string());
     crate::pane::pty_events::notify_info(
         ctx,
-        crate::pane::pty_events::ToastBody::new(format!("{who} requests layout control")).hint(how),
+        crate::pane::pty_events::ToastBody::new(format!("`{who}` requests layout control"))
+            .hint(how),
     );
     ctx.state.commands_dirty = true;
     Update::full()

@@ -404,7 +404,7 @@ fn finish_install(
             }
             if !waiting {
                 // The new row alone may go unseen by someone who moved on.
-                notify_info(ctx, &format!("Installed {id}"));
+                notify_info(ctx, &format!("Installed `{id}`"));
             }
             if let Some(warning) = outcome.warning {
                 notify_warning(ctx, "Extension installed", warning);
@@ -753,8 +753,8 @@ fn report_update_results(
     }
     let failed = results.iter().any(|(_, result)| result.is_err());
     match (changed, results) {
-        ([id], _) => notify_info(ctx, &format!("Updated {id}")),
-        ([], [(id, _)]) if !failed => notify_info(ctx, &format!("{id} is up to date")),
+        ([id], _) => notify_info(ctx, &format!("Updated `{id}`")),
+        ([], [(id, _)]) if !failed => notify_info(ctx, &format!("`{id}` is up to date")),
         ([], _) if !failed => notify_info(ctx, "Extensions are up to date"),
         ([], _) => {}
         (changed, _) => notify_info(ctx, &format!("Updated {} extensions", changed.len())),
@@ -770,7 +770,7 @@ fn report_update_result(
     match result {
         Ok(outcome) => {
             if let Some(warning) = &outcome.warning {
-                notify_warning(ctx, "Extension updated", format!("{id}: {warning}"));
+                notify_warning(ctx, "Extension updated", format!("`{id}`: {warning}"));
             }
         }
         Err(error) => {

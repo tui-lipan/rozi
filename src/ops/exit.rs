@@ -291,7 +291,7 @@ pub(crate) fn kill_workspace_with_confirmation(
                 &ctx.state.theme,
                 ctx.state.config.pane.toast_opacity,
                 format!(
-                    "Press again to kill {pane_count} {} on workspace {label}",
+                    "Press again to kill {pane_count} {} on workspace `{label}`",
                     if pane_count == 1 { "pane" } else { "panes" }
                 ),
             ),

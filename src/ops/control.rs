@@ -1936,11 +1936,14 @@ fn notify_command(
             crate::pane::pty_events::notify_error(
                 ctx,
                 title.unwrap_or_else(|| "Error".to_string()),
-                message,
+                crate::pane::pty_events::ToastBody::verbatim(message),
             );
         }
         crate::control::NotifyLevel::Info => {
-            crate::pane::pty_events::notify_info(ctx, message);
+            crate::pane::pty_events::notify_info(
+                ctx,
+                crate::pane::pty_events::ToastBody::verbatim(message),
+            );
         }
     }
     ControlResponse::empty()
@@ -2964,6 +2967,45 @@ mod tests {
                 ))
                 .expect("dispatch notify");
             assert!(rx.try_recv().expect("answered").ok);
+        });
+    }
+
+    /// A script's or extension's message is its own text: backticks in it are drawn, not read as
+    /// the name markup rozi's own toasts use.
+    #[test]
+    fn notify_shows_the_message_as_written() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (tx, rx) = std::sync::mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(
+                    crate::control::ControlEnvelope {
+                        request: crate::control::ControlRequest {
+                            command: crate::control::ControlCommand::Notify {
+                                message: "run `make` again".into(),
+                                title: None,
+                                level: crate::control::NotifyLevel::Info,
+                            },
+                            source_pane: None,
+                            source_session: None,
+                            extension: None,
+                            caller_context: None,
+                            credential: None,
+                        },
+                        reply: tx,
+                        worker: None,
+                        caller: None,
+                    },
+                ))
+                .expect("dispatch notify");
+            assert!(rx.try_recv().expect("answered").ok);
+            backend.render();
+            backend.advance(std::time::Duration::from_millis(500));
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            assert!(
+                lines.iter().any(|line| line.contains("run `make` again")),
+                "{lines:#?}"
+            );
         });
     }
 

@@ -112,7 +112,7 @@ impl AppRoot {
         // Only news is worth the automatic showing: a release without notes of its own still shows
         // the ones before it, but not again to someone who already ran them.
         let release_notes = ops::release_notes::embedded(startup.last_ran.clone()).map(|notes| {
-            let due = startup.notes_due && notes.new_count() > 0;
+            let due = startup.notes_due && notes.has_news();
             (notes, due)
         });
         let welcome = ops::welcome::due_at_startup(startup.first_install);

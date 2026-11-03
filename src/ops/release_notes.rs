@@ -63,7 +63,8 @@ pub(crate) struct WhatsNew {
     /// Newest first, never empty, and none newer than the running version.
     pub(crate) releases: Vec<ReleaseNotes>,
     running: Version,
-    /// The newest version that started a client here before this one, if any did.
+    /// The newest version below this one that started a client here, if any did. Not necessarily
+    /// the one that ran most recently: after a downgrade, the newer version's notes are old news.
     pub(crate) last_ran: Option<Version>,
 }
 
@@ -95,12 +96,12 @@ impl WhatsNew {
             .map_or(*version == self.running, |last| version > last)
     }
 
-    /// How many releases this machine had not run before this launch. They lead the list.
-    pub(crate) fn new_count(&self) -> usize {
+    /// Whether any of the releases shown came out after the version that ran here before. Only
+    /// then is the dialog worth showing by itself.
+    pub(crate) fn has_news(&self) -> bool {
         self.releases
             .iter()
-            .take_while(|notes| self.is_new(&notes.version))
-            .count()
+            .any(|notes| self.is_new(&notes.version))
     }
 
     /// The release a tab index names, clamped to the list.
@@ -427,15 +428,23 @@ mod tests {
     #[test]
     fn releases_after_the_last_version_run_are_new() {
         let all = [notes("0.0.41"), notes("0.0.40"), notes("0.0.38")];
-        let after = |last: Option<&str>| {
-            WhatsNew::new(all.clone(), version("0.0.41"), last.map(version))
-                .unwrap()
-                .new_count()
+        let new = |whats_new: &WhatsNew| {
+            let new = whats_new
+                .releases
+                .iter()
+                .filter(|notes| whats_new.is_new(&notes.version))
+                .map(|notes| notes.version.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(whats_new.has_news(), !new.is_empty());
+            new
         };
-        assert_eq!(after(Some("0.0.37")), 3);
-        assert_eq!(after(Some("0.0.39")), 2);
-        assert_eq!(after(Some("0.0.40")), 1);
-        assert_eq!(after(None), 1);
+        let after = |last: Option<&str>| {
+            new(&WhatsNew::new(all.clone(), version("0.0.41"), last.map(version)).unwrap())
+        };
+        assert_eq!(after(Some("0.0.37")), ["0.0.41", "0.0.40", "0.0.38"]);
+        assert_eq!(after(Some("0.0.39")), ["0.0.41", "0.0.40"]);
+        assert_eq!(after(Some("0.0.40")), ["0.0.41"]);
+        assert_eq!(after(None), ["0.0.41"]);
 
         let without_own = WhatsNew::new(
             [notes("0.0.40"), notes("0.0.38")],
@@ -443,16 +452,16 @@ mod tests {
             Some(version("0.0.39")),
         )
         .unwrap();
-        assert_eq!(without_own.new_count(), 1);
+        assert_eq!(new(&without_own), ["0.0.40"]);
         let caught_up = WhatsNew::new(
             [notes("0.0.40")],
             version("0.0.41"),
             Some(version("0.0.40")),
         )
         .unwrap();
-        assert_eq!(caught_up.new_count(), 0);
+        assert!(new(&caught_up).is_empty());
         let unknown = WhatsNew::new([notes("0.0.40")], version("0.0.41"), None).unwrap();
-        assert_eq!(unknown.new_count(), 0);
+        assert!(new(&unknown).is_empty());
     }
 
     /// The version that ran before this one is the newest older one, whichever order they ran in,
@@ -662,7 +671,7 @@ mod app_tests {
             let title = row_of(&shown, "What's new · rozi");
             let title_row = shown.lines().nth(title).unwrap();
             assert!(!title_row.contains("v9.9.6"), "{shown}");
-            assert!(title_row.contains("2 new releases since v9.9.4"), "{shown}");
+            assert!(title_row.contains("updated from v9.9.4"), "{shown}");
             let tabs = shown.lines().nth(row_of(&shown, "v9.9.6")).unwrap();
             let at = |label: &str| tabs.find(label).unwrap_or_else(|| panic!("{shown}"));
             assert!(

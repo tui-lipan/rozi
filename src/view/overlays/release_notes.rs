@@ -78,17 +78,13 @@ pub(crate) fn release_notes_overlay(ctx: &Context<AppRoot>) -> Element {
     } else {
         format!("What's new · rozi v{}", notes.version)
     };
-    // The releases this machine had not run lead the list; say how many, and since when.
+    // Name the version this machine updated from rather than count releases: the tabs carry only
+    // the latest releases with notes, and the ones newer than it read as new by their labels.
     let news = whats_new
         .last_ran
         .as_ref()
-        .filter(|_| whats_new.new_count() > 0)
-        .map(|last| {
-            Cow::Owned(format!(
-                "{} since v{last}",
-                crate::view::vocabulary::count(whats_new.new_count(), "new release")
-            ))
-        });
+        .filter(|_| whats_new.has_news())
+        .map(|last| Cow::Owned(format!("updated from v{last}")));
     let depth = u16::from(ctx.state.release_notes_is_stacked());
     wrap_palette(
         ctx,

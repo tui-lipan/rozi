@@ -499,7 +499,7 @@ These settings apply on reload and are also in the General category of Settings.
 | `check` | bool | `true` | Looks for a newer release shortly after a client starts, then every `interval_hours`. Off, rozi never contacts the release host or the usage counter on its own. |
 | `interval_hours` | integer | `6` | Hours between re-checks in a client that stays open. Minimum `1`; lower values are clamped with a warning. |
 | `count_usage` | bool | `true` | Adds this install to the anonymous weekly [usage count](usage-count.md) during these checks. Has no effect while `check` is off. |
-| `release_notes` | bool | `true` | Shows the notes of the releases since the version you last ran once, the first time rozi starts after an update. Works offline and while `check` is off. See [Release notes](#release-notes). |
+| `release_notes` | bool | `true` | Shows the release notes once, the first time rozi starts after an update. Works offline and while `check` is off. See [Release notes](#release-notes). |
 
 `rozi update --check` checks on demand, whether or not `check` is on. Turning `check` back on
 schedules the next check one interval later, not immediately.
@@ -530,9 +530,10 @@ The first time rozi starts after an update, a `What's new · rozi` dialog shows 
 at startup, and only one client shows it. A first install skips it, and so does going back to an
 older version.
 
-The dialog has a tab for each of the latest releases with notes, up to seven, newest first. It
-opens on the newest, and its header counts the releases that came out since the version you last
-ran, such as `3 new releases since v0.0.37`, so the notes of releases you skipped are one tab away.
+The dialog has a tab for each of the latest seven releases that have notes, newest first, and
+opens on the newest. A release with nothing user-facing has no tab. The header names the newest
+older version that ran on this machine, such as `updated from v0.0.37`, so every tab with a newer
+version is a release you skipped. Releases older than the seven are on the GitHub releases page.
 
 | Key | Action |
 | --- | --- |

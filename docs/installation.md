@@ -195,8 +195,8 @@ Commands, which runs the update in a popup (see
 
 The same check also adds the install to the anonymous weekly [usage count](usage-count.md).
 
-After you update, the first rozi you start shows the notes of every release since the version
-you last ran, once. See [Release notes](configuration.md#release-notes).
+After you update, the first rozi you start shows the release notes once, including those of
+recent releases you skipped. See [Release notes](configuration.md#release-notes).
 
 Use [`[updates]`](configuration.md#updates) to turn these checks, the usage count, or the release
 notes off, or to change the interval.

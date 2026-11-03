@@ -77,7 +77,7 @@ pub(in crate::view::overlays) use confirm::{DialogButton, DialogChrome, dialog_o
 pub(crate) use palette::PICKER_DESCRIPTION_GAP;
 pub(in crate::view::overlays) use palette::{
     OverlayAction, OverlayItemRenderer, OverlayPalette, OverlayTabs, overlay_hints,
-    overlay_interceptor, picker_description, picker_row, picker_selection_style,
+    overlay_interceptor, picker_description, picker_row, picker_selection_style, wrap_palette,
 };
 pub(in crate::view::overlays) use pick::fit_description;
 pub(in crate::view::overlays) use profiles::render_ephemeral_session_item;

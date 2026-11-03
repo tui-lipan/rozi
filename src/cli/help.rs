@@ -442,9 +442,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             advanced_row("    --skill", "Print agent control instructions"),
             advanced_row(
-                "    --release-notes",
+                "    --release-notes [VERSION]",
                 "Print the release notes built into rozi",
             ),
+            advanced_row("", "for this release, or an earlier VERSION"),
         ],
     },
     HelpSection {

@@ -428,9 +428,11 @@ pub struct State {
     /// went, and this process keeps running the old build either way, so offering the same update
     /// again would only repeat it.
     pub(crate) update_started: bool,
-    /// The notes this build carries, which **What's new** shows. `None` for a build made outside
-    /// the release workflow.
-    pub(crate) release_notes: Option<crate::ops::release_notes::ReleaseNotes>,
+    /// The releases whose notes this build carries, which **What's new** shows. `None` for a build
+    /// made outside the release workflow.
+    pub(crate) release_notes: Option<crate::ops::release_notes::WhatsNew>,
+    /// The release **What's new** shows, as an index into [`Self::release_notes`], newest first.
+    pub(crate) release_notes_tab: usize,
     /// The startup decision to show [`Self::release_notes`] once, as soon as nothing else holds the
     /// screen. Cleared when it fires.
     pub(crate) release_notes_due: bool,
@@ -775,6 +777,7 @@ impl State {
             available_update: None,
             update_started: false,
             release_notes: None,
+            release_notes_tab: 0,
             release_notes_due: false,
             show_release_notes: false,
             welcome_due: false,

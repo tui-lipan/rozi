@@ -262,7 +262,7 @@ impl OverlayTabs {
 
     /// Tab and Shift+Tab, or Left and Right, step through the pages, wrapping, as they do on every
     /// tabbed picker.
-    fn interceptor(&self, ctx: &Context<AppRoot>) -> KeyHandler {
+    pub(super) fn interceptor(&self, ctx: &Context<AppRoot>) -> KeyHandler {
         let count = self.labels.len();
         let active = self.active;
         let select = self.select;
@@ -281,6 +281,22 @@ impl OverlayTabs {
                 _ => None,
             }
         })
+    }
+
+    /// The tab row and the blank row under it.
+    pub(super) fn strip(&self, ctx: &Context<AppRoot>) -> VStack {
+        let select = self.select;
+        let labels = self.labels.iter().map(String::as_str).collect::<Vec<_>>();
+        VStack::new()
+            .height(Length::Auto)
+            .child(picker_tabs(
+                ctx,
+                &labels,
+                self.active,
+                ctx.link()
+                    .callback(move |event: TabsEvent| select(event.index)),
+            ))
+            .child(Spacer::new().height(Length::Px(1)))
     }
 }
 
@@ -555,22 +571,11 @@ impl<'a, T: Clone + PartialEq + 'static> OverlayPalette<'a, T> {
 
         let mut body = VStack::new().height(Length::Auto);
         if let Some(tabs) = tabs {
-            let select = tabs.select;
-            let labels = tabs.labels.iter().map(String::as_str).collect::<Vec<_>>();
             // Reset rather than remount: each page brings its own query and highlight, but the tab
             // strip above them has to keep its scroll position.
-            palette = palette.reset_key(tabs.active.to_string()).results_header(
-                VStack::new()
-                    .height(Length::Auto)
-                    .child(picker_tabs(
-                        ctx,
-                        &labels,
-                        tabs.active,
-                        ctx.link()
-                            .callback(move |event: TabsEvent| select(event.index)),
-                    ))
-                    .child(Spacer::new().height(Length::Px(1))),
-            );
+            palette = palette
+                .reset_key(tabs.active.to_string())
+                .results_header(tabs.strip(ctx));
         }
         body = body.child(palette);
         if let Some(detail) = detail {

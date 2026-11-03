@@ -11,6 +11,7 @@ from scripts.release_notes import (
     pull_request_url,
     release_body,
     requires_note,
+    select_earlier_releases,
     select_previous_release,
     validate_coverage,
     validate_notes,
@@ -51,6 +52,44 @@ class PreviousReleaseTests(unittest.TestCase):
         ]
 
         self.assertEqual(select_previous_release(releases, "v0.0.23"), "v0.0.22")
+
+
+def published(tag, body="## Fixed\n\n- One.\n", **fields):
+    return {"tag_name": tag, "body": body, "draft": False, "prerelease": False, **fields}
+
+
+class EarlierReleasesTests(unittest.TestCase):
+    def test_takes_the_newest_releases_before_the_target_by_version(self):
+        releases = [
+            published("v0.0.9"),
+            published("v0.0.41"),
+            published("v0.0.10"),
+            published("v0.0.40"),
+            published("v0.0.39"),
+        ]
+        self.assertEqual(
+            [tag for tag, _ in select_earlier_releases(releases, "v0.0.41", 3)],
+            ["v0.0.40", "v0.0.39", "v0.0.10"],
+        )
+
+    def test_skips_drafts_prereleases_other_tags_and_releases_without_sections(self):
+        releases = [
+            published("v0.0.40", draft=True),
+            published("v0.0.39", prerelease=True),
+            published("nightly"),
+            published("v0.0.38-rc.1"),
+            published("v0.0.37", "No user-facing changes since v0.0.36.\n"),
+            published("v0.0.36", None),
+            published("v0.0.35", "## Added\r\n\r\n- Two.\r\n"),
+        ]
+        self.assertEqual(
+            select_earlier_releases(releases, "v0.0.41", 7),
+            [("v0.0.35", "## Added\n\n- Two.\n")],
+        )
+
+    def test_refuses_a_target_that_is_not_a_release_tag(self):
+        with self.assertRaises(ReleaseNotesError):
+            select_earlier_releases([published("v0.0.40")], "nightly", 7)
 
 
 class FilteringTests(unittest.TestCase):
@@ -396,6 +435,16 @@ class ReleaseBodyTests(unittest.TestCase):
         self.assertEqual(release_body("## Fixed\n\n- One.\n", "v0.0.30"), "## Fixed\n\n- One.\n")
         with self.assertRaises(ReleaseNotesError):
             release_body("Release notes\n", "v0.0.30")
+
+    def test_the_earlier_packaging_fixtures_are_publishable_bodies(self):
+        # Pull request Release runs embed these as earlier releases' notes.
+        fixtures = Path(__file__).parents[2] / "tests" / "fixtures" / "earlier-release-notes"
+        paths = sorted(fixtures.iterdir())
+        self.assertTrue(paths)
+        for path in paths:
+            self.assertRegex(path.name, r"^v\d+\.\d+\.\d+\.md$")
+            raw = path.read_text(encoding="utf-8")
+            self.assertEqual(validate_notes(raw), raw, path.name)
 
     def test_the_packaging_fixture_is_a_publishable_body(self):
         # Pull request Release runs embed this file in place of generated notes; it has to stay a

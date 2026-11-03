@@ -231,8 +231,9 @@ pub(crate) enum ParsedCli {
         advanced: bool,
     },
     Version,
-    /// Print the release notes this binary embeds, byte for byte (`--release-notes`).
-    ReleaseNotes,
+    /// Print the release notes this binary embeds for a release, or for itself, byte for byte
+    /// (`--release-notes [VERSION]`).
+    ReleaseNotes(Option<semver::Version>),
     ApiDescribe,
     ApiSchema,
     ApiCommands,
@@ -440,10 +441,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         };
     }
     if args.first().is_some_and(|arg| arg == "--release-notes") {
-        return if args.len() == 1 {
-            Ok(ParsedCli::ReleaseNotes)
-        } else {
-            Err("--release-notes must be used without other arguments".to_string())
+        return match &args[1..] {
+            [] => Ok(ParsedCli::ReleaseNotes(None)),
+            [version] => semver::Version::parse(version.strip_prefix('v').unwrap_or(version))
+                .map(|version| ParsedCli::ReleaseNotes(Some(version)))
+                .map_err(|_| format!("--release-notes: `{version}` is not a version")),
+            _ => Err("--release-notes takes at most one version".to_string()),
         };
     }
     if args.first().is_some_and(|arg| arg == "skill") {
@@ -2219,9 +2222,23 @@ mod tests {
         assert!(parse_cli_args(vec!["api".into(), "unknown".into()]).is_err());
         assert!(matches!(
             parse_cli_args(vec!["--release-notes".into()]).expect("parses"),
-            ParsedCli::ReleaseNotes
+            ParsedCli::ReleaseNotes(None)
         ));
+        for version in ["0.0.40", "v0.0.40"] {
+            match parse_cli_args(vec!["--release-notes".into(), version.into()]).expect("parses") {
+                ParsedCli::ReleaseNotes(Some(parsed)) => assert_eq!(parsed.to_string(), "0.0.40"),
+                other => panic!("{version}: {other:?}"),
+            }
+        }
         assert!(parse_cli_args(vec!["--release-notes".into(), "extra".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "--release-notes".into(),
+                "0.0.40".into(),
+                "0.0.39".into()
+            ])
+            .is_err()
+        );
         assert!(parse_cli_args(vec!["target".into(), "--release-notes".into()]).is_err());
     }
 

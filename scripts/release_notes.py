@@ -27,6 +27,10 @@ RELEASE_METADATA_PATHS = {
     "docs/installation.md",
 }
 SUMMARY_MAX_CHARS = 4_000
+# Earlier releases a build embeds next to its own notes, for What's new to show as tabs. The dialog
+# shows at most seven, so a release without notes of its own still fills them.
+EARLIER_RELEASES = 7
+PLAIN_TAG_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 # Reviewer-facing sections that never reach the notes, whichever section a PR uses for its summary.
 NON_RELEASE_SECTIONS = {
     "checklist",
@@ -153,6 +157,42 @@ def select_previous_release(releases: Sequence[dict[str, Any]], to_tag: str) -> 
         ),
     )
     return str(previous["tag_name"])
+
+
+def plain_version(tag: str) -> tuple[int, int, int] | None:
+    match = PLAIN_TAG_RE.fullmatch(tag)
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
+def select_earlier_releases(
+    releases: Sequence[dict[str, Any]], to_tag: str, count: int
+) -> list[tuple[str, str]]:
+    """The newest `count` published releases before `to_tag` with notes worth a tab, newest first.
+
+    A release with no section published only the fixed no-changes line, which says nothing a tab
+    should show.
+    """
+    target = plain_version(to_tag)
+    if target is None:
+        raise ReleaseNotesError(f"{to_tag} is not a vX.Y.Z release tag")
+    candidates = []
+    for release in releases:
+        tag = release.get("tag_name")
+        version = plain_version(tag) if isinstance(tag, str) else None
+        body = release.get("body")
+        if (
+            version is None
+            or version >= target
+            or release.get("draft", False)
+            or release.get("prerelease", False)
+            or not isinstance(body, str)
+        ):
+            continue
+        body = body.replace("\r\n", "\n")
+        if any(line.startswith("## ") for line in body.splitlines()):
+            candidates.append((version, tag, body))
+    candidates.sort(reverse=True)
+    return [(tag, body) for _, tag, body in candidates[:count]]
 
 
 def resolve_tag(tag: str) -> str:
@@ -631,6 +671,17 @@ def prepare(arguments: argparse.Namespace) -> None:
     )
 
 
+def earlier(arguments: argparse.Namespace) -> None:
+    releases = select_earlier_releases(
+        github_releases(arguments.repository), arguments.to_tag, arguments.count
+    )
+    output = Path(arguments.output)
+    output.mkdir(parents=True, exist_ok=True)
+    for tag, body in releases:
+        (output / f"{tag}.md").write_text(body, encoding="utf-8")
+    print(f"wrote the notes of {len(releases)} earlier releases to {output}")
+
+
 def validate(arguments: argparse.Namespace) -> None:
     raw = Path(arguments.input).read_text(encoding="utf-8")
     metadata = json.loads(Path(arguments.metadata).read_text(encoding="utf-8"))
@@ -659,6 +710,13 @@ def parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--input", required=True)
     prepare_parser.add_argument("--metadata", required=True)
     prepare_parser.set_defaults(function=prepare)
+
+    earlier_parser = commands.add_parser("earlier")
+    earlier_parser.add_argument("--repository", required=True)
+    earlier_parser.add_argument("--to-tag", required=True)
+    earlier_parser.add_argument("--count", type=int, default=EARLIER_RELEASES)
+    earlier_parser.add_argument("--output", required=True)
+    earlier_parser.set_defaults(function=earlier)
 
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("--input", required=True)

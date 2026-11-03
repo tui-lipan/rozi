@@ -230,6 +230,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::OpenWelcomeGuide => crate::ops::welcome::open_guide(ctx),
         Msg::CloseReleaseNotes => crate::ops::release_notes::close(ctx),
         Msg::OpenReleaseNotesPage => crate::ops::release_notes::open_page(ctx),
+        Msg::ReleaseNotesTab(index) => crate::ops::release_notes::select_tab(ctx, index),
         Msg::CloseSettingsNumberEditor => overlays::close_settings_number_editor(ctx),
         Msg::SettingsNumberChanged(field, event) => {
             overlays::settings_number_changed(ctx, field, event)

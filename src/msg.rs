@@ -53,6 +53,7 @@ pub enum Msg {
     OpenWelcomeGuide,
     CloseReleaseNotes,
     OpenReleaseNotesPage,
+    ReleaseNotesTab(usize),
     CloseHelp,
     HelpQueryChanged(InputEvent),
     HelpTabSelected(usize),

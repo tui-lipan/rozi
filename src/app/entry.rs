@@ -35,7 +35,7 @@ pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
 }
 
 pub(crate) fn clipboard_copy_feedback_duration(config: &Config) -> Duration {
-    Duration::from_millis(clipboard_config(config).copy_feedback_duration_ms as u64)
+    clipboard_config(config).copy_feedback.duration
 }
 
 /// Point config loading at `--config <PATH>` before any command reads it.

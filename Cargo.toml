@@ -83,7 +83,7 @@ exclude = [
 # pixel-mask effects.
 # 0.35.0: SearchPalette::reset_key, and tab bars keep the active tab on screen.
 # 0.36.0: OnDrop tab drag previews the reordered tab positions before mouse release.
-tui-lipan = { version = "0.37.3", features = [
+tui-lipan = { version = "0.38.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

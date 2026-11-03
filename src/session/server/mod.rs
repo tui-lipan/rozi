@@ -2366,6 +2366,10 @@ fn pty_config(
         .fold(config, |config, key| config.env_remove(*key))
         .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))
+        // XON/XOFF would let a stray `Ctrl+S` - or `Ctrl+Shift+S`, which the legacy key encoding
+        // sends as the same byte - pause the pane's output until `Ctrl+Q`, leaving it looking
+        // frozen. Hand the byte to the child instead, where readline uses it for forward search.
+        .flow_control(false)
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {

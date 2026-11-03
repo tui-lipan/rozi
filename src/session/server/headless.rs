@@ -743,20 +743,38 @@ impl SessionServer {
                 state,
                 reason,
                 native_session,
+                unless_quiet,
                 seq,
             } => self.session_agent_report_update(
                 target,
-                Some(agent),
-                integration,
-                Some((state, reason, native_session)),
-                seq,
+                runtime::AgentIntegrationUpdate {
+                    agent: Some(agent),
+                    integration,
+                    state: Some(state),
+                    reason,
+                    native_session,
+                    unless_quiet,
+                    seq,
+                },
                 broadcasts,
             ),
             ControlCommand::AgentRelease {
                 target,
                 integration,
                 seq,
-            } => self.session_agent_report_update(target, None, integration, None, seq, broadcasts),
+            } => self.session_agent_report_update(
+                target,
+                runtime::AgentIntegrationUpdate {
+                    agent: None,
+                    integration,
+                    state: None,
+                    reason: None,
+                    native_session: None,
+                    unless_quiet: None,
+                    seq,
+                },
+                broadcasts,
+            ),
             ControlCommand::Notify {
                 message,
                 title,
@@ -1303,6 +1321,35 @@ impl SessionServer {
         Ok(reference)
     }
 
+    /// Read now rather than from the last poll: a dialog can open just after the report that said
+    /// the agent was ready, and the Enter of a prompt typed into it would answer it.
+    fn refuse_unannounced_dialog(
+        &mut self,
+        pane_id: PaneId,
+    ) -> std::result::Result<(), ControlResponse> {
+        let agents = self.settings.agents.clone();
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return Ok(());
+        };
+        let Some(definition) = pane
+            .agent
+            .identity
+            .as_deref()
+            .and_then(|id| agents.by_id(id))
+        else {
+            return Ok(());
+        };
+        let title = pane.effective_title().unwrap_or_default();
+        let screen = pane.screen_without_change().snapshot();
+        if crate::agent_detection::dialog_outranks_reports(definition, screen.as_ref(), &title) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::AgentBlocked,
+                "agent is showing a dialog; refusing to type into it",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_prompt_authority(
         &self,
         client_id: ClientId,
@@ -1361,6 +1408,9 @@ impl SessionServer {
             Ok(reference) => reference,
             Err(response) => return Some(response),
         };
+        if let Err(response) = self.refuse_unannounced_dialog(reference.pane.pane_id) {
+            return Some(response);
+        }
         let bytes = match self.session_prompt_bytes(reference.pane.pane_id, request.prompt) {
             Ok(bytes) => bytes,
             Err(response) => return Some(response),
@@ -1657,10 +1707,7 @@ impl SessionServer {
     fn session_agent_report_update(
         &mut self,
         target: Option<PaneId>,
-        agent: Option<String>,
-        integration: String,
-        report: Option<(protocol::AgentState, Option<String>, Option<String>)>,
-        seq: u64,
+        update: runtime::AgentIntegrationUpdate,
         broadcasts: &mut Vec<(Target, ServerMessage)>,
     ) -> ControlResponse {
         let id = match self.session_target_pane(target) {
@@ -1673,22 +1720,7 @@ impl SessionServer {
                 format!("pane {id} not found"),
             );
         };
-        let (state, reason, native_session) = report.map_or((None, None, None), |report| {
-            (Some(report.0), report.1, report.2)
-        });
-        match self.apply_agent_integration(
-            None,
-            id,
-            generation,
-            runtime::AgentIntegrationUpdate {
-                agent,
-                integration,
-                state,
-                reason,
-                native_session,
-                seq,
-            },
-        ) {
+        match self.apply_agent_integration(None, id, generation, update) {
             Ok(Some(message)) => {
                 broadcasts.push((Target::Broadcast, message));
                 ControlResponse::empty()
@@ -2980,6 +3012,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 1,
+                unless_quiet: None,
             })
         };
         let ask = |server: &mut SessionServer, request| {
@@ -3422,6 +3455,7 @@ mod tests {
                 reason: Some("ready".into()),
                 native_session: Some("native-123".into()),
                 seq: 13,
+                unless_quiet: None,
             },
         );
         assert!(accepted.ok);
@@ -3448,6 +3482,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 12,
+                unless_quiet: None,
             },
         );
         assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
@@ -3480,6 +3515,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 1,
+                unless_quiet: None,
             },
         );
         assert!(next.ok, "{next:?}");
@@ -3498,6 +3534,7 @@ mod tests {
                 reason: Some("still working".into()),
                 native_session: None,
                 seq: 2,
+                unless_quiet: None,
             },
         );
         assert!(heartbeat.ok, "{heartbeat:?}");
@@ -3515,6 +3552,7 @@ mod tests {
                 reason: Some("x".repeat(protocol::PANE_STATUS_REASON_MAX_LEN + 10)),
                 native_session: None,
                 seq: 3,
+                unless_quiet: None,
             },
         );
         assert!(blocked.ok, "{blocked:?}");
@@ -3544,6 +3582,7 @@ mod tests {
                 reason: None,
                 native_session: None,
                 seq: 15,
+                unless_quiet: None,
             },
         );
         assert_eq!(delayed.code, Some(ControlErrorCode::Conflict));
@@ -3614,6 +3653,7 @@ mod tests {
                     reason: None,
                     native_session: Some(native.into()),
                     seq,
+                    unless_quiet: None,
                 },
             )
             .0
@@ -3766,6 +3806,7 @@ mod tests {
                     reason: None,
                     native_session: Some(native.into()),
                     seq,
+                    unless_quiet: None,
                 },
             )
             .0

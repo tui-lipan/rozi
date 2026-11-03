@@ -6,7 +6,7 @@ restore a session.
 
 ## Install
 
-Use a Rozi version with `rozi agents report` and `rozi agents release`. You also need Codex 0.164
+Use a Rozi version with `rozi agents report --unless-quiet` and `rozi agents release`. You also need Codex 0.164
 or newer with hooks enabled, which is the default, and Python 3.10 or newer available as `python3`
 on `PATH`. The plugin validates with Codex 0.166.0.
 
@@ -18,7 +18,7 @@ codex plugin add rozi@rozi
 ```
 
 Restart Codex inside a local Rozi pane. Codex asks you to review hooks that are new or changed:
-choose **Trust all and continue**, or review the eleven `rozi` hooks with `/hooks` and trust them
+choose **Trust all and continue**, or review the twelve `rozi` hooks with `/hooks` and trust them
 there. Until you trust them, they do not run. Codex asks again after an update changes them.
 The plugin does not require a Rozi extension or edits to Codex's `config.toml` or `hooks.json`.
 
@@ -44,21 +44,25 @@ each thread's state from the background server and lists every loaded thread as 
 | Codex event | Rozi state |
 | --- | --- |
 | Model request starting, or tool running | `working`, with the native thread ID |
+| Model request fails | Follows Codex's screen while it retries or shows a dialog, then `error` |
 | Approval requested | `blocked` |
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
 | Compaction | `working`, keeping the same integration token |
-| Turn finishes | `done` |
+| Turn finishes | `done` once the screen has been quiet for about two seconds, or `blocked` if Codex opens a dialog first |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
+
+A turn isn't over when this plugin's `Stop` hook runs: another `Stop` hook can still be running, and
+can send the turn on, and Codex opens some dialogs with no hook, such as its offer to switch models.
+So a turn waits for the screen before it reads `done`. `rozi agents prompt` refuses to type into
+those dialogs whatever the pane reports.
 
 A prompt reports nothing until Codex is about to call the model, because another hook can still
 reject it. A rejected prompt leaves the pane as it was.
 
-Codex has no hook that says a turn has failed for good. A failed model request looks the same
-whether Codex will retry it or not, so after a turn ends in an error, such as a usage limit, the pane
-keeps reporting `working`. Send the next prompt with `rozi agents prompt --allow-working`.
-
+Codex has no hook that says a turn has failed for good, and a failed model request looks the same
+whether Codex will retry it or not. So Rozi holds that report only while the screen shows the turn.
 Codex starts a thread's hooks at its first prompt in a client, not when the client opens or when
 `/resume` switches to the thread. Until you send that prompt, the pane keeps reporting the thread
 it showed before, or uses screen detection when it has shown none.
@@ -135,7 +139,7 @@ For a live check, launch Codex with the plugin inside a Rozi pane. From another 
 1. Submit a prompt. The pane reports the native thread ID and its state becomes `working` when the model request starts.
 2. Request a command that needs approval. Its state becomes `blocked`, and returns to `working`
    once the approved command finishes.
-3. Let the response finish. Its state becomes `done`.
+3. Let the response finish. Its state becomes `done` about two seconds later.
 4. Run `/compact`. Reporting continues with the same token.
 5. Run `/new` and submit a prompt. The pane reports the new thread ID.
 6. Exit Codex. Its report is released and its activity disappears when the process exits.

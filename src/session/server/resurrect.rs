@@ -1898,6 +1898,7 @@ mod tests {
         });
         let generation = pane.generation;
         pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: protocol::AgentIdentity::new("codex", "Codex"),
             reference: protocol::AgentRef {
@@ -2101,6 +2102,7 @@ mod tests {
             state: protocol::DetectedAgentState::Idle,
         });
         pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-abc".into(),
             identity: protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: protocol::AgentRef {
@@ -2517,6 +2519,7 @@ mod tests {
     fn reporting_agent_pane(instance: &protocol::SessionInstanceId) -> ServerPane {
         let mut pane = running("claude", &[], protocol::PaneCommandPhase::Executing);
         pane.runtime.integration = Some(Box::new(protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-abc".into(),
             identity: protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: protocol::AgentRef {

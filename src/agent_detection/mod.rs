@@ -84,6 +84,21 @@ pub(crate) fn observe(
     }
 }
 
+/// Whether the pane shows a dialog that a report saying the agent is ready cannot speak for.
+pub(crate) fn dialog_outranks_reports(
+    definition: &AgentDefinition,
+    screen: &str,
+    title: &str,
+) -> bool {
+    definition::dialog_outranks_reports(
+        definition,
+        AgentDetectionInput {
+            screen: &screen.to_lowercase(),
+            title: &title.to_lowercase(),
+        },
+    )
+}
+
 /// Whether a Claude Code CLI is on `PATH`, using the same name vocabulary as pane detection.
 pub(crate) fn claude_cli_available() -> bool {
     process::agent_on_path(

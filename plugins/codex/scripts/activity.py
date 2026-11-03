@@ -23,7 +23,9 @@ EVENT_STATES = {
     "PreCompact": ("working", None),
     "PostCompact": ("working", None),
     "PermissionRequest": ("blocked", "Permission required"),
-    "Stop": ("done", None),
+    # Codex opens dialogs after this hook returns, such as its offer to switch models. Saying done
+    # now would release anything waiting on it into the moment before one opens.
+    "Stop": ("working|done", None),
     "Interrupt": ("idle", None),
     "SessionEnd": ("release", None),
 }
@@ -52,6 +54,16 @@ def prompt_transition(_event: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
+def model_response_transition(event: dict) -> tuple[str | None, str | None]:
+    """A failed request says nothing about whether Codex will retry, and no hook says it won't.
+
+    A retry's next request replaces this, and the screen shows the retry until then.
+    """
+    if event.get("status") == "failed":
+        return "working|error", "Turn ended with an API error"
+    return None, None
+
+
 def tool_transition(event: dict) -> tuple[str, str | None]:
     if event.get("tool_name") in QUESTION_TOOLS:
         return "blocked", "Question needs an answer"
@@ -61,6 +73,7 @@ def tool_transition(event: dict) -> tuple[str, str | None]:
 EVENT_HANDLERS = {
     "SessionStart": session_start_transition,
     "UserPromptSubmit": prompt_transition,
+    "PostModelRequest": model_response_transition,
     "PreToolUse": tool_transition,
 }
 
@@ -322,8 +335,11 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     if state == "release":
         args += ["release"]
     else:
+        state, _, fallback = state.partition("|")
         args += ["report", "--agent", "codex", "--state", state,
                  "--native-session", row[1]]
+        if fallback:
+            args += ["--unless-quiet", fallback]
     args += ["--integration", row[0], "--seq", str(row[2])]
     if reason:
         args += ["--reason", reason]

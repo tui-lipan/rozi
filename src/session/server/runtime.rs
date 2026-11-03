@@ -359,6 +359,7 @@ pub(super) struct AgentIntegrationUpdate {
     pub state: Option<protocol::AgentState>,
     pub reason: Option<String>,
     pub native_session: Option<String>,
+    pub unless_quiet: Option<protocol::AgentState>,
     pub seq: u64,
 }
 
@@ -562,6 +563,29 @@ fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()
     }
 }
 
+/// A fallback only makes sense for a run said to be going, and has to say it stopped.
+fn validate_unless_quiet(
+    state: Option<protocol::AgentState>,
+    unless_quiet: Option<protocol::AgentState>,
+) -> IntegrationResult<()> {
+    let Some(fallback) = unless_quiet else {
+        return Ok(());
+    };
+    if state != Some(protocol::AgentState::Working) {
+        return Err((
+            "invalid-argument",
+            "--unless-quiet only applies to --state working".to_string(),
+        ));
+    }
+    if !fallback.is_stopped() {
+        return Err((
+            "invalid-argument",
+            "--unless-quiet must be idle, done, or error".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_integration_report(
     session_instance: protocol::SessionInstanceId,
@@ -573,6 +597,7 @@ fn build_integration_report(
     state: protocol::AgentState,
     reason: Option<String>,
     native_session: Option<String>,
+    unless_quiet: Option<protocol::AgentState>,
     seq: u64,
     previous: Option<&protocol::AgentIntegrationReport>,
 ) -> IntegrationResult<protocol::AgentIntegrationReport> {
@@ -611,6 +636,11 @@ fn build_integration_report(
     let reason = reason
         .as_deref()
         .and_then(|reason| clean_text(reason, PANE_STATUS_REASON_MAX_LEN));
+    // The reason describes the state it would fall to, not the working it says for now.
+    let (reason, unless_quiet) = match unless_quiet {
+        Some(state) => (None, Some(protocol::QuietFallback { state, reason })),
+        None => (reason, None),
+    };
     Ok(protocol::AgentIntegrationReport {
         integration,
         identity,
@@ -618,6 +648,7 @@ fn build_integration_report(
         state,
         reason,
         native_session,
+        unless_quiet,
         seq,
         reported_at_unix_ms: crate::runtime_metrics::unix_time_millis(),
     })
@@ -1035,8 +1066,10 @@ impl SessionServer {
             state,
             reason,
             native_session,
+            unless_quiet,
             seq,
         } = update;
+        validate_unless_quiet(state, unless_quiet)?;
         let report = state.map(|state| (state, reason, native_session));
         let previous_runtime = pane.runtime.clone();
         let previous = previous_runtime.integration.clone();
@@ -1056,7 +1089,12 @@ impl SessionServer {
                         integration,
                         RowReport {
                             native_session,
-                            state,
+                            // No screen speaks for a row, and this says the turn ended.
+                            state: if unless_quiet == Some(protocol::AgentState::Done) {
+                                protocol::AgentState::Done
+                            } else {
+                                state
+                            },
                             reason: reason
                                 .as_deref()
                                 .and_then(|reason| clean_text(reason, PANE_STATUS_REASON_MAX_LEN)),
@@ -1085,6 +1123,7 @@ impl SessionServer {
                 state,
                 reason,
                 native_session,
+                unless_quiet,
                 seq,
                 previous.as_deref(),
             )?));
@@ -1545,6 +1584,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.detected_agent != current.detected_agent
         || candidate.agent_launch != current.agent_launch
         || candidate.work_started_at != current.work_started_at
+        || candidate.integration != current.integration
 }
 
 /// Whether runtime metadata used to reconstruct an observed foreground command changed.
@@ -1621,12 +1661,22 @@ fn compute_runtime_state(
         foreground_job.as_ref(),
         process_refreshed,
     );
+    // An agent's rows say what its pane reads as, so then no screen speaks for the report.
+    let screen_reading = crate::session::protocol::agent_rows_with_integration(&pane.runtime)
+        .is_empty()
+        .then_some(detected_agent.as_ref())
+        .flatten();
+    let integration = settle_quiet_report(
+        pane.runtime.integration.clone(),
+        screen_reading,
+        crate::runtime_metrics::unix_time_millis(),
+    );
 
     let work_started_at = next_work_started_at(
         &pane.runtime,
         pane.runtime.status.as_ref(),
         detected_agent.as_ref(),
-        pane.runtime.integration.as_deref(),
+        integration.as_deref(),
     );
     let foreground_shell = foreground
         .program
@@ -1654,7 +1704,7 @@ fn compute_runtime_state(
         work_started_at,
         // Owned by `report_pane_rows`, which is the only writer; a recompute carries them.
         rows: pane.runtime.rows.clone(),
-        integration: pane.runtime.integration.clone(),
+        integration,
         // Owned by the recorder; a recompute carries it.
         recording: pane.runtime.recording,
         sequence: pane.runtime.sequence,
@@ -2679,6 +2729,55 @@ fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
     }
 }
 
+/// Let a report that asked to end if the screen went quiet follow the screen until it has.
+///
+/// Pure in `now_unix_ms`. Hooks can stop a turn after the one that reported it, and then nothing
+/// replaces that report. The agent's screen settles to idle through [`settle_state_flicker`], and
+/// the report waits out the same grace itself, for a screen that has not yet drawn the new turn.
+/// A dialog can open with no hook to say so, and typing into one answers it, so until then the
+/// report also says what the screen says: blocked while a dialog is up, working after it.
+///
+/// A fallback to `done` waits on a screen reading as working however long that takes: another
+/// hook on the same event can still be running, and can send the turn on. With no screen to read,
+/// which happens on a pane listing agent rows, nothing better is coming, so it falls after the grace.
+fn settle_quiet_report(
+    report: Option<Box<protocol::AgentIntegrationReport>>,
+    detected: Option<&DetectedAgent>,
+    now_unix_ms: u64,
+) -> Option<Box<protocol::AgentIntegrationReport>> {
+    use crate::session::protocol::DetectedAgentState;
+    let mut report = report?;
+    if report.unless_quiet.is_none() {
+        return Some(report);
+    }
+    let reading = detected
+        .filter(|detected| detected.agent.id == report.identity.id)
+        .map(|detected| detected.state);
+    let grace_passed = now_unix_ms.saturating_sub(report.reported_at_unix_ms)
+        >= STATE_SETTLE_GRACE.as_millis() as u64;
+    let finished = report
+        .unless_quiet
+        .as_ref()
+        .is_some_and(|fallback| fallback.state == protocol::AgentState::Done);
+    let falls = match reading {
+        Some(DetectedAgentState::Blocked) => {
+            report.state = protocol::AgentState::Blocked;
+            false
+        }
+        Some(DetectedAgentState::Working) => {
+            report.state = protocol::AgentState::Working;
+            false
+        }
+        Some(DetectedAgentState::Idle) => grace_passed,
+        None => finished && grace_passed,
+    };
+    if falls && let Some(fallback) = report.unless_quiet.take() {
+        report.state = fallback.state;
+        report.reason = fallback.reason;
+    }
+    Some(report)
+}
+
 /// Keep a reading steady across a single frame that says the pane went quiet.
 ///
 /// Pure in `now`, and one-directional: a state only ever holds against a *quieter* one, and only
@@ -2881,6 +2980,84 @@ mod tests {
     /// that goes quiet under the same reference finishes one: a blocked agent the user dismissed
     /// did not, and a replacement agent's quiet start is not its predecessor finishing.
     #[test]
+    fn a_quiet_report_waits_out_the_grace_for_a_screen_yet_to_draw_the_turn() {
+        use protocol::{AgentState, QuietFallback};
+        let report = |at| {
+            Some(Box::new(protocol::AgentIntegrationReport {
+                integration: "token".into(),
+                identity: crate::session::protocol::AgentIdentity::new("claude", "Claude"),
+                reference: protocol::AgentRef {
+                    pane: protocol::PaneRef {
+                        session_instance: protocol::SessionInstanceId::for_test("server"),
+                        pane_id: 1,
+                        generation: 1,
+                    },
+                    slot: None,
+                    incarnation: 1,
+                },
+                state: AgentState::Working,
+                reason: None,
+                native_session: None,
+                unless_quiet: Some(QuietFallback {
+                    state: AgentState::Idle,
+                    reason: None,
+                }),
+                seq: 1,
+                reported_at_unix_ms: at,
+            }))
+        };
+        let detected = |id: &str, state| DetectedAgent {
+            agent: crate::session::protocol::AgentIdentity::new(id, id).into(),
+            state,
+        };
+        let idle = detected("claude", protocol::DetectedAgentState::Idle);
+        let grace = STATE_SETTLE_GRACE.as_millis() as u64;
+        let state = |report: Option<Box<protocol::AgentIntegrationReport>>| report.unwrap().state;
+
+        assert_eq!(
+            state(settle_quiet_report(
+                report(1000),
+                Some(&idle),
+                1000 + grace - 1
+            )),
+            AgentState::Working
+        );
+        assert_eq!(
+            state(settle_quiet_report(report(1000), Some(&idle), 1000 + grace)),
+            AgentState::Idle
+        );
+        // A turn that ended waits on a screen reading as working: another hook may send it on.
+        let finished = |at| {
+            let mut report = report(at).unwrap();
+            report.unless_quiet.as_mut().unwrap().state = AgentState::Done;
+            Some(report)
+        };
+        let working = detected("claude", protocol::DetectedAgentState::Working);
+        assert_eq!(
+            state(settle_quiet_report(finished(0), Some(&working), u64::MAX)),
+            AgentState::Working
+        );
+        assert_eq!(
+            state(settle_quiet_report(finished(1000), None, 1000 + grace - 1)),
+            AgentState::Working
+        );
+        assert_eq!(
+            state(settle_quiet_report(finished(1000), None, 1000 + grace)),
+            AgentState::Done
+        );
+        // Anything but `done` is a guess: no reading, or another program's, can't confirm it.
+        assert_eq!(
+            state(settle_quiet_report(report(0), None, 1000 + grace)),
+            AgentState::Working
+        );
+        let other = detected("codex", protocol::DetectedAgentState::Idle);
+        assert_eq!(
+            state(settle_quiet_report(report(0), Some(&other), 1000 + grace)),
+            AgentState::Working
+        );
+    }
+
+    #[test]
     fn completions_count_each_run_that_ends() {
         let mut scratch = AgentScratch::default();
         let runtime = |id: &str, state| PaneRuntimeState {
@@ -3010,6 +3187,7 @@ mod tests {
 
         let claim = |state| PaneRuntimeState {
             integration: Some(Box::new(protocol::AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook-a".into(),
                 identity: protocol::AgentIdentity::new("claude", "Claude Code"),
                 reference: protocol::AgentRef {
@@ -3061,6 +3239,7 @@ mod tests {
         let reported = |state| PaneRuntimeState {
             rows: vec![row.clone()],
             integration: Some(Box::new(protocol::AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook-a".into(),
                 identity: protocol::AgentIdentity::new("claude", "Claude Code"),
                 reference: protocol::AgentRef {
@@ -3103,6 +3282,7 @@ mod tests {
         };
         let runtime = PaneRuntimeState {
             integration: Some(Box::new(protocol::AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook-a".into(),
                 identity: protocol::AgentIdentity::new("claude", "Claude Code"),
                 reference: reference.clone(),
@@ -3132,6 +3312,7 @@ mod tests {
     #[test]
     fn integration_retires_only_on_strong_process_replacement_evidence() {
         let integration = protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook-a".into(),
             identity: protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: protocol::AgentRef {
@@ -3369,6 +3550,7 @@ mod tests {
             native_session: Some("native-quiet".into()),
         };
         let report = |state| protocol::AgentIntegrationReport {
+            unless_quiet: None,
             integration: "hook".into(),
             identity: protocol::AgentIdentity::new("claude", "Claude Code"),
             reference: protocol::AgentRef {

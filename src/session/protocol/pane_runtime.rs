@@ -541,6 +541,15 @@ pub struct PaneRuntimeState {
     pub sequence: u64,
 }
 
+/// What a report's `working` becomes if the screen shows the agent has stopped. See
+/// [`AgentIntegrationReport::unless_quiet`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuietFallback {
+    pub state: super::AgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentIntegrationReport {
     pub integration: String,
@@ -551,6 +560,10 @@ pub struct AgentIntegrationReport {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_session: Option<String>,
+    /// Set when the reporter cannot know a later report will follow, such as a hook that another
+    /// hook can stop the turn after. Every other report outranks the screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unless_quiet: Option<QuietFallback>,
     pub seq: u64,
     pub reported_at_unix_ms: u64,
 }

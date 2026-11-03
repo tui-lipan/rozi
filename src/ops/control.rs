@@ -455,6 +455,7 @@ pub(crate) fn handle_control_request(
             state,
             reason,
             native_session,
+            unless_quiet,
             seq,
         } => {
             return report_agent(
@@ -466,6 +467,7 @@ pub(crate) fn handle_control_request(
                 Some(state),
                 reason,
                 native_session,
+                unless_quiet,
                 seq,
                 envelope.reply,
             );
@@ -481,6 +483,7 @@ pub(crate) fn handle_control_request(
                 agent_report_epoch,
                 None,
                 integration,
+                None,
                 None,
                 None,
                 None,
@@ -1286,6 +1289,7 @@ fn report_agent(
     state: Option<crate::session::protocol::AgentState>,
     reason: Option<String>,
     native_session: Option<String>,
+    unless_quiet: Option<crate::session::protocol::AgentState>,
     seq: u64,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
@@ -1326,6 +1330,7 @@ fn report_agent(
         state,
         reason,
         native_session,
+        unless_quiet,
         seq,
     );
     Update::none()

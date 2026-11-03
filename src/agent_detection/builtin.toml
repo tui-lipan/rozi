@@ -271,14 +271,16 @@ match = { names = ["codex", "codex-cli"], paths = ["@openai/codex"] }
 argv = ["codex", "resume", "{session}"]
 reported = ["codex", "resume", "--no-daemon", "{session}"]
 
-# Codex's startup choosers end in a hint, whatever they ask: `enter continue · esc back` under its
-# folder access question, `enter continue · esc use session` under its resume directory one, and
-# `enter confirm · esc skip` under its hook review. Footer-scoped so a transcript quoting one cannot
-# pin the pane blocked.
+# Codex's choosers end in a hint, whatever they ask: `enter continue · esc back` under its folder
+# access question, `enter continue · esc use session` under its resume directory one,
+# `enter confirm · esc skip` under its hook review, and `enter select · esc back` under its offer to
+# switch models. Footer-scoped so a transcript quoting one cannot pin the pane blocked. No hook
+# announces them, and the offer opens after the hook that says a turn is done, so they outrank reports.
 [[agents.states]]
 state = "blocked"
 scope = "footer"
-screen = { any_of = ["enter continue ·", "enter confirm · esc skip"] }
+outranks_reports = true
+screen = { any_of = ["enter continue ·", "enter confirm · esc skip", "enter select · esc back"] }
 
 [[agents]]
 id = "pi"

@@ -795,6 +795,7 @@ impl SessionClient {
         state: Option<protocol::AgentState>,
         reason: Option<String>,
         native_session: Option<String>,
+        unless_quiet: Option<protocol::AgentState>,
         seq: u64,
     ) {
         self.send_control(ClientMessage::ReportAgent {
@@ -807,6 +808,7 @@ impl SessionClient {
             state,
             reason,
             native_session,
+            unless_quiet,
             seq,
         });
     }

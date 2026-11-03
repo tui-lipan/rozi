@@ -159,6 +159,47 @@ fn screens_read_the_states_their_fixtures_claim() {
     assert!(checked > 0, "the corpus must not be empty");
 }
 
+/// A rule that outranks reports refuses prompts on a pane whose hooks say it is ready, so a wrong
+/// match stops a healthy agent. Nothing that is not a dialog may match one.
+#[test]
+fn only_a_dialog_outranks_a_report() {
+    let catalog = AgentCatalog::builtin();
+    let mut matched = Vec::new();
+    for (id, fixture) in fixtures() {
+        let Some(definition) = catalog.by_id(&id) else {
+            continue;
+        };
+        for case in &fixture.cases {
+            let outranks = super::definition::dialog_outranks_reports(
+                definition,
+                AgentDetectionInput {
+                    screen: &case.screen.to_lowercase(),
+                    title: &case.title.to_lowercase(),
+                },
+            );
+            if outranks {
+                assert_eq!(
+                    case.expected(),
+                    Some(DetectedAgentState::Blocked),
+                    "{id}/{}: outranks a report but is not blocked",
+                    case.name
+                );
+                matched.push(format!("{id}/{}", case.name));
+            }
+        }
+    }
+    matched.sort();
+    assert_eq!(
+        matched,
+        [
+            "codex/hooks-need-review-dialog",
+            "codex/offer-to-switch-models",
+            "codex/resume-working-directory-dialog",
+            "codex/startup-folder-access-dialog",
+        ]
+    );
+}
+
 /// An agent Rozi claims to support with nobody having ever watched it run is a guess on the
 /// sidebar. This does not force the guess to be right - it forces it to be admitted.
 #[test]

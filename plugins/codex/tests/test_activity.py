@@ -82,7 +82,8 @@ class ActivityTests(unittest.TestCase):
         self.hook("Stop")
         self.hook("SessionEnd", reason="other")
         self.assertEqual([self.field("--state", i) for i in range(5)],
-                         ["working", "working", "blocked", "working", "done"])
+                         ["working", "working", "blocked", "working", "working"])
+        self.assertEqual(self.field("--unless-quiet", 4), "done")
         self.assertEqual([self.field("--seq", i) for i in range(6)], list(map(str, range(1, 7))))
         self.assertEqual(len({self.field("--integration", i) for i in range(6)}), 1)
         self.assertTrue(self.field("--integration").startswith("codex:"))
@@ -117,7 +118,7 @@ class ActivityTests(unittest.TestCase):
         count = len(self.calls)
         self.hook("UserPromptSubmit")
         self.assertEqual(len(self.calls), count)
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
         self.hook("PreModelRequest")
         self.assertEqual(self.field("--state"), "working")
 
@@ -142,6 +143,28 @@ class ActivityTests(unittest.TestCase):
         self.hook("PreToolUse", tool_name="request_user_input", tool_use_id="ask-1", tool_input={})
         self.hook("PreModelRequest")
         self.assertEqual(self.field("--state"), "blocked")
+
+    def test_a_failed_model_request_holds_only_while_the_screen_shows_the_turn(self):
+        self.first_turn()
+        self.hook("PostModelRequest", status="failed", error="Connection refused")
+        args = self.calls[-1][0]
+        self.assertEqual(args[args.index("--state") + 1], "working")
+        self.assertEqual(args[args.index("--unless-quiet") + 1], "error")
+        self.assertEqual(self.field("--reason"), "Turn ended with an API error")
+        self.assertNotIn("Connection refused", str(self.calls))
+
+    def test_a_retry_after_a_failed_request_is_an_ordinary_report(self):
+        self.first_turn()
+        self.hook("PostModelRequest", status="failed", error="Connection refused")
+        self.hook("PreModelRequest")
+        self.assertEqual(self.field("--state"), "working")
+        self.assertNotIn("--unless-quiet", self.calls[-1][0])
+
+    def test_a_model_request_that_worked_says_nothing(self):
+        self.first_turn()
+        count = len(self.calls)
+        self.hook("PostModelRequest", status="completed", error=None)
+        self.assertEqual(len(self.calls), count)
 
     def test_a_prompt_ends_waits_from_the_turn_before_it(self):
         self.first_turn()
@@ -340,7 +363,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.assertEqual(self.field("--state"), "blocked")
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
 
     def test_write_stdin_approval_waits_for_its_exec_call_across_turns(self):
         # Codex fires no PreToolUse for write_stdin, and the command it writes to can outlive the
@@ -375,7 +398,7 @@ class ActivityTests(unittest.TestCase):
         self.hook("PreToolUse", tool_use_id="exec-1", **BASH)
         self.permission()
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
         self.hook("UserPromptSubmit")
         self.hook("PostToolUse", tool_use_id="exec-1", **BASH)
         self.assertEqual(self.field("--state"), "working")
@@ -387,7 +410,7 @@ class ActivityTests(unittest.TestCase):
             self.hook(name, session="nested")
         self.assertEqual(len(self.calls), 1)
         self.hook("Stop")
-        self.assertEqual(self.field("--state"), "done")
+        self.assertEqual(self.field("--unless-quiet"), "done")
 
     def test_question_tool_blocks_until_its_own_completion(self):
         self.first_turn()
@@ -701,7 +724,7 @@ class ActivityTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(manifest["hooks"], "./hooks/hooks.json")
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
-        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreModelRequest", "PreToolUse",
+        self.assertEqual(set(hooks), {"SessionStart", "UserPromptSubmit", "PreModelRequest", "PostModelRequest", "PreToolUse",
                                       "PermissionRequest", "PostToolUse", "PreCompact",
                                       "PostCompact", "Stop", "Interrupt", "SessionEnd"})
         self.assertLess(activity.CLI_TIMEOUT, activity.DELIVERY_BUDGET)
@@ -766,7 +789,7 @@ class ShellLaunchTests(unittest.TestCase):
         calls = [line.split() for line in self.log.read_text().splitlines()]
         states = [args[args.index("--state") + 1] if "--state" in args else args[1]
                   for args in calls]
-        self.assertEqual(states, ["working", "working", "blocked", "working", "done", "release"])
+        self.assertEqual(states, ["working", "working", "blocked", "working", "working", "release"])
         tokens = {args[args.index("--integration") + 1] for args in calls}
         self.assertEqual(len(tokens), 1)
 

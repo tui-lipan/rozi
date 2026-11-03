@@ -16,7 +16,9 @@ import uuid
 
 
 EVENT_STATES = {
-    "UserPromptSubmit": ("working", None),
+    # Another hook can reject the prompt, and then no later hook runs. Claude Code has no later hook
+    # that says a turn was admitted, so this one holds only while the screen shows the turn.
+    "UserPromptSubmit": ("working|idle", None),
     "PostToolUse": ("working", None),
     "PostToolUseFailure": ("working", None),
     "PostToolBatch": ("working", None),
@@ -308,8 +310,11 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     if state == "release":
         args += ["release"]
     else:
+        state, _, fallback = state.partition("|")
         args += ["report", "--agent", "claude", "--state", state,
                  "--native-session", row[1]]
+        if fallback:
+            args += ["--unless-quiet", fallback]
     args += ["--integration", row[0], "--seq", str(row[2])]
     if reason:
         args += ["--reason", reason]

@@ -169,6 +169,8 @@ pub struct AgentStateRule {
     pub any_of: Vec<Pattern>,
     /// None of these may match.
     pub none_of: Vec<Pattern>,
+    /// A dialog no hook announces: it refuses a prompt even when a report says the agent is ready.
+    pub outranks_reports: bool,
 }
 
 impl AgentStateRule {
@@ -329,6 +331,19 @@ pub fn evaluate(
     Some(DetectedAgentState::Idle)
 }
 
+/// Whether this observation matches a rule that says a dialog is up whatever a report says.
+pub fn dialog_outranks_reports(
+    definition: &AgentDefinition,
+    input: AgentDetectionInput<'_>,
+) -> bool {
+    let footer = footer_text(input.screen);
+    definition
+        .states
+        .iter()
+        .filter(|rule| rule.outranks_reports)
+        .any(|rule| rule.matches(input.screen, &footer, input.title))
+}
+
 /// The last [`FOOTER_ROWS`] non-empty lines, in original order.
 fn footer_text(screen: &str) -> String {
     let mut lines: Vec<&str> = screen
@@ -356,6 +371,7 @@ mod tests {
                 .map(|value| Pattern::Literal((*value).into()))
                 .collect(),
             none_of: Vec::new(),
+            outranks_reports: false,
         }
     }
 
@@ -496,6 +512,7 @@ mod tests {
                 Pattern::Literal("enter toggle".into()),
             ],
             none_of: vec![Pattern::Literal("quoted".into())],
+            outranks_reports: false,
         };
         let definition = definition(vec![composed]);
         assert_eq!(

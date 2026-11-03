@@ -66,6 +66,40 @@ screen = '''
   enter continue · esc use session · ^c quit
 '''
 
+# Captured from Codex 0.166.0 on 2026-11-02 at 88x39, with under 5% of its limit left and a turn that had
+# just failed, nothing pressed. It read as idle. `agents prompt` typed into it, and its Enter switched
+# the model with no sign but the footer, and the prompt was lost. The transcript above it is cut.
+[[case]]
+name = "offer-to-switch-models"
+state = "blocked"
+title = "Say one | q9"
+screen = '''
+› Say only the word one.
+
+
+■ The 'no-such-model-for-this-lab' model is not supported when using Codex with a
+ChatGPT account.
+
+
+
+
+
+
+
+
+
+  Approaching rate limits
+  Switch to gpt-6-luna for lower credit usage?
+
+
+› 1. Switch to gpt-6-luna                   Fast and affordable model for easier tasks.
+  2. Keep current model
+  3. Keep current model (never show again)  Hide future rate limit reminders about
+                                            switching models
+
+  enter select · esc back
+'''
+
 # Captured from Codex 0.166.0 on 2026-11-02 with a trusted plugin's script changed, nothing pressed; with
 # it unchanged Codex does not ask. So any update to a plugin with hooks can put this in front of a pane.
 # It read as idle, so `agents prompt` typed into it and its Enter chose an option. Its title is empty,

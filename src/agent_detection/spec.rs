@@ -72,6 +72,7 @@ pub struct AgentStateSpec {
     pub scope: Option<String>,
     pub screen: Option<PatternGroupSpec>,
     pub title: Option<PatternGroupSpec>,
+    pub outranks_reports: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -375,6 +376,13 @@ fn build_state_rule(
         ));
     }
 
+    let outranks_reports = spec.outranks_reports && state == AgentStateOutcome::Blocked;
+    if spec.outranks_reports && !outranks_reports {
+        warnings.push(format!(
+            "Ignored {noun} `{id}` `{declared}` rule `outranks_reports` (only applies to a `blocked` rule)"
+        ));
+    }
+
     let mut compile = |needles: Vec<String>| -> Option<Vec<Pattern>> {
         needles
             .into_iter()
@@ -385,6 +393,7 @@ fn build_state_rule(
         state,
         source,
         scope,
+        outranks_reports,
         all_of: compile(group.all_of)?,
         any_of: compile(group.any_of)?,
         none_of: compile(group.none_of)?,

@@ -176,8 +176,12 @@ Each `[[agents.states]]` rule accepts:
 | `scope` | `all`, the default, or `footer`; screen rules only |
 | `screen` | Pattern group matched against visible terminal text |
 | `title` | Pattern group matched against the terminal title |
+| `outranks_reports` | `true` to refuse `agents prompt` when this `blocked` rule matches, even if a report says the agent is ready |
 
 Set exactly one of `screen` or `title`.
+
+Use `outranks_reports` only for a dialog no hook announces, whose text can't appear in a transcript
+on the same lines. A wrong match refuses prompts on a healthy agent.
 
 `scope = "footer"` reads only the last eight non-empty lines of the screen. Use it for spinners,
 interrupt hints, and prompt controls that may also appear in transcript text. An unrecognized
@@ -436,7 +440,17 @@ rozi --session dev agents release --target "$ROZI_PANE" \
 - A released token cannot claim the pane again. Late hooks from an old process fail with `conflict`,
   even after a new process starts its own sequence at 1.
 - `--agent` ties the report to the agent currently detected in the pane.
-- A live report overrides screen detection. Releasing it returns the pane to screen detection.
+- A live report overrides screen detection, apart from a rule set with `outranks_reports`. Releasing
+  it returns the pane to screen detection.
+- A hook that can't know another report will follow, because a later hook can stop the turn, adds
+  `--unless-quiet idle`, `done`, or `error` to `--state working`. The pane follows screen detection
+  until it reads the agent as idle, then falls to that state, with `--reason` as its reason. So a
+  dialog reads `blocked` in the meantime. The next report replaces it either way. This applies to a
+  report that owns the pane, when the pane lists no agent rows.
+- `--unless-quiet done` is for a hook that knows the turn ended but not whether a dialog opens next.
+  The state becomes `done` about two seconds after the screen goes quiet, or `blocked` if a dialog is
+  up. So another hook still running holds it back, if the agent's screen shows that. With no screen
+  to read, it falls after those two seconds.
 - When the pane also publishes agent rows, a report drives only the row whose conversation matches
   `--native-session`; the other rows stay listed as published.
 - One token owns the pane. Hooks for a conversation running in the background can still report for

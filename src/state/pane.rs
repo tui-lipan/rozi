@@ -839,6 +839,7 @@ mod tests {
         let _ = pane.terminal.apply_rows(
             vec![row("shown", "idle", true), row("behind", "blocked", false)],
             Some(Box::new(AgentIntegrationReport {
+                unless_quiet: None,
                 integration: "hook".into(),
                 identity: AgentIdentity::new("claude", "Claude Code"),
                 reference: reference(None, 9),

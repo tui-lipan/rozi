@@ -8,8 +8,9 @@ use std::path::PathBuf;
 use tui_lipan::prelude::CapStyle;
 
 use crate::config::{
-    Config, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste, MousePointer,
-    RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup, WhichKey,
+    Config, CopyFeedback, CopyOnSelect, CursorBlink, ForegroundRestore, MiddleClickPaste,
+    MousePointer, RightClickClipboardAction, SessionOnAttach, SessionPickerOpenOn, SessionStartup,
+    WhichKey,
 };
 use crate::input::Action;
 use crate::layout::anim::{
@@ -597,6 +598,47 @@ pub static SETTINGS: &[SettingSpec] = {
                 )
                 .with_effect(SettingEffect::Clipboard),
             ),
+        ),
+        row(
+            CycleCopyFeedback,
+            G::Clipboard,
+            "Copy feedback",
+            &["highlight", "flash", "fade", "scan", "pulse", "blink"],
+            Choice(
+                &EnumChoice::new(
+                    "Copy feedback",
+                    Choices::Fixed(CopyFeedback::all),
+                    config_field!(clipboard.copy_feedback),
+                    CopyFeedback::label,
+                    ChoiceSave::Key(
+                        ConfigKey::new("clipboard", "copy_feedback"),
+                        CopyFeedback::id,
+                    ),
+                )
+                .with_effect(SettingEffect::Clipboard),
+            ),
+        ),
+        row(
+            ToggleCopyFeedbackOnSelect,
+            G::Clipboard,
+            "Highlight copy on selection",
+            &["copy feedback", "mouse", "flash"],
+            SettingControl::Toggle {
+                field: config_field!(clipboard.copy_feedback_on_select),
+                key: ConfigKey::new("clipboard", "copy_feedback_on_select"),
+                effect: Some(SettingEffect::Clipboard),
+            },
+        ),
+        row(
+            ToggleClearSelectionAfterCopy,
+            G::Clipboard,
+            "Clear selection after copy",
+            &["highlight", "deselect", "unselect"],
+            SettingControl::Toggle {
+                field: config_field!(clipboard.clear_selection_after_copy),
+                key: ConfigKey::new("clipboard", "clear_selection_after_copy"),
+                effect: Some(SettingEffect::Clipboard),
+            },
         ),
         row(
             ToggleOsc52,

@@ -960,12 +960,61 @@ impl RightClickClipboardAction {
     }
 }
 
+/// How a copied selection is highlighted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyFeedback {
+    Off,
+    Flash,
+    Fade,
+    Scan,
+    Pulse,
+}
+
+impl CopyFeedback {
+    pub const fn all() -> &'static [Self] {
+        &[Self::Off, Self::Flash, Self::Fade, Self::Scan, Self::Pulse]
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|feedback| feedback.id() == value)
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Flash => "flash",
+            Self::Fade => "fade",
+            Self::Scan => "scan",
+            Self::Pulse => "pulse",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Flash => "Flash",
+            Self::Fade => "Fade",
+            Self::Scan => "Scan",
+            Self::Pulse => "Pulse",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClipboardConfig {
     pub copy_on_select: CopyOnSelect,
     pub middle_click_paste: MiddleClickPaste,
     pub right_click: RightClickClipboardAction,
     pub enable_osc52: bool,
+    /// How a successful copy highlights the copied text.
+    pub copy_feedback: CopyFeedback,
+    /// Whether copy-on-select highlights too.
+    pub copy_feedback_on_select: bool,
+    /// Whether a copied selection is cleared once its highlight ends.
+    pub clear_selection_after_copy: bool,
 }
 
 impl Default for ClipboardConfig {
@@ -984,6 +1033,9 @@ impl Default for ClipboardConfig {
             },
             right_click: RightClickClipboardAction::Disabled,
             enable_osc52: true,
+            copy_feedback: CopyFeedback::Flash,
+            copy_feedback_on_select: false,
+            clear_selection_after_copy: false,
         }
     }
 }

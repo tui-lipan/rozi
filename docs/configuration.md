@@ -479,6 +479,9 @@ See [Worktrees](worktrees.md#configuration).
 | `middle_click_paste` | string | `"primary"` on Linux, `"off"` elsewhere | What a middle click pastes: `"off"`, `"primary"`, or `"clipboard"`. |
 | `right_click` | string | `"off"` | What an otherwise unhandled right click does: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
 | `enable_osc52` | bool | `true` | Lets programs in panes set the system clipboard with OSC 52, a terminal escape sequence for clipboard access. |
+| `copy_feedback` | string | `"flash"` | How copied text lights up: `"off"`, `"flash"` (lights up for 150 ms), `"fade"` (lights up, then fades over 300 ms), `"scan"` (a soft line sweeps across it from left to right over 450 ms), or `"pulse"` (lights up twice over 420 ms). With the animation master switch off, Fade, Scan, and Pulse flash instead. |
+| `copy_feedback_on_select` | bool | `false` | Also lights up text that `copy_on_select` copies when a mouse selection ends. |
+| `clear_selection_after_copy` | bool | `false` | Clears a copied selection once the highlight ends, or at once when `copy_feedback` is `"off"`. A selection you change in the meantime stays. |
 
 PRIMARY is the Linux selection clipboard. Where PRIMARY is unsupported, `copy_on_select` stops
 using it but keeps copying to the regular clipboard, and a middle click that pastes PRIMARY does

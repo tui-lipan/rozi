@@ -1,7 +1,7 @@
 //! Settings keeps persisted appearance and alert preferences in one searchable grouped list.
 
 use rozi::AppRoot;
-use rozi::config::{CopyOnSelect, MiddleClickPaste, RightClickClipboardAction};
+use rozi::config::{CopyFeedback, CopyOnSelect, MiddleClickPaste, RightClickClipboardAction};
 use rozi::state::{AlertMode, PaneAlertPaint, PaneBorderMode, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
@@ -981,18 +981,36 @@ fn settings_choice_lists_every_option() {
 #[test]
 fn clipboard_settings_do_not_apply_unconfirmed_choices() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(90, 45);
+        let mut backend = settings_backend(90, 55);
         backend.state_mut().config.clipboard.copy_on_select = CopyOnSelect::Disabled;
         backend.state_mut().config.clipboard.middle_click_paste = MiddleClickPaste::Disabled;
         backend.state_mut().config.clipboard.right_click = RightClickClipboardAction::Disabled;
         backend.state_mut().config.clipboard.enable_osc52 = true;
+        backend.state_mut().config.clipboard.copy_feedback = CopyFeedback::Scan;
 
         let frame = rendered_rows(&mut backend);
         let clipboard = group_rows(&frame, "Clipboard", "Pickers");
         assert!(setting_row(clipboard, "Copy on selection").contains("Off"));
         assert!(setting_row(clipboard, "Middle-click paste").contains("Off"));
         assert!(setting_row(clipboard, "Right-click action").contains("Off"));
+        assert!(setting_row(clipboard, "Copy feedback").contains("Scan"));
+        assert!(setting_row(clipboard, "Highlight copy on selection").contains("Disabled"));
+        assert!(setting_row(clipboard, "Clear selection after copy").contains("Disabled"));
         assert!(setting_row(clipboard, "OSC 52").contains("Enabled"));
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(
+                SettingsAction::CycleCopyFeedback,
+            ))
+            .unwrap();
+        backend
+            .dispatch(rozi::Msg::SettingsChoiceSelect(4))
+            .unwrap();
+        backend.dispatch(rozi::Msg::SettingsChoiceCancel).unwrap();
+        assert_eq!(
+            backend.state().config.clipboard.copy_feedback,
+            CopyFeedback::Scan
+        );
 
         backend
             .dispatch(rozi::Msg::SettingsActivate(
@@ -1147,7 +1165,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 22, "Pane close"),
+            (SettingsTab::General, 25, "Pane close"),
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 22, "Bell urgency"),

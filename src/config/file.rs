@@ -624,6 +624,9 @@ struct ClipboardFileConfig {
     middle_click_paste: Option<String>,
     right_click: Option<String>,
     enable_osc52: Option<bool>,
+    copy_feedback: Option<String>,
+    copy_feedback_on_select: Option<bool>,
+    clear_selection_after_copy: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1279,6 +1282,20 @@ fn load_config_from_text_with_extensions(
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
+    if let Some(value) = parsed.clipboard.copy_feedback.as_deref() {
+        match CopyFeedback::parse(value) {
+            Some(feedback) => config.clipboard.copy_feedback = feedback,
+            None => warnings.push(format!(
+                "Ignored unknown clipboard.copy_feedback \"{value}\" (expected one of: off, flash, fade, scan, pulse)"
+            )),
+        }
+    }
+    if let Some(on_select) = parsed.clipboard.copy_feedback_on_select {
+        config.clipboard.copy_feedback_on_select = on_select;
+    }
+    if let Some(clear) = parsed.clipboard.clear_selection_after_copy {
+        config.clipboard.clear_selection_after_copy = clear;
+    }
     if let Some(check) = parsed.updates.check {
         config.updates.check = check;
     }
@@ -1788,7 +1805,7 @@ mod file_tests {
     #[test]
     fn clipboard_mouse_policies_parse() {
         let loaded = load_config_from_text(
-            "[clipboard]\ncopy_on_select = \"primary\"\nmiddle_click_paste = \"clipboard\"\nright_click = \"copy-or-paste\"",
+            "[clipboard]\ncopy_on_select = \"primary\"\nmiddle_click_paste = \"clipboard\"\nright_click = \"copy-or-paste\"\ncopy_feedback = \"scan\"\ncopy_feedback_on_select = true\nclear_selection_after_copy = true",
             Path::new("config.toml"),
         );
 
@@ -1796,6 +1813,9 @@ mod file_tests {
             loaded.config.clipboard.copy_on_select,
             CopyOnSelect::PrimarySelection
         );
+        assert_eq!(loaded.config.clipboard.copy_feedback, CopyFeedback::Scan);
+        assert!(loaded.config.clipboard.copy_feedback_on_select);
+        assert!(loaded.config.clipboard.clear_selection_after_copy);
         assert_eq!(
             loaded.config.clipboard.middle_click_paste,
             MiddleClickPaste::Clipboard
@@ -1810,12 +1830,18 @@ mod file_tests {
     #[test]
     fn unknown_clipboard_mouse_policies_warn_and_keep_defaults() {
         let loaded = load_config_from_text(
-            "[clipboard]\ncopy_on_select = \"magic\"\nmiddle_click_paste = \"magic\"\nright_click = \"magic\"",
+            "[clipboard]\ncopy_on_select = \"magic\"\nmiddle_click_paste = \"magic\"\nright_click = \"magic\"\ncopy_feedback = \"magic\"",
             Path::new("config.toml"),
         );
 
         assert_eq!(loaded.config.clipboard, ClipboardConfig::default());
-        assert_eq!(loaded.warnings.len(), 3, "{:?}", loaded.warnings);
+        assert_eq!(loaded.warnings.len(), 4, "{:?}", loaded.warnings);
+        assert!(
+            loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("copy_feedback"))
+        );
         assert!(
             loaded
                 .warnings

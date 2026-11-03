@@ -798,22 +798,23 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
                 &state.config.workbar.alert,
                 &state.agent_attention,
             );
-            let label =
-                workspace_tab_label(state.current().workspaces[idx].name.as_deref(), idx, count);
-            let label = if workspace_tab_shows_recording(state, idx) {
-                // A tab's label takes one style, so the dot blinks by giving way to blanks of its
-                // own width: the tab keeps its size and the tabs beside it stay put.
+            // The number is the slot's, not the workspace's, so the bar draws it from where the
+            // tab is (`position_label` below) and a drag preview renumbers the tabs it moves.
+            let mut tab = DraggableTab::new(workspace_tab_identity(
+                state.current().workspaces[idx].name.as_deref(),
+                count,
+            ));
+            if workspace_tab_shows_recording(state, idx) {
+                // The dot blinks by giving way to blanks of its own width: the tab keeps its size
+                // and the tabs beside it stay put.
                 let icon = state.config.recording_icon();
                 let dot = if super::recording_dot_off_phase(state) {
                     " ".repeat(unicode_width::UnicodeWidthStr::width(icon))
                 } else {
                     icon.to_string()
                 };
-                format!("{dot} {label}")
-            } else {
-                label
-            };
-            let mut tab = DraggableTab::new(label);
+                tab = tab.icon(Span::new(dot));
+            }
             // `static` colors the marked tab without moving it; only `pulse` breathes. The active
             // tab is never restyled - its solid `active_style` pill already reads as current, and
             // the pane border carries the alert on the workspace you are looking at.
@@ -906,6 +907,10 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         // Dropping a tab moves its workspace to that slot. The bar previews the move while dragging,
         // and the workspaces themselves only move once the button is released.
         .reorder_mode(DragReorderMode::OnDrop)
+        .position_label(|slot, identity| workspace_tab_label(slot, identity).into())
+        // The bar already draws the dragged tab in its new slot, under its new number. The floating
+        // copy is a snapshot from when the drag began, so it would sit on that slot with the old one.
+        .drag_preview(false)
         .style(
             Style::new()
                 .fg(crate::ops::theme::chrome_label_fg(theme, fill))
@@ -952,22 +957,28 @@ pub(crate) fn workspace_tab_shows_recording(state: &crate::state::State, index: 
             || !super::pane::pane_chrome_shows_recording(&state.workspace_pane_config()))
 }
 
-/// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
-/// with a ` ·<count>` suffix while it holds panes.
+/// What a workspace tab says about its workspace: `:<name>` when a custom name is set, then a
+/// ` ·<count>` suffix while it holds panes. The slot number goes in front of it, from
+/// [`workspace_tab_label`].
 ///
 /// Tab text is identity only - number, optional name, pane count. Alerts are carried entirely by the
 /// tab's background color, so a workspace does not change width when an agent blocks and the tabs
-/// beside it do not shift. The recording dot is the one addition, ahead of this label.
-fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
-    let base = match name {
-        Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),
-        _ => (index + 1).to_string(),
+/// beside it do not shift. The recording dot is the one addition, ahead of the label.
+fn workspace_tab_identity(name: Option<&str>, pane_count: usize) -> String {
+    let mut identity = match name {
+        Some(name) if !name.is_empty() => format!(":{name}"),
+        _ => String::new(),
     };
     if pane_count > 0 {
-        format!("{base} ·{pane_count}")
-    } else {
-        base
+        identity.push_str(&format!(" ·{pane_count}"));
     }
+    identity
+}
+
+/// The label a workspace tab draws in `slot`: `<number>` followed by its
+/// [`workspace_tab_identity`].
+fn workspace_tab_label(slot: usize, identity: &str) -> String {
+    format!("{}{identity}", slot + 1)
 }
 
 /// Fixed sidebar-compatible workspace marker vocabulary.
@@ -1252,7 +1263,8 @@ mod tests {
     use super::{
         WorkspaceMarker, collaboration_status, curated_color, has_inactive_marked_workspace,
         location_label, resolve_badge_color, session_badge_label, workspace_marker,
-        workspace_marker_color, workspace_placeholder_label, workspace_tab_label,
+        workspace_marker_color, workspace_placeholder_label, workspace_tab_identity,
+        workspace_tab_label,
     };
     use crate::config::{BadgeColor, WorkbarAlertConfig, WorkbarSegment};
     use crate::state::{AlertMode, Pane, Workspace};
@@ -1352,15 +1364,19 @@ mod tests {
 
     #[test]
     fn workspace_tab_label_falls_back_to_number_without_a_name() {
-        assert_eq!(workspace_tab_label(None, 0, 0), "1");
-        assert_eq!(workspace_tab_label(Some(""), 0, 0), "1");
-        assert_eq!(workspace_tab_label(None, 0, 3), "1 ·3");
+        let label =
+            |name, slot, count| workspace_tab_label(slot, &workspace_tab_identity(name, count));
+        assert_eq!(label(None, 0, 0), "1");
+        assert_eq!(label(Some(""), 0, 0), "1");
+        assert_eq!(label(None, 0, 3), "1 ·3");
     }
 
     #[test]
     fn workspace_tab_label_prefixes_the_custom_name_with_the_number() {
-        assert_eq!(workspace_tab_label(Some("code"), 0, 0), "1:code");
-        assert_eq!(workspace_tab_label(Some("code"), 0, 2), "1:code ·2");
+        let label =
+            |name, slot, count| workspace_tab_label(slot, &workspace_tab_identity(name, count));
+        assert_eq!(label(Some("code"), 0, 0), "1:code");
+        assert_eq!(label(Some("code"), 4, 2), "5:code ·2");
     }
 
     fn marker_pane(id: u32) -> Pane {

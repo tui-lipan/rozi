@@ -234,14 +234,21 @@ fn dropping_a_workspace_tab_moves_it_there_as_previewed_and_the_view_follows() {
             backend.state().current().workspaces[0].name.as_deref(),
             Some("code")
         );
+        // Each previewed tab already carries the number it will have once dropped.
         let preview = row(&mut backend);
-        let preview_two = find_run(&preview, "2").expect("second tab in preview");
-        let preview_docs = find_run(&preview, "3:docs").expect("third tab in preview");
-        let preview_code = find_run(&preview, "1:code").expect("dragged tab in previewed slot");
+        let preview_one = find_run(&preview, "1").expect("emptied first slot in preview");
+        let preview_docs = find_run(&preview, "2:docs").expect("docs renumbered in preview");
+        let preview_code = find_run(&preview, "3:code").expect("dragged tab in previewed slot");
         assert!(
-            preview_two < preview_docs && preview_docs < preview_code,
-            "OnDrop drag previews the moved tab before mouse release"
+            preview_one < preview_docs && preview_docs < preview_code,
+            "OnDrop drag previews the moved and renumbered tabs before mouse release"
         );
+        for stale in ["1:code", "3:docs"] {
+            assert!(
+                find_run(&preview, stale).is_none(),
+                "{stale} keeps its old number in the preview"
+            );
+        }
 
         backend
             .send_mouse(MouseEvent {
@@ -264,12 +271,65 @@ fn dropping_a_workspace_tab_moves_it_there_as_previewed_and_the_view_follows() {
             "the view follows the dragged workspace to its new number"
         );
         let cells = row(&mut backend);
+        let text = |cells: &[CapturedCell]| -> String {
+            cells.iter().map(|cell| cell.symbol.as_str()).collect()
+        };
+        assert_eq!(
+            text(&cells),
+            text(&preview),
+            "the drop reads exactly as the preview did"
+        );
         let one = find_run(&cells, "1").expect("the empty workspace now holds the first slot");
         let docs = find_run(&cells, "2:docs").expect("docs now holds the second slot");
         let code = find_run(&cells, "3:code").expect("code now holds the third slot");
         assert!(
             one < docs && docs < code,
             "tabs keep their numeric order and the previewed arrangement"
+        );
+    });
+}
+
+/// A workspace recording off screen keeps its dot ahead of its number, and keeps it there while
+/// another tab is dragged past and the preview renumbers it.
+#[test]
+fn a_recording_dot_stays_ahead_of_the_number_a_preview_gives_its_workspace() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = backend();
+        {
+            let state = backend.state_mut();
+            state.current_mut().workspaces[0].panes[0]
+                .terminal
+                .recording = true;
+            state.current_mut().active_workspace = 1;
+        }
+        let dot = backend.state().config.recording_icon().to_string();
+        let text = |cells: &[CapturedCell]| -> String {
+            cells.iter().map(|cell| cell.symbol.as_str()).collect()
+        };
+        let cells = row(&mut backend);
+        let recorded = find_run(&cells, &format!("{dot} 1 ·1"))
+            .unwrap_or_else(|| panic!("dot ahead of the number in {:?}", text(&cells)));
+        let source = find_run(&cells, "3").expect("third workspace tab") as u16;
+
+        for (x, kind) in [
+            (source, MouseKind::Down(MouseButton::Left)),
+            (source - 2, MouseKind::Drag(MouseButton::Left)),
+            (recorded as u16, MouseKind::Drag(MouseButton::Left)),
+        ] {
+            backend
+                .send_mouse(MouseEvent {
+                    x,
+                    y: 0,
+                    kind,
+                    mods: KeyMods::NONE,
+                })
+                .expect("workbar drag");
+        }
+        let preview = row(&mut backend);
+        assert!(
+            find_run(&preview, &format!("{dot} 2 ·1")).is_some(),
+            "the recorded workspace makes room and keeps its dot ahead of its new number, got {:?}",
+            text(&preview)
         );
     });
 }

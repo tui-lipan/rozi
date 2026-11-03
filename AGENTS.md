@@ -23,6 +23,10 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
 - Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes. Docs
   describe current behavior for users: no change history, migration notes, or implementation
   detail. The rules are in `.agents/instructions/documentation.md`.
+- After a change users can see, show it: capture the UI with rozi (`rozi capture-ui --render png`,
+  or `capture-pane --render png` for one pane) in an isolated session, and attach the image to the
+  pull request or your hand-off. The `rozi-visual` skill covers the setup. Keep personal paths and
+  hostnames out of the shot.
 - GitHub Releases is the only changelog. Do not recreate `CHANGELOG.md`. The `/changelog` command
   defines release-note structure; Rosie writes the prose from each PR Summary.
 - Mark every breaking change with `!` in the commit or PR title and add a `### Breaking changes`

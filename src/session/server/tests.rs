@@ -6295,6 +6295,7 @@ fn agent_report(
             native_session: Some(native.into()),
             seq,
             unless_quiet: None,
+            ended: false,
         },
         None => crate::control::ControlCommand::AgentRelease {
             target: Some(7),
@@ -6352,6 +6353,7 @@ fn report_unless_quiet(
             reason: Some("It stopped".into()),
             native_session: Some("origin".into()),
             unless_quiet: Some(fallback),
+            ended: false,
             seq,
         },
     )
@@ -6531,6 +6533,7 @@ fn pane_reporting(server: &mut SessionServer, agent: &str, screen: &str) {
             reason: None,
             native_session: Some("origin".into()),
             unless_quiet: None,
+            ended: false,
             seq: 1,
         },
     );
@@ -6666,14 +6669,170 @@ fn a_turn_stays_working_while_the_screen_shows_it_is_not_over() {
     assert_eq!(completions(&server), 1, "one turn, however many Stop hooks");
 }
 
+/// `working --unless-quiet done`, as a Stop hook says it, or with `--ended` once the agent has
+/// confirmed the turn ended.
+fn report_turn_end(
+    server: &mut SessionServer,
+    token: &str,
+    native: &str,
+    ended: bool,
+    seq: u64,
+) -> crate::control::ControlResponse {
+    agent_control(
+        server,
+        crate::control::ControlCommand::AgentReport {
+            target: Some(7),
+            agent: "claude".into(),
+            integration: token.into(),
+            state: protocol::AgentState::Working,
+            reason: None,
+            native_session: Some(native.into()),
+            unless_quiet: Some(protocol::AgentState::Done),
+            ended,
+            seq,
+        },
+    )
+}
+
+/// With no screen to read, nothing shows another Stop hook still running, and one can send the
+/// turn on, so only the agent's confirmation that the turn ended can end it.
 #[test]
-fn a_turn_that_ended_is_not_held_back_on_a_pane_with_no_screen_to_read() {
+fn a_pane_with_no_screen_to_read_holds_a_turn_until_the_agent_confirms_it_ended() {
     use protocol::{AgentState, DetectedAgentState};
     let mut server = SessionServer::new_named("dev");
     pane_with_session_rows(&mut server, 7);
-    assert!(report_unless_quiet(&mut server, AgentState::Working, AgentState::Done, 1).ok);
-    screen_reads(&mut server, DetectedAgentState::Working);
+    // The report speaks for the row of its conversation.
+    let completions = |server: &SessionServer| {
+        server
+            .agent_records(None, 7)
+            .iter()
+            .find(|record| {
+                record
+                    .reference
+                    .slot
+                    .as_ref()
+                    .is_some_and(|slot| slot.id == "origin")
+            })
+            .unwrap()
+            .completions
+    };
+    assert!(report_turn_end(&mut server, "client", "origin", false, 1).ok);
+    screen_reads(&mut server, DetectedAgentState::Idle);
+    assert_eq!(reported(&server).0, AgentState::Working);
+    assert_eq!(completions(&server), 0);
+
+    assert!(report_turn_end(&mut server, "client", "origin", true, 2).ok);
+    assert_eq!(
+        reported(&server).0,
+        AgentState::Done,
+        "at once, not at a poll"
+    );
+    assert_eq!(completions(&server), 1);
+}
+
+#[test]
+fn a_row_holds_a_turn_until_the_agent_confirms_it_ended() {
+    use protocol::AgentState;
+    let mut server = SessionServer::new_named("dev");
+    pane_with_session_rows(&mut server, 7);
+    assert!(
+        agent_report(
+            &mut server,
+            "client",
+            Some(AgentState::Working),
+            "origin",
+            1
+        )
+        .ok
+    );
+    let status = |server: &SessionServer| {
+        server.panes[&7]
+            .runtime
+            .rows
+            .iter()
+            .find(|row| row.id == "background")
+            .map(|row| row.status.clone())
+            .unwrap()
+    };
+
+    assert!(report_turn_end(&mut server, "fork-hooks", "background", false, 1).ok);
+    assert_eq!(status(&server), "working");
+    // Another Stop hook sent the turn on, and it ended at its next Stop.
+    let working = Some(AgentState::Working);
+    assert!(agent_report(&mut server, "fork-hooks", working, "background", 2).ok);
+    assert!(report_turn_end(&mut server, "fork-hooks", "background", false, 3).ok);
+    assert_eq!(status(&server), "working");
+    assert!(report_turn_end(&mut server, "fork-hooks", "background", true, 4).ok);
+    assert_eq!(status(&server), "done");
+}
+
+/// The agent confirms a turn ended before it opens a dialog, so a screen still decides.
+#[test]
+fn a_confirmed_end_still_waits_for_the_screen_when_there_is_one() {
+    use protocol::{AgentState, DetectedAgentState};
+    let mut server = SessionServer::new_named("dev");
+    pane_with_agent(&mut server);
+    assert!(report_turn_end(&mut server, "client", "origin", false, 1).ok);
+    let reported_at = |server: &SessionServer| {
+        server.panes[&7]
+            .runtime
+            .integration
+            .as_ref()
+            .unwrap()
+            .reported_at_unix_ms
+    };
+    let said_it_might_have = reported_at(&server);
+    let generation = server.panes[&7].generation;
+    let pane = server.panes.get_mut(&7).unwrap();
+    pane.runtime.detected_agent.as_mut().unwrap().state = DetectedAgentState::Blocked;
+    server.sync_pane_runtime(None, 7, generation);
+    assert_eq!(reported(&server).0, AgentState::Blocked);
+
+    assert!(report_turn_end(&mut server, "client", "origin", true, 2).ok);
+    assert_eq!(reported(&server).0, AgentState::Blocked);
+    assert_eq!(completions(&server), 0);
+    assert_eq!(
+        reported_at(&server),
+        said_it_might_have,
+        "no new turn, so no new grace"
+    );
+
+    screen_reads(&mut server, DetectedAgentState::Idle);
     assert_eq!(reported(&server).0, AgentState::Done);
+    assert_eq!(completions(&server), 1);
+}
+
+#[test]
+fn only_a_fallback_to_done_can_be_confirmed() {
+    use protocol::AgentState;
+    let mut server = SessionServer::new_named("dev");
+    pane_with_agent(&mut server);
+    for (state, fallback) in [
+        (AgentState::Working, None),
+        (AgentState::Done, None),
+        (AgentState::Working, Some(AgentState::Idle)),
+        (AgentState::Working, Some(AgentState::Error)),
+    ] {
+        let response = agent_control(
+            &mut server,
+            crate::control::ControlCommand::AgentReport {
+                target: Some(7),
+                agent: "claude".into(),
+                integration: "client".into(),
+                state,
+                reason: None,
+                native_session: Some("origin".into()),
+                unless_quiet: fallback,
+                ended: true,
+                seq: 1,
+            },
+        );
+        assert_eq!(
+            response.code,
+            Some(crate::control::ControlErrorCode::InvalidArgument),
+            "{state:?} unless {fallback:?}"
+        );
+    }
 }
 
 #[test]
@@ -8684,6 +8843,7 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
             native_session: Some("sess-1".to_string()),
             seq,
             unless_quiet: None,
+            ended: false,
         });
         assert!(res.ok, "{:?}", res.error);
     }

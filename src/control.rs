@@ -782,6 +782,10 @@ pub enum ControlCommand {
         /// a reporter that cannot know a later report will follow. `reason` describes that state.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unless_quiet: Option<crate::session::protocol::AgentState>,
+        /// With `unless_quiet` of `done`: the agent has confirmed the turn ended, so a report no
+        /// screen speaks for falls to `done` instead of holding `working`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ended: bool,
         seq: u64,
     },
     /// Withdraw an integration's agent report from a pane.

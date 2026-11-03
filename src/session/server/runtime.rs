@@ -360,6 +360,8 @@ pub(super) struct AgentIntegrationUpdate {
     pub reason: Option<String>,
     pub native_session: Option<String>,
     pub unless_quiet: Option<protocol::AgentState>,
+    /// With `unless_quiet` of `done`: the agent has confirmed the turn ended.
+    pub ended: bool,
     pub seq: u64,
 }
 
@@ -567,7 +569,14 @@ fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()
 fn validate_unless_quiet(
     state: Option<protocol::AgentState>,
     unless_quiet: Option<protocol::AgentState>,
+    ended: bool,
 ) -> IntegrationResult<()> {
+    if ended && unless_quiet != Some(protocol::AgentState::Done) {
+        return Err((
+            "invalid-argument",
+            "--ended only applies to --unless-quiet done".to_string(),
+        ));
+    }
     let Some(fallback) = unless_quiet else {
         return Ok(());
     };
@@ -598,6 +607,7 @@ fn build_integration_report(
     reason: Option<String>,
     native_session: Option<String>,
     unless_quiet: Option<protocol::AgentState>,
+    ended: bool,
     seq: u64,
     previous: Option<&protocol::AgentIntegrationReport>,
 ) -> IntegrationResult<protocol::AgentIntegrationReport> {
@@ -638,9 +648,30 @@ fn build_integration_report(
         .and_then(|reason| clean_text(reason, PANE_STATUS_REASON_MAX_LEN));
     // The reason describes the state it would fall to, not the working it says for now.
     let (reason, unless_quiet) = match unless_quiet {
-        Some(state) => (None, Some(protocol::QuietFallback { state, reason })),
+        Some(state) => (
+            None,
+            Some(protocol::QuietFallback {
+                state,
+                reason,
+                ended,
+            }),
+        ),
         None => (reason, None),
     };
+    // Confirming a turn's end starts no new turn, so the screen's grace still runs from the
+    // report that said it might have ended.
+    let reported_at_unix_ms = previous
+        .filter(|previous| {
+            ended
+                && previous.integration == integration
+                && previous
+                    .unless_quiet
+                    .as_ref()
+                    .is_some_and(|fallback| fallback.state == protocol::AgentState::Done)
+        })
+        .map_or_else(crate::runtime_metrics::unix_time_millis, |previous| {
+            previous.reported_at_unix_ms
+        });
     Ok(protocol::AgentIntegrationReport {
         integration,
         identity,
@@ -650,7 +681,7 @@ fn build_integration_report(
         native_session,
         unless_quiet,
         seq,
-        reported_at_unix_ms: crate::runtime_metrics::unix_time_millis(),
+        reported_at_unix_ms,
     })
 }
 
@@ -1067,9 +1098,10 @@ impl SessionServer {
             reason,
             native_session,
             unless_quiet,
+            ended,
             seq,
         } = update;
-        validate_unless_quiet(state, unless_quiet)?;
+        validate_unless_quiet(state, unless_quiet, ended)?;
         let report = state.map(|state| (state, reason, native_session));
         let previous_runtime = pane.runtime.clone();
         let previous = previous_runtime.integration.clone();
@@ -1089,8 +1121,9 @@ impl SessionServer {
                         integration,
                         RowReport {
                             native_session,
-                            // No screen speaks for a row, and this says the turn ended.
-                            state: if unless_quiet == Some(protocol::AgentState::Done) {
+                            // No screen speaks for a row, so only the agent's confirmation that
+                            // the turn ended can end it: another hook may still send it on.
+                            state: if unless_quiet == Some(protocol::AgentState::Done) && ended {
                                 protocol::AgentState::Done
                             } else {
                                 state
@@ -1124,9 +1157,18 @@ impl SessionServer {
                 reason,
                 native_session,
                 unless_quiet,
+                ended,
                 seq,
                 previous.as_deref(),
             )?));
+            // Settled now, not at the next poll: a confirmation with no screen to wait for, or a
+            // dialog already up, says what the pane reads as straight away.
+            let detected = pane.runtime.detected_agent.clone();
+            pane.runtime.integration = settle_quiet_report(
+                pane.runtime.integration.take(),
+                screen_reading(&pane.runtime, detected.as_ref()),
+                crate::runtime_metrics::unix_time_millis(),
+            );
             // Published rows stay. A program listing several conversations keeps listing them
             // while hooks report on one; the publisher's stream, not this claim, owns their
             // lifetime, and withdraws them when it closes.
@@ -1661,14 +1703,9 @@ fn compute_runtime_state(
         foreground_job.as_ref(),
         process_refreshed,
     );
-    // An agent's rows say what its pane reads as, so then no screen speaks for the report.
-    let screen_reading = crate::session::protocol::agent_rows_with_integration(&pane.runtime)
-        .is_empty()
-        .then_some(detected_agent.as_ref())
-        .flatten();
     let integration = settle_quiet_report(
         pane.runtime.integration.clone(),
-        screen_reading,
+        screen_reading(&pane.runtime, detected_agent.as_ref()),
         crate::runtime_metrics::unix_time_millis(),
     );
 
@@ -2729,6 +2766,18 @@ fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
     }
 }
 
+/// What the screen says about a pane's report: nothing when the agent's rows say what the pane
+/// reads as.
+fn screen_reading<'a>(
+    runtime: &PaneRuntimeState,
+    detected: Option<&'a DetectedAgent>,
+) -> Option<&'a DetectedAgent> {
+    crate::session::protocol::agent_rows_with_integration(runtime)
+        .is_empty()
+        .then_some(detected)
+        .flatten()
+}
+
 /// Let a report that asked to end if the screen went quiet follow the screen until it has.
 ///
 /// Pure in `now_unix_ms`. Hooks can stop a turn after the one that reported it, and then nothing
@@ -2739,7 +2788,8 @@ fn attention_rank(state: crate::session::protocol::DetectedAgentState) -> u8 {
 ///
 /// A fallback to `done` waits on a screen reading as working however long that takes: another
 /// hook on the same event can still be running, and can send the turn on. With no screen to read,
-/// which happens on a pane listing agent rows, nothing better is coming, so it falls after the grace.
+/// which happens on a pane listing agent rows, only the agent's confirmation that the turn ended
+/// lets it fall, and then it falls at once.
 fn settle_quiet_report(
     report: Option<Box<protocol::AgentIntegrationReport>>,
     detected: Option<&DetectedAgent>,
@@ -2755,10 +2805,10 @@ fn settle_quiet_report(
         .map(|detected| detected.state);
     let grace_passed = now_unix_ms.saturating_sub(report.reported_at_unix_ms)
         >= STATE_SETTLE_GRACE.as_millis() as u64;
-    let finished = report
+    let ended = report
         .unless_quiet
         .as_ref()
-        .is_some_and(|fallback| fallback.state == protocol::AgentState::Done);
+        .is_some_and(|fallback| fallback.state == protocol::AgentState::Done && fallback.ended);
     let falls = match reading {
         Some(DetectedAgentState::Blocked) => {
             report.state = protocol::AgentState::Blocked;
@@ -2769,7 +2819,7 @@ fn settle_quiet_report(
             false
         }
         Some(DetectedAgentState::Idle) => grace_passed,
-        None => finished && grace_passed,
+        None => ended,
     };
     if falls && let Some(fallback) = report.unless_quiet.take() {
         report.state = fallback.state;
@@ -3001,6 +3051,7 @@ mod tests {
                 unless_quiet: Some(QuietFallback {
                     state: AgentState::Idle,
                     reason: None,
+                    ended: false,
                 }),
                 seq: 1,
                 reported_at_unix_ms: at,
@@ -3037,13 +3088,32 @@ mod tests {
             state(settle_quiet_report(finished(0), Some(&working), u64::MAX)),
             AgentState::Working
         );
+        // With no screen to read, only the agent's confirmation ends it, however long it takes.
         assert_eq!(
-            state(settle_quiet_report(finished(1000), None, 1000 + grace - 1)),
+            state(settle_quiet_report(finished(1000), None, u64::MAX)),
+            AgentState::Working
+        );
+        let ended = |at| {
+            let mut report = finished(at).unwrap();
+            report.unless_quiet.as_mut().unwrap().ended = true;
+            Some(report)
+        };
+        assert_eq!(
+            state(settle_quiet_report(ended(1000), None, 1000)),
+            AgentState::Done
+        );
+        // A screen still decides when it can speak: a dialog can follow the confirmation.
+        assert_eq!(
+            state(settle_quiet_report(ended(0), Some(&working), u64::MAX)),
             AgentState::Working
         );
         assert_eq!(
-            state(settle_quiet_report(finished(1000), None, 1000 + grace)),
-            AgentState::Done
+            state(settle_quiet_report(
+                ended(1000),
+                Some(&idle),
+                1000 + grace - 1
+            )),
+            AgentState::Working
         );
         // Anything but `done` is a guess: no reading, or another program's, can't confirm it.
         assert_eq!(

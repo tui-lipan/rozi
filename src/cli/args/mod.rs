@@ -2450,6 +2450,7 @@ mod tests {
             native_session: None,
             seq: 1,
             unless_quiet: None,
+            ended: false,
         };
         let release = control::ControlCommand::AgentRelease {
             target: None,

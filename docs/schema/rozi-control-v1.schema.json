@@ -2123,6 +2123,10 @@
               "const": "agent-report",
               "type": "string"
             },
+            "ended": {
+              "description": "With `unless_quiet` of `done`: the agent has confirmed the turn ended, so a report no\nscreen speaks for falls to `done` instead of holding `working`.",
+              "type": "boolean"
+            },
             "integration": {
               "type": "string"
             },
@@ -3835,6 +3839,10 @@
             "cmd": {
               "const": "agent-report",
               "type": "string"
+            },
+            "ended": {
+              "description": "With `unless_quiet` of `done`: the agent has confirmed the turn ended, so a report no\nscreen speaks for falls to `done` instead of holding `working`.",
+              "type": "boolean"
             },
             "integration": {
               "type": "string"

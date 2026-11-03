@@ -23,7 +23,9 @@ SPEC.loader.exec_module(activity)
 BASH = {"tool_name": "Bash", "tool_input": {"command": "cargo test"}}
 
 
-class ActivityTests(unittest.TestCase):
+class HookTestCase(unittest.TestCase):
+    """Isolated plugin state, with every call to the Rozi CLI recorded."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="rozi codex plugin ż ")
         self.addCleanup(self.temp.cleanup)
@@ -72,6 +74,7 @@ class ActivityTests(unittest.TestCase):
         tool_input = {**call["tool_input"], "description": "Do you approve running cargo test?"}
         self.hook("PermissionRequest", tool_name=call["tool_name"], tool_input=tool_input)
 
+class ActivityTests(HookTestCase):
     def test_main_lifecycle_uses_one_token_and_increasing_sequences(self):
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit")
@@ -743,6 +746,110 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(hooks["Interrupt"][0]["hooks"][0]["timeout"], 3)
 
 
+def turn_record(kind, turn):
+    return json.dumps({"type": "event_msg", "payload": {"type": kind, "turn_id": turn}}) + "\n"
+
+
+class TurnEndTests(HookTestCase):
+    """Codex writes that a turn ended to its transcript only once every Stop hook has returned, and
+    another Stop hook can send the turn on, so this plugin's Stop only says the turn may have ended."""
+
+    def setUp(self):
+        super().setUp()
+        self.transcript = Path(self.temp.name) / "rollout.jsonl"
+        self.transcript.write_text(turn_record("task_started", "turn-1"))
+        self.spawned = []
+        spawner = patch.object(activity.subprocess, "Popen",
+                               side_effect=lambda args, **kwargs: self.spawned.append(args))
+        spawner.start()
+        self.addCleanup(spawner.stop)
+        for name, value in (("WATCH_POLL", 0), ("WATCH_STATE_EVERY", 0), ("WATCH_LIMIT", 5)):
+            setting = patch.object(activity, name, value)
+            setting.start()
+            self.addCleanup(setting.stop)
+
+    def stop(self):
+        self.hook("Stop", turn_id="turn-1", transcript_path=str(self.transcript))
+
+    def watch(self):
+        """Run the watcher the last Stop started, as its own process would."""
+        session, turn, transcript, offset = self.spawned[-1][3:7]
+        activity.watch_turn(self.env, session, turn, Path(transcript), int(offset))
+
+    def codex_writes(self, kind):
+        with open(self.transcript, "a") as file:
+            file.write(turn_record(kind, "turn-1"))
+
+    def test_the_turn_ends_once_codex_has_written_so(self):
+        self.first_turn()
+        size = self.transcript.stat().st_size
+        self.stop()
+        self.assertEqual((self.field("--state"), self.field("--unless-quiet")), ("working", "done"))
+        self.assertNotIn("--ended", self.calls[-1][0])
+        self.assertEqual(self.spawned[-1][2:7],
+                         ["--watch-turn", "thread-id", "turn-1", str(self.transcript), str(size)])
+
+        self.codex_writes("task_complete")
+        self.watch()
+        self.assertIn("--ended", self.calls[-1][0])
+        self.assertEqual((self.field("--state"), self.field("--unless-quiet")), ("working", "done"))
+        self.assertEqual(self.field("--seq"), str(int(self.field("--seq", -2)) + 1))
+
+    def test_a_turn_another_stop_hook_sent_on_ends_after_its_next_stop(self):
+        self.first_turn()
+        self.stop()
+        first = self.spawned[-1]
+        self.hook("PreModelRequest")
+        self.stop()
+        self.codex_writes("task_complete")
+        self.spawned.append(first)
+        self.watch()
+        self.assertIn("--ended", self.calls[-1][0])
+
+    def test_an_end_read_after_the_next_turn_started_says_nothing(self):
+        self.first_turn()
+        self.stop()
+        self.codex_writes("task_complete")
+        self.hook("PreModelRequest")
+        count = len(self.calls)
+        self.watch()
+        self.assertEqual(len(self.calls), count)
+        self.assertNotIn("--unless-quiet", self.calls[-1][0])
+
+    def test_a_turn_that_was_interrupted_is_left_to_interrupt(self):
+        self.first_turn()
+        self.stop()
+        self.hook("Interrupt")
+        count = len(self.calls)
+        self.watch()
+        self.codex_writes("turn_aborted")
+        self.watch()
+        self.assertEqual(len(self.calls), count)
+        self.assertEqual(self.field("--state"), "idle")
+
+    def test_a_line_still_being_written_is_read_once_it_is_whole(self):
+        line = turn_record("task_complete", "turn-1")
+        self.transcript.write_text(line[:10])
+        self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"), (None, 0))
+        self.transcript.write_text(line)
+        self.assertEqual(activity.turn_outcome(self.transcript, 0, "turn-1"),
+                         ("task_complete", len(line.encode())))
+
+    def test_with_nothing_to_watch_the_stop_is_the_last_word(self):
+        self.first_turn()
+        self.hook("Stop", turn_id="turn-1")
+        self.hook("Stop", turn_id="turn-1", transcript_path=str(self.transcript) + ".missing")
+        self.assertEqual(self.spawned, [])
+        self.assertIn("--ended", self.calls[-1][0])
+        self.assertEqual(self.field("--unless-quiet"), "done")
+
+    def test_a_watcher_that_cannot_start_leaves_the_stop_the_last_word(self):
+        self.first_turn()
+        with patch.object(activity.subprocess, "Popen", side_effect=OSError("no python")):
+            self.stop()
+        self.assertIn("--ended", self.calls[-1][0])
+
+
 @unittest.skipIf(os.name == "nt" or not shutil.which("sh") or not shutil.which("python3"),
                  "needs a POSIX shell and python3")
 class ShellLaunchTests(unittest.TestCase):
@@ -792,6 +899,25 @@ class ShellLaunchTests(unittest.TestCase):
         self.assertEqual(states, ["working", "working", "blocked", "working", "working", "release"])
         tokens = {args[args.index("--integration") + 1] for args in calls}
         self.assertEqual(len(tokens), 1)
+
+    def test_a_watcher_outlives_its_stop_hook_and_confirms_the_end(self):
+        transcript = Path(self.temp.name) / "rollout.jsonl"
+        transcript.write_text(turn_record("task_started", "turn-1"))
+        self.run_hook("SessionStart", source="startup")
+        self.run_hook("UserPromptSubmit", prompt="test")
+        self.run_hook("PreModelRequest")
+        self.run_hook("Stop", stop_hook_active=False, turn_id="turn-1",
+                      transcript_path=str(transcript))
+        self.assertNotIn("--ended", self.log.read_text())
+
+        with open(transcript, "a") as file:
+            file.write(turn_record("task_complete", "turn-1"))
+        deadline = time.monotonic() + 10
+        while "--ended" not in self.log.read_text() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        last = self.log.read_text().splitlines()[-1].split()
+        self.assertIn("--ended", last)
+        self.assertEqual(last[last.index("--seq") + 1], "3")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ restore a session.
 
 ## Install
 
-Use a Rozi version with `rozi agents report --unless-quiet` and `rozi agents release`. You also need Codex 0.164
+Use a Rozi version with `rozi agents report --unless-quiet --ended` and `rozi agents release`. You also need Codex 0.164
 or newer with hooks enabled, which is the default, and Python 3.10 or newer available as `python3`
 on `PATH`. The plugin validates with Codex 0.166.0.
 
@@ -49,14 +49,16 @@ each thread's state from the background server and lists every loaded thread as 
 | `request_user_input` question asked | `blocked` |
 | Tool finishes | `working` once no question or approval waits on a running call |
 | Compaction | `working`, keeping the same integration token |
-| Turn finishes | `done` once the screen has been quiet for about two seconds, or `blocked` if Codex opens a dialog first |
+| Turn finishes | `done` once Codex has recorded that the turn ended and the screen has been quiet for about two seconds, or `blocked` if Codex opens a dialog first |
 | Turn interrupted, including by declining an approval with `Esc` | `idle` |
 | Codex exits | Releases the report; Rozi returns to screen detection |
 
 A turn isn't over when this plugin's `Stop` hook runs: another `Stop` hook can still be running, and
 can send the turn on, and Codex opens some dialogs with no hook, such as its offer to switch models.
-So a turn waits for the screen before it reads `done`. `rozi agents prompt` refuses to type into
-those dialogs whatever the pane reports.
+So the plugin leaves a small background process to read Codex's thread transcript until Codex
+records that the turn ended. That process then reports the end and exits, and it also exits once a
+newer report replaces the turn. A turn reads `done` only after that and after its screen goes quiet.
+`rozi agents prompt` refuses to type into those dialogs whatever the pane reports.
 
 A prompt reports nothing until Codex is about to call the model, because another hook can still
 reject it. A rejected prompt leaves the pane as it was.

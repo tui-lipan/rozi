@@ -1050,6 +1050,7 @@ fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
             reason: Some("Permission required".into()),
             native_session: Some("native-e2e".into()),
             unless_quiet: None,
+            ended: false,
             seq: 1,
         })
     };

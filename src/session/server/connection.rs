@@ -651,6 +651,7 @@ impl SessionServer {
                 reason,
                 native_session,
                 unless_quiet,
+                ended,
                 seq,
             } => {
                 if self.client_read_only(client_id) {
@@ -677,6 +678,7 @@ impl SessionServer {
                         reason,
                         native_session,
                         unless_quiet,
+                        ended,
                         seq,
                     },
                 ) {

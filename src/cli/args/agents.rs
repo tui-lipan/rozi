@@ -177,6 +177,7 @@ fn parse_report(
     let mut reason = None;
     let mut native_session = None;
     let mut unless_quiet = None;
+    let mut ended = false;
     let mut seq = None;
     let mut iter = args.into_iter();
     while let Some(flag) = iter.next() {
@@ -193,6 +194,7 @@ fn parse_report(
                 let value = super::require_value(&mut iter, "--unless-quiet requires a state")?;
                 unless_quiet = Some(parse_report_state(&value)?);
             }
+            "--ended" => ended = true,
             "--state" => {
                 let value = super::require_value(&mut iter, "--state requires a state")?;
                 state = Some(parse_report_state(&value)?);
@@ -238,6 +240,7 @@ fn parse_report(
             reason,
             native_session,
             unless_quiet,
+            ended,
             seq: seq.ok_or_else(|| "agents report requires --seq".to_string())?,
         },
         None,
@@ -693,7 +696,8 @@ mod tests {
                 "--state",
                 "working",
                 "--unless-quiet",
-                "error",
+                "done",
+                "--ended",
                 "--seq",
                 "1",
             ]
@@ -705,7 +709,8 @@ mod tests {
         assert!(matches!(
             command,
             ControlCommand::AgentReport {
-                unless_quiet: Some(crate::session::protocol::AgentState::Error),
+                unless_quiet: Some(crate::session::protocol::AgentState::Done),
+                ended: true,
                 ..
             }
         ));
@@ -982,6 +987,7 @@ mod tests {
                 native_session: Some("opaque-123".into()),
                 seq: 42,
                 unless_quiet: None,
+                ended: false,
             }
         );
     }

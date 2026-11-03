@@ -23,9 +23,6 @@ EVENT_STATES = {
     "PreCompact": ("working", None),
     "PostCompact": ("working", None),
     "PermissionRequest": ("blocked", "Permission required"),
-    # Codex opens dialogs after this hook returns, such as its offer to switch models. Saying done
-    # now would release anything waiting on it into the moment before one opens.
-    "Stop": ("working|done", None),
     "Interrupt": ("idle", None),
     "SessionEnd": ("release", None),
 }
@@ -38,6 +35,42 @@ DELIVERY_LOCK_TIMEOUT = 0.05
 DELIVERY_BUDGET = 0.9
 # Codex caps an Interrupt hook at three seconds, so its persistence retries stop sooner.
 SHORT_HOOK_BUDGETS = {"Interrupt": 1.2}
+# Not a Codex hook: what the turn watcher records once Codex has written that the turn ended.
+TURN_ENDED = "rozi:TurnEnded"
+WATCH_POLL = 0.1
+# How often the watcher checks that nothing has replaced the turn it waits on.
+WATCH_STATE_EVERY = 1.0
+# Another Stop hook can run for as long as its own timeout, ten minutes by default.
+WATCH_LIMIT = 3600.0
+CONFIRM_ATTEMPTS = 10
+
+
+def watchable(event: dict) -> bool:
+    turn, transcript = event.get("turn_id"), event.get("transcript_path")
+    return (isinstance(turn, str) and bool(turn) and isinstance(transcript, str)
+            and os.path.isfile(transcript))
+
+
+def stop_transition(_event: dict) -> tuple[str, str | None]:
+    """The turn may have ended, but another Stop hook can still be running, and can send it on.
+
+    Codex writes that the turn ended to its transcript only once every Stop hook has returned, so a
+    watcher confirms it from there. Without one, nothing confirms it, and a pane with no screen to
+    read stays working rather than finish a turn that may go on. Codex also opens dialogs after the
+    turn ends, such as its offer to switch models, so the pane follows its screen either way.
+    """
+    return "working|done", None
+
+
+def turn_ended_change(payload: dict) -> tuple[str, str | None]:
+    """Codex records a turn that failed for good as completed, with the error it ended on."""
+    error = payload.get("error")
+    if not error:
+        return "working|done|ended", None
+    message = error.get("message") if isinstance(error, dict) else error
+    if not isinstance(message, str) or not message.strip():
+        message = "Turn ended with an error"
+    return "working|error|ended", message
 
 
 def session_start_transition(event: dict) -> tuple[str | None, str | None]:
@@ -75,6 +108,7 @@ EVENT_HANDLERS = {
     "UserPromptSubmit": prompt_transition,
     "PostModelRequest": model_response_transition,
     "PreToolUse": tool_transition,
+    "Stop": stop_transition,
 }
 
 
@@ -144,6 +178,10 @@ def initialize_state(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE IF NOT EXISTS attempts (
         token TEXT PRIMARY KEY, seq INTEGER NOT NULL
     )""")
+    # The turn a Stop said may have ended, until a watcher confirms it or another report replaces it.
+    db.execute("""CREATE TABLE IF NOT EXISTS ending (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1), turn TEXT NOT NULL
+    )""")
 
 
 def open_state(path: Path) -> sqlite3.Connection:
@@ -201,6 +239,7 @@ def start_run(db: sqlite3.Connection, row: tuple | None, event: dict) -> tuple:
     db.execute("INSERT OR REPLACE INTO run VALUES (1, ?, ?, ?, ?)", row)
     # The previous lifecycle's undelivered state is not this one's to report.
     db.execute("UPDATE status SET dirty = 0")
+    db.execute("DELETE FROM ending")
     clear_waits(db)
     return row
 
@@ -312,13 +351,25 @@ def open_wait(db: sqlite3.Connection) -> tuple | None:
         UNION ALL SELECT reason FROM approvals LIMIT 1""").fetchone()
 
 
+def ending_turn(db: sqlite3.Connection) -> str | None:
+    row = db.execute("SELECT turn FROM ending").fetchone()
+    return row[0] if row else None
+
+
 def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     row = current_run(db, event)
     if row is None:
         return
+    name = event["hook_event_name"]
+    # A confirmation counts only while the Stop it confirms is still the latest word.
+    if name == TURN_ENDED and ending_turn(db) != event.get("turn_id"):
+        return
     update_blockers(db, event, change)
     if change[0] is None:
         return
+    db.execute("DELETE FROM ending")
+    if name == "Stop" and watchable(event):
+        db.execute("INSERT INTO ending VALUES (1, ?)", (event["turn_id"],))
     blocker = open_wait(db)
     state, reason = ("blocked", blocker[0]) if blocker else change
     released = state == "release"
@@ -335,11 +386,13 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     if state == "release":
         args += ["release"]
     else:
-        state, _, fallback = state.partition("|")
+        state, *fallback = state.split("|")
         args += ["report", "--agent", "codex", "--state", state,
                  "--native-session", row[1]]
         if fallback:
-            args += ["--unless-quiet", fallback]
+            args += ["--unless-quiet", fallback[0]]
+        if fallback[1:] == ["ended"]:
+            args += ["--ended"]
     args += ["--integration", row[0], "--seq", str(row[2])]
     if reason:
         args += ["--reason", reason]
@@ -453,17 +506,116 @@ def handle(event: dict, env: dict[str, str]) -> None:
     if change is None:
         return
     path = state_path(env)
+    watch_from = None
+    if event["hook_event_name"] == "Stop" and watchable(event):
+        # Measured before this hook returns: Codex writes that the turn ended only after that.
+        try:
+            watch_from = os.path.getsize(event["transcript_path"])
+        except OSError:
+            pass
     # State persistence has its own retry budget. Delivery gets only its separate, smaller
     # budget after the event has committed, and never extends a failed persistence attempt.
     db = persist_event(path, event, change)
     try:
+        if watch_from is not None:
+            start_watcher(env, event, watch_from)
         flush_pending(db, path, env)
     finally:
         db.close()
 
 
+
+def start_watcher(env: dict[str, str], event: dict, offset: int) -> None:
+    """Outlive this hook, which Codex waits on before it can end the turn. A watcher that cannot
+    start leaves the turn unconfirmed, never confirmed early."""
+    args = [sys.executable, os.path.abspath(__file__), "--watch-turn", event["session_id"],
+            event["turn_id"], event["transcript_path"], str(offset)]
+    options = {"start_new_session": True}
+    if sys.platform == "win32":
+        options = {"creationflags": subprocess.DETACHED_PROCESS
+                   | subprocess.CREATE_NEW_PROCESS_GROUP}
+    try:
+        subprocess.Popen(args, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, **options)
+    except OSError:
+        pass
+
+
+def turn_outcome(transcript: Path, offset: int, turn: str) -> tuple[dict | None, int]:
+    """What Codex has written since `offset` about `turn` completing or being aborted, and the
+    offset to read from next. A line still being written is left for the next read."""
+    with open(transcript, "rb") as file:
+        file.seek(offset)
+        data = file.read()
+    for line in data.splitlines(keepends=True):
+        if not line.endswith(b"\n"):
+            break
+        offset += len(line)
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        payload = record.get("payload") if isinstance(record, dict) else None
+        if (record.get("type") == "event_msg" and isinstance(payload, dict)
+                and payload.get("turn_id") == turn
+                and payload.get("type") in {"task_complete", "turn_aborted"}):
+            return payload, offset
+    return None, offset
+
+
+def still_ending(path: Path, turn: str) -> bool:
+    try:
+        db = connect_private(path, STATE_LOCK_TIMEOUT)
+        try:
+            return ending_turn(db) == turn
+        finally:
+            db.close()
+    except sqlite3.OperationalError as error:
+        return is_lock_error(error)
+
+
+def confirm_turn_end(env: dict[str, str], session: str, turn: str, change: tuple) -> None:
+    path = state_path(env)
+    event = {"hook_event_name": TURN_ENDED, "session_id": session, "turn_id": turn}
+    db = persist_event(path, event, change)
+    try:
+        # No later hook may come to deliver what one attempt leaves behind.
+        for _ in range(CONFIRM_ATTEMPTS):
+            flush_pending(db, path, env)
+            if db.execute("SELECT 1 FROM status WHERE dirty = 1").fetchone() is None:
+                return
+            time.sleep(WATCH_STATE_EVERY)
+    finally:
+        db.close()
+
+
+def watch_turn(env: dict[str, str], session: str, turn: str, transcript: Path,
+               offset: int) -> None:
+    """Confirm `turn` ended once Codex has written so, unless another report replaced its Stop."""
+    path = state_path(env)
+    deadline = time.monotonic() + WATCH_LIMIT
+    checked = time.monotonic()
+    while time.monotonic() < deadline:
+        outcome, offset = turn_outcome(transcript, offset, turn)
+        if outcome is not None and outcome["type"] == "task_complete":
+            confirm_turn_end(env, session, turn, turn_ended_change(outcome))
+            return
+        # An interrupted turn is Interrupt's to report.
+        if outcome is not None:
+            return
+        if time.monotonic() - checked >= WATCH_STATE_EVERY:
+            if not still_ending(path, turn):
+                return
+            checked = time.monotonic()
+        time.sleep(WATCH_POLL)
+
+
 def main() -> None:
     try:
+        if sys.argv[1:2] == ["--watch-turn"]:
+            session, turn, transcript, offset = sys.argv[2:6]
+            watch_turn(dict(os.environ), session, turn, Path(transcript), int(offset))
+            return
         event = json.load(sys.stdin)
         if isinstance(event, dict):
             handle(event, dict(os.environ))

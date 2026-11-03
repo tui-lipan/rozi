@@ -744,6 +744,7 @@ impl SessionServer {
                 reason,
                 native_session,
                 unless_quiet,
+                ended,
                 seq,
             } => self.session_agent_report_update(
                 target,
@@ -754,6 +755,7 @@ impl SessionServer {
                     reason,
                     native_session,
                     unless_quiet,
+                    ended,
                     seq,
                 },
                 broadcasts,
@@ -771,6 +773,7 @@ impl SessionServer {
                     reason: None,
                     native_session: None,
                     unless_quiet: None,
+                    ended: false,
                     seq,
                 },
                 broadcasts,
@@ -3013,6 +3016,7 @@ mod tests {
                 native_session: None,
                 seq: 1,
                 unless_quiet: None,
+                ended: false,
             })
         };
         let ask = |server: &mut SessionServer, request| {
@@ -3456,6 +3460,7 @@ mod tests {
                 native_session: Some("native-123".into()),
                 seq: 13,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert!(accepted.ok);
@@ -3483,6 +3488,7 @@ mod tests {
                 native_session: None,
                 seq: 12,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert_eq!(stale.code, Some(ControlErrorCode::Conflict));
@@ -3516,6 +3522,7 @@ mod tests {
                 native_session: None,
                 seq: 1,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert!(next.ok, "{next:?}");
@@ -3535,6 +3542,7 @@ mod tests {
                 native_session: None,
                 seq: 2,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert!(heartbeat.ok, "{heartbeat:?}");
@@ -3553,6 +3561,7 @@ mod tests {
                 native_session: None,
                 seq: 3,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert!(blocked.ok, "{blocked:?}");
@@ -3583,6 +3592,7 @@ mod tests {
                 native_session: None,
                 seq: 15,
                 unless_quiet: None,
+                ended: false,
             },
         );
         assert_eq!(delayed.code, Some(ControlErrorCode::Conflict));
@@ -3654,6 +3664,7 @@ mod tests {
                     native_session: Some(native.into()),
                     seq,
                     unless_quiet: None,
+                    ended: false,
                 },
             )
             .0
@@ -3807,6 +3818,7 @@ mod tests {
                     native_session: Some(native.into()),
                     seq,
                     unless_quiet: None,
+                    ended: false,
                 },
             )
             .0

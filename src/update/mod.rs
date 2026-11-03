@@ -123,6 +123,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::UpdateCheckTick => overlays::update_check_tick(ctx),
         Msg::UsageCountNotice => overlays::usage_count_notice(ctx),
+        Msg::OpenUsageCountDocs => crate::ops::usage_count::open_docs(ctx),
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),

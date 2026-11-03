@@ -38,7 +38,7 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use tui_lipan::prelude::CommandLink;
+use tui_lipan::prelude::{CommandLink, Context, Update};
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::Msg;
@@ -49,7 +49,7 @@ pub(crate) const ENDPOINT: &str = "https://usage.tui-lipan.dev/v1/count";
 /// The counter's current week, asked before each new report.
 const WEEK_ENDPOINT: &str = "https://usage.tui-lipan.dev/v1/week";
 /// The user docs page that says what is sent and how to opt out.
-pub(crate) const DOCS_URL: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/usage-count");
+const DOCS_URL: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/usage-count");
 
 const SCHEMA_VERSION: u32 = 1;
 const APP: &str = "rozi";
@@ -182,6 +182,17 @@ pub(crate) fn report_if_due(link: &CommandLink<Msg>, enabled: bool) {
     let template = Report::current(crate::platform::install_source::detect_current());
     if run(&dir, Utc::now(), &template, &HttpsTransport::new()) == Outcome::NoticeDue {
         link.send(Msg::UsageCountNotice);
+    }
+}
+
+/// Open the usage count documentation, where the notice's click leads.
+pub(crate) fn open_docs(ctx: &mut Context<crate::AppRoot>) -> Update {
+    match tui_lipan::utils::open_url(DOCS_URL) {
+        Ok(()) => Update::none(),
+        Err(error) => {
+            crate::pane::pty_events::notify_error(ctx, "Could not open link", error.to_string());
+            Update::full()
+        }
     }
 }
 

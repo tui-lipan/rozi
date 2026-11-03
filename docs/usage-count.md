@@ -49,8 +49,9 @@ whether a report is due; that request sends nothing. A report that gets no answe
 a later check.
 
 The first time rozi runs for an install, it sends nothing and shows a notice titled
-**Anonymous usage count** instead. If rozi exits before the notice appears, it shows the notice
-the next time it starts. The first report goes out on a later day than the notice, so you can opt
+**Anonymous usage count** instead. Click the notice to open this page, or copy it to get the
+opt-out lines for your config. If rozi exits before the notice appears, it shows the notice the
+next time it starts. The first report goes out on a later day than the notice, so you can opt
 out before anything is sent.
 
 ## Opt out

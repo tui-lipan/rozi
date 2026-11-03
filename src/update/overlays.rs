@@ -771,17 +771,17 @@ pub(super) fn update_available(
 /// out, then record that it was shown. Only this records it: a client that exits before getting
 /// here leaves the notice for the next launch. The first report waits at least a day after this.
 pub(super) fn usage_count_notice(ctx: &mut Context<AppRoot>) -> Update {
-    crate::pane::pty_events::notify_update(
+    crate::pane::pty_events::notify_announcement(
         ctx,
         "Anonymous usage count",
-        format!(
-            "once a week rozi adds itself to a public count of active installs\n\
-             no ID or personal data; starts tomorrow\n\
-             opt out with `[updates] count_usage = false`\n\
-             {}",
-            crate::ops::usage_count::DOCS_URL
-        ),
-        false,
+        "Once a week, rozi adds this install to a public count of active installs. \
+         It sends no ID and no personal data.\n\
+         \n\
+         First count  tomorrow at the earliest\n\
+         Opt out      [updates] count_usage = false\n\
+         Details      click this notice",
+        "[updates]\ncount_usage = false",
+        Msg::OpenUsageCountDocs,
     );
     crate::ops::usage_count::notice_shown();
     Update::full()
@@ -1140,8 +1140,12 @@ mod tests {
             );
             let toast = last_toast(&backend);
             assert!(toast.starts_with("Anonymous usage count"), "{toast}");
-            assert!(toast.contains("`[updates] count_usage = false`"), "{toast}");
-            assert!(toast.ends_with("/usage-count"), "{toast}");
+            assert!(toast.contains("[updates] count_usage = false"), "{toast}");
+            assert!(toast.ends_with("click this notice"), "{toast}");
+            assert!(
+                !toast.contains('`'),
+                "toasts render text, not markdown: {toast}"
+            );
         });
     }
 

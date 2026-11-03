@@ -25,6 +25,8 @@ pub enum Msg {
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.
     UsageCountNotice,
+    /// The usage count notice was clicked: open its documentation page.
+    OpenUsageCountDocs,
     /// Time to look for a newer release again. Rescheduled from its own handler for as long as
     /// `[updates] check` stays on.
     UpdateCheckTick,

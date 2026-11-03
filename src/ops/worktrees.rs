@@ -1134,7 +1134,7 @@ pub(crate) fn apply_result(
                 if picker_here {
                     return refresh(ctx);
                 }
-                crate::pane::pty_events::notify_info(ctx, format!("Unlocked worktree {path}"));
+                crate::pane::pty_events::notify_info(ctx, format!("Unlocked worktree `{path}`"));
             }
             (
                 WorktreeOperationKind::Remove { path, force: false },

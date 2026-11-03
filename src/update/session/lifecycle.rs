@@ -327,8 +327,14 @@ pub(crate) fn attached(
             client.detach();
         }
         ctx.state.current_mut().mark_disconnected();
-        crate::pane::pty_events::notify_error(ctx, "Invalid session layout",
-            "The server has panes without an authoritative layout. Restore a valid session snapshot.".to_string());
+        crate::pane::pty_events::notify_error(
+            ctx,
+            "Invalid session layout",
+            crate::pane::pty_events::ToastBody::new(
+                "The server has panes without an authoritative layout",
+            )
+            .hint("Restore a valid session snapshot"),
+        );
         return Update::full();
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all

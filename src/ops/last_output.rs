@@ -19,7 +19,8 @@ pub(crate) fn copy_last_output(ctx: &mut Context<AppRoot>) -> Update {
     let Some(text) = pane.terminal.capture_last_command_output() else {
         crate::pane::pty_events::notify_info(
             ctx,
-            "No last command output\nEnable shell integration to track commands",
+            crate::pane::pty_events::ToastBody::new("No last command output")
+                .hint("Enable shell integration to track commands"),
         );
         return Update::full();
     };

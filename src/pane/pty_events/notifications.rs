@@ -173,9 +173,9 @@ fn toast_content(title: Option<&str>, message: &str) -> std::sync::Arc<str> {
 }
 
 /// Report app state or a rejection. Identical repeats renew rather than stack.
-pub(crate) fn notify_info(ctx: &mut Context<AppRoot>, message: impl Into<String>) -> Notified {
+pub(crate) fn notify_info(ctx: &mut Context<AppRoot>, message: impl Into<ToastBody>) -> Notified {
     let message = message.into();
-    let content = toast_content(None, &message);
+    let content = toast_content(None, &message.source());
     let toast = info_toast(
         &ctx.state.theme,
         ctx.state.config.pane.toast_opacity,
@@ -204,7 +204,7 @@ pub(crate) fn notify_path_info(
         ctx.state.theme.status.info,
         ctx.state.config.pane.toast_opacity,
         title,
-        shown_paths,
+        ToastBody::verbatim(shown_paths),
     )
     .copy_text(copy_paths);
     notify(
@@ -232,7 +232,7 @@ pub(crate) fn notify_screenshot_saved(
         ctx.state.theme.status.info,
         ctx.state.config.pane.toast_opacity,
         title,
-        shown_path,
+        ToastBody::verbatim(shown_path),
     )
     .copy_text(copied_path)
     .on_click(callback);
@@ -248,10 +248,10 @@ pub(crate) fn notify_screenshot_saved(
 pub(crate) fn notify_error(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
-    let content = toast_content(Some(&title), &message);
+    let content = toast_content(Some(&title), &message.source());
     let toast = error_toast(
         &ctx.state.theme,
         ctx.state.config.pane.toast_opacity,
@@ -271,11 +271,11 @@ pub(crate) fn notify_error(
 pub(crate) fn notify_path_error(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
     copy_paths: impl Into<String>,
 ) -> Notified {
     let (title, message, copy_paths) = (title.into(), message.into(), copy_paths.into());
-    let content = toast_content(Some(&title), &message);
+    let content = toast_content(Some(&title), &message.source());
     let toast = error_toast(
         &ctx.state.theme,
         ctx.state.config.pane.toast_opacity,
@@ -295,10 +295,10 @@ pub(crate) fn notify_path_error(
 pub(crate) fn notify_warning(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
-    let content = toast_content(Some(&title), &message);
+    let content = toast_content(Some(&title), &message.source());
     let toast = warning_toast(
         &ctx.state.theme,
         ctx.state.config.pane.toast_opacity,
@@ -318,11 +318,11 @@ pub(crate) fn notify_warning(
 pub(crate) fn notify_update(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
     caution: bool,
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
-    let content = toast_content(Some(&title), &message);
+    let content = toast_content(Some(&title), &message.source());
     let theme = &ctx.state.theme;
     let accent = if caution {
         theme.status.warning
@@ -350,12 +350,12 @@ pub(crate) fn notify_update(
 pub(crate) fn notify_announcement(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
     copy_text: impl Into<String>,
     on_click: crate::Msg,
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
-    let content = toast_content(Some(&title), &message);
+    let content = toast_content(Some(&title), &message.source());
     let callback = ctx.link().callback(move |_| on_click.clone());
     let toast = titled_toast(
         &ctx.state.theme,
@@ -382,10 +382,10 @@ pub(crate) fn notify_on(
     ctx: &mut Context<AppRoot>,
     channel: ToastChannel,
     title: Option<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Notified {
     let message = message.into();
-    let content = toast_content(title.as_deref(), &message);
+    let content = toast_content(title.as_deref(), &message.source());
     let opacity = ctx.state.config.pane.toast_opacity;
     let toast = match title {
         Some(title) => error_toast(&ctx.state.theme, opacity, title, message),
@@ -394,8 +394,8 @@ pub(crate) fn notify_on(
     notify(ctx, ToastKey::Channel(channel), content, toast)
 }
 
-pub(crate) fn info_toast(theme: &Theme, opacity: f32, message: impl Into<String>) -> Toast {
-    Toast::new(message.into())
+pub(crate) fn info_toast(theme: &Theme, opacity: f32, message: impl Into<ToastBody>) -> Toast {
+    Toast::rich(message.into().rich(theme))
         .duration(3.0)
         .wrap(true)
         .min_width(Length::Px(10))
@@ -405,27 +405,27 @@ pub(crate) fn info_toast(theme: &Theme, opacity: f32, message: impl Into<String>
         .message_style(toast_text_style(theme))
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
-        .padding((0, 0, 0, 0))
+        .padding(TOAST_PADDING)
 }
 
 /// Toast for an armed destructive action: error-colored chrome, visible for exactly the confirm
 /// window so its dismissal coincides with the pending action expiring.
-pub(crate) fn confirm_toast(theme: &Theme, opacity: f32, message: impl Into<String>) -> Toast {
-    Toast::new(message.into())
+pub(crate) fn confirm_toast(theme: &Theme, opacity: f32, message: impl Into<ToastBody>) -> Toast {
+    Toast::rich(message.into().rich(theme))
         .duration(crate::ops::confirm::CONFIRM_WINDOW.as_secs_f64())
         .wrap(true)
         .min_width(Length::Px(10))
         .max_width(Length::Px(64))
         .frame_style(toast_frame_style(theme, theme.status.error, opacity))
         .message_style(toast_text_style(theme))
-        .padding((0, 0, 0, 0))
+        .padding(TOAST_PADDING)
 }
 
 pub(crate) fn warning_toast(
     theme: &Theme,
     opacity: f32,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Toast {
     titled_toast(theme, theme.status.warning, opacity, title, message)
 }
@@ -434,7 +434,7 @@ pub(crate) fn error_toast(
     theme: &Theme,
     opacity: f32,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Toast {
     titled_toast(theme, theme.status.error, opacity, title, message)
 }
@@ -444,10 +444,11 @@ fn titled_toast(
     accent: Color,
     opacity: f32,
     title: impl Into<String>,
-    message: impl Into<String>,
+    message: impl Into<ToastBody>,
 ) -> Toast {
-    Toast::new(message.into())
+    Toast::rich(message.into().rich(theme))
         .title(Some(title.into()))
+        .header_padding(TOAST_PADDING)
         .duration(6.0)
         .wrap(true)
         .min_width(Length::Px(10))
@@ -458,7 +459,7 @@ fn titled_toast(
         .message_style(toast_text_style(theme))
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
-        .padding((0, 0, 0, 0))
+        .padding(TOAST_PADDING)
 }
 
 /// Chrome for a toast: `accent` over the theme's own panel color.
@@ -485,11 +486,112 @@ fn toast_frame_style(theme: &Theme, accent: Color, opacity: f32) -> Style {
 }
 
 fn toast_text_style(theme: &Theme) -> Style {
-    theme
-        .primary
+    foreground(&theme.primary)
+}
+
+/// The foreground of a theme style, alone, so it can be laid over a toast's own surface.
+fn foreground(style: &Style) -> Style {
+    style
         .resolved_fg()
         .filter(|color| !color.is_sentinel())
-        .map_or_else(Style::new, |text| Style::new().fg(text))
+        .map_or_else(Style::new, |color| Style::new().fg(color))
+}
+
+/// One cell between a toast's text and its border, and between its title and the corner.
+const TOAST_PADDING: (u16, u16) = (0, 1);
+
+/// What a toast says: a message, and optionally a hint beneath it saying what to do.
+///
+/// Text between backticks names something the user can type or look for, such as a command, a
+/// session or a config key. It shows in the theme's accent color, without the backticks. A hint is
+/// set in the theme's muted color, so the message reads first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ToastBody {
+    message: String,
+    hint: Option<String>,
+    marked_up: bool,
+}
+
+impl ToastBody {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            hint: None,
+            marked_up: true,
+        }
+    }
+
+    /// Text shown exactly as given, such as a path, which may itself contain a backtick.
+    pub(crate) fn verbatim(text: impl Into<String>) -> Self {
+        Self {
+            marked_up: false,
+            ..Self::new(text)
+        }
+    }
+
+    /// What to do about the message. An empty hint is no hint.
+    pub(crate) fn hint(mut self, hint: impl Into<String>) -> Self {
+        let hint = hint.into();
+        self.hint = (!hint.is_empty()).then_some(hint);
+        self
+    }
+
+    /// The text as written, backticks included: what makes two toasts the same message.
+    pub(crate) fn source(&self) -> String {
+        match &self.hint {
+            Some(hint) => format!("{}\n{hint}", self.message),
+            None => self.message.clone(),
+        }
+    }
+
+    fn rich(&self, theme: &Theme) -> RichText {
+        let name = foreground(&theme.accent);
+        let mut spans = Vec::new();
+        self.push_marked(&mut spans, &self.message, Style::new(), name);
+        if let Some(hint) = &self.hint {
+            let muted = foreground(&theme.muted);
+            spans.push(Span::new("\n"));
+            self.push_marked(&mut spans, hint, muted, name);
+        }
+        RichText::from(spans)
+    }
+
+    /// Split `text` at its backticks: what they enclose takes `name`, the rest `base`. A backtick
+    /// with no partner is ordinary text.
+    fn push_marked(&self, spans: &mut Vec<Span>, text: &str, base: Style, name: Style) {
+        if !self.marked_up {
+            spans.push(Span::new(text.to_string()).style(base));
+            return;
+        }
+        let parts: Vec<&str> = text.split('`').collect();
+        let unpaired = parts.len().is_multiple_of(2);
+        for (index, part) in parts.iter().enumerate() {
+            if unpaired && index == parts.len() - 1 {
+                spans.push(Span::new(format!("`{part}")).style(base));
+            } else if !part.is_empty() {
+                let style = if index % 2 == 1 { name } else { base };
+                spans.push(Span::new(part.to_string()).style(style));
+            }
+        }
+    }
+}
+
+impl From<String> for ToastBody {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+
+impl From<&str> for ToastBody {
+    fn from(message: &str) -> Self {
+        Self::new(message)
+    }
+}
+
+impl From<&String> for ToastBody {
+    fn from(message: &String) -> Self {
+        Self::new(message.as_str())
+    }
 }
 
 pub(crate) fn maybe_notify_pane_exit(config: &crate::config::Config, id: PaneId, code: i32) {
@@ -780,4 +882,85 @@ pub(crate) fn maybe_notify_program_status(
     );
     crate::platform::notifications::notify("rozi", &body);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::ThemePreset;
+
+    fn theme() -> Theme {
+        ThemePreset::Lipan.theme()
+    }
+
+    /// Each span as its text and the foreground it was given.
+    fn spans(body: ToastBody) -> Vec<(String, Option<Color>)> {
+        body.rich(&theme())
+            .spans
+            .into_iter()
+            .map(|span| (span.content.to_string(), span.style.fg.map(|fg| fg.color())))
+            .collect()
+    }
+
+    fn fg(style: &Style) -> Option<Color> {
+        foreground(style).fg.map(|fg| fg.color())
+    }
+
+    #[test]
+    fn backticks_mark_a_name_in_the_accent_color() {
+        let accent = fg(&theme().accent);
+        assert_eq!(
+            spans(ToastBody::new("Session `work` is already running")),
+            vec![
+                ("Session ".to_string(), None),
+                ("work".to_string(), accent),
+                (" is already running".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unpaired_backtick_is_ordinary_text() {
+        assert_eq!(
+            spans(ToastBody::new("`a` and a stray ` here")),
+            vec![
+                ("a".to_string(), fg(&theme().accent)),
+                (" and a stray ".to_string(), None),
+                ("` here".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hint_follows_on_its_own_line_in_the_muted_color() {
+        let theme = theme();
+        let body = ToastBody::new("`vim` is not available").hint("Set `$EDITOR`");
+        assert_eq!(body.source(), "`vim` is not available\nSet `$EDITOR`");
+        assert_eq!(
+            spans(body),
+            vec![
+                ("vim".to_string(), fg(&theme.accent)),
+                (" is not available".to_string(), None),
+                ("\n".to_string(), None),
+                ("Set ".to_string(), fg(&theme.muted)),
+                ("$EDITOR".to_string(), fg(&theme.accent)),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_hint_is_no_hint() {
+        assert_eq!(
+            ToastBody::new("Service failed").hint("").source(),
+            "Service failed"
+        );
+    }
+
+    #[test]
+    fn verbatim_text_keeps_its_backticks() {
+        assert_eq!(
+            spans(ToastBody::verbatim("~/odd`name.cast")),
+            vec![("~/odd`name.cast".to_string(), None)]
+        );
+    }
 }

@@ -384,7 +384,7 @@ fn answer(
         }
         AttachedReply::PaletteAction(id) => {
             if response.ok {
-                crate::pane::pty_events::notify_info(ctx, format!("{id} finished"));
+                crate::pane::pty_events::notify_info(ctx, format!("`{id}` finished"));
             } else {
                 crate::pane::pty_events::notify_error(
                     ctx,

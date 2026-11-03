@@ -473,7 +473,8 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
                         if reset_startup_mode_without_default(ctx) {
                             crate::pane::pty_events::notify_info(
                                 ctx,
-                                "Startup default cleared\nStartup mode reset to Picker",
+                                crate::pane::pty_events::ToastBody::new("Startup default cleared")
+                                    .hint("Startup mode reset to Picker"),
                             );
                         } else {
                             crate::pane::pty_events::notify_info(ctx, "Startup default cleared");

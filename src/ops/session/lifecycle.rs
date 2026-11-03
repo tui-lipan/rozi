@@ -363,10 +363,11 @@ pub(crate) fn activate_discovered_session(
         crate::pane::pty_events::notify_error(
             ctx,
             "Attach failed",
-            format!(
-                "`{}` runs an incompatible version\nCtrl+K removes it",
+            crate::pane::pty_events::ToastBody::new(format!(
+                "`{}` runs an incompatible version",
                 entry.name
-            ),
+            ))
+            .hint("Ctrl+K removes it"),
         );
         return Update::full();
     }

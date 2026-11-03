@@ -302,26 +302,42 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     emit_workspace_switched(state, target_index);
 }
 
-/// Trade workspace slots `a` and `b`: each takes the other's panes, layout, and name. The view
-/// follows its content, so when one of the two is active, whatever was on screen stays there under
-/// its new number. Dropping one workspace tab on another does this.
-pub(crate) fn swap_workspaces(state: &mut State, a: usize, b: usize) {
+/// Move the workspace in slot `from` to slot `to`, with its panes, layout, and name. The workspaces
+/// between the two shift one slot toward `from` to make room, as tabs do when one is dragged along
+/// a strip. The view follows its content, so whatever was on screen stays there under its new
+/// number. Dropping a workspace tab between others does this.
+pub(crate) fn move_workspace(state: &mut State, from: usize, to: usize) {
     let len = state.current().workspaces.len();
-    if a == b || a >= len || b >= len {
+    if from == to || from >= len || to >= len {
         return;
     }
-    swap_workspace_content(state, a, b);
-    let active = state.current().active_workspace;
-    let followed = if active == a {
-        b
-    } else if active == b {
-        a
+    let workspaces = &mut state.current_mut().workspaces;
+    if from < to {
+        workspaces[from..=to].rotate_left(1);
     } else {
+        workspaces[to..=from].rotate_right(1);
+    }
+    let active = state.current().active_workspace;
+    let followed = moved_slot(active, from, to);
+    if followed == active {
         return;
-    };
+    }
     state.current_mut().active_workspace = followed;
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, followed);
+}
+
+/// Where the workspace in `slot` ends up when the one in `from` moves to `to`.
+fn moved_slot(slot: usize, from: usize, to: usize) -> usize {
+    if slot == from {
+        to
+    } else if from < to && (from + 1..=to).contains(&slot) {
+        slot - 1
+    } else if to < from && (to..from).contains(&slot) {
+        slot + 1
+    } else {
+        slot
+    }
 }
 
 /// Whether `workspace` holds nothing of its own. A pinned pane only rides along on it.

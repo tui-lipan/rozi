@@ -201,7 +201,7 @@ fn cap_overlay_lets_workspace_tabs_and_the_title_receive_pointer_events() {
 }
 
 #[test]
-fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
+fn dropping_a_workspace_tab_moves_it_there_as_previewed_and_the_view_follows() {
     rozi::test_support::on_deeper_stack(|| {
         let mut backend = backend();
         {
@@ -228,8 +228,8 @@ fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
                 .expect("workbar drag");
         }
 
-        // Before mouse release, workspaces are not yet swapped in state, but the workbar previews
-        // the dragged tab in the target slot.
+        // Before mouse release, workspaces have not moved in state, but the workbar previews the
+        // dragged tab in the target slot with the tabs between shifted back to make room.
         assert_eq!(
             backend.state().current().workspaces[0].name.as_deref(),
             Some("code")
@@ -252,17 +252,24 @@ fn dropping_a_workspace_tab_on_another_swaps_the_two_and_the_view_follows() {
             })
             .expect("workbar drop");
 
+        // The drop lands where the preview put it: the dragged workspace third, the two it passed
+        // one slot earlier each, in the same order the preview drew them.
         let workspaces = &backend.state().current().workspaces;
+        assert_eq!(workspaces[0].name, None);
+        assert_eq!(workspaces[1].name.as_deref(), Some("docs"));
         assert_eq!(workspaces[2].name.as_deref(), Some("code"));
-        assert_eq!(workspaces[0].name.as_deref(), Some("docs"));
         assert_eq!(
             backend.state().current().active_workspace,
             2,
             "the view follows the dragged workspace to its new number"
         );
         let cells = row(&mut backend);
-        let docs = find_run(&cells, "1:docs").expect("docs now holds the first slot");
+        let one = find_run(&cells, "1").expect("the empty workspace now holds the first slot");
+        let docs = find_run(&cells, "2:docs").expect("docs now holds the second slot");
         let code = find_run(&cells, "3:code").expect("code now holds the third slot");
-        assert!(docs < code, "tabs keep their numeric order");
+        assert!(
+            one < docs && docs < code,
+            "tabs keep their numeric order and the previewed arrangement"
+        );
     });
 }

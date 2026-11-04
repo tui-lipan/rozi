@@ -447,6 +447,7 @@ fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
 fn copy_mode_drops_pastes_into_its_pane() {
     use crate::Msg;
     use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
     use crate::state::{CopyModeState, Mode};
     use tui_lipan::{ImageContent, ImageFormat, TestBackend};
 
@@ -494,9 +495,16 @@ fn copy_mode_drops_pastes_into_its_pane() {
                 ))
                 .expect("dispatch clipboard paste");
         }
+        // Pane input, or an attachment upload for rich content.
         let input = |rx: &std::sync::mpsc::Receiver<ClientOutbound>| {
             rx.try_iter()
-                .filter(|message| matches!(message, ClientOutbound::PaneInput { .. }))
+                .filter(|message| {
+                    matches!(
+                        message,
+                        ClientOutbound::PaneInput { .. }
+                            | ClientOutbound::Control(ClientMessage::Attachment { .. })
+                    )
+                })
                 .count()
         };
         assert_eq!(input(&rx), 0, "a paste reached the session");

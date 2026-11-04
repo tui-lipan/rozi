@@ -746,6 +746,7 @@ mod tests {
             ansi_reported: HostTerminalColors::ALL_ANSI_REPORTED,
             fg: Color::rgb(230, 231, 232),
             bg: Color::rgb(10, 11, 12),
+            cursor: None,
         }
     }
 

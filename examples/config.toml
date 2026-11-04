@@ -208,10 +208,6 @@
 # Toast arrival and departure: "slide" in from the right edge, "fade" in place, or "off". Slide and
 # Fade also glide the other toasts out of the way.
 #toast = "slide"
-# A trail behind the cursor when it jumps: "off", "focus" when focus moves to another pane or prompt,
-# or "jump" to also follow long moves inside one pane. Drawn in the focused border's colour.
-#cursor_trail = "off"
-#cursor_trail_ms = 160
 #focus_chrome = true
 # Choose a style independently for pane opening and closing. "off" shows and hides the pane at
 # once while neighbouring tiles still reflow; "scale" grows the pane from its own centre with a fade; "slide" brings it in
@@ -246,6 +242,37 @@
 #scale_from = 0.9
 #portal_origin = [0.5, 0.5]
 #scan_direction = "top-left"
+# A smear that follows the cursor when it jumps. mode: "off", "focus" when focus moves to another
+# pane or prompt, or "jump" to also follow long moves inside one pane. fill: "solid" draws the smear
+# in block glyphs and the cursor itself while it moves, "tint" colors the background behind the text.
+# motion: "spring" stretches and snaps it with the spring values below, which mean what they mean in
+# smear-cursor.nvim; "glide" eases the tail in over glide_ms.
+#[animations.cursor_trail]
+#mode = "off"
+#fill = "solid"
+#motion = "spring"
+# "cursor" for the cursor's own color, "accent" for the focused border's, or "#rrggbb".
+#color = "cursor"
+#stiffness = 0.6
+#trailing_stiffness = 0.45
+#trailing_exponent = 3.0
+#damping = 0.85
+#glide_ms = 160
+#max_length = 25.0
+#opacity = 1.0
+#taper = 0.0
+# Smoother diagonals for fonts with the sextants of Symbols for Legacy Computing.
+#sextants = false
+# Sparks thrown off the moving smear.
+#[animations.cursor_trail.particles]
+#enabled = false
+#per_cell = 1.5
+#max = 100
+#lifetime_ms = 300
+#spread = 6.0
+#inherit = 0.25
+#gravity = 20.0
+#drag = 3.0
 
 [theme]
 # A built-in preset id, "system" for host-derived colors, or the stem of a file in

@@ -387,9 +387,41 @@ impl PickerAnimationStyle {
     }
 }
 
-/// When a trail follows the caret to where it lands.
+/// Generates `all`, `id`, `label`, and `parse` for a config choice.
+macro_rules! config_choice {
+    ($name:ident { $($variant:ident => $id:literal, $label:literal;)+ }) => {
+        impl $name {
+            /// Cycle order for the Settings row.
+            pub fn all() -> &'static [Self] {
+                &[$(Self::$variant),+]
+            }
+
+            /// Config token and persisted value.
+            pub fn id(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $id,)+
+                }
+            }
+
+            pub fn label(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label,)+
+                }
+            }
+
+            pub fn parse(value: &str) -> Option<Self> {
+                Self::all()
+                    .iter()
+                    .copied()
+                    .find(|choice| choice.id().eq_ignore_ascii_case(value.trim()))
+            }
+        }
+    };
+}
+
+/// When a cursor trail follows the caret: `[animations.cursor_trail] mode`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CursorTrailStyle {
+pub enum CursorTrailMode {
     /// No trail.
     #[default]
     Off,
@@ -399,34 +431,88 @@ pub enum CursorTrailStyle {
     Jump,
 }
 
-impl CursorTrailStyle {
-    /// Cycle order for the Settings row.
-    pub fn all() -> &'static [Self] {
-        &[Self::Off, Self::Focus, Self::Jump]
-    }
+config_choice!(CursorTrailMode {
+    Off => "off", "Off";
+    Focus => "focus", "Focus";
+    Jump => "jump", "Jump";
+});
 
-    /// Config token and persisted value.
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Focus => "focus",
-            Self::Jump => "jump",
+/// How a cursor trail is drawn: `[animations.cursor_trail] fill`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorTrailFillStyle {
+    /// In the trail color, with block glyphs for its edges; it draws the cursor while it moves.
+    #[default]
+    Solid,
+    /// As a tint behind the text.
+    Tint,
+}
+
+config_choice!(CursorTrailFillStyle {
+    Solid => "solid", "Solid";
+    Tint => "tint", "Tint";
+});
+
+/// How a cursor trail moves: `[animations.cursor_trail] motion`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorTrailMotionStyle {
+    /// Spring physics: the smear stretches and snaps into the cursor.
+    #[default]
+    Spring,
+    /// The front sits on the cursor at once and the tail eases in over `glide_ms`.
+    Glide,
+}
+
+config_choice!(CursorTrailMotionStyle {
+    Spring => "spring", "Spring";
+    Glide => "glide", "Glide";
+});
+
+/// The color of a cursor trail: `[animations.cursor_trail] color`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorTrailColor {
+    /// The cursor's own color: the program's, else the terminal's.
+    #[default]
+    Cursor,
+    /// The theme's focused-border color.
+    Accent,
+    /// A fixed color.
+    Rgb(u8, u8, u8),
+}
+
+/// Everything `[animations.cursor_trail]` sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CursorTrailConfig {
+    pub mode: CursorTrailMode,
+    pub motion: CursorTrailMotionStyle,
+    pub fill: CursorTrailFillStyle,
+    pub color: CursorTrailColor,
+    pub spring: tui_lipan::CursorTrailSpring,
+    pub glide_duration: Duration,
+    pub max_length: f32,
+    pub opacity: f32,
+    pub taper: f32,
+    pub sextants: bool,
+    pub particles: bool,
+    pub particle: tui_lipan::CursorTrailParticles,
+}
+
+impl Default for CursorTrailConfig {
+    fn default() -> Self {
+        let trail = tui_lipan::CursorTrail::new();
+        Self {
+            mode: CursorTrailMode::default(),
+            motion: CursorTrailMotionStyle::default(),
+            fill: CursorTrailFillStyle::default(),
+            color: CursorTrailColor::default(),
+            spring: tui_lipan::CursorTrailSpring::DEFAULT,
+            glide_duration: tui_lipan::CursorTrail::DEFAULT_DURATION,
+            max_length: trail.max_length,
+            opacity: trail.opacity,
+            taper: trail.taper,
+            sextants: trail.sextants,
+            particles: false,
+            particle: tui_lipan::CursorTrailParticles::default(),
         }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Focus => "Focus",
-            Self::Jump => "Jump",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::all()
-            .iter()
-            .copied()
-            .find(|style| style.id().eq_ignore_ascii_case(value.trim()))
     }
 }
 
@@ -855,8 +941,7 @@ pub struct WindowAnimationConfig {
     pub session: SessionAnimationStyle,
     pub picker: PickerAnimationStyle,
     pub toast: ToastAnimationStyle,
-    pub cursor_trail: CursorTrailStyle,
-    pub cursor_trail_duration: Duration,
+    pub cursor_trail: CursorTrailConfig,
     pub focus_chrome: bool,
     pub pane_open_style: PaneAnimationStyle,
     pub pane_close_style: PaneAnimationStyle,
@@ -883,8 +968,7 @@ impl Default for WindowAnimationConfig {
             session: SessionAnimationStyle::default(),
             picker: PickerAnimationStyle::default(),
             toast: ToastAnimationStyle::default(),
-            cursor_trail: CursorTrailStyle::default(),
-            cursor_trail_duration: tui_lipan::CursorTrail::DEFAULT_DURATION,
+            cursor_trail: CursorTrailConfig::default(),
             focus_chrome: true,
             pane_open_style: PaneAnimationStyle::Scale,
             pane_close_style: PaneAnimationStyle::Scale,

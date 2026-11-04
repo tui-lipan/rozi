@@ -102,7 +102,7 @@ fn list_gap_after_tabs(frame: &str) -> usize {
 #[test]
 fn settings_lists_both_effect_rows_with_their_current_modes() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         {
             let state = backend.state_mut();
             state.config.pane.alert_border = AlertMode::Static;
@@ -126,7 +126,7 @@ fn settings_lists_both_effect_rows_with_their_current_modes() {
 #[test]
 fn settings_marks_multi_value_rows_with_an_ellipsis() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         let frame = rendered_rows(&mut backend);
         assert!(
             setting_row(&frame, "Which-key").contains("Which-key…"),
@@ -166,7 +166,7 @@ fn settings_marks_multi_value_rows_with_an_ellipsis() {
 #[test]
 fn settings_rows_report_their_disabled_reasons() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         {
             let state = backend.state_mut();
             state.config.pane.border_mode = PaneBorderMode::None;
@@ -229,7 +229,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_all_keeps_every_control_available() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 172);
+        let mut backend = settings_backend(100, 182);
         backend
             .state_mut()
             .config
@@ -251,6 +251,9 @@ fn settings_all_keeps_every_control_available() {
             "Session switching",
             "Pickers",
             "Cursor trail",
+            "Cursor trail fill",
+            "Cursor trail motion",
+            "Cursor trail sparks",
             "Pane open",
             "Pane close",
             "Nerd icons",
@@ -372,7 +375,7 @@ fn settings_all_keeps_every_control_available() {
 #[test]
 fn settings_omits_the_inner_header_that_repeats_the_active_tab() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         backend.state_mut().settings_navigation.tab = SettingsTab::General;
         let general = rendered_rows(&mut backend);
         let general_body = list_body(&general);
@@ -481,7 +484,7 @@ fn settings_matches_keybindings_chrome_without_hints() {
 #[test]
 fn settings_reports_startup_and_session_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         {
             let state = backend.state_mut();
             state.config.session.startup = rozi::config::SessionStartup::Last;
@@ -508,7 +511,7 @@ fn settings_reports_startup_and_session_values() {
 #[test]
 fn settings_reports_sidebar_values() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         {
             let state = backend.state_mut();
             state.sidebar.shown = [true, false];
@@ -719,7 +722,7 @@ fn picker_border_style_changes_settings_frame_glyphs() {
 fn animation_rows_are_found_by_search_and_read_their_value() {
     rozi::test_support::on_large_stack(|| {
         use rozi::layout::anim::{
-            CursorTrailStyle, PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle,
+            CursorTrailMode, PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle,
         };
         let cases = [
             ("workspace switching", "Workspace switching", "Enabled"),
@@ -737,7 +740,7 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
                 animations.workspace = true;
                 animations.session = SessionAnimationStyle::Fade;
                 animations.picker = PickerAnimationStyle::Scan;
-                animations.cursor_trail = CursorTrailStyle::Jump;
+                animations.cursor_trail.mode = CursorTrailMode::Jump;
                 animations.pane_open_style = PaneAnimationStyle::Slide;
                 animations.pane_close_style = PaneAnimationStyle::Particles;
             }
@@ -751,42 +754,83 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
     });
 }
 
-/// The Cursor trail row reaches the runtime, not just the config: picking a style hands the
-/// framework a trail lit in the focused-border colour, and the animation master switch takes it
-/// away again.
+/// The cursor trail rows reach the runtime, not just the config: picking a mode hands the
+/// framework a trail, the fill and sparks rows change it, the dependent rows grey out while the
+/// trail is off, and the animation master switch takes it away again.
 #[test]
-fn the_cursor_trail_choice_reaches_the_runtime() {
+fn the_cursor_trail_rows_reach_the_runtime() {
     rozi::test_support::on_large_stack(|| {
-        use rozi::layout::anim::CursorTrailStyle;
-        use rozi::state::SettingsAction::{CycleCursorTrailAnimation, ToggleAnimations};
-        use tui_lipan::prelude::{CursorTrail, CursorTrailTrigger};
+        use rozi::layout::anim::{CursorTrailFillStyle, CursorTrailMode};
+        use rozi::state::SettingsAction::{
+            CycleCursorTrailAnimation, CycleCursorTrailFill, ToggleAnimations,
+            ToggleCursorTrailParticles,
+        };
+        use tui_lipan::prelude::{CursorTrail, CursorTrailFill, CursorTrailTrigger};
         // Settings saves into the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(90, 30);
         backend.state_mut().config.animations.enabled = true;
-        backend.state_mut().config.animations.cursor_trail = CursorTrailStyle::Off;
+        backend.state_mut().config.animations.cursor_trail = Default::default();
         type_query(&mut backend, "cursor trail");
         assert_eq!(backend.cursor_trail(), None, "off by default");
+        for dependent in [CycleCursorTrailFill, ToggleCursorTrailParticles] {
+            assert_eq!(
+                dependent.disabled_reason(&backend.state().config),
+                Some("Needs cursor trail")
+            );
+        }
 
-        let ring = CycleCursorTrailAnimation
-            .choice_ring(&backend.state().config)
-            .expect("the row is a choice");
-        let jump = CursorTrailStyle::all()
+        let pick = |backend: &mut TestBackend<AppRoot>, action: SettingsAction, index: usize| {
+            let ring = action
+                .choice_ring(&backend.state().config)
+                .expect("the row is a choice");
+            backend.state_mut().settings_choice = Some(
+                rozi::state::SettingsChoiceEditor::from_ring(action, ring, &backend.state().config),
+            );
+            backend
+                .dispatch(rozi::Msg::SettingsChoicePick(index))
+                .unwrap();
+        };
+        let jump = CursorTrailMode::all()
             .iter()
-            .position(|style| *style == CursorTrailStyle::Jump)
+            .position(|mode| *mode == CursorTrailMode::Jump)
             .expect("Jump is offered");
-        backend.state_mut().settings_choice = Some(rozi::state::SettingsChoiceEditor::from_ring(
-            CycleCursorTrailAnimation,
-            ring,
-            &backend.state().config,
-        ));
+        pick(&mut backend, CycleCursorTrailAnimation, jump);
+        let expected = CursorTrail::new().trigger(CursorTrailTrigger::jump());
+        assert_eq!(
+            backend.cursor_trail(),
+            Some(expected),
+            "the cursor's own color by default"
+        );
+        assert_eq!(
+            CycleCursorTrailFill.disabled_reason(&backend.state().config),
+            None
+        );
+
+        let tint = CursorTrailFillStyle::all()
+            .iter()
+            .position(|fill| *fill == CursorTrailFillStyle::Tint)
+            .expect("Tint is offered");
+        pick(&mut backend, CycleCursorTrailFill, tint);
+        assert_eq!(
+            backend.cursor_trail().map(|trail| trail.fill),
+            Some(CursorTrailFill::Tint)
+        );
         backend
-            .dispatch(rozi::Msg::SettingsChoicePick(jump))
+            .dispatch(rozi::Msg::SettingsActivate(ToggleCursorTrailParticles))
             .unwrap();
-        let expected = CursorTrail::new()
-            .trigger(CursorTrailTrigger::jump())
-            .color(backend.state().theme.border_active);
-        assert_eq!(backend.cursor_trail(), Some(expected));
+        assert!(
+            backend
+                .cursor_trail()
+                .is_some_and(|trail| trail.particles.is_some()),
+            "sparks on"
+        );
+        let saved = rozi::config::load_config().config.animations.cursor_trail;
+        assert_eq!(
+            (saved.mode, saved.fill, saved.particles),
+            (CursorTrailMode::Jump, CursorTrailFillStyle::Tint, true),
+            "every row persists"
+        );
 
         backend
             .dispatch(rozi::Msg::SettingsActivate(ToggleAnimations))
@@ -1113,7 +1157,7 @@ fn merged_visibility_rows_render_save_and_restore_on_cancel() {
         use rozi::state::SettingsAction;
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 182);
         backend.state_mut().config.pane.show_titles = false;
         backend.state_mut().config.pane.titlebar = PaneTitlebarMode::Inset;
         backend.state_mut().config.pane.show_workbar = false;
@@ -1222,7 +1266,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 26, "Pane close"),
+            (SettingsTab::General, 29, "Pane close"),
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 22, "Bell urgency"),

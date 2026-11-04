@@ -8,25 +8,53 @@ use crate::{cli, config, control, ops, platform};
 
 use super::{AppRoot, exit_report, startup::StartupPlan};
 
-/// The trail `[animations] cursor_trail` asks for, lit in the focused-border colour: the same
-/// "this is where you are" signal the focused pane's border gives.
+/// The trail `[animations.cursor_trail]` asks for, or `None` when it, or animations as a whole,
+/// are off.
 pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail> {
-    use crate::layout::anim::CursorTrailStyle;
+    use crate::layout::anim::{
+        CursorTrailColor, CursorTrailFillStyle, CursorTrailMode, CursorTrailMotionStyle,
+    };
 
     let animations = &config.animations;
-    let trigger = match animations.cursor_trail {
+    let settings = animations.cursor_trail;
+    let trigger = match settings.mode {
         _ if !animations.enabled => return None,
-        CursorTrailStyle::Off => return None,
-        CursorTrailStyle::Focus => CursorTrailTrigger::FocusChange,
-        CursorTrailStyle::Jump => CursorTrailTrigger::jump(),
+        CursorTrailMode::Off => return None,
+        CursorTrailMode::Focus => CursorTrailTrigger::FocusChange,
+        CursorTrailMode::Jump => CursorTrailTrigger::jump(),
     };
-    let trail = CursorTrail::new()
+    let mut trail = CursorTrail::new()
         .trigger(trigger)
-        .duration(animations.cursor_trail_duration);
-    Some(match theme.border_active {
-        Color::Reset | Color::Backdrop | Color::Transparent => trail,
-        color => trail.color(color),
-    })
+        .motion(match settings.motion {
+            CursorTrailMotionStyle::Spring => CursorTrailMotion::Spring(settings.spring),
+            CursorTrailMotionStyle::Glide => CursorTrailMotion::Glide {
+                duration: settings.glide_duration,
+            },
+        })
+        .fill(match settings.fill {
+            CursorTrailFillStyle::Solid => CursorTrailFill::Solid,
+            CursorTrailFillStyle::Tint => CursorTrailFill::Tint,
+        })
+        .opacity(settings.opacity)
+        .taper(settings.taper)
+        .max_length(settings.max_length)
+        .sextants(settings.sextants)
+        .particles(settings.particles.then_some(settings.particle));
+    // `Cursor` leaves the color to the framework: the program's cursor color, then the
+    // terminal's.
+    match settings.color {
+        CursorTrailColor::Cursor => {}
+        CursorTrailColor::Accent => {
+            if !matches!(
+                theme.border_active,
+                Color::Reset | Color::Backdrop | Color::Transparent
+            ) {
+                trail = trail.color(theme.border_active);
+            }
+        }
+        CursorTrailColor::Rgb(r, g, b) => trail = trail.color(Color::Rgb(r, g, b)),
+    }
+    Some(trail)
 }
 
 /// Hand the runtime the trail the current config and theme ask for. Both change in many places

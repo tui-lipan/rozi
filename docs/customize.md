@@ -249,13 +249,22 @@ pane_close_style = "particles"
 workspace_ms = 160      # 0 switches workspaces instantly
 session = "portal"      # portal, wave, fade, or off
 toast = "slide"         # slide, fade, or off
-cursor_trail = "focus"  # off, focus, or jump
+
+[animations.cursor_trail]
+mode = "jump"           # off, focus, or jump
+fill = "solid"          # solid or tint
+motion = "spring"       # spring or glide
+
+[animations.cursor_trail.particles]
+enabled = true
 ```
 
-`cursor_trail` draws a short trail, in the focused border's colour, from where the cursor was to
-where it lands. `"focus"` draws it when you move to another pane or a prompt. `"jump"` also draws it
-when the cursor jumps far inside one pane, for example to another line in an editor. It is off by
-default. If your editor or terminal draws its own cursor trail, leave this off to avoid two trails.
+The cursor trail smears the cursor from where it was to where it lands, and snaps it back into
+place. `"focus"` draws it when you move to another pane or a prompt; `"jump"` also draws it when the
+cursor jumps far inside one pane, for example to another line in an editor. It is off by default.
+Its spring settings work like smear-cursor.nvim's; see [Cursor trail](configuration.md#cursor-trail)
+for every setting. If your editor or terminal draws its own cursor trail, leave this off to avoid
+two trails.
 
 Each pane style has its own timing and motion curve. See
 [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-close-animation-styles).

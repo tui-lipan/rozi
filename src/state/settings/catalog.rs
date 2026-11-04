@@ -14,8 +14,8 @@ use crate::config::{
 };
 use crate::input::Action;
 use crate::layout::anim::{
-    CursorTrailStyle, PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle,
-    ToastAnimationStyle,
+    CursorTrailFillStyle, CursorTrailMode, CursorTrailMotionStyle, PaneAnimationStyle,
+    PickerAnimationStyle, SessionAnimationStyle, ToastAnimationStyle,
 };
 use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
@@ -524,14 +524,57 @@ pub static SETTINGS: &[SettingSpec] = {
             &["caret", "smear", "focus", "jump"],
             Choice(&EnumChoice::new(
                 "Cursor trail",
-                Choices::Fixed(CursorTrailStyle::all),
-                config_field!(animations.cursor_trail),
-                CursorTrailStyle::label,
+                Choices::Fixed(CursorTrailMode::all),
+                config_field!(animations.cursor_trail.mode),
+                CursorTrailMode::label,
                 ChoiceSave::Key(
-                    ConfigKey::new("animations", "cursor_trail"),
-                    CursorTrailStyle::id,
+                    ConfigKey::new("animations.cursor_trail", "mode"),
+                    CursorTrailMode::id,
                 ),
             )),
+        ),
+        row(
+            CycleCursorTrailFill,
+            G::Animations,
+            "Cursor trail fill",
+            &["caret", "smear", "solid", "tint"],
+            Choice(&EnumChoice::new(
+                "Cursor trail fill",
+                Choices::Fixed(CursorTrailFillStyle::all),
+                config_field!(animations.cursor_trail.fill),
+                CursorTrailFillStyle::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations.cursor_trail", "fill"),
+                    CursorTrailFillStyle::id,
+                ),
+            )),
+        ),
+        row(
+            CycleCursorTrailMotion,
+            G::Animations,
+            "Cursor trail motion",
+            &["caret", "smear", "spring", "glide", "physics"],
+            Choice(&EnumChoice::new(
+                "Cursor trail motion",
+                Choices::Fixed(CursorTrailMotionStyle::all),
+                config_field!(animations.cursor_trail.motion),
+                CursorTrailMotionStyle::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations.cursor_trail", "motion"),
+                    CursorTrailMotionStyle::id,
+                ),
+            )),
+        ),
+        row(
+            ToggleCursorTrailParticles,
+            G::Animations,
+            "Cursor trail sparks",
+            &["caret", "smear", "particles", "fire"],
+            toggle(
+                config_field!(animations.cursor_trail.particles),
+                "animations.cursor_trail.particles",
+                "enabled",
+            ),
         ),
         row(
             CyclePaneOpenAnimation,

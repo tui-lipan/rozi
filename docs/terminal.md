@@ -52,8 +52,9 @@ See [Configuration](configuration.md#shell-integration) for modes and per-shell 
 
 ## Use the mouse
 
-Mouse events go to the program in the pane unless you hold the modifier (`Alt` by default) or have
-pressed the prefix. Mouse-aware editors and other terminal apps keep working normally.
+Mouse events go to the program in the pane unless you hold the modifier (`Alt` by default), have
+pressed the prefix, or the pane is in [copy mode](#copy-mode). Mouse-aware editors and other
+terminal apps keep working normally.
 
 | Gesture | Action |
 | --- | --- |
@@ -165,6 +166,12 @@ program that calls a clipboard API directly uses the remote host's clipboard.
 Press `Ctrl+A`, then `[` to enter copy mode. It lets you move a cursor with the keyboard, select
 text, jump between shell prompts, and copy the last command's output. Press `/` in copy mode to
 search the focused pane. See [Keybindings](keybindings.md#copy-mode) for every key.
+
+The mouse works in copy mode too. Drag to select text, or click to move the cursor there. The
+keys then pick up where the mouse left off: `$` extends a dragged selection to the end of its row,
+and `y` copies it and exits. The wheel scrolls the pane and keeps the cursor on the same screen
+row. While copy mode is open, the mouse belongs to it, even when the program in the pane tracks
+the mouse.
 
 ### Search scrollback
 

@@ -612,6 +612,8 @@ pub enum Msg {
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
     ForwardPrefix(KeyEvent),
     PaneMouse(PaneId, ForwardedMouseEvent),
+    /// A mouse press or drag over the copy-mode pane's terminal.
+    PaneSelection(PaneId, TerminalSelectionEvent),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),

@@ -221,6 +221,52 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
     }
 }
 
+/// Adopt a mouse press or drag over the copy-mode pane: a press moves the cursor, a drag selects.
+pub(crate) fn handle_pointer(
+    ctx: &mut Context<AppRoot>,
+    id: crate::state::PaneId,
+    event: &TerminalSelectionEvent,
+) -> Update {
+    if ctx.state.copy_mode.as_ref().map(|copy| copy.target) != Some(id) {
+        return Update::none();
+    }
+    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+        return Update::none();
+    };
+    let viewport = CopyModeViewport {
+        rows: usize::from(pane.terminal.rows),
+        cols: usize::from(pane.terminal.cols),
+        total_scrollback_rows: pane.terminal.total_scrollback_rows(),
+        scrollback_offset: pane.terminal.scrollback_offset(),
+    };
+    let Some(copy) = ctx.state.copy_mode.as_mut() else {
+        return Update::none();
+    };
+    if copy.navigation.handle_pointer(event, viewport) == CopyModeAction::Ignored {
+        return Update::none();
+    }
+    let offset = copy.navigation.scrollback_offset();
+    crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+        pane.terminal.set_scrollback(offset);
+    }
+    Update::full()
+}
+
+/// Keep the copy cursor on the same screen row when the wheel or a drag past an edge scrolls the
+/// copy-mode pane, so the view stays where it was put and an anchored selection follows it.
+pub(crate) fn follow_scroll(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, offset: usize) {
+    if let Some(copy) = ctx
+        .state
+        .copy_mode
+        .as_mut()
+        .filter(|copy| copy.target == id)
+    {
+        let (row, col) = copy.navigation.cursor();
+        copy.navigation.goto(row, col, offset);
+    }
+}
+
 fn cycle_copy_search(ctx: &mut Context<AppRoot>, backward: bool) -> Update {
     let Some(copy) = ctx.state.copy_mode.as_mut() else {
         return Update::none();
@@ -397,6 +443,126 @@ mod tests {
                     .scrollback_offset(),
                 0
             );
+        });
+    }
+
+    /// A copy-mode backend over a pane holding `line 0` .. `line 47`, scrolled to the live view.
+    fn copy_mode_backend() -> (TestBackend<AppRoot>, crate::state::PaneId) {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let target = backend.state().focused_pane().expect("focused pane");
+        let output = (0..48)
+            .map(|row| format!("line {row}\r\n"))
+            .collect::<String>();
+        find_pane_mut(backend.state_mut(), target)
+            .expect("pane")
+            .terminal
+            .process_server_output(output.as_bytes());
+        backend.state_mut().mode = Mode::Copy;
+        backend.state_mut().copy_mode = Some(CopyModeState {
+            target,
+            navigation: TerminalCopyMode::new(0, 0, 0),
+            search_matches: Vec::new(),
+            search_current: 0,
+            search_truncated: false,
+        });
+        (backend, target)
+    }
+
+    fn pointer_event(
+        selection: Option<TerminalSelection>,
+        pointer: TerminalPos,
+    ) -> TerminalSelectionEvent {
+        let mut event = TerminalSelectionEvent::default();
+        event.selection = selection;
+        event.pointer = Some(pointer);
+        event
+    }
+
+    #[test]
+    fn a_pointer_drag_selects_the_dragged_text_in_copy_mode() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, target) = copy_mode_backend();
+            let total = find_pane_mut(backend.state_mut(), target)
+                .expect("pane")
+                .terminal
+                .total_scrollback_rows();
+            // `line 40` sits at absolute line 40; drag from its `4` back to its first cell.
+            let drag = TerminalSelection {
+                anchor: TerminalPos { line: 40, col: 7 },
+                cursor: TerminalPos { line: 40, col: 0 },
+            };
+            backend
+                .dispatch(crate::Msg::PaneSelection(
+                    target,
+                    pointer_event(Some(drag), drag.cursor),
+                ))
+                .expect("pointer drag");
+
+            let copy = backend.state().copy_mode.clone().expect("copy mode");
+            let selection = copy
+                .navigation
+                .selection(total)
+                .expect("anchored selection");
+            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+            let text =
+                pane.terminal
+                    .selection_display_text(&selection, SelectionEnd::Inclusive, true);
+            assert_eq!(text, "line 40", "selection {selection:?}");
+            assert_eq!(
+                pane.terminal.scrollback_offset(),
+                copy.navigation.scrollback_offset()
+            );
+        });
+    }
+
+    #[test]
+    fn wheel_scrolling_keeps_the_copy_cursor_on_its_screen_row() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, target) = copy_mode_backend();
+            backend
+                .state_mut()
+                .copy_mode
+                .as_mut()
+                .expect("copy mode")
+                .navigation
+                .goto(2, 3, 0);
+            backend
+                .dispatch(crate::Msg::PaneScroll(target, 5))
+                .expect("wheel scroll");
+
+            let copy = backend.state().copy_mode.clone().expect("copy mode");
+            assert_eq!(copy.navigation.scrollback_offset(), 5);
+            assert_eq!(copy.navigation.cursor(), (2, 3));
+
+            // A press in the scrolled view lands where it was made, not where the view was.
+            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+            let total = pane.terminal.total_scrollback_rows();
+            let line = absolute_line(total, 5, 1);
+            backend
+                .dispatch(crate::Msg::PaneSelection(
+                    target,
+                    pointer_event(None, TerminalPos { line, col: 4 }),
+                ))
+                .expect("pointer press");
+            let copy = backend.state().copy_mode.clone().expect("copy mode");
+            assert_eq!(copy.navigation.scrollback_offset(), 5);
+            assert_eq!(copy.navigation.cursor(), (1, 4));
+            assert_eq!(copy.navigation.anchor(), None);
+        });
+    }
+
+    #[test]
+    fn pointer_events_for_another_pane_leave_copy_mode_alone() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, target) = copy_mode_backend();
+            let before = backend.state().copy_mode.clone();
+            backend
+                .dispatch(crate::Msg::PaneSelection(
+                    target + 1,
+                    pointer_event(None, TerminalPos { line: 40, col: 2 }),
+                ))
+                .expect("pointer press elsewhere");
+            assert_eq!(backend.state().copy_mode, before);
         });
     }
 }

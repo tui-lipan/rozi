@@ -8,7 +8,7 @@ use crate::layout::geometry::{
     canvas_local_point_from_mouse, clamp_float_rect, clamp_floating_rect,
     grabbed_edge_on_outer_border, resize_float_rect_from_corner, workspace_tile_bounds,
 };
-use crate::layout::model::{Direction, LayoutKind, ResizeCorner, TileGap};
+use crate::layout::model::{Direction, EVEN_SPLIT_RATIO, LayoutKind, ResizeCorner, TileGap};
 use crate::layout::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
 };
@@ -21,7 +21,7 @@ use crate::ops::focus::{
     scrollable_scroll, settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
 use crate::pane::id::PaneId;
-use crate::state::{EVEN_SPLIT_RATIO, MoveSession, ResizeSession, State, Workspace};
+use crate::state::{MoveSession, ResizeSession, State, Workspace};
 
 use super::tiling::{
     master_available_width, resize_master_split_by_pixels, resize_scrollable_width_by_pixels,

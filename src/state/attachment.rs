@@ -5,9 +5,15 @@ use std::time::Duration;
 
 use tui_lipan::prelude::{ExitQueue, GraphicsMediaPolicy};
 
-use super::{Pane, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, Workspace};
+use super::{
+    ORPHAN_OUTPUT_GLOBAL_CAP, ORPHAN_OUTPUT_KEY_CAP, Pane, PendingPaneSpawn, PendingSessionAttach,
+    SharedSessionState, Workspace,
+};
 use crate::layout::model::WORKSPACE_COUNT;
 use crate::pane::id::PaneId;
+use crate::runtime_metrics::{
+    ByteBufferMetrics, OrphanOutputMetrics, RuntimeMetrics, unix_time_millis,
+};
 use crate::session::naming::is_ephemeral_session_name;
 
 /// Identity of an attachment. Equal to the `runtime_epoch` the attachment was committed with, which
@@ -153,6 +159,47 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    /// This attachment's client-side resource counters, sampled now, with the server's last
+    /// cached report.
+    pub fn runtime_metrics(&self) -> RuntimeMetrics {
+        let (client_inbound, client_outbound, piped_remote, server) = self
+            .session_client
+            .as_ref()
+            .map(|client| {
+                let stats = client.runtime_stats();
+                (
+                    stats.inbound,
+                    Some(stats.outbound),
+                    stats.piped_remote,
+                    stats.server,
+                )
+            })
+            .unwrap_or((None, None, None, None));
+        let orphan = self
+            .shared
+            .as_ref()
+            .map(|shared| shared.orphan_output_stats())
+            .unwrap_or_default();
+
+        RuntimeMetrics {
+            terminal_graphics: tui_lipan::terminal_graphics_metrics(),
+            sampled_at_unix_ms: unix_time_millis(),
+            client_inbound,
+            client_outbound,
+            piped_remote,
+            orphan_output: OrphanOutputMetrics {
+                bytes: ByteBufferMetrics::new(
+                    orphan.retained,
+                    orphan.high_water,
+                    ORPHAN_OUTPUT_GLOBAL_CAP,
+                ),
+                keys: orphan.keys as u64,
+                capacity_keys: ORPHAN_OUTPUT_KEY_CAP as u64,
+            },
+            server,
+        }
+    }
+
     /// Where this attachment's client runs relative to the server spawning its panes.
     pub(crate) fn client_site(&self) -> crate::pane::spawn_policy::ClientSite {
         if self.remote_host.is_some() {

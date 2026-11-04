@@ -90,24 +90,6 @@ pub enum Launch {
     Shell { line: String },
 }
 
-impl From<&crate::config::LaunchTemplate> for Launch {
-    fn from(template: &crate::config::LaunchTemplate) -> Self {
-        match template {
-            crate::config::LaunchTemplate::Direct(argv) => Self::Direct { argv: argv.clone() },
-            crate::config::LaunchTemplate::Shell(line) => Self::Shell { line: line.clone() },
-        }
-    }
-}
-
-impl Launch {
-    pub fn template(&self) -> crate::config::LaunchTemplate {
-        match self {
-            Self::Direct { argv } => crate::config::LaunchTemplate::Direct(argv.clone()),
-            Self::Shell { line } => crate::config::LaunchTemplate::Shell(line.clone()),
-        }
-    }
-}
-
 /// Where a placed process starts on the host.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

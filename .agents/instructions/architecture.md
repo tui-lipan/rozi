@@ -47,15 +47,19 @@ Some files in the domain cores are cut free of the application layers: they must
 `crate::state`, `config`, `view`, `app`, `ops` or `update`, and must not name `AppRoot`. They are
 the plain vocabulary and documents the layers share: `layout/model.rs`, `pane/id.rs`,
 `pane/chrome.rs`, the shared layout document (`layout/shared/mod.rs`, `validate.rs`, `edit.rs`,
-`placement.rs`), the wire vocabulary (`control.rs`, `control/`, `session/protocol/`) and
-`session/naming.rs`. `tests/suites/contracts/domain_floor.rs` holds the list and enforces it. A file
-joins the list once it stops importing the layers; it never leaves the list to make a change
-compile. Plain vocabulary that both a core and a layer need belongs in the core, not in `state/`.
+`placement.rs`), the wire vocabulary (`control.rs`, `control/`, `session/protocol/`, and the
+`runtime_metrics.rs`, `extension_runtime/protocol.rs` and `recording/format.rs` types it carries)
+and `session/naming.rs`. `tests/suites/contracts/domain_floor.rs` holds the list and enforces it.
+Test modules are skipped, and only them: a `mod` gated on `cfg(test)` or `cfg(all(test, …))` at any
+visibility, whether inline or in its own file. Production code after a test module is still scanned. A file joins the list once it stops importing the layers; it never leaves the list to make
+a change compile. Plain vocabulary that both a core and a layer need belongs in the core, not in
+`state/`, and a conversion between a floor type and a layer type lives on the layer's side.
 
-The guard covers *direct* imports only. It does not make these files separable from `state`:
-`layout/tiling.rs`, which several of them reach for `DwindleTree`, still imports `Workspace` from
-`state`. Moving the tree into a state-free module, with `tiling.rs` keeping the `Workspace`
-adapters, is what would make the floor hold transitively.
+The guard covers *direct* imports only. It does not make these files separable from `state`: the
+floor still calls into `layout/tiling.rs` (`DwindleTree`) and `layout/mod.rs`
+(`effective_tile_tree`, `placement_for`), and both import `Workspace` from `state`. Moving the tree
+and placement code into state-free modules, with `Workspace` adapters left behind, is what would make
+the floor hold transitively.
 
 The code that reads or writes `State` for these documents sits next to them but outside the list:
 `layout/shared/project.rs` projects `State` into the document, `layout/shared/reconcile.rs`

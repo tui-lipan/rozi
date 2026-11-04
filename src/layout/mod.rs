@@ -20,9 +20,11 @@ use self::tiling::{
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
     collect_tree_leaves, insert_leaf_around_target, ratio_at,
 };
-use crate::layout::model::{LayoutKind, ScrollableRevealEdge, SplitAxis, TileGap};
+use crate::layout::model::{
+    EVEN_SPLIT_RATIO, LayoutKind, ScrollableRevealEdge, SplitAxis, TileGap,
+};
 use crate::pane::id::PaneId;
-use crate::state::{EVEN_SPLIT_RATIO, Pane, Workspace};
+use crate::state::{Pane, Workspace};
 
 /// What tiling geometry reads from one workspace.
 ///

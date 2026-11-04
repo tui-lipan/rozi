@@ -586,7 +586,7 @@ fn collect(reader: std::thread::JoinHandle<Vec<u8>>, until: Instant) -> Option<V
 }
 
 fn build_command(launch: &Launch, bundle_dir: &Path) -> Result<Command, SpawnFailure> {
-    match launch.template().resolve(bundle_dir) {
+    match LaunchTemplate::from(launch).resolve(bundle_dir) {
         LaunchTemplate::Direct(argv) => {
             let Some((program, args)) = argv.split_first() else {
                 return Err(SpawnFailure::SpawnFailed {

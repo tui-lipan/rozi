@@ -122,6 +122,25 @@ pub enum LaunchTemplate {
     Shell(String),
 }
 
+impl From<&LaunchTemplate> for crate::extension_runtime::protocol::Launch {
+    fn from(template: &LaunchTemplate) -> Self {
+        match template {
+            LaunchTemplate::Direct(argv) => Self::Direct { argv: argv.clone() },
+            LaunchTemplate::Shell(line) => Self::Shell { line: line.clone() },
+        }
+    }
+}
+
+impl From<&crate::extension_runtime::protocol::Launch> for LaunchTemplate {
+    fn from(launch: &crate::extension_runtime::protocol::Launch) -> Self {
+        use crate::extension_runtime::protocol::Launch;
+        match launch {
+            Launch::Direct { argv } => Self::Direct(argv.clone()),
+            Launch::Shell { line } => Self::Shell(line.clone()),
+        }
+    }
+}
+
 impl LaunchTemplate {
     /// Substitute `extension_dir` for the placeholder and resolve a relative program against it.
     pub fn resolve(&self, extension_dir: &std::path::Path) -> LaunchTemplate {

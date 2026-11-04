@@ -450,7 +450,7 @@ to where it settled. A move to another pane draws at once.
 | `trailing_exponent` | float | `3.0` | How quickly corners between leading and trailing fall back to the trailing pull, from 0.1 to 10. |
 | `damping` | float | `0.82` | How much speed the corners lose each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
-| `max_length` | float | `25.0` | No part of the smear trails the cursor by more than this many cells, up to 500. `0` leaves it unbounded. |
+| `max_length` | float | `0.0` | No part of the smear trails the cursor by more than this many cells, from the start of a jump, up to 500. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
 | `sextants` | bool | `false` | Also draw edges with the sextant characters of Symbols for Legacy Computing, for smoother diagonals. Turn it on only if your font has them. |

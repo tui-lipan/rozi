@@ -258,7 +258,7 @@
 #trailing_exponent = 3.0
 #damping = 0.82
 #glide_ms = 160
-#max_length = 25.0
+#max_length = 0.0
 #opacity = 1.0
 #taper = 0.0
 # Smoother diagonals for fonts with the sextants of Symbols for Legacy Computing.

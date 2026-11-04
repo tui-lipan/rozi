@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::source_scan::{production_lines, rust_sources};
+use crate::source_scan::{production_lines, production_sources};
 
 /// Files and directories (relative to the crate root) that must not reach into the layers.
 const FLOOR: &[&str] = &[
@@ -124,17 +124,17 @@ fn forbidden_references(lines: &[&str]) -> Vec<(usize, String)> {
 
 #[test]
 fn domain_floor_does_not_import_the_application_layers() {
-    let mut sources = Vec::new();
-    for entry in FLOOR {
-        let path = Path::new(entry);
-        assert!(path.exists(), "floor entry {entry} no longer exists");
-        rust_sources(path, &mut sources);
+    let roots: Vec<&Path> = FLOOR.iter().map(Path::new).collect();
+    for (entry, root) in FLOOR.iter().zip(&roots) {
+        assert!(root.exists(), "floor entry {entry} no longer exists");
     }
+    // Test modules may build `State` to exercise the core, so they are left out.
+    let sources = production_sources(Path::new("src"), &roots);
 
     let mut offenders = Vec::new();
     for path in sources {
         let text = std::fs::read_to_string(&path).expect("read source");
-        // Unit tests may build `State` to exercise the core, so their modules are skipped.
+        // Inline test modules are blanked the same way.
         let lines = production_lines(&path, &text);
         for (line_number, what) in forbidden_references(&lines) {
             offenders.push(format!(

@@ -50,8 +50,8 @@ the plain vocabulary and documents the layers share: `layout/model.rs`, `pane/id
 `placement.rs`), the wire vocabulary (`control.rs`, `control/`, `session/protocol/`, and the
 `runtime_metrics.rs`, `extension_runtime/protocol.rs` and `recording/format.rs` types it carries)
 and `session/naming.rs`. `tests/suites/contracts/domain_floor.rs` holds the list and enforces it.
-Unit-test modules are skipped, and only them: production code after a `#[cfg(test)] mod` is still
-scanned. A file joins the list once it stops importing the layers; it never leaves the list to make
+Test modules are skipped, and only them: a `mod` gated on `cfg(test)` or `cfg(all(test, …))` at any
+visibility, whether inline or in its own file. Production code after a test module is still scanned. A file joins the list once it stops importing the layers; it never leaves the list to make
 a change compile. Plain vocabulary that both a core and a layer need belongs in the core, not in
 `state/`, and a conversion between a floor type and a layer type lives on the layer's side.
 

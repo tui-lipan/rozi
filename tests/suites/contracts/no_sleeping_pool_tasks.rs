@@ -8,21 +8,22 @@
 
 use std::path::Path;
 
-use crate::source_scan::{production_lines, rust_sources};
+use crate::source_scan::{production_lines, production_sources};
 
 /// Lines to look ahead from a `Command::spawn(` for a sleep in its body.
 const WINDOW: usize = 6;
 
 #[test]
 fn no_command_spawn_sleeps_on_a_pool_worker() {
-    let mut sources = Vec::new();
-    rust_sources(Path::new("src"), &mut sources);
+    // Test modules legitimately sleep to drive timing, so they are left out.
+    let src = Path::new("src");
+    let sources = production_sources(src, &[src]);
     assert!(!sources.is_empty(), "expected to find crate sources");
 
     let mut offenders = Vec::new();
     for path in sources {
         let text = std::fs::read_to_string(&path).expect("read source");
-        // Unit tests legitimately sleep to drive timing, so their modules are skipped.
+        // Inline test modules are blanked the same way.
         let lines = production_lines(&path, &text);
         let end = lines.len();
         for (index, line) in lines.iter().enumerate() {

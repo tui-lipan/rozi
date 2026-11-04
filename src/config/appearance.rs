@@ -3,8 +3,8 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle, ScanDirection,
-    SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
+    CursorTrailStyle, PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle,
+    ScanDirection, SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
 };
 
 use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec, SessionSpec};
@@ -98,6 +98,14 @@ pub(super) fn apply_animations(
             )),
         }
     }
+    if let Some(value) = raw.cursor_trail.as_deref() {
+        match CursorTrailStyle::parse(value) {
+            Some(style) => target.cursor_trail = style,
+            None => warnings.push(format!(
+                "Ignored unknown animations.cursor_trail \"{value}\" (expected one of: off, focus, jump)"
+            )),
+        }
+    }
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
     target.pane_overrides = resolve_pane_overrides(&raw, warnings);
@@ -162,6 +170,9 @@ fn apply_animation_misc(target: &mut WindowAnimationConfig, raw: &AnimationFileC
     }
     if let Some(value) = raw.focus_chrome_ms {
         target.focus_chrome_duration = Duration::from_millis(value);
+    }
+    if let Some(value) = raw.cursor_trail_ms {
+        target.cursor_trail_duration = Duration::from_millis(value);
     }
     if let Some(value) = raw.alert_pulse_ms {
         target.alert_pulse_duration = Duration::from_millis(value);
@@ -316,12 +327,23 @@ mod tests {
             assert_eq!(config.toast, *style);
             assert!(warnings.is_empty());
         }
-        let (config, warnings) = parsed("picker = \"zoom\"\ntoast = \"zoom\"");
+        for style in CursorTrailStyle::all() {
+            let (config, warnings) =
+                parsed(&format!("cursor_trail = \"{}\"", style.id().to_uppercase()));
+            assert_eq!(config.cursor_trail, *style);
+            assert!(warnings.is_empty());
+        }
+        let (config, _) = parsed("cursor_trail_ms = 300");
+        assert_eq!(config.cursor_trail_duration, Duration::from_millis(300));
+        let (config, warnings) =
+            parsed("picker = \"zoom\"\ntoast = \"zoom\"\ncursor_trail = \"zoom\"");
         assert_eq!(config.picker, PickerAnimationStyle::Fade);
         assert_eq!(config.toast, ToastAnimationStyle::Slide);
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(config.cursor_trail, CursorTrailStyle::Off);
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert!(warnings[0].contains("animations.picker"));
         assert!(warnings[1].contains("animations.toast"));
+        assert!(warnings[2].contains("animations.cursor_trail"));
     }
 
     #[test]

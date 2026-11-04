@@ -111,6 +111,7 @@ settings_actions! {
     CycleSessionAnimation,
     CyclePickerAnimation,
     CycleToastAnimation,
+    CycleCursorTrailAnimation,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCursorBlink,
@@ -310,6 +311,7 @@ impl SettingsAction {
             | Self::CycleSessionAnimation
             | Self::CyclePickerAnimation
             | Self::CycleToastAnimation
+            | Self::CycleCursorTrailAnimation
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")
@@ -802,6 +804,7 @@ mod tests {
             SettingsAction::CycleSessionAnimation,
             SettingsAction::CyclePickerAnimation,
             SettingsAction::CycleToastAnimation,
+            SettingsAction::CycleCursorTrailAnimation,
             SettingsAction::CyclePaneOpenAnimation,
             SettingsAction::CyclePaneCloseAnimation,
         ];

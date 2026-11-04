@@ -229,7 +229,7 @@ fn settings_keeps_both_effect_rows_on_a_narrow_viewport() {
 #[test]
 fn settings_all_keeps_every_control_available() {
     rozi::test_support::on_large_stack(|| {
-        let mut backend = settings_backend(100, 170);
+        let mut backend = settings_backend(100, 172);
         backend
             .state_mut()
             .config
@@ -250,6 +250,7 @@ fn settings_all_keeps_every_control_available() {
             "Workspace switching",
             "Session switching",
             "Pickers",
+            "Cursor trail",
             "Pane open",
             "Pane close",
             "Nerd icons",
@@ -299,6 +300,7 @@ fn settings_all_keeps_every_control_available() {
         }
         let animations = group_rows(&frame, "Animations", "Clipboard");
         setting_row(animations, "Play animations");
+        setting_row(animations, "Cursor trail");
         setting_row(animations, "Pane open");
         setting_row(animations, "Pane close");
         let pickers = group_rows(&frame, "Pickers", "Background");
@@ -716,11 +718,14 @@ fn picker_border_style_changes_settings_frame_glyphs() {
 #[test]
 fn animation_rows_are_found_by_search_and_read_their_value() {
     rozi::test_support::on_large_stack(|| {
-        use rozi::layout::anim::{PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle};
+        use rozi::layout::anim::{
+            CursorTrailStyle, PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle,
+        };
         let cases = [
             ("workspace switching", "Workspace switching", "Enabled"),
             ("session switching", "Session switching", "Fade"),
             ("picker animation", "Pickers", "Scan"),
+            ("cursor trail", "Cursor trail", "Jump"),
             ("pane open", "Pane open", "Slide"),
             ("pane close", "Pane close", "Particles"),
         ];
@@ -732,6 +737,7 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
                 animations.workspace = true;
                 animations.session = SessionAnimationStyle::Fade;
                 animations.picker = PickerAnimationStyle::Scan;
+                animations.cursor_trail = CursorTrailStyle::Jump;
                 animations.pane_open_style = PaneAnimationStyle::Slide;
                 animations.pane_close_style = PaneAnimationStyle::Particles;
             }
@@ -742,6 +748,55 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
                 "{query:?} should find {label:?} reading {value:?}:\n{frame}"
             );
         }
+    });
+}
+
+/// The Cursor trail row reaches the runtime, not just the config: picking a style hands the
+/// framework a trail lit in the focused-border colour, and the animation master switch takes it
+/// away again.
+#[test]
+fn the_cursor_trail_choice_reaches_the_runtime() {
+    rozi::test_support::on_large_stack(|| {
+        use rozi::layout::anim::CursorTrailStyle;
+        use rozi::state::SettingsAction::{CycleCursorTrailAnimation, ToggleAnimations};
+        use tui_lipan::prelude::{CursorTrail, CursorTrailTrigger};
+        // Settings saves into the file this binary's tests share.
+        let _config = rozi::test_support::lock_config_file();
+        let mut backend = settings_backend(90, 30);
+        backend.state_mut().config.animations.enabled = true;
+        backend.state_mut().config.animations.cursor_trail = CursorTrailStyle::Off;
+        type_query(&mut backend, "cursor trail");
+        assert_eq!(backend.cursor_trail(), None, "off by default");
+
+        let ring = CycleCursorTrailAnimation
+            .choice_ring(&backend.state().config)
+            .expect("the row is a choice");
+        let jump = CursorTrailStyle::all()
+            .iter()
+            .position(|style| *style == CursorTrailStyle::Jump)
+            .expect("Jump is offered");
+        backend.state_mut().settings_choice = Some(rozi::state::SettingsChoiceEditor::from_ring(
+            CycleCursorTrailAnimation,
+            ring,
+            &backend.state().config,
+        ));
+        backend
+            .dispatch(rozi::Msg::SettingsChoicePick(jump))
+            .unwrap();
+        let expected = CursorTrail::new()
+            .trigger(CursorTrailTrigger::jump())
+            .color(backend.state().theme.border_active);
+        assert_eq!(backend.cursor_trail(), Some(expected));
+
+        backend
+            .dispatch(rozi::Msg::SettingsActivate(ToggleAnimations))
+            .unwrap();
+        assert!(!backend.state().config.animations.enabled);
+        assert_eq!(
+            backend.cursor_trail(),
+            None,
+            "the master switch turns it off"
+        );
     });
 }
 
@@ -1167,7 +1222,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 25, "Pane close"),
+            (SettingsTab::General, 26, "Pane close"),
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 22, "Bell urgency"),

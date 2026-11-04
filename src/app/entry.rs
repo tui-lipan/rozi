@@ -8,6 +8,37 @@ use crate::{cli, config, control, ops, platform};
 
 use super::{AppRoot, exit_report, startup::StartupPlan};
 
+/// The trail `[animations] cursor_trail` asks for, lit in the focused-border colour: the same
+/// "this is where you are" signal the focused pane's border gives.
+pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail> {
+    use crate::layout::anim::CursorTrailStyle;
+
+    let animations = &config.animations;
+    let trigger = match animations.cursor_trail {
+        _ if !animations.enabled => return None,
+        CursorTrailStyle::Off => return None,
+        CursorTrailStyle::Focus => CursorTrailTrigger::FocusChange,
+        CursorTrailStyle::Jump => CursorTrailTrigger::jump(),
+    };
+    let trail = CursorTrail::new()
+        .trigger(trigger)
+        .duration(animations.cursor_trail_duration);
+    Some(match theme.border_active {
+        Color::Reset | Color::Backdrop | Color::Transparent => trail,
+        color => trail.color(color),
+    })
+}
+
+/// Hand the runtime the trail the current config and theme ask for. Both change in many places
+/// (reloads, theme files, Settings, profiles), so the post-update sync calls this rather than
+/// each of them.
+pub(crate) fn sync_cursor_trail(ctx: &mut Context<super::AppRoot>) {
+    let trail = cursor_trail(&ctx.state.config, &ctx.state.theme);
+    if ctx.cursor_trail() != trail {
+        ctx.set_cursor_trail(trail);
+    }
+}
+
 pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
     // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
     // that is what we want: copy from a remote pane reaches the local clipboard. Disabling

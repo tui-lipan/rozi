@@ -238,8 +238,8 @@ You can add your own sidebar tabs that launch commands or list a command's outpu
 ## Tune animations
 
 rozi animates panes opening and closing, workspace and session switches, toasts, and focus
-changes. The master switch turns everything off at once; **Settings › General › Animations** holds
-the same controls.
+changes, and can draw a trail behind the cursor when it jumps. The master switch turns everything
+off at once; **Settings › General › Animations** holds the same controls.
 
 ```toml
 [animations]
@@ -249,7 +249,13 @@ pane_close_style = "particles"
 workspace_ms = 160      # 0 switches workspaces instantly
 session = "portal"      # portal, wave, fade, or off
 toast = "slide"         # slide, fade, or off
+cursor_trail = "focus"  # off, focus, or jump
 ```
+
+`cursor_trail` draws a short trail, in the focused border's colour, from where the cursor was to
+where it lands. `"focus"` draws it when you move to another pane or a prompt. `"jump"` also draws it
+when the cursor jumps far inside one pane, for example to another line in an editor. It is off by
+default. If your editor or terminal draws its own cursor trail, leave this off to avoid two trails.
 
 Each pane style has its own timing and motion curve. See
 [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-close-animation-styles).

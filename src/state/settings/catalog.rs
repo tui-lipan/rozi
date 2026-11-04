@@ -14,7 +14,8 @@ use crate::config::{
 };
 use crate::input::Action;
 use crate::layout::anim::{
-    PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle, ToastAnimationStyle,
+    CursorTrailStyle, PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle,
+    ToastAnimationStyle,
 };
 use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
@@ -513,6 +514,22 @@ pub static SETTINGS: &[SettingSpec] = {
                 ChoiceSave::Key(
                     ConfigKey::new("animations", "toast"),
                     ToastAnimationStyle::id,
+                ),
+            )),
+        ),
+        row(
+            CycleCursorTrailAnimation,
+            G::Animations,
+            "Cursor trail",
+            &["caret", "smear", "focus", "jump"],
+            Choice(&EnumChoice::new(
+                "Cursor trail",
+                Choices::Fixed(CursorTrailStyle::all),
+                config_field!(animations.cursor_trail),
+                CursorTrailStyle::label,
+                ChoiceSave::Key(
+                    ConfigKey::new("animations", "cursor_trail"),
+                    CursorTrailStyle::id,
                 ),
             )),
         ),

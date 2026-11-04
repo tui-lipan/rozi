@@ -15,7 +15,7 @@ pub(crate) mod exit_report;
 mod startup;
 
 pub use entry::run;
-pub(crate) use entry::{clipboard_config, clipboard_copy_feedback_duration};
+pub(crate) use entry::{clipboard_config, clipboard_copy_feedback_duration, sync_cursor_trail};
 use startup::{StartupCwd, StartupProfile, StartupSession, StartupTasks};
 
 pub struct AppRoot {
@@ -340,6 +340,7 @@ impl Component for AppRoot {
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
         ctx.set_scroll_wheel_multiplier(ctx.state.config.input.scroll_multiplier);
+        sync_cursor_trail(ctx);
         ctx.state.terminal_presentation_subscription =
             Some(ctx.observe_terminal_presentations(ctx.link().callback(Msg::TerminalPresented)));
         commands::sync(ctx);

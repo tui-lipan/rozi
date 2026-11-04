@@ -697,6 +697,8 @@ pub(super) struct AnimationFileConfig {
     pub(super) session: Option<SessionSpec>,
     pub(super) picker: Option<String>,
     pub(super) toast: Option<String>,
+    pub(super) cursor_trail: Option<String>,
+    pub(super) cursor_trail_ms: Option<u64>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) pane_open_style: Option<String>,

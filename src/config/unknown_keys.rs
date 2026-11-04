@@ -66,6 +66,8 @@ const ANIMATION_KEYS: &[&str] = &[
     "pane_style",
     "picker",
     "toast",
+    "cursor_trail",
+    "cursor_trail_ms",
     "pane_open_style",
     "pane_close_style",
     "geometry_ms",

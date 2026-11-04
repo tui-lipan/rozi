@@ -387,6 +387,49 @@ impl PickerAnimationStyle {
     }
 }
 
+/// When a trail follows the caret to where it lands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorTrailStyle {
+    /// No trail.
+    #[default]
+    Off,
+    /// A trail when focus moves to another pane or prompt.
+    Focus,
+    /// A trail on focus moves, and when the caret jumps far inside one pane.
+    Jump,
+}
+
+impl CursorTrailStyle {
+    /// Cycle order for the Settings row.
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Focus, Self::Jump]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Focus => "focus",
+            Self::Jump => "jump",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Focus => "Focus",
+            Self::Jump => "Jump",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|style| style.id().eq_ignore_ascii_case(value.trim()))
+    }
+}
+
 /// How toasts arrive, leave, and make room for each other.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ToastAnimationStyle {
@@ -812,6 +855,8 @@ pub struct WindowAnimationConfig {
     pub session: SessionAnimationStyle,
     pub picker: PickerAnimationStyle,
     pub toast: ToastAnimationStyle,
+    pub cursor_trail: CursorTrailStyle,
+    pub cursor_trail_duration: Duration,
     pub focus_chrome: bool,
     pub pane_open_style: PaneAnimationStyle,
     pub pane_close_style: PaneAnimationStyle,
@@ -838,6 +883,8 @@ impl Default for WindowAnimationConfig {
             session: SessionAnimationStyle::default(),
             picker: PickerAnimationStyle::default(),
             toast: ToastAnimationStyle::default(),
+            cursor_trail: CursorTrailStyle::default(),
+            cursor_trail_duration: tui_lipan::CursorTrail::DEFAULT_DURATION,
             focus_chrome: true,
             pane_open_style: PaneAnimationStyle::Scale,
             pane_close_style: PaneAnimationStyle::Scale,

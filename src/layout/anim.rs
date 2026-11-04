@@ -440,9 +440,10 @@ config_choice!(CursorTrailMode {
 /// How a cursor trail looks: `[animations.cursor_trail] style`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorTrailStyle {
-    /// A tint behind the text; the cursor stays where it is.
+    /// A fainter smear that never covers text or the cursor: a tint behind text, smooth edges
+    /// where there is none.
     Tint,
-    /// A solid smear of the cursor, drawn in block glyphs; it draws the cursor while it moves.
+    /// A solid smear of the cursor with smooth edges; it draws the cursor while it moves.
     #[default]
     Smear,
     /// The smear, throwing sparks.

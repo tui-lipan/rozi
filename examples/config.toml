@@ -243,10 +243,11 @@
 #portal_origin = [0.5, 0.5]
 #scan_direction = "top-left"
 # A smear that follows the cursor when it jumps. mode: "off", "focus" when focus moves to another
-# pane or prompt, or "jump" to also follow long moves inside one pane. style: "smear" draws it in
-# block glyphs and the cursor itself while it moves, "sparks" adds sparks, "tint" colors the
-# background behind the text. motion: "spring" stretches and snaps it with the spring values below,
-# which mean what they mean in smear-cursor.nvim; "glide" eases the tail in over glide_ms.
+# pane or prompt, or "jump" to also follow long moves inside one pane. style: "smear" draws it
+# with smooth edges and draws the cursor itself while it moves, "sparks" adds sparks, "tint" is a
+# fainter smear that colors the background behind text and leaves text and cursor alone. motion:
+# "spring" stretches and snaps it with the spring values below, which mean what they mean in
+# smear-cursor.nvim; "glide" eases the tail in over glide_ms.
 #[animations.cursor_trail]
 #mode = "off"
 #style = "smear"

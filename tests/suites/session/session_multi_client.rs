@@ -447,7 +447,7 @@ fn pane_layout() -> SharedLayout {
                 pinned: false,
                 fullscreen: false,
                 rect: None,
-                scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                scrollable_width: rozi::layout::model::DEFAULT_SCROLLABLE_WIDTH,
             }],
         }],
     }

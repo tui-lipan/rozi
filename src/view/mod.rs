@@ -1231,8 +1231,9 @@ pub(crate) fn fg_only(style: &Style) -> Style {
 mod pane_layer_tests {
     use crate::AppRoot;
     use crate::layout::anim::PaneAnimationStyle;
+    use crate::layout::model::{LayoutKind, SplitAxis};
     use crate::layout::tiling::DwindleTree;
-    use crate::state::{LayoutKind, Pane, SharedSessionState, SplitAxis};
+    use crate::state::{Pane, SharedSessionState};
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::{FloatRect, Rect};
 

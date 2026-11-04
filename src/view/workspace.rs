@@ -8,7 +8,8 @@ use crate::layout::tiling::PanePlacement;
 use crate::layout::{
     ordered_panes, placement_for, workspace_target_rects_excluding_with_visible_and_float_bounds,
 };
-use crate::state::{ChromeSlot, PaneId};
+use crate::pane::id::PaneId;
+use crate::state::ChromeSlot;
 
 use super::animation;
 use super::canvas_rect_to_root;

@@ -1001,7 +1001,7 @@ mod tests {
     }
 
     /// Two tiled panes, `focus` focused, the session fade off so frames compare exactly.
-    fn two_panes(focus: crate::state::PaneId) -> TestBackend<AppRoot> {
+    fn two_panes(focus: crate::pane::id::PaneId) -> TestBackend<AppRoot> {
         let mut backend = backend();
         {
             let state = backend.state_mut();
@@ -1022,7 +1022,7 @@ mod tests {
         backend
     }
 
-    fn move_focus(backend: &mut TestBackend<AppRoot>, focus: crate::state::PaneId) {
+    fn move_focus(backend: &mut TestBackend<AppRoot>, focus: crate::pane::id::PaneId) {
         let state = backend.state_mut();
         state.current_mut().workspaces[0].focused_pane = Some(focus);
         state.current_mut().focused_pane = Some(focus);

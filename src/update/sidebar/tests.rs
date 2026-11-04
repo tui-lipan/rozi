@@ -1743,7 +1743,7 @@ fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
 fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
     crate::test_support::on_large_stack(|| {
         let spawn = activate_launcher(UserCommandAction::popup("date"), Some("/home/x/notes"));
-        assert_eq!(spawn.pane_id, crate::state::POPUP_PANE_ID);
+        assert_eq!(spawn.pane_id, crate::pane::id::POPUP_PANE_ID);
         assert_eq!(spawn.cwd.as_deref(), Some("/home/x/notes"));
         assert!(
             spawn.keep_open,
@@ -2563,7 +2563,7 @@ fn remote_directory_requests_reject_old_sessions_but_survive_configuration_chang
 
 fn monitored_agent(
     session: &str,
-    pane: crate::state::PaneId,
+    pane: crate::pane::id::PaneId,
     state: &str,
 ) -> crate::session::protocol::AgentSummary {
     crate::session::protocol::AgentSummary {
@@ -2666,7 +2666,7 @@ fn project(
     root: &str,
     repository: Option<&str>,
     branch: &str,
-    panes: &[crate::state::PaneId],
+    panes: &[crate::pane::id::PaneId],
 ) -> crate::session::protocol::ProjectSummary {
     crate::session::protocol::ProjectSummary {
         session: session.into(),

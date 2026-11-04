@@ -1,7 +1,7 @@
 //! `rozi layout ...` and `rozi pane ...`: reading and changing the shared layout.
 
 use crate::control::{CellRect, ControlCommand, ControlLayoutKind, FractionRect};
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 use super::{ListFormat, parse_list_format, require_value};
 
@@ -215,11 +215,11 @@ impl Flags {
         let index = value
             .parse::<usize>()
             .ok()
-            .filter(|index| (1..=crate::state::WORKSPACE_COUNT).contains(index))
+            .filter(|index| (1..=crate::layout::model::WORKSPACE_COUNT).contains(index))
             .ok_or_else(|| {
                 format!(
                     "--workspace requires a workspace number from 1 to {}",
-                    crate::state::WORKSPACE_COUNT
+                    crate::layout::model::WORKSPACE_COUNT
                 )
             })?;
         once(&mut self.workspace, index, "--workspace")

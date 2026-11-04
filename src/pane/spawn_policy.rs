@@ -15,9 +15,10 @@
 use std::path::Path;
 
 use crate::config::RuleConfig;
+use crate::layout::model::WORKSPACE_COUNT;
+use crate::pane::id::PaneId;
 use crate::pane::launch::PaneLaunch;
 use crate::pane::lifecycle::SpawnPlacement;
-use crate::state::{PaneId, WORKSPACE_COUNT};
 
 /// Turn a request's `command`/`argv` pair into a launch.
 ///

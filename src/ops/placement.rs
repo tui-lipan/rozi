@@ -1248,7 +1248,7 @@ pub(crate) fn run_command_from_pane(
     placements: SharedPlacements,
     placed: &crate::config::PlacedCommand,
     extra_env: Vec<(String, String)>,
-    source: Option<crate::state::PaneId>,
+    source: Option<crate::pane::id::PaneId>,
 ) -> Update {
     let label = command.label.clone().unwrap_or_else(|| command.id.clone());
     let Some(binding) = active_binding(&ctx.state) else {

@@ -621,7 +621,7 @@ impl SessionServer {
                         );
                         self.sync_program_status(owner, id, generation, true);
                         if keep_open {
-                            let outbound = if id == crate::state::POPUP_PANE_ID {
+                            let outbound = if id == crate::pane::id::POPUP_PANE_ID {
                                 self.retain_completed_popup(owner, id, generation, code)
                             } else {
                                 self.replace_with_keep_open_shell(owner, id, generation, code)

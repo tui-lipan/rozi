@@ -1,8 +1,9 @@
 //! Paste local clipboard attachments into the session that owns the target pane.
 
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane, pane_is_local};
 use crate::session::client::attachments::Source;
-use crate::state::{PaneId, State};
+use crate::state::State;
 use crate::{AppRoot, Msg};
 use std::result::Result;
 use tui_lipan::prelude::*;

@@ -581,7 +581,7 @@ fn unexpected(command: &str, value: &str) -> String {
 }
 
 fn is_pane_id(value: &str) -> bool {
-    value.parse::<crate::state::PaneId>().is_ok()
+    value.parse::<crate::pane::id::PaneId>().is_ok()
 }
 
 /// The error for a pane id written where only a flag may go, as in `agents get 3`.

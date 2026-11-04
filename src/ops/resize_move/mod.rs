@@ -31,8 +31,10 @@ pub(super) mod test_util {
     use tui_lipan::prelude::*;
 
     use crate::AppRoot;
+    use crate::layout::model::SplitAxis;
     use crate::layout::tiling::DwindleTree;
-    use crate::state::{Pane, PaneId, SplitAxis, Workspace};
+    use crate::pane::id::PaneId;
+    use crate::state::{Pane, Workspace};
 
     pub(super) const TEST_VIEWPORT: Rect = Rect {
         x: 0,

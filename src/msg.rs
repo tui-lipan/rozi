@@ -1,8 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::input::Action;
+use crate::layout::model::ResizeCorner;
 use crate::layout::shared::{ClientId, SharedLayout};
-use crate::state::{PaneId, ResizeCorner};
+use crate::pane::id::PaneId;
 use crate::{control, session};
 
 pub use crate::extension_installation::{ExtensionInstallOutcome, ExtensionUpdateOutcome};
@@ -164,7 +165,7 @@ pub enum Msg {
     AlertPulseTick,
     /// Forward a pane's newest held pointer position when its next frame interval begins.
     /// See [`crate::pane::pty_events::pointer_flow`].
-    PointerFlowTick(crate::state::PaneId),
+    PointerFlowTick(crate::pane::id::PaneId),
     /// The config watcher saw `config.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
     /// The installed extension set changed, from this client, another one, or the CLI; reload
@@ -653,7 +654,7 @@ pub enum Msg {
     /// A pane's program opened a `publish` stream. The sender carries activations back to it.
     PublishStreamOpen {
         stream_id: u64,
-        requested_pane: Option<crate::state::PaneId>,
+        requested_pane: Option<crate::pane::id::PaneId>,
         source_session: Option<crate::session::protocol::SessionInstanceId>,
         kind: crate::session::protocol::PublisherKind,
         name: Option<String>,
@@ -661,19 +662,19 @@ pub enum Msg {
         worker: Option<crate::state::WorkerId>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<
-            std::result::Result<crate::state::PaneId, control::ControlResponse>,
+            std::result::Result<crate::pane::id::PaneId, control::ControlResponse>,
         >,
     },
     /// One row list from an open stream, replacing whatever that pane published before.
     PublishedRowsReported {
         stream_id: u64,
-        pane_id: crate::state::PaneId,
+        pane_id: crate::pane::id::PaneId,
         rows: Vec<crate::session::protocol::PublishedRow>,
     },
     /// A `publish` stream ended, withdrawing the pane's rows.
     PublishStreamClosed {
         stream_id: u64,
-        pane_id: crate::state::PaneId,
+        pane_id: crate::pane::id::PaneId,
     },
     /// An external program opened a `pick` stream.
     PickStreamOpen {
@@ -949,7 +950,7 @@ pub enum Msg {
     },
     SessionProgramStatusChanged {
         epoch: u64,
-        pane_id: crate::state::PaneId,
+        pane_id: crate::pane::id::PaneId,
         local: bool,
         generation: u64,
         /// Initial attach baseline, applied without attention or historical notifications.

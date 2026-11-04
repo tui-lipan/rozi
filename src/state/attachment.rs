@@ -6,9 +6,11 @@ use std::time::Duration;
 use tui_lipan::prelude::{ExitQueue, GraphicsMediaPolicy};
 
 use super::{
-    Pane, PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT,
-    Workspace, is_ephemeral_session_name,
+    Pane, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, Workspace,
+    is_ephemeral_session_name,
 };
+use crate::layout::model::WORKSPACE_COUNT;
+use crate::pane::id::PaneId;
 
 /// Identity of an attachment. Equal to the `runtime_epoch` the attachment was committed with, which
 /// is also the epoch its server frames carry, so a background attachment's output routes to it while

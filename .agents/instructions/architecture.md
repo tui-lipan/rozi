@@ -41,6 +41,15 @@ terminal widget and its lifecycle, `state/pane.rs` is the per-pane app state, `v
 it. That repetition is the structure working, not a naming clash — read the *directory*, not the
 file name, to know which one you want.
 
+### Domain floor
+
+Some files in the domain cores are cut free of the application layers: they must not import
+`crate::state`, `config`, `view`, `app`, `ops` or `update`, and must not name `AppRoot`. The list
+lives in `tests/suites/contracts/domain_floor.rs`, which enforces it. A file joins the list once it
+stops importing the layers; it never leaves the list to make a change compile. Plain vocabulary
+that both a core and a layer need (`layout/model.rs`, `pane/id.rs`) belongs in the core, not in
+`state/`.
+
 New code lands in an existing layer or an existing domain core. Adding a new top-level module means
 claiming a new domain, so say why in the change that introduces it.
 

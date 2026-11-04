@@ -3,7 +3,7 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::config::{LinkAction, LinkHandler, UserCommandAction};
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 pub(crate) fn handler<'a>(handlers: &'a [LinkHandler], scheme: &str) -> Option<&'a LinkAction> {
     handlers

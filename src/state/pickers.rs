@@ -7,7 +7,7 @@ use tui_lipan::rank_search_palette_indices_with_mode;
 use crate::config::ProfileEntry;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 
-use super::PaneId;
+use crate::pane::id::PaneId;
 
 pub struct SaveProfileState {
     pub input: TextInput,
@@ -1266,18 +1266,18 @@ impl SaveProfileState {
     }
 }
 
-/// The open layout-mode picker. The list is the fixed [`crate::state::LayoutKind::all`] set, so this
+/// The open layout-mode picker. The list is the fixed [`crate::layout::model::LayoutKind::all`] set, so this
 /// only tracks the highlighted row — the row set is derived at render time. `selected` lets the
 /// `set default` key act on whichever mode is highlighted; `original` is the active workspace's
 /// layout when the picker opened, restored if the user leaves without committing (live preview).
 pub struct LayoutPickerState {
     pub selected: usize,
-    pub original: super::LayoutKind,
+    pub original: crate::layout::model::LayoutKind,
     pub query: String,
 }
 
 impl LayoutPickerState {
-    pub fn new(selected: usize, original: super::LayoutKind) -> Self {
+    pub fn new(selected: usize, original: crate::layout::model::LayoutKind) -> Self {
         Self {
             selected,
             original,

@@ -1,7 +1,7 @@
 //! Static built-in command catalog: ids, default keys, labels, and palette eligibility.
 
 use crate::input::Action;
-use crate::state::Direction::{Down, Left, Right, Up};
+use crate::layout::model::Direction::{Down, Left, Right, Up};
 
 pub(crate) struct BuiltinCommand {
     pub(crate) action: Action,

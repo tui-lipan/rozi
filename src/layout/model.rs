@@ -1,4 +1,8 @@
-use super::TILE_GAP;
+//! Plain layout vocabulary: split axes, directions, layout kinds, gaps and the constants the
+//! tiling math shares. It depends on no application state.
+
+/// Gap, in cells, between left|right tiled panes.
+pub const TILE_GAP: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplitAxis {
@@ -110,6 +114,39 @@ impl LayoutKind {
         all[(index + 1) % all.len()]
     }
 }
+
+pub const WORKSPACE_COUNT: usize = 9;
+
+/// Which visible edge a Scrollable strip anchor aligns to when scrolling into view.
+/// Local viewport state only — never persisted in profiles or SharedLayout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollableRevealEdge {
+    /// Align the anchor pane's left edge with the visible left edge.
+    #[default]
+    Left,
+    /// Align the anchor pane's right edge with the visible right edge.
+    Right,
+    /// Hold the anchor pane's left edge this many cells right of the visible left edge (negative
+    /// when it sits scrolled past it). Reordering panes records the strip's scroll this way so a
+    /// pane can land in a visible slot without the columns around it sliding.
+    LeftOffset(i32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeCorner {
+    UpperLeft,
+    UpperRight,
+    LowerLeft,
+    LowerRight,
+}
+
+pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
+pub const DEFAULT_RATIO: f32 = 0.58;
+/// Default Scrollable column width as a fraction of the tile viewport.
+pub const DEFAULT_SCROLLABLE_WIDTH: f32 = 0.45;
+pub const MAX_SPLIT_RATIO: f32 = 0.80;
+/// Default weight for tile width against height when choosing a dwindle split direction.
+pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 #[cfg(test)]
 mod tests {

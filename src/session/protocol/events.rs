@@ -9,10 +9,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::shared::ClientId;
+use crate::pane::id::PaneId;
 use crate::session::protocol::{
     AgentRuntime, AgentState, PaneCommandPhase, PaneStatus, SessionInstanceId,
 };
-use crate::state::PaneId;
 
 /// An event's fields, as they are built before going onto the wire.
 pub type EventFields = Vec<(&'static str, String)>;

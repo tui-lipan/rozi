@@ -13,8 +13,9 @@ use tui_lipan::prelude::*;
 
 use crate::app::AppRoot;
 use crate::config::SessionScope;
+use crate::pane::id::PaneId;
 use crate::session::protocol::{PublishedRow, PublisherKind, RowKey, SessionInstanceId};
-use crate::state::{PaneId, PublishOrigin, PublishStreamKey, PublisherIdentity};
+use crate::state::{PublishOrigin, PublishStreamKey, PublisherIdentity};
 
 /// What a `publish` request asked for, beside the channels that carry its stream.
 pub(crate) struct PublishOpen {
@@ -569,7 +570,7 @@ mod tests {
 
     struct Open<'a> {
         stream_id: u64,
-        pane: Option<crate::state::PaneId>,
+        pane: Option<crate::pane::id::PaneId>,
         session: Option<&'a str>,
         extension: Option<&'a str>,
         kind: PublisherKind,
@@ -593,7 +594,7 @@ mod tests {
         backend: &mut TestBackend<crate::AppRoot>,
         open: Open<'_>,
         sender: std::sync::mpsc::SyncSender<String>,
-    ) -> std::result::Result<crate::state::PaneId, crate::control::ControlResponse> {
+    ) -> std::result::Result<crate::pane::id::PaneId, crate::control::ControlResponse> {
         let (ack, reply) = mpsc::channel();
         let extension = open.extension.map(|id| crate::config::ExtensionProvenance {
             id: id.to_string(),

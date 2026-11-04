@@ -1,9 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane_in_namespace_mut, remove_pane_after_exit};
 use crate::pane::pty_events::maybe_notify_pane_exit;
-use crate::state::PaneId;
 
 struct PaneOutputEffects {
     indicator_raised: bool,
@@ -524,7 +524,7 @@ pub(crate) fn exited(
     // The scratchpad is a local overlay (never in the shared layout), so every client that owns it
     // closes it directly. Shared exits never consult overlay membership: a colliding numeric id
     // must not close the owner's scratch or popup.
-    if local && pane_id == crate::state::POPUP_PANE_ID {
+    if local && pane_id == crate::pane::id::POPUP_PANE_ID {
         return crate::ops::popup::handle_exit(ctx);
     }
     if local && crate::scratchpad::contains(&ctx.state, pane_id) {

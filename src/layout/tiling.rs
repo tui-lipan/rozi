@@ -1,9 +1,11 @@
 use tui_lipan::prelude::FloatRect;
 
-use crate::state::{
-    DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, EVEN_SPLIT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO,
-    PaneId, ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
+use crate::layout::model::{
+    DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, MAX_SPLIT_RATIO, ScrollableRevealEdge, SplitAxis,
+    TileGap,
 };
+use crate::pane::id::PaneId;
+use crate::state::{EVEN_SPLIT_RATIO, MIN_SPLIT_RATIO, Workspace};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DwindleTree {

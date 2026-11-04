@@ -16,11 +16,12 @@ use crate::control::{
     RecordingStopped,
 };
 use crate::ops::focus::{request_current_pane_focus, request_recording_mark_focus};
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane, pane_is_local};
 use crate::pane::pty_events::{notify_error, notify_info, notify_path_error, notify_path_info};
 use crate::recording::EndReason;
 use crate::state::{
-    AttachedReply, Mode, PaneId, RecordingAction, RecordingMarkPrompt, RecordingMarkTarget, State,
+    AttachedReply, Mode, RecordingAction, RecordingMarkPrompt, RecordingMarkTarget, State,
 };
 
 /// How long a mark's blink holds the dot highlighted.

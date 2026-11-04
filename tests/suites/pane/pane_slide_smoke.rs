@@ -12,8 +12,9 @@ use rozi::layout::anim::{
     GeometryAnimation, PaneAnimationSnapshot, PaneAnimationSpec, PaneAnimationStyle, ScanDirection,
     SlideEdge,
 };
+use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneBorderMode, SplitAxis};
+use rozi::state::{Pane, PaneBorderMode};
 use tui_lipan::TestBackend;
 use tui_lipan::animation::Easing;
 use tui_lipan::core::event::{MouseButton, MouseKind};

@@ -35,12 +35,12 @@ pub struct SidebarCommandOutput {
 pub enum RowTarget {
     /// Headers, spacers, and error rows: present in the list, never selected or activated.
     Inert,
-    Pane(crate::state::PaneId),
+    Pane(crate::pane::id::PaneId),
     /// One agent or activity inside a pane that publishes several. Focuses the pane and asks its
     /// program to bring that row on screen, since focusing alone would only ever reveal the row it
     /// already draws.
     PublishedRow {
-        pane_id: crate::state::PaneId,
+        pane_id: crate::pane::id::PaneId,
         row: crate::session::protocol::RowKey,
     },
     Session(Box<crate::session::discovery::DiscoveredSession>),
@@ -93,7 +93,7 @@ pub enum RowTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarClose {
     /// Kill the pane, the same as `close-pane` on it.
-    Pane(crate::state::PaneId),
+    Pane(crate::pane::id::PaneId),
     /// Remove a linked checkout, never its branch. `force` once Git has refused a dirty one.
     Worktree { path: String, force: bool },
     /// Kill the session: shut its server down, the same as the picker's `Ctrl+K`.
@@ -462,7 +462,7 @@ pub struct SidebarState {
     pub tree_refresh_armed_epoch: Option<u64>,
     /// Focused pane and its last observed command phase, used to refresh git status on the edge
     /// into `Completed` — the moment a command has finished changing the working tree.
-    pub last_command_phase: Option<(crate::state::PaneId, PaneCommandPhase)>,
+    pub last_command_phase: Option<(crate::pane::id::PaneId, PaneCommandPhase)>,
     /// Whether the row list currently owns keyboard focus. Mirrored from the body widget's
     /// `on_focus`/`on_blur` rather than set directly, so it cannot disagree with the framework
     /// about where focus actually is — clicking a pane blurs the body and clears this on its own.

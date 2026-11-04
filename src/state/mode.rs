@@ -1,4 +1,4 @@
-use super::PaneId;
+use crate::pane::id::PaneId;
 use tui_lipan::prelude::TerminalCopyMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

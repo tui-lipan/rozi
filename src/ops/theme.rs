@@ -628,7 +628,8 @@ fn fallback_text_color(background: Color) -> Color {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{Pane, PaneId, ThemePreset};
+    use crate::pane::id::PaneId;
+    use crate::state::{Pane, ThemePreset};
 
     #[test]
     fn chrome_color_snaps_palette_colors_but_fades_truecolor() {

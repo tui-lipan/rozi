@@ -203,7 +203,7 @@ fn summary_row(
 /// Where a row sits, for numbering rows that would otherwise read the same: its pane, then its
 /// place among that pane's agents. Stable while states change, and the order Activity numbers the
 /// same runs in, so one run carries one number everywhere.
-type Seat = (crate::state::PaneId, usize);
+type Seat = (crate::pane::id::PaneId, usize);
 
 /// Number the rows that would otherwise read exactly the same - same title, same agent beside a
 /// task, same session and host, same project and branch - by where they sit. Every other row stays
@@ -386,7 +386,7 @@ mod tests {
     use crate::session::protocol::AgentSummary;
     use crate::session::remote::RemoteTarget;
 
-    fn summary(session: &str, pane: crate::state::PaneId, state: &str) -> AgentSummary {
+    fn summary(session: &str, pane: crate::pane::id::PaneId, state: &str) -> AgentSummary {
         AgentSummary {
             reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),

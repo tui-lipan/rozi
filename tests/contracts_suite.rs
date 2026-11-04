@@ -1,5 +1,7 @@
 #[path = "suites/contracts/cli_startup.rs"]
 mod cli_startup;
+#[path = "suites/contracts/domain_floor.rs"]
+mod domain_floor;
 #[path = "suites/contracts/extensions_cli.rs"]
 mod extensions_cli;
 #[path = "suites/contracts/extensions_conformance.rs"]

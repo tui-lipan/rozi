@@ -11,9 +11,10 @@ use crate::input::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::ops::focus::{
     focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
 };
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
 use crate::pane::pty_events::terminal_key_event_bytes;
-use crate::state::{PaneId, PaneIdentity};
+use crate::state::PaneIdentity;
 
 /// The documents this endpoint answers with are the CLI's contract, not this module's, so their
 /// shapes live in [`crate::control`] and both control surfaces fill the same types.
@@ -2593,8 +2594,8 @@ mod tests {
     fn validate_workspace_index_rejects_out_of_range() {
         assert!(validate_workspace_index(0).is_some());
         assert!(validate_workspace_index(1).is_none());
-        assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT).is_none());
-        assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT + 1).is_some());
+        assert!(validate_workspace_index(crate::layout::model::WORKSPACE_COUNT).is_none());
+        assert!(validate_workspace_index(crate::layout::model::WORKSPACE_COUNT + 1).is_some());
     }
 
     #[test]
@@ -3229,7 +3230,7 @@ mod tests {
             assert_eq!(report.session, "dev");
             assert_eq!(
                 report.workspaces.len(),
-                crate::state::WORKSPACE_COUNT,
+                crate::layout::model::WORKSPACE_COUNT,
                 "empty workspaces are still reported, with their layouts"
             );
             let client = report.client.expect("a UI reports its own view");
@@ -3653,13 +3654,15 @@ mod tests {
                 (
                     layout_set(Some(crate::control::ControlLayoutKind::Master), Some(0.65)),
                     |layout| {
-                        layout.set_layout_kind(0, crate::state::LayoutKind::Master)
+                        layout.set_layout_kind(0, crate::layout::model::LayoutKind::Master)
                             | layout.set_master_ratio(0, 0.65)
                     },
                 ),
                 (
                     layout_set(Some(crate::control::ControlLayoutKind::Scrollable), None),
-                    |layout| layout.set_layout_kind(0, crate::state::LayoutKind::Scrollable),
+                    |layout| {
+                        layout.set_layout_kind(0, crate::layout::model::LayoutKind::Scrollable)
+                    },
                 ),
             ];
             for (command, apply) in steps {

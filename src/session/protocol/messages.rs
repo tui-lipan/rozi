@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::layout::shared::{ClientId, SharedLayout};
+use crate::pane::id::PaneId;
 use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::session::origin::SessionOrigin;
 use crate::session::protocol::pane_runtime::{
     PaneMeta, PaneRuntimeState, PublishedRow, WirePalette,
 };
-use crate::state::PaneId;
 
 /// A cell size as the wire carries it. Zero in either dimension means the sender had none.
 pub fn wire_cell(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize> {

@@ -1,9 +1,10 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::layout::model::LayoutKind;
 use crate::ops::focus::{request_current_pane_focus, request_layout_picker_focus};
 use crate::ops::resize_move::set_layout;
-use crate::state::{LayoutKind, LayoutPickerState, Mode};
+use crate::state::{LayoutPickerState, Mode};
 
 /// The active workspace's current layout, and its index in [`LayoutKind::all`].
 fn current_layout(ctx: &Context<AppRoot>) -> (usize, LayoutKind) {

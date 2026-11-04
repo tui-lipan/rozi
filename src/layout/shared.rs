@@ -15,7 +15,8 @@ use crate::layout::tiling::DwindleTree;
 use crate::layout::tree_ser::{
     SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
 };
-use crate::state::{PaneId, State};
+use crate::pane::id::PaneId;
+use crate::state::State;
 
 /// Stable identity for an attached client, assigned by the server on attach.
 pub type ClientId = u64;
@@ -119,7 +120,7 @@ pub struct SharedPane {
 }
 
 fn default_shared_scrollable_width() -> f32 {
-    crate::state::DEFAULT_SCROLLABLE_WIDTH
+    crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -259,7 +260,7 @@ impl SharedLayout {
         let mut seen_panes = std::collections::HashSet::new();
 
         for ws in &self.workspaces {
-            if ws.index >= crate::state::WORKSPACE_COUNT {
+            if ws.index >= crate::layout::model::WORKSPACE_COUNT {
                 return Err(SharedLayoutValidationError::InvalidWorkspaceIndex(ws.index));
             }
             if !seen_workspaces.insert(ws.index) {
@@ -270,7 +271,7 @@ impl SharedLayout {
 
             let mut ws_pane_ids = std::collections::HashSet::new();
             for pane in &ws.panes {
-                if pane.pane_id == crate::state::POPUP_PANE_ID {
+                if pane.pane_id == crate::pane::id::POPUP_PANE_ID {
                     return Err(SharedLayoutValidationError::ReservedPaneId(pane.pane_id));
                 }
                 if !seen_panes.insert(pane.pane_id) {
@@ -538,11 +539,11 @@ impl<'a> SharedTileSource<'a> {
 }
 
 impl crate::layout::TileSource for SharedTileSource<'_> {
-    fn layout_kind(&self) -> crate::state::LayoutKind {
+    fn layout_kind(&self) -> crate::layout::model::LayoutKind {
         self.workspace.layout.into()
     }
 
-    fn start_axis(&self) -> crate::state::SplitAxis {
+    fn start_axis(&self) -> crate::layout::model::SplitAxis {
         self.workspace.start_axis.into()
     }
 
@@ -568,7 +569,7 @@ impl crate::layout::TileSource for SharedTileSource<'_> {
             .panes
             .iter()
             .find(|pane| pane.pane_id == id)
-            .map_or(crate::state::DEFAULT_SCROLLABLE_WIDTH, |pane| {
+            .map_or(crate::layout::model::DEFAULT_SCROLLABLE_WIDTH, |pane| {
                 pane.scrollable_width
             })
     }
@@ -576,10 +577,10 @@ impl crate::layout::TileSource for SharedTileSource<'_> {
     fn scrollable_viewport(
         &self,
         tiled_ids: &[PaneId],
-    ) -> (Option<PaneId>, crate::state::ScrollableRevealEdge) {
+    ) -> (Option<PaneId>, crate::layout::model::ScrollableRevealEdge) {
         (
             tiled_ids.first().copied(),
-            crate::state::ScrollableRevealEdge::Left,
+            crate::layout::model::ScrollableRevealEdge::Left,
         )
     }
 
@@ -616,7 +617,7 @@ pub(crate) fn shared_workspace_placements(
         None,
         None,
         0.0,
-        crate::state::TileGap {
+        crate::layout::model::TileGap {
             horizontal: 0.0,
             vertical: 0.0,
         },
@@ -711,7 +712,11 @@ impl SharedLayout {
     /// Set a workspace's layout kind; `index` is zero-based. A workspace the document does not
     /// hold yet is added, empty, so the choice is recorded for when panes arrive. Returns whether
     /// the document changed.
-    pub(crate) fn set_layout_kind(&mut self, index: usize, kind: crate::state::LayoutKind) -> bool {
+    pub(crate) fn set_layout_kind(
+        &mut self,
+        index: usize,
+        kind: crate::layout::model::LayoutKind,
+    ) -> bool {
         let kind = SharedLayoutKind::from(kind);
         let exists = self
             .workspaces
@@ -727,7 +732,7 @@ impl SharedLayout {
 
     /// The layout kind of the workspace at zero-based `index`; a workspace the document does not
     /// hold yet reads as the kind it would be added with.
-    pub(crate) fn layout_kind_of(&self, index: usize) -> crate::state::LayoutKind {
+    pub(crate) fn layout_kind_of(&self, index: usize) -> crate::layout::model::LayoutKind {
         self.workspaces
             .iter()
             .find(|workspace| workspace.index == index)
@@ -1099,7 +1104,7 @@ pub(crate) fn set_master_share(split_ratios: &mut Vec<f32>, ratio: f32) -> bool 
     if split_ratios
         .first()
         .copied()
-        .unwrap_or(crate::state::DEFAULT_RATIO)
+        .unwrap_or(crate::layout::model::DEFAULT_RATIO)
         == ratio
     {
         return false;
@@ -1269,7 +1274,7 @@ struct RebuiltWorkspaces {
 }
 
 fn index_incoming_panes(layout: &SharedLayout) -> std::collections::HashMap<PaneId, usize> {
-    use crate::state::WORKSPACE_COUNT;
+    use crate::layout::model::WORKSPACE_COUNT;
 
     layout
         .workspaces
@@ -1303,7 +1308,7 @@ fn drain_existing_panes(
     bounds: FloatRect,
     visible_bounds: FloatRect,
 ) -> DrainedPanes {
-    use crate::state::WORKSPACE_COUNT;
+    use crate::layout::model::WORKSPACE_COUNT;
 
     let animations = state.config.animations;
     let top_gap = state.workspace_top_gap();
@@ -1401,7 +1406,8 @@ fn rebuild_shared_workspaces(
     reusable: &mut std::collections::HashMap<PaneId, crate::state::Pane>,
     closing_by_workspace: &mut [Vec<crate::state::Pane>],
 ) -> RebuiltWorkspaces {
-    use crate::state::{Pane, WORKSPACE_COUNT};
+    use crate::layout::model::WORKSPACE_COUNT;
+    use crate::state::Pane;
 
     let (canvas_cols, canvas_rows) = canonical_canvas;
     let mut next_pane_id = ctx.state.current().next_pane_id;
@@ -1535,7 +1541,7 @@ fn restore_closing_panes_in_omitted_workspaces(
     layout: &SharedLayout,
     closing_by_workspace: Vec<Vec<crate::state::Pane>>,
 ) {
-    use crate::state::WORKSPACE_COUNT;
+    use crate::layout::model::WORKSPACE_COUNT;
 
     for (index, closing) in closing_by_workspace.into_iter().enumerate() {
         let omitted = !layout
@@ -1549,8 +1555,10 @@ fn restore_closing_panes_in_omitted_workspaces(
     }
 }
 
-fn repair_workspace_focus_and_anchors(state: &mut State) -> [bool; crate::state::WORKSPACE_COUNT] {
-    use crate::state::{LayoutKind, ScrollableRevealEdge, WORKSPACE_COUNT};
+fn repair_workspace_focus_and_anchors(
+    state: &mut State,
+) -> [bool; crate::layout::model::WORKSPACE_COUNT] {
+    use crate::layout::model::{LayoutKind, ScrollableRevealEdge, WORKSPACE_COUNT};
 
     let mut reveal_after_focus_fallback = [false; WORKSPACE_COUNT];
     for (index, workspace) in state.current_mut().workspaces.iter_mut().enumerate() {
@@ -1596,7 +1604,7 @@ pub(crate) fn apply_shared_layout(
     layout: &SharedLayout,
     rev: u64,
 ) -> Update {
-    use crate::state::WORKSPACE_COUNT;
+    use crate::layout::model::WORKSPACE_COUNT;
 
     // A foreign commit can only land mid-drag right after this client lost the lease; cancel any
     // in-flight move/resize so it does not fight the incoming geometry.
@@ -1852,7 +1860,8 @@ fn apply_shared_pane_fields(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{LayoutKind, Pane, State};
+    use crate::layout::model::LayoutKind;
+    use crate::state::{Pane, State};
 
     #[test]
     fn client_scratchpad_is_excluded_from_shared_layout() {
@@ -1943,7 +1952,7 @@ mod tests {
                 &state.current().workspaces[0],
                 bounds,
                 0.0,
-                crate::state::TileGap {
+                crate::layout::model::TileGap {
                     horizontal: 0.0,
                     vertical: 0.0,
                 },
@@ -2273,7 +2282,7 @@ mod tests {
         assert!(!pane.replay);
         assert_eq!(
             pane.scrollable_width,
-            crate::state::DEFAULT_SCROLLABLE_WIDTH
+            crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
         );
     }
 
@@ -2322,7 +2331,7 @@ mod tests {
         );
         assert_eq!(
             runtime.scrollable_width,
-            crate::state::DEFAULT_SCROLLABLE_WIDTH
+            crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
         );
         assert_eq!(SHARED_LAYOUT_VERSION, 4);
     }
@@ -2372,7 +2381,7 @@ mod tests {
             previous,
             bounds,
             0.0,
-            crate::state::TileGap::DEFAULT,
+            crate::layout::model::TileGap::DEFAULT,
             split_width_multiplier,
         );
         state.current_mut().next_pane_id = 3;
@@ -2478,7 +2487,7 @@ mod tests {
                         pinned: false,
                         fullscreen: false,
                         rect: None,
-                        scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                        scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                     }],
                 }],
             };
@@ -2504,11 +2513,12 @@ mod reconciler_tests {
     use crate::AppRoot;
     use crate::Msg;
     use crate::input::Action;
+    use crate::layout::model::Direction;
     use crate::ops::focus::focus_pane;
     use crate::pane::lifecycle::{find_pane, find_pane_mut};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
-    use crate::state::{Direction, DirectionalFocusHint, SharedSessionState};
+    use crate::state::{DirectionalFocusHint, SharedSessionState};
     use tui_lipan::TestBackend;
 
     // Seed capacity metadata for synthetic layout fixtures. Explicit resize/output fixtures keep
@@ -2602,7 +2612,7 @@ mod reconciler_tests {
                         pinned: false,
                         fullscreen: false,
                         rect: None,
-                        scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                        scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                     })
                     .collect(),
             }],
@@ -3203,7 +3213,7 @@ mod reconciler_tests {
             );
             assert_eq!(
                 backend.state().current().workspaces[0].scrollable_reveal_edge,
-                crate::state::ScrollableRevealEdge::Left
+                crate::layout::model::ScrollableRevealEdge::Left
             );
             assert_eq!(
                 backend.state().animation,
@@ -3252,8 +3262,8 @@ mod reconciler_tests {
     #[test]
     fn inactive_scrollable_focus_fallback_reveals_on_workspace_switch() {
         in_stack(|| {
+            use crate::layout::model::LayoutKind;
             use crate::ops::focus::switch_workspace;
-            use crate::state::LayoutKind;
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
@@ -3289,7 +3299,7 @@ mod reconciler_tests {
                             pinned: false,
                             fullscreen: false,
                             rect: None,
-                            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                            scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                         }],
                     },
                     SharedWorkspace {
@@ -3315,7 +3325,7 @@ mod reconciler_tests {
                                 pinned: false,
                                 fullscreen: false,
                                 rect: None,
-                                scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                                scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                             })
                             .collect(),
                     },
@@ -3393,7 +3403,7 @@ mod reconciler_tests {
             );
             assert_eq!(
                 backend.state().current().workspaces[1].scrollable_reveal_edge,
-                crate::state::ScrollableRevealEdge::Left
+                crate::layout::model::ScrollableRevealEdge::Left
             );
             assert_eq!(
                 backend.state().current().workspaces[1].layout_kind,
@@ -3462,11 +3472,11 @@ mod reconciler_tests {
                 .expect("commit scrollable widths");
 
             let ws = &backend.state().current().workspaces[0];
-            assert_eq!(ws.layout_kind, crate::state::LayoutKind::Scrollable);
+            assert_eq!(ws.layout_kind, crate::layout::model::LayoutKind::Scrollable);
             assert!((ws.panes[0].scrollable_width - 0.62).abs() < 1e-6);
             assert_eq!(
                 ws.panes[1].scrollable_width,
-                crate::state::MAX_SPLIT_RATIO,
+                crate::layout::model::MAX_SPLIT_RATIO,
                 "follower applies sanitize at the state boundary"
             );
 
@@ -3479,7 +3489,7 @@ mod reconciler_tests {
             );
             assert_eq!(
                 reemitted.workspaces[0].panes[1].scrollable_width,
-                crate::state::MAX_SPLIT_RATIO
+                crate::layout::model::MAX_SPLIT_RATIO
             );
         });
     }
@@ -4221,7 +4231,7 @@ mod reconciler_tests {
 
         // Workspace index out of range
         let mut bad = valid.clone();
-        bad.workspaces[0].index = crate::state::WORKSPACE_COUNT;
+        bad.workspaces[0].index = crate::layout::model::WORKSPACE_COUNT;
         assert!(matches!(
             bad.validate(),
             Err(SharedLayoutValidationError::InvalidWorkspaceIndex(_))
@@ -4229,12 +4239,12 @@ mod reconciler_tests {
 
         // Reserved popup pane id
         let mut bad = valid.clone();
-        bad.workspaces[0].panes[0].pane_id = crate::state::POPUP_PANE_ID;
+        bad.workspaces[0].panes[0].pane_id = crate::pane::id::POPUP_PANE_ID;
         bad.workspaces[0].tree = Some(SerializedTree::Split {
             axis: SharedSplitAxis::Horizontal,
             ratio: 0.5,
             first: Box::new(SerializedTree::Leaf {
-                pane: crate::state::POPUP_PANE_ID,
+                pane: crate::pane::id::POPUP_PANE_ID,
             }),
             second: Box::new(SerializedTree::Leaf { pane: 2 }),
         });

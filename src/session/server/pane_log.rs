@@ -145,7 +145,7 @@ pub struct PaneLog {
 /// What a log's opening line records, so a file that spans several logging runs is self-describing.
 pub(super) struct LogHeader<'a> {
     pub session: &'a str,
-    pub pane_id: crate::state::PaneId,
+    pub pane_id: crate::pane::id::PaneId,
     pub generation: u64,
     pub cols: u16,
     pub rows: u16,

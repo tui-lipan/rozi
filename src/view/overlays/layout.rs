@@ -18,7 +18,7 @@ pub(crate) fn layout_picker_overlay(ctx: &Context<AppRoot>) -> Element {
         .as_ref()
         .map(|picker| picker.selected);
     let selected_action = selected.unwrap_or_default();
-    let entries = crate::state::LayoutKind::all()
+    let entries = crate::layout::model::LayoutKind::all()
         .iter()
         .enumerate()
         .map(|(index, kind)| {

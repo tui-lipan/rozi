@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 /// Opaque identity of one running session-server process.
 ///
@@ -78,7 +78,7 @@ pub struct AgentRef {
 impl AgentRef {
     /// A first incarnation in a fixed test server, for fixtures that only care which pane and row.
     pub(crate) fn for_test(
-        pane_id: crate::state::PaneId,
+        pane_id: crate::pane::id::PaneId,
         generation: u64,
         slot: Option<super::RowKey>,
     ) -> Self {

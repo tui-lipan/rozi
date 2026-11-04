@@ -2,12 +2,14 @@ use tui_lipan::prelude::*;
 
 use crate::input::routing::handle_key_routing;
 use crate::layout::anim::GeometryAnimation;
+use crate::layout::model::ResizeCorner;
 use crate::ops::focus::{acknowledge_pane_input, focus_pane as focus, request_pane_focus};
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::find_pane_mut;
 use crate::pane::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
 };
-use crate::state::{AlertMode, PaneId, ResizeCorner, State};
+use crate::state::{AlertMode, State};
 use crate::{AppRoot, control, schedule_alert_pulse_tick};
 
 pub(super) fn close_popup(ctx: &mut Context<AppRoot>) -> Update {
@@ -196,7 +198,7 @@ pub(super) fn activate_pane(
         return Update::none();
     }
     let focused = ctx.state.focused_pane() == Some(id)
-        || (id == crate::state::POPUP_PANE_ID && ctx.state.popup.is_some());
+        || (id == crate::pane::id::POPUP_PANE_ID && ctx.state.popup.is_some());
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.pty_generation != generation {
             return Update::none();

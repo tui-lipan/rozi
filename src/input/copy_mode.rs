@@ -94,7 +94,7 @@ pub(crate) fn clear_copy_feedback(ctx: &mut Context<AppRoot>) {
 
 pub(crate) fn flash_copy_feedback(
     ctx: &mut Context<AppRoot>,
-    target: crate::state::PaneId,
+    target: crate::pane::id::PaneId,
     selection: tui_lipan::utils::GridSelection,
 ) -> Command {
     clear_copy_feedback(ctx);
@@ -115,7 +115,7 @@ pub(crate) fn flash_copy_feedback(
 pub(crate) fn expire_copy_feedback(
     ctx: &mut Context<AppRoot>,
     attachment: u64,
-    target: crate::state::PaneId,
+    target: crate::pane::id::PaneId,
     epoch: u64,
 ) -> Update {
     if ctx.state.copy_feedback_epoch != epoch
@@ -224,7 +224,7 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
 /// Adopt a mouse press or drag over the copy-mode pane: a press moves the cursor, a drag selects.
 pub(crate) fn handle_pointer(
     ctx: &mut Context<AppRoot>,
-    id: crate::state::PaneId,
+    id: crate::pane::id::PaneId,
     event: &TerminalSelectionEvent,
 ) -> Update {
     if ctx.state.copy_mode.as_ref().map(|copy| copy.target) != Some(id) {
@@ -255,7 +255,11 @@ pub(crate) fn handle_pointer(
 
 /// Keep the copy cursor on the same screen row when the wheel or a drag past an edge scrolls the
 /// copy-mode pane, so the view stays where it was put and an anchored selection follows it.
-pub(crate) fn follow_scroll(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, offset: usize) {
+pub(crate) fn follow_scroll(
+    ctx: &mut Context<AppRoot>,
+    id: crate::pane::id::PaneId,
+    offset: usize,
+) {
     if let Some(copy) = ctx
         .state
         .copy_mode
@@ -447,7 +451,7 @@ mod tests {
     }
 
     /// A copy-mode backend over a pane holding `line 0` .. `line 47`, scrolled to the live view.
-    fn copy_mode_backend() -> (TestBackend<AppRoot>, crate::state::PaneId) {
+    fn copy_mode_backend() -> (TestBackend<AppRoot>, crate::pane::id::PaneId) {
         let mut backend = TestBackend::new(AppRoot::default());
         let target = backend.state().focused_pane().expect("focused pane");
         let output = (0..48)

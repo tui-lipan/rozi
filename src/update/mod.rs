@@ -1269,7 +1269,7 @@ mod tests {
 
     fn seed_stale_search(backend: &mut TestBackend<AppRoot>) {
         backend.state_mut().search = Some(crate::state::ScrollbackSearchState::new(
-            crate::state::PaneId::MAX,
+            crate::pane::id::PaneId::MAX,
         ));
     }
 
@@ -1305,7 +1305,7 @@ mod tests {
                 .push(Frame::PaneOutput {
                     media: None,
                     metadata: crate::session::protocol::OutputMetadata::default(),
-                    pane_id: (index % 2) as crate::state::PaneId + 1,
+                    pane_id: (index % 2) as crate::pane::id::PaneId + 1,
                     local: false,
                     generation: index as u64 + 1,
                     bytes: vec![index as u8],

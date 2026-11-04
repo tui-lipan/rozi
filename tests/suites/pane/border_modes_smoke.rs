@@ -3,10 +3,11 @@
 //! scratchpad's own merged layer.
 
 use rozi::AppRoot;
+use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
+use rozi::pane::id::PaneId;
 use rozi::state::{
-    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneId, PaneTitlebarMode, SplitAxis,
-    Workspace,
+    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, Workspace,
 };
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 use tui_lipan::{CapturedFrame, TestBackend};

@@ -5,7 +5,9 @@ use tui_lipan::prelude::{FloatRect, Key, ManagedTerminalStatus, Span, Text, Text
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
-use super::{DEFAULT_SCROLLABLE_WIDTH, PaneId, PaneIdentity};
+use super::PaneIdentity;
+use crate::layout::model::DEFAULT_SCROLLABLE_WIDTH;
+use crate::pane::id::PaneId;
 
 pub struct Pane {
     pub id: PaneId,

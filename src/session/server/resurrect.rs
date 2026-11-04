@@ -627,7 +627,7 @@ impl SessionServer {
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
-            if pane.exited.is_some() || pane_id == crate::state::POPUP_PANE_ID {
+            if pane.exited.is_some() || pane_id == crate::pane::id::POPUP_PANE_ID {
                 continue;
             }
             // A pane running its own launch command has nothing to add: restoring `launch` already

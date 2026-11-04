@@ -3,10 +3,10 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::layout::shared::{ClientId, SharedLayout};
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{
     find_pane_in_namespace, find_pane_in_namespace_mut, remove_pane_after_exit,
 };
-use crate::state::PaneId;
 
 pub(crate) fn agent_report_result(
     ctx: &mut Context<AppRoot>,
@@ -728,7 +728,7 @@ fn current_spawn_result(
     }
     if presentation.close {
         // Popups live outside workspaces and need their own close lifecycle.
-        if reply.local && reply.pane_id == crate::state::POPUP_PANE_ID {
+        if reply.local && reply.pane_id == crate::pane::id::POPUP_PANE_ID {
             return crate::ops::popup::close(ctx);
         }
         return remove_pane_after_exit(ctx, reply.pane_id, reply.local);

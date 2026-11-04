@@ -51,12 +51,12 @@ pub(super) fn build_rules(raw: Vec<RuleFileConfig>, warnings: &mut Vec<String>) 
                 })
             };
             let workspace = rule.workspace.and_then(|workspace| {
-                if (1..=crate::state::WORKSPACE_COUNT).contains(&workspace) {
+                if (1..=crate::layout::model::WORKSPACE_COUNT).contains(&workspace) {
                     Some(workspace - 1)
                 } else {
                     warnings.push(format!(
                         "Ignored rule `{label}` workspace {workspace} (expected 1..={})",
-                        crate::state::WORKSPACE_COUNT
+                        crate::layout::model::WORKSPACE_COUNT
                     ));
                     None
                 }

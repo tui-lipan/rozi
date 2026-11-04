@@ -23,8 +23,8 @@ use crate::control::{
     ControlEnvelope, ControlErrorCode, ControlRequest, ControlResponse, PaneCapture,
 };
 use crate::pane::capture_wait::{ScreenWait, WaitEnd, WaitPlan, WaitReply, WaitStatus};
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane_in_namespace_mut, find_pane_mut, pane_is_local};
-use crate::state::PaneId;
 use crate::{AppRoot, Msg};
 
 /// Longest gap between two looks at a pending wait. Output is looked at as it lands; this bounds

@@ -1,6 +1,7 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{OFFSCREEN_MIN_VISIBLE, PaneId, ResizeCorner, SplitAxis};
+use crate::layout::model::{OFFSCREEN_MIN_VISIBLE, ResizeCorner, SplitAxis};
+use crate::pane::id::PaneId;
 
 pub const MIN_CANVAS_COLS: u16 = 20;
 
@@ -357,7 +358,7 @@ pub fn rect_center(rect: FloatRect) -> (f32, f32) {
 pub fn directional_score(
     current: FloatRect,
     candidate: FloatRect,
-    direction: crate::state::Direction,
+    direction: crate::layout::model::Direction,
 ) -> Option<f32> {
     let current_center = rect_center(current);
     let candidate_center = rect_center(candidate);
@@ -367,7 +368,7 @@ pub fn directional_score(
     let candidate_bottom = candidate.y + candidate.h;
 
     let (primary_gap, cross_overlap, cross_gap, center_offset) = match direction {
-        crate::state::Direction::Left => {
+        crate::layout::model::Direction::Left => {
             if candidate_center.0 >= current_center.0 && candidate_right > current.x {
                 return None;
             }
@@ -378,7 +379,7 @@ pub fn directional_score(
                 (candidate_center.1 - current_center.1).abs(),
             )
         }
-        crate::state::Direction::Right => {
+        crate::layout::model::Direction::Right => {
             if candidate_center.0 <= current_center.0 && candidate.x < current_right {
                 return None;
             }
@@ -389,7 +390,7 @@ pub fn directional_score(
                 (candidate_center.1 - current_center.1).abs(),
             )
         }
-        crate::state::Direction::Up => {
+        crate::layout::model::Direction::Up => {
             if candidate_center.1 >= current_center.1 && candidate_bottom > current.y {
                 return None;
             }
@@ -400,7 +401,7 @@ pub fn directional_score(
                 (candidate_center.0 - current_center.0).abs(),
             )
         }
-        crate::state::Direction::Down => {
+        crate::layout::model::Direction::Down => {
             if candidate_center.1 <= current_center.1 && candidate.y < current_bottom {
                 return None;
             }

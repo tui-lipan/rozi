@@ -183,7 +183,7 @@ pub(crate) fn scratch_height_fraction(state: &crate::state::State) -> f32 {
         .unwrap_or(state.config.scratchpad.height)
 }
 
-pub(crate) fn contains(state: &crate::state::State, id: crate::state::PaneId) -> bool {
+pub(crate) fn contains(state: &crate::state::State, id: crate::pane::id::PaneId) -> bool {
     state.scratch.panes.iter().any(|pane| pane.id == id)
 }
 
@@ -330,7 +330,10 @@ pub(crate) fn height_step_rows(state: &crate::state::State, viewport: Rect) -> f
 
 /// Whether `id` sits against the dropdown's top edge, which is the border the scratchpad's own
 /// height resize moves. Panes further down have an ordinary split above them instead.
-pub(crate) fn pane_touches_top_edge(state: &crate::state::State, id: crate::state::PaneId) -> bool {
+pub(crate) fn pane_touches_top_edge(
+    state: &crate::state::State,
+    id: crate::pane::id::PaneId,
+) -> bool {
     let Some(viewport) = state.last_viewport.get() else {
         return false;
     };
@@ -648,7 +651,7 @@ mod tests {
         h: 40,
     };
 
-    fn state_with_scratch(panes: &[crate::state::PaneId]) -> crate::state::State {
+    fn state_with_scratch(panes: &[crate::pane::id::PaneId]) -> crate::state::State {
         let mut state =
             crate::state::State::new(crate::config::Config::default(), Theme::default());
         state.last_viewport.set(Some(VIEWPORT));
@@ -916,7 +919,7 @@ mod tests {
     fn only_panes_against_the_dropdown_top_edge_own_it() {
         let mut state = state_with_scratch(&[1, 2]);
         state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
-            axis: crate::state::SplitAxis::Vertical,
+            axis: crate::layout::model::SplitAxis::Vertical,
             ratio: 0.5,
             first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
             second: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
@@ -925,7 +928,7 @@ mod tests {
         assert!(!pane_touches_top_edge(&state, 2));
 
         state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
-            axis: crate::state::SplitAxis::Horizontal,
+            axis: crate::layout::model::SplitAxis::Horizontal,
             ratio: 0.5,
             first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
             second: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
@@ -1157,11 +1160,11 @@ mod tests {
                 }
                 // 1 | (2 over 3): closing 3 must land on 2, its own split partner, not on 1.
                 state.scratch.tile_tree = Some(crate::layout::tiling::DwindleTree::Split {
-                    axis: crate::state::SplitAxis::Horizontal,
+                    axis: crate::layout::model::SplitAxis::Horizontal,
                     ratio: 0.5,
                     first: Box::new(crate::layout::tiling::DwindleTree::Leaf(1)),
                     second: Box::new(crate::layout::tiling::DwindleTree::Split {
-                        axis: crate::state::SplitAxis::Vertical,
+                        axis: crate::layout::model::SplitAxis::Vertical,
                         ratio: 0.5,
                         first: Box::new(crate::layout::tiling::DwindleTree::Leaf(2)),
                         second: Box::new(crate::layout::tiling::DwindleTree::Leaf(3)),

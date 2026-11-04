@@ -4,9 +4,10 @@ use std::str::FromStr;
 use tui_lipan::prelude::*;
 
 use crate::layout::anim::WindowAnimationConfig;
+use crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
 use crate::state::{
-    AlertMode, AlertPaint, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneAlertPaint, PaneBorderMode,
-    PaneBorderStyle, PaneTitlebarMode, ThemePreset,
+    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode,
+    ThemePreset,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,14 +280,14 @@ pub struct LayoutConfig {
     /// Terminal cell height divided by cell width, used to compare tile dimensions visually.
     pub split_width_multiplier: f32,
     /// Layout mode every fresh workspace starts in. Profiles override this per workspace.
-    pub default: crate::state::LayoutKind,
+    pub default: crate::layout::model::LayoutKind,
 }
 
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             split_width_multiplier: DEFAULT_SPLIT_WIDTH_MULTIPLIER,
-            default: crate::state::LayoutKind::Dwindle,
+            default: crate::layout::model::LayoutKind::Dwindle,
         }
     }
 }

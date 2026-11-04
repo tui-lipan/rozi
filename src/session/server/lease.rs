@@ -38,7 +38,7 @@ impl SessionServer {
         let mut layout_ids = std::collections::HashSet::new();
         for ws in &layout.workspaces {
             for pane in &ws.panes {
-                if pane.pane_id == crate::state::POPUP_PANE_ID {
+                if pane.pane_id == crate::pane::id::POPUP_PANE_ID {
                     return false;
                 }
                 let Some(server_pane) = self.panes.get(&pane.pane_id) else {

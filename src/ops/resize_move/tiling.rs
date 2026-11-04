@@ -6,6 +6,7 @@ use crate::layout::geometry::{
     clamp_float_rect, clamp_floating_rect, directional_score, lift_off_float_rect,
     workspace_tile_bounds,
 };
+use crate::layout::model::{Direction, LayoutKind, TileGap};
 use crate::layout::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
     move_tiled_window_around_target, ratio_at, redock_split_ratio, resize_tiled_split,
@@ -19,9 +20,8 @@ use crate::ops::focus::{
     active_pane_is_fullscreen, active_pane_mut, request_pane_focus, scrollable_scroll,
     settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
-use crate::state::{
-    Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace,
-};
+use crate::pane::id::PaneId;
+use crate::state::{EVEN_SPLIT_RATIO, MoveSwapHint, State, Workspace};
 
 use super::float::{
     ensure_tile_tree, finish_pointer_layout_interaction, layout_has_resizable_splits,
@@ -356,7 +356,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<AppRoot>, show_toast: bool) {
 /// ([`toggle_layout`]) and the layout picker's direct selection.
 pub(crate) fn set_layout(
     ctx: &mut Context<AppRoot>,
-    kind: crate::state::LayoutKind,
+    kind: crate::layout::model::LayoutKind,
     show_toast: bool,
 ) {
     finish_pointer_layout_interaction(ctx);
@@ -411,7 +411,9 @@ pub(super) fn resize_master_split_by_pixels(
         -pixels
     };
     if workspace.split_ratios.is_empty() {
-        workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
+        workspace
+            .split_ratios
+            .push(crate::layout::model::DEFAULT_RATIO);
     }
     let master_cells = (available * ratio_at(&workspace.split_ratios, 0)).round();
     let ratio = cell_split_ratio(master_cells + toward_master, available);
@@ -423,7 +425,12 @@ pub(super) fn resize_master_split_by_pixels(
 
 /// The width the master divider splits, matching what `allocate_master` lays panes out in.
 pub(super) fn master_available_width(tile_bounds: FloatRect, gap: TileGap) -> f32 {
-    usable_axis_extent(tile_bounds.w, crate::state::SplitAxis::Horizontal, gap).max(1.0)
+    usable_axis_extent(
+        tile_bounds.w,
+        crate::layout::model::SplitAxis::Horizontal,
+        gap,
+    )
+    .max(1.0)
 }
 
 /// Grow or shrink one Scrollable pane's width by whole cells of the tile viewport.
@@ -696,13 +703,14 @@ fn opposite_direction(direction: Direction) -> Direction {
 mod tests {
     use super::*;
     use crate::input::Action;
+    use crate::layout::model::SplitAxis;
     use crate::layout::tiling::DwindleTree;
     use crate::layout::workspace_target_rects_excluding;
     use crate::ops::resize_move::test_util::{
         TEST_VIEWPORT, first_pane_extent, in_test_stack, pane_extent, steps, three_pane_stack_tree,
         three_pane_stack_workspace, two_pane_backend,
     };
-    use crate::state::{Pane, SplitAxis};
+    use crate::state::Pane;
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
@@ -1357,10 +1365,10 @@ mod tests {
     fn scrollable_move_and_swap_reveal_focused_under_non_focus_anchor() {
         in_test_stack(|| {
             use crate::layout::geometry::workspace_tile_bounds;
+            use crate::layout::model::{LayoutKind, ScrollableRevealEdge};
             use crate::layout::tiling::append_tiled_window;
             use crate::layout::workspace_target_rects_with_visible_bounds;
             use crate::ops::focus::focus_pane;
-            use crate::state::{LayoutKind, ScrollableRevealEdge};
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
@@ -1503,10 +1511,10 @@ mod tests {
     fn scrollable_grow_non_anchor_pane_syncs_reveal_when_clipped() {
         in_test_stack(|| {
             use crate::layout::geometry::workspace_tile_bounds;
+            use crate::layout::model::{LayoutKind, ScrollableRevealEdge};
             use crate::layout::tiling::append_tiled_window;
             use crate::layout::workspace_target_rects_with_visible_bounds;
             use crate::ops::focus::focus_pane;
-            use crate::state::{LayoutKind, ScrollableRevealEdge};
 
             let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);

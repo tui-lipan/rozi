@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::find_pane_mut;
-use crate::state::PaneId;
 
 pub(crate) fn handle_pane_resize(
     ctx: &mut Context<AppRoot>,

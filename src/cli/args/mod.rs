@@ -1610,7 +1610,7 @@ fn take_launch_option(
 /// The pane id after a `--target` flag, shared by every control command that accepts one.
 pub(super) fn parse_target(
     iter: &mut impl Iterator<Item = String>,
-) -> std::result::Result<crate::state::PaneId, String> {
+) -> std::result::Result<crate::pane::id::PaneId, String> {
     let value = require_value(iter, "--target requires a pane id")?;
     value
         .parse()

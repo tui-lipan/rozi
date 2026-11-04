@@ -3129,7 +3129,7 @@ fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
                     pinned: false,
                     fullscreen: false,
                     rect: None,
-                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                 })
                 .collect(),
         }],
@@ -5191,7 +5191,11 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     server.origin.worktree = Some(crate::session::origin::WorktreeOrigin {
         path: "C:\\code\\feature".into(),
     });
-    for (id, exited) in [(1, None), (2, Some(0)), (crate::state::POPUP_PANE_ID, None)] {
+    for (id, exited) in [
+        (1, None),
+        (2, Some(0)),
+        (crate::pane::id::POPUP_PANE_ID, None),
+    ] {
         let mut screen = TerminalScreen::new(5, 20, 100);
         screen.process_bytes(format!("marker-{id}").as_bytes());
         server.panes.insert(
@@ -5267,7 +5271,10 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     assert!(!root.join("dev/panes/2.replay").exists());
     assert!(
         !root
-            .join(format!("dev/panes/{}.replay", crate::state::POPUP_PANE_ID))
+            .join(format!(
+                "dev/panes/{}.replay",
+                crate::pane::id::POPUP_PANE_ID
+            ))
             .exists()
     );
 
@@ -5275,7 +5282,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     assert_eq!(restored.restore().unwrap(), 1);
     assert!(restored.panes.contains_key(&1));
     assert!(!restored.panes.contains_key(&2));
-    assert!(!restored.panes.contains_key(&crate::state::POPUP_PANE_ID));
+    assert!(!restored.panes.contains_key(&crate::pane::id::POPUP_PANE_ID));
     assert_eq!(
         restored.panes[&1].launch,
         Some(crate::pane::launch::PaneLaunch::Direct {
@@ -5913,7 +5920,7 @@ fn keep_open_recovers_terminal_modes_before_starting_the_shell() {
 fn keep_open_popup_retains_output_without_starting_a_shell() {
     let mut server = SessionServer::new_named("dev");
     let (_client, _stream) = attach_client(&mut server);
-    let pane_id = crate::state::POPUP_PANE_ID;
+    let pane_id = crate::pane::id::POPUP_PANE_ID;
 
     let result = server.spawn_pane(SpawnRequest {
         owner: None,
@@ -8575,7 +8582,7 @@ impl EventParityHarness {
                     pinned: false,
                     fullscreen: false,
                     rect: None,
-                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                 }],
             }],
         });

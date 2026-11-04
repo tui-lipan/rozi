@@ -27,7 +27,8 @@ use crate::control::{
     AgentTarget, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ExtensionGrant,
     RequestOrigin,
 };
-use crate::state::{HostKey, PaneId, State, Worker, WorkerBinding, WorkerId, WorkerRuntime};
+use crate::pane::id::PaneId;
+use crate::state::{HostKey, State, Worker, WorkerBinding, WorkerId, WorkerRuntime};
 
 /// Establish who sent a control request. See [`crate::control::RequestOrigin`].
 pub(crate) fn authorize(

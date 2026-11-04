@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control::{SpanCursor, SpanFrame, SpanImage, SpanPalette, SpanRun};
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 /// [`RecordingHeader::format`]: what a reader checks before anything else.
 pub const RECORDING_FORMAT: &str = "rozi-recording";

@@ -308,7 +308,7 @@ fn spawn_new_pane(ctx: &mut Context<AppRoot>, workspace: usize) -> Update {
     crate::pane::lifecycle::spawn_interactive_pane(ctx, workspace, previous_focused, identity).1
 }
 
-pub(crate) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -> Update {
+pub(crate) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::pane::id::PaneId) -> Update {
     if crate::ops::focus::focus_pane_anywhere(ctx, id) {
         Update::full()
     } else {
@@ -322,7 +322,7 @@ pub(crate) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -
 /// stopped listening still gets its pane focused, which is the part rozi can do alone.
 pub(crate) fn activate_published_row(
     ctx: &mut Context<AppRoot>,
-    pane_id: crate::state::PaneId,
+    pane_id: crate::pane::id::PaneId,
     row: crate::session::protocol::RowKey,
 ) -> Update {
     let update = focus_pane(ctx, pane_id);

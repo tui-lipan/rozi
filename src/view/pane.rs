@@ -1346,7 +1346,19 @@ pub(crate) fn pane_element(
                 ctx.link()
                     .key_handler(move |key| Some(Msg::PaneKey(id, key))),
             );
-        if !hinting {
+        let copying = ctx
+            .state
+            .copy_mode
+            .as_ref()
+            .is_some_and(|copy| copy.target == id);
+        if copying {
+            // Copy mode owns the pointer: presses and drags move its cursor and selection, and
+            // none reach a program that tracks the mouse.
+            terminal_widget = terminal_widget.on_selection(
+                ctx.link()
+                    .callback(move |event| Msg::PaneSelection(id, event)),
+            );
+        } else if !hinting {
             terminal_widget =
                 terminal_widget
                     .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {

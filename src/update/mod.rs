@@ -573,6 +573,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::PaneLinkActivate(id, event) => panes::pane_link_activate(ctx, id, event),
         Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
         Msg::PaneMouse(id, event) => panes::pane_mouse(ctx, id, event),
+        Msg::PaneSelection(id, event) => crate::input::copy_mode::handle_pointer(ctx, id, &event),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
         Msg::AuthorizeExtensionControl {

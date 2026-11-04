@@ -444,6 +444,89 @@ fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
 }
 
 #[test]
+fn copy_mode_drops_pastes_into_its_pane() {
+    use crate::Msg;
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
+    use crate::state::{CopyModeState, Mode};
+    use tui_lipan::{ImageContent, ImageFormat, TestBackend};
+
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (client, rx) = SessionClient::test_channel();
+        {
+            let state = backend.state_mut();
+            state.current_mut().session_client = Some(client);
+            let pane = &mut state.current_mut().workspaces[0].panes[0];
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.terminal
+                .process_server_output("history\n".repeat(80).as_bytes());
+            assert!(pane.terminal.set_scrollback(10));
+            state.mode = Mode::Copy;
+            state.copy_mode = Some(CopyModeState {
+                target: 1,
+                navigation: TerminalCopyMode::new(2, 3, 10),
+                search_matches: Vec::new(),
+                search_current: 0,
+                search_truncated: false,
+            });
+        }
+        backend.render();
+        backend.focus_next();
+        let copy_before = backend.state().copy_mode.clone();
+
+        // The widget's own paste (middle or right click) and the clipboard paste message, for text
+        // and for content that would upload.
+        backend
+            .send_paste("pasted")
+            .expect("dispatch terminal paste");
+        for content in [
+            ClipboardContent::Text("pasted".into()),
+            ClipboardContent::Image(ImageContent::from_bytes(b"png bytes", ImageFormat::Png)),
+        ] {
+            backend
+                .dispatch(Msg::PanePaste(
+                    1,
+                    TerminalPasteEvent {
+                        content,
+                        origin: PasteOrigin::Clipboard,
+                    },
+                ))
+                .expect("dispatch clipboard paste");
+        }
+        // Pane input, or an attachment upload for rich content.
+        let input = |rx: &std::sync::mpsc::Receiver<ClientOutbound>| {
+            rx.try_iter()
+                .filter(|message| {
+                    matches!(
+                        message,
+                        ClientOutbound::PaneInput { .. }
+                            | ClientOutbound::Control(ClientMessage::Attachment { .. })
+                    )
+                })
+                .count()
+        };
+        assert_eq!(input(&rx), 0, "a paste reached the session");
+        assert_eq!(
+            backend.state().current().workspaces[0].panes[0]
+                .terminal
+                .scrollback_offset(),
+            10
+        );
+        assert_eq!(backend.state().copy_mode, copy_before);
+
+        // Out of copy mode the same paste goes through.
+        backend.state_mut().copy_mode = None;
+        backend.state_mut().mode = Mode::Normal;
+        backend
+            .send_paste("pasted")
+            .expect("dispatch terminal paste");
+        assert_eq!(input(&rx), 1, "a paste outside copy mode is sent");
+    });
+}
+
+#[test]
 fn synchronized_targets_default_to_source_only() {
     let mut state = State::new(crate::config::Config::default(), Theme::default());
     state.current_mut().workspaces[0]

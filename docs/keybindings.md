@@ -194,6 +194,8 @@ After the `[` command key:
 | `v` or `Space` | Start a selection |
 | `y` or `Enter` | Copy and exit |
 | `Esc` or `q` | Exit |
+| Drag | Select text |
+| Click | Move the cursor |
 
 Prompt jumps and last-output copying need shell integration. See
 [Terminal features](terminal.md#copy-search-and-hints).

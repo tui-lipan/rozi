@@ -149,6 +149,16 @@ pub(crate) fn prepare_pane_paste(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
 ) -> std::result::Result<(crate::session::client::SessionClient, bool), Update> {
+    // Copy mode owns the pane: like its keys, a middle-click or right-click paste reaches neither
+    // the program nor the live view.
+    if ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|copy| copy.target == id)
+    {
+        return Err(Update::none());
+    }
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.notified.update());
     }
@@ -290,6 +300,9 @@ pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset:
     let acknowledged = crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
     let scrolled =
         find_pane_mut(&mut ctx.state, id).is_some_and(|pane| pane.terminal.set_scrollback(offset));
+    if scrolled {
+        crate::input::copy_mode::follow_scroll(ctx, id, offset);
+    }
     if acknowledged || (scrolled && scroll_offset_shapes_view(&ctx.state, id)) {
         Update::full()
     } else if scrolled {
@@ -303,7 +316,8 @@ pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset:
 }
 
 /// Whether the view itself reads what `id` shows, so moving its scrollback needs a rebuild rather
-/// than a repaint. Search highlights and hint labels are both found in the rows on screen.
+/// than a repaint. Search highlights, hint labels, and the copy-mode cursor are all placed in the
+/// rows on screen.
 fn scroll_offset_shapes_view(state: &crate::state::State, id: PaneId) -> bool {
     let searched = state
         .search
@@ -313,7 +327,11 @@ fn scroll_offset_shapes_view(state: &crate::state::State, id: PaneId) -> bool {
         .hint_mode
         .as_ref()
         .is_some_and(|hints| hints.target == id);
-    searched || hinted
+    let copying = state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|copy| copy.target == id);
+    searched || hinted || copying
 }
 
 pub(crate) fn terminal_key_event_bytes(key: KeyEvent, modes: TerminalKeyModes) -> Option<Vec<u8>> {

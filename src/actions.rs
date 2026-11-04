@@ -3,6 +3,7 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::config::UserCommandAction;
 use crate::input::Action;
+use crate::layout::model::Direction;
 use crate::ops::focus::{
     cycle_focus_in_tiled_order, focus_in_direction, focus_in_direction_no_wrap,
     move_focused_to_workspace, move_workspace, promote_focused_to_master,
@@ -19,7 +20,7 @@ use crate::ops::search::open_search;
 use crate::ops::theme::open_theme_picker;
 use crate::ops::user_command;
 use crate::pane::lifecycle::{find_pane, spawn_floating_pane_at_cursor, spawn_pane};
-use crate::state::{Direction, Mode};
+use crate::state::Mode;
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
@@ -129,7 +130,10 @@ fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
 }
 
 /// Whether any process eligible to read from the pane is a split-aware navigation target.
-fn focused_pane_forwards_navigation(state: &crate::state::State, id: crate::state::PaneId) -> bool {
+fn focused_pane_forwards_navigation(
+    state: &crate::state::State,
+    id: crate::pane::id::PaneId,
+) -> bool {
     let Some(pane) = find_pane(state, id) else {
         return false;
     };
@@ -1010,7 +1014,7 @@ mod tests {
     #[test]
     fn layout_picker_opens_on_current_and_switches_the_active_workspace() {
         use crate::Msg;
-        use crate::state::LayoutKind;
+        use crate::layout::model::LayoutKind;
 
         with_backend(|mut backend| {
             // A fresh backend starts every workspace in the default (dwindle, index 0).
@@ -1053,7 +1057,7 @@ mod tests {
     #[test]
     fn layout_picker_previews_on_highlight_and_reverts_on_cancel() {
         use crate::Msg;
-        use crate::state::LayoutKind;
+        use crate::layout::model::LayoutKind;
 
         with_backend(|mut backend| {
             backend

@@ -11,7 +11,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::{BufWriter, Seek, Write};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use rozi::state::{Pane, PaneId};
+use rozi::pane::id::PaneId;
+use rozi::state::Pane;
 use tui_lipan::prelude::{FloatRect, TerminalScreen};
 
 static ENABLED: AtomicBool = AtomicBool::new(false);

@@ -15,7 +15,7 @@ use crate::control::{
     CaptureRender, CaptureScrollback, ControlCommand, ControlErrorCode, ControlResponse,
     PaneCapture, PaneWait,
 };
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 /// A checked pane wait and what its reply carries, taken from the command that asked for it.
 #[derive(Clone, Debug)]

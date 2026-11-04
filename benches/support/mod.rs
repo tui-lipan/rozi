@@ -6,11 +6,12 @@ use rozi::layout::shared::{
 };
 use rozi::layout::tiling::build_dwindle_tree;
 use rozi::layout::tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
+use rozi::pane::id::PaneId;
 use rozi::session::protocol::{
     ClientInfo, PROTOCOL_VERSION, PaneCommandPhase, PaneCwdSource, PaneMeta, PaneRuntimeState,
     ServerMessage,
 };
-use rozi::state::{Pane, PaneId};
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect, TerminalScreen};
 
@@ -241,7 +242,7 @@ fn large_layout() -> SharedLayout {
                                 w: 0.7,
                                 h: 0.75,
                             }),
-                            scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                            scrollable_width: rozi::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                         }
                     })
                     .collect();

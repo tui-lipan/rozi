@@ -1,6 +1,6 @@
 use tui_lipan::prelude::TextInput;
 
-use super::PaneId;
+use crate::pane::id::PaneId;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PaneIdentity {

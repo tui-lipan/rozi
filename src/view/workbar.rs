@@ -152,7 +152,7 @@ pub(crate) enum UiRecordingChip {
     /// A badge on the workbar.
     Workbar,
     /// Text at the end of this pane's title row: the pane is fullscreen and covers the workbar.
-    Title(crate::state::PaneId),
+    Title(crate::pane::id::PaneId),
     /// A badge over the top-right corner, when no workbar or title can carry it.
     Overlay,
 }

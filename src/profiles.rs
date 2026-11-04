@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::FloatRect;
 
+use crate::layout::model::WORKSPACE_COUNT;
 use crate::layout::tiling::DwindleTree;
 use crate::layout::tiling::append_tiled_window;
 use crate::layout::tree_ser::{SerializedLayoutKind, SerializedTree, from_dwindle, to_dwindle};
-use crate::state::{Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
+use crate::pane::id::PaneId;
+use crate::state::{Pane, State, Workspace};
 
 pub fn load_profile(path: &Path) -> Result<Profile, String> {
     let text = std::fs::read_to_string(path)
@@ -530,7 +532,7 @@ pub(crate) fn attachment_from_profile(
             pane.scrollable_width = crate::layout::tiling::sanitize_scrollable_width(
                 pane_profile
                     .scrollable_width
-                    .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH),
+                    .unwrap_or(crate::layout::model::DEFAULT_SCROLLABLE_WIDTH),
             );
             workspace.panes.push(pane);
         }
@@ -683,7 +685,7 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
                     scrollable_width: {
                         let width =
                             crate::layout::tiling::sanitize_scrollable_width(pane.scrollable_width);
-                        (width != crate::state::DEFAULT_SCROLLABLE_WIDTH).then_some(width)
+                        (width != crate::layout::model::DEFAULT_SCROLLABLE_WIDTH).then_some(width)
                     },
                 }
             })
@@ -789,7 +791,7 @@ pub struct PaneProfile {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
     pub rect: Option<ProfileRect>,
-    /// Scrollable column width fraction; absent restores as [`crate::state::DEFAULT_SCROLLABLE_WIDTH`].
+    /// Scrollable column width fraction; absent restores as [`crate::layout::model::DEFAULT_SCROLLABLE_WIDTH`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrollable_width: Option<f32>,
 }
@@ -848,7 +850,8 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use crate::config::Config;
-    use crate::state::{LayoutKind, Pane, SplitAxis, State};
+    use crate::layout::model::{LayoutKind, SplitAxis};
+    use crate::state::{Pane, State};
     use tui_lipan::prelude::Theme;
 
     /// `docs/profiles.md` points readers at this file as the profile format, so a schema change
@@ -2032,13 +2035,13 @@ id = 0
         let state = State::from_profile(Config::default(), Theme::default(), profile);
         assert_eq!(
             state.current().workspaces[0].panes[0].scrollable_width,
-            crate::state::DEFAULT_SCROLLABLE_WIDTH
+            crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
         );
 
         let mut live = State::new(Config::default(), Theme::default());
         live.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
         live.current_mut().workspaces[0].panes[0].scrollable_width =
-            crate::state::DEFAULT_SCROLLABLE_WIDTH;
+            crate::layout::model::DEFAULT_SCROLLABLE_WIDTH;
         let quiet = profile_from_state(&live);
         assert_eq!(
             quiet.workspaces[0].panes[0].scrollable_width, None,
@@ -2070,7 +2073,7 @@ scrollable_width = 9.0
         let state = State::from_profile(Config::default(), Theme::default(), profile);
         assert_eq!(
             state.current().workspaces[0].panes[0].scrollable_width,
-            crate::state::MAX_SPLIT_RATIO
+            crate::layout::model::MAX_SPLIT_RATIO
         );
     }
 

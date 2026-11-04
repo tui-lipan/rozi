@@ -46,7 +46,7 @@ fn is_zero(value: &u64) -> bool {
 }
 
 impl AgentSummary {
-    pub fn pane(&self) -> crate::state::PaneId {
+    pub fn pane(&self) -> crate::pane::id::PaneId {
         self.reference.pane.pane_id
     }
 

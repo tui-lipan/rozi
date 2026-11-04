@@ -67,7 +67,7 @@ pub(crate) fn run_publish_cli(command: PublishCli) -> Result<()> {
     };
     let source_pane = std::env::var("ROZI_PANE")
         .ok()
-        .and_then(|value| value.parse::<crate::state::PaneId>().ok());
+        .and_then(|value| value.parse::<crate::pane::id::PaneId>().ok());
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
         Ok(stream) => stream,
         Err(err) => {

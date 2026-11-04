@@ -9,8 +9,8 @@ use tui_lipan::prelude::*;
 
 use crate::Msg;
 use crate::events::{EventHub, EventKind};
+use crate::pane::id::PaneId;
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcListener};
-use crate::state::PaneId;
 
 /// Version of the public control request and response API.
 pub const CONTROL_API_VERSION: u32 = 1;
@@ -1176,7 +1176,7 @@ impl ControlLayoutKind {
     }
 }
 
-impl From<ControlLayoutKind> for crate::state::LayoutKind {
+impl From<ControlLayoutKind> for crate::layout::model::LayoutKind {
     fn from(kind: ControlLayoutKind) -> Self {
         match kind {
             ControlLayoutKind::Dwindle => Self::Dwindle,
@@ -1190,9 +1190,9 @@ impl From<ControlLayoutKind> for crate::state::LayoutKind {
     }
 }
 
-impl From<crate::state::LayoutKind> for ControlLayoutKind {
-    fn from(kind: crate::state::LayoutKind) -> Self {
-        use crate::state::LayoutKind;
+impl From<crate::layout::model::LayoutKind> for ControlLayoutKind {
+    fn from(kind: crate::layout::model::LayoutKind) -> Self {
+        use crate::layout::model::LayoutKind;
         match kind {
             LayoutKind::Dwindle => Self::Dwindle,
             LayoutKind::Master => Self::Master,
@@ -1294,8 +1294,8 @@ impl WorkspaceLayout {
                 let placements = crate::layout::shared::shared_workspace_placements(shared, canvas);
                 let source = crate::layout::shared::SharedTileSource::new(shared, canvas);
                 let tiled = crate::layout::ordered_tiled_ids(&source);
-                let kind = crate::state::LayoutKind::from(shared.layout);
-                let tree = (kind == crate::state::LayoutKind::Dwindle)
+                let kind = crate::layout::model::LayoutKind::from(shared.layout);
+                let tree = (kind == crate::layout::model::LayoutKind::Dwindle)
                     .then(|| crate::layout::effective_tile_tree(&source, None))
                     .flatten();
                 let mut panes: Vec<PaneLayout> = shared
@@ -1325,7 +1325,7 @@ impl WorkspaceLayout {
                                     crate::layout::tiling::leaf_share(tree, pane.pane_id)
                                 })
                                 .map(report_ratio),
-                            width_ratio: (kind == crate::state::LayoutKind::Scrollable
+                            width_ratio: (kind == crate::layout::model::LayoutKind::Scrollable
                                 && !pane.floating)
                                 .then(|| report_ratio(pane.scrollable_width)),
                             view_rect: None,
@@ -1338,7 +1338,7 @@ impl WorkspaceLayout {
                     name: shared.name.clone(),
                     layout: kind.into(),
                     synchronized: shared.synchronized,
-                    master_ratio: (kind == crate::state::LayoutKind::Master).then(|| {
+                    master_ratio: (kind == crate::layout::model::LayoutKind::Master).then(|| {
                         report_ratio(crate::layout::tiling::ratio_at(&shared.split_ratios, 0))
                     }),
                     panes,
@@ -1437,7 +1437,7 @@ pub(crate) struct PaneEdit {
 pub(crate) fn validate_ratio(flag: &str, value: f64) -> std::result::Result<f32, ControlResponse> {
     let (low, high) = (
         f64::from(crate::state::MIN_SPLIT_RATIO),
-        f64::from(crate::state::MAX_SPLIT_RATIO),
+        f64::from(crate::layout::model::MAX_SPLIT_RATIO),
     );
     if value.is_finite() && (low..=high).contains(&value) {
         Ok(value as f32)
@@ -1519,10 +1519,10 @@ impl PaneEdit {
     pub(crate) fn check_sizes(
         self,
         floating: bool,
-        layout: crate::state::LayoutKind,
+        layout: crate::layout::model::LayoutKind,
         in_split: bool,
     ) -> std::result::Result<(), ControlResponse> {
-        use crate::state::LayoutKind;
+        use crate::layout::model::LayoutKind;
         let unsupported = |message: &str| {
             Err(ControlResponse::error_with(
                 ControlErrorCode::Unsupported,
@@ -1575,7 +1575,7 @@ impl PaneEdit {
 /// A validated `layout set`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LayoutEdit {
-    pub kind: Option<crate::state::LayoutKind>,
+    pub kind: Option<crate::layout::model::LayoutKind>,
     pub master_ratio: Option<f32>,
 }
 
@@ -1602,10 +1602,10 @@ impl LayoutEdit {
     /// Refuse a master ratio for a workspace that will not be Master, before anything changes.
     pub(crate) fn check(
         self,
-        current: crate::state::LayoutKind,
+        current: crate::layout::model::LayoutKind,
     ) -> std::result::Result<(), ControlResponse> {
         if self.master_ratio.is_some()
-            && self.kind.unwrap_or(current) != crate::state::LayoutKind::Master
+            && self.kind.unwrap_or(current) != crate::layout::model::LayoutKind::Master
         {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::Unsupported,
@@ -1641,12 +1641,12 @@ pub(crate) fn validate_layout_workspace(
     workspace: Option<usize>,
 ) -> std::result::Result<(), ControlResponse> {
     match workspace {
-        Some(index) if !(1..=crate::state::WORKSPACE_COUNT).contains(&index) => {
+        Some(index) if !(1..=crate::layout::model::WORKSPACE_COUNT).contains(&index) => {
             Err(ControlResponse::error_with(
                 ControlErrorCode::InvalidArgument,
                 format!(
                     "workspace {index} does not exist; expected 1-{}",
-                    crate::state::WORKSPACE_COUNT
+                    crate::layout::model::WORKSPACE_COUNT
                 ),
             ))
         }

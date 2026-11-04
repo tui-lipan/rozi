@@ -4,6 +4,7 @@
 //! per-pane app state and `view/pane.rs` renders it.
 
 pub(crate) mod capture_wait;
+pub mod id;
 pub mod launch;
 pub mod lifecycle;
 pub mod pty_events;
@@ -225,7 +226,7 @@ pub(crate) fn new_terminal_screen(rows: u16, cols: u16, scrollback: usize) -> Te
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
 pub struct TerminalPane {
-    pub pane_id: crate::state::PaneId,
+    pub pane_id: crate::pane::id::PaneId,
     pub generation: u64,
     pub cols: u16,
     pub rows: u16,
@@ -556,7 +557,7 @@ impl TerminalPane {
         self.screen.borrow_mut().set_image_budget(bytes);
     }
 
-    pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
+    pub fn bind_session(&mut self, pane_id: crate::pane::id::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
             // A position held for the process that just went away belongs to nothing: the pointer
             // was over the old pane's content, and the new one has never been pointed at.
@@ -587,7 +588,7 @@ impl TerminalPane {
 
     /// Prepare the pane to (re)receive a server pane's output: reset the parser to a fresh screen
     /// of the current size, ready to be seeded by the replay bytes that follow an attach or spawn.
-    pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
+    pub fn bind_server_backend(&mut self, pane_id: crate::pane::id::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
         self.program_status = Default::default();

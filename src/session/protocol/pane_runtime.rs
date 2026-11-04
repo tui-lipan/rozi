@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 fn boxed_strings_are_empty(values: &[String]) -> bool {
     values.is_empty()

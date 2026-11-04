@@ -1668,9 +1668,9 @@ mod tests {
         crate::ops::focus::focus_pane(&mut state, 2);
         assert!(palette_visible(Action::PromoteToMaster, &state));
 
-        state.current_mut().workspaces[0].layout_kind = crate::state::LayoutKind::Monocle;
+        state.current_mut().workspaces[0].layout_kind = crate::layout::model::LayoutKind::Monocle;
         assert!(!palette_visible(Action::PromoteToMaster, &state));
-        state.current_mut().workspaces[0].layout_kind = crate::state::LayoutKind::Dwindle;
+        state.current_mut().workspaces[0].layout_kind = crate::layout::model::LayoutKind::Dwindle;
 
         crate::pane::lifecycle::find_pane_mut(&mut state, 2)
             .unwrap()

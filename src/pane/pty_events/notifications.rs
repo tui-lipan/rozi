@@ -1,7 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::state::{PaneId, ToastChannel};
+use crate::pane::id::PaneId;
+use crate::state::ToastChannel;
 
 /// Why input was rejected, and what surfacing that rejection did to the screen.
 pub(crate) struct BlockedInput {

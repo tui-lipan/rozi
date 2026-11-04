@@ -375,7 +375,7 @@ fn pending_agent_has_arrived(state: &crate::state::State) -> bool {
 /// the request that survives its destination going away.
 fn land_on_pane(
     ctx: &mut Context<AppRoot>,
-    pane: crate::state::PaneId,
+    pane: crate::pane::id::PaneId,
     row: Option<&crate::session::protocol::RowKey>,
 ) -> bool {
     let Some(row) = row else {
@@ -397,7 +397,7 @@ mod tests {
     use crate::state::Pane;
     use tui_lipan::TestBackend;
 
-    fn backend_with_panes(ids: &[crate::state::PaneId]) -> TestBackend<AppRoot> {
+    fn backend_with_panes(ids: &[crate::pane::id::PaneId]) -> TestBackend<AppRoot> {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
@@ -1124,7 +1124,7 @@ mod tests {
             .map(
                 |(pane, (label, session))| crate::session::protocol::AgentSummary {
                     reference: crate::session::protocol::AgentRef::for_test(
-                        pane as crate::state::PaneId + 1,
+                        pane as crate::pane::id::PaneId + 1,
                         0,
                         None,
                     ),

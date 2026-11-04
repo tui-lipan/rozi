@@ -2,11 +2,10 @@ use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
 
 use crate::config::{BadgeColor, PaneConfig};
+use crate::layout::model::{LayoutKind, TileGap};
 use crate::layout::tiling::PanePlacement;
-use crate::state::{
-    AlertMode, ChromeSlot, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap,
-    Workspace,
-};
+use crate::pane::id::PaneId;
+use crate::state::{AlertMode, ChromeSlot, Pane, PaneBorderMode, PaneTitlebarMode, Workspace};
 use crate::{AppRoot, Msg};
 
 use super::animation;
@@ -1720,10 +1719,10 @@ fn pane_gesture_pointer(
         .filter(|session| session.id == id)
     {
         return Some(match session.corner {
-            crate::state::ResizeCorner::UpperLeft => PointerShape::NwResize,
-            crate::state::ResizeCorner::UpperRight => PointerShape::NeResize,
-            crate::state::ResizeCorner::LowerLeft => PointerShape::SwResize,
-            crate::state::ResizeCorner::LowerRight => PointerShape::SeResize,
+            crate::layout::model::ResizeCorner::UpperLeft => PointerShape::NwResize,
+            crate::layout::model::ResizeCorner::UpperRight => PointerShape::NeResize,
+            crate::layout::model::ResizeCorner::LowerLeft => PointerShape::SwResize,
+            crate::layout::model::ResizeCorner::LowerRight => PointerShape::SeResize,
         });
     }
     prefix_active.then_some(PointerShape::Grab)

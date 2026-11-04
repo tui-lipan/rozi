@@ -4,9 +4,9 @@ use tui_lipan::core::event::MouseKind;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::find_pane_mut;
 use crate::pane::pty_events::notifications::{Notified, input_blocked};
-use crate::state::PaneId;
 
 pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) -> Update {
     if let Some(update) = crate::ops::session::handle_offline_session_key(ctx, key) {

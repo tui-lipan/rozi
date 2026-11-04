@@ -5,10 +5,10 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::ops::focus::{focus_pane, request_search_focus, switch_workspace};
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane, find_pane_mut};
 use crate::state::{
-    MAX_MATCHES, PaneId, ScrollbackMatch, ScrollbackSearchScan, ScrollbackSearchState, SearchScope,
-    State,
+    MAX_MATCHES, ScrollbackMatch, ScrollbackSearchScan, ScrollbackSearchState, SearchScope, State,
 };
 
 pub const SEARCH_LINES_PER_CHUNK: usize = 512;
@@ -1434,7 +1434,7 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.current_mut().workspaces[0].layout_kind =
-                    crate::state::LayoutKind::Scrollable;
+                    crate::layout::model::LayoutKind::Scrollable;
                 for id in [2, 3, 4] {
                     state.current_mut().workspaces[0]
                         .panes
@@ -1445,7 +1445,7 @@ mod tests {
                     );
                 }
                 state.current_mut().workspaces[1].layout_kind =
-                    crate::state::LayoutKind::Scrollable;
+                    crate::layout::model::LayoutKind::Scrollable;
                 state.current_mut().workspaces[1]
                     .panes
                     .push(Pane::new(10, 100, rect));

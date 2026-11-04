@@ -5,7 +5,7 @@ pub mod copy_mode;
 pub mod routing;
 pub mod send_keys;
 
-use crate::state::Direction;
+use crate::layout::model::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {

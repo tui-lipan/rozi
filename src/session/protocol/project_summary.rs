@@ -26,7 +26,7 @@ pub struct ProjectSummary {
     pub branch: Option<String>,
     /// Live panes whose working directory is inside this checkout.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub panes: Vec<crate::state::PaneId>,
+    pub panes: Vec<crate::pane::id::PaneId>,
     /// Published rows working in this checkout from a pane whose own directory is elsewhere — a
     /// program running each of its agents in its own worktree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -46,7 +46,7 @@ impl ProjectSummary {
 pub fn checkout_of<'a>(
     summaries: &'a [ProjectSummary],
     session: &str,
-    pane: crate::state::PaneId,
+    pane: crate::pane::id::PaneId,
     row: Option<&super::RowKey>,
 ) -> Option<&'a ProjectSummary> {
     let in_session = || {
@@ -68,7 +68,7 @@ pub fn checkout_of<'a>(
 /// A published row, by the pane that publishes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectRowRef {
-    pub pane: crate::state::PaneId,
+    pub pane: crate::pane::id::PaneId,
     pub row: super::RowKey,
 }
 

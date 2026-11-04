@@ -86,7 +86,7 @@ pub(super) fn bind_attached_pane_backends(
             .observe_records(&meta.agents, crate::state::FirstSighting::Baseline);
         // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
         // would pin next_pane_id at MAX and collide every later spawn with the popup slot.
-        if meta.pane_id != crate::state::POPUP_PANE_ID {
+        if meta.pane_id != crate::pane::id::POPUP_PANE_ID {
             let next = ctx
                 .state
                 .current()
@@ -113,7 +113,7 @@ pub(super) fn bind_attached_pane_backends(
 /// is handed over by the caller along with the rest of the attach.
 pub(crate) fn open_arriving_panes(
     ctx: &mut Context<AppRoot>,
-    panes: &[(crate::state::PaneId, u64)],
+    panes: &[(crate::pane::id::PaneId, u64)],
 ) {
     for &(id, generation) in panes {
         if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
@@ -135,7 +135,7 @@ pub(crate) fn open_arriving_panes(
 /// panes start with `opening = true` and would otherwise stay invisible).
 pub(crate) fn spawn_state_panes_on_session(
     ctx: &mut Context<AppRoot>,
-) -> Vec<(crate::state::PaneId, u64)> {
+) -> Vec<(crate::pane::id::PaneId, u64)> {
     if ctx.state.current().session_client.is_none() {
         return Vec::new();
     }
@@ -187,7 +187,7 @@ pub(crate) fn spawn_state_panes_on_session(
     let forwarded_environment = ctx.state.config.environment.forward.clone();
     let animation_config = ctx.state.config.animations;
     let mut next_generation = ctx.state.current().next_pty_generation;
-    let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
+    let mut replay_inserts: Vec<((crate::pane::id::PaneId, u64), String)> = Vec::new();
     for workspace in &mut ctx.state.current_mut().workspaces {
         for pane in workspace.panes.iter_mut().filter(|pane| !pane.closing) {
             if pane.opening_animation.is_none() {

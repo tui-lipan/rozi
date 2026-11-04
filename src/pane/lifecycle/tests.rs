@@ -2,8 +2,10 @@ use super::namespace::*;
 use super::spawn::*;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::canvas_local_point_from_mouse;
+use crate::layout::model::ScrollableRevealEdge;
+use crate::pane::id::PaneId;
 use crate::pane::spawn_policy::ClientSite;
-use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
+use crate::state::{Pane, PaneIdentity, State};
 use tui_lipan::Theme;
 use tui_lipan::prelude::*;
 
@@ -50,11 +52,11 @@ fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::AppR
         let state = backend.state_mut();
         state.config.confirm.close_pane = false;
         let workspace = &mut state.current_mut().workspaces[0];
-        workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+        workspace.layout_kind = crate::layout::model::LayoutKind::Scrollable;
         workspace.panes.clear();
         workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
             &[10, 30, 20],
-            crate::state::SplitAxis::Horizontal,
+            crate::layout::model::SplitAxis::Horizontal,
             &[0.5, 0.5],
         );
         // Storage order intentionally differs from the tree order.
@@ -243,8 +245,8 @@ fn close_keeps_the_pane_described_while_it_animates_out() {
 /// rather than to 3, which merely sits closest to the vacated rectangle.
 #[test]
 fn closing_a_dwindle_pane_focuses_the_sibling_that_inherits_its_space() {
+    use crate::layout::model::SplitAxis;
     use crate::layout::tiling::DwindleTree;
-    use crate::state::SplitAxis;
 
     in_stack(|| {
         let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
@@ -258,7 +260,7 @@ fn closing_a_dwindle_pane_focuses_the_sibling_that_inherits_its_space() {
             let state = backend.state_mut();
             state.config.confirm.close_pane = false;
             let workspace = &mut state.current_mut().workspaces[0];
-            workspace.layout_kind = crate::state::LayoutKind::Dwindle;
+            workspace.layout_kind = crate::layout::model::LayoutKind::Dwindle;
             workspace.panes.clear();
             let row = |first, second| DwindleTree::Split {
                 axis: SplitAxis::Horizontal,
@@ -510,7 +512,7 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
                 h: 24.0,
             };
             let workspace = &mut state.current_mut().workspaces[1];
-            workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+            workspace.layout_kind = crate::layout::model::LayoutKind::Scrollable;
             workspace.panes.clear();
             for id in [120, 110, 130] {
                 let mut pane = Pane::new(id, 100, rect);
@@ -520,7 +522,7 @@ fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
             }
             workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                 &[110, 130, 120],
-                crate::state::SplitAxis::Horizontal,
+                crate::layout::model::SplitAxis::Horizontal,
                 &[0.5, 0.5],
             );
             workspace.focused_pane = Some(130);
@@ -577,7 +579,7 @@ fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
         {
             let state = backend.state_mut();
             let mut popup = Pane::new(
-                crate::state::POPUP_PANE_ID,
+                crate::pane::id::POPUP_PANE_ID,
                 state.config.scrollback,
                 FloatRect {
                     x: 10.0,
@@ -617,7 +619,7 @@ fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
         backend
             .dispatch(crate::Msg::PruneClosed(
                 backend.state().runtime_epoch,
-                crate::state::POPUP_PANE_ID,
+                crate::pane::id::POPUP_PANE_ID,
                 generation,
             ))
             .expect("prune closed popup");
@@ -777,7 +779,7 @@ fn non_focusing_spawn_on_active_scrollable_keeps_viewport_anchor() {
     let mut state = State::new(crate::config::Config::default(), Theme::default());
     {
         let workspace = &mut state.current_mut().workspaces[0];
-        workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+        workspace.layout_kind = crate::layout::model::LayoutKind::Scrollable;
         for id in [1_u32, 2] {
             workspace.panes.push(Pane::new(id, 100, bounds));
             crate::layout::tiling::append_tiled_window(workspace, id);
@@ -812,7 +814,7 @@ fn non_focusing_spawn_on_active_scrollable_keeps_viewport_anchor() {
         &state.current().workspaces[0],
         bounds,
         0.0,
-        crate::state::TileGap::DEFAULT,
+        crate::layout::model::TileGap::DEFAULT,
     );
     let anchored = placements.iter().find(|p| p.id == 1).expect("pane A");
     assert!(
@@ -832,7 +834,7 @@ fn non_focusing_tiled_spawn_with_floating_focus_anchors_existing_tiled() {
     let mut state = State::new(crate::config::Config::default(), Theme::default());
     {
         let workspace = &mut state.current_mut().workspaces[0];
-        workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+        workspace.layout_kind = crate::layout::model::LayoutKind::Scrollable;
         workspace.panes.push(Pane::new(1, 100, bounds));
         crate::layout::tiling::append_tiled_window(workspace, 1);
         let mut floating = Pane::new(2, 100, bounds);
@@ -870,7 +872,7 @@ fn non_focusing_tiled_spawn_with_floating_focus_anchors_existing_tiled() {
         &state.current().workspaces[0],
         bounds,
         0.0,
-        crate::state::TileGap::DEFAULT,
+        crate::layout::model::TileGap::DEFAULT,
     );
     let anchored = placements
         .iter()

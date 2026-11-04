@@ -9,6 +9,7 @@ use tui_lipan::prelude::*;
 
 use crate::control;
 use crate::layout::shared::{ClientId, SharedLayout};
+use crate::pane::id::PaneId;
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint, IpcListener};
 use crate::runtime_metrics::{
     ByteBufferMetrics, QueueMetrics, ResurrectionMetrics, ServerOutboxMetrics,
@@ -20,7 +21,6 @@ use crate::session::protocol::{
     ServerMessage, WirePalette,
 };
 use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
-use crate::state::PaneId;
 
 mod acquisition;
 mod agent_summary;

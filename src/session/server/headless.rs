@@ -1861,7 +1861,7 @@ impl SessionServer {
             return ControlResponse::error(format!(
                 "session `{}` has no free pane id below the reserved {}",
                 self.session_name,
-                crate::state::POPUP_PANE_ID
+                crate::pane::id::POPUP_PANE_ID
             ));
         };
         // `spawn_pane` raises `next_generation` past whatever it is handed, so nothing is consumed
@@ -1952,7 +1952,7 @@ impl SessionServer {
     /// is what guarantees the next client-side spawn cannot land on this id; reusing a gap would
     /// also hand a stale reference to a pane that is not the one it meant.
     ///
-    /// `None` once the climb would reach [`crate::state::POPUP_PANE_ID`], which is
+    /// `None` once the climb would reach [`crate::pane::id::POPUP_PANE_ID`], which is
     /// [`PaneId::MAX`] and reserved: there is no id above it, so the honest answer is that the
     /// session has none left rather than a reserved id a layout would reject.
     fn next_headless_pane_id(&self) -> Option<PaneId> {
@@ -1972,7 +1972,7 @@ impl SessionServer {
             .unwrap_or(0);
         highest
             .checked_add(1)
-            .filter(|next| *next != crate::state::POPUP_PANE_ID)
+            .filter(|next| *next != crate::pane::id::POPUP_PANE_ID)
     }
 
     /// Geometry for a headless spawn: whatever the session's panes are already using, so a new pane
@@ -2039,7 +2039,7 @@ impl SessionServer {
                     layout.canvas_rows,
                 )
             }),
-            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+            scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
         };
         match layout
             .workspaces
@@ -2477,7 +2477,7 @@ mod tests {
                     pinned: false,
                     fullscreen: false,
                     rect: None,
-                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                 }],
             }],
         }
@@ -2497,7 +2497,7 @@ mod tests {
             pinned: false,
             fullscreen: false,
             rect,
-            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+            scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
         }
     }
 
@@ -2620,7 +2620,7 @@ mod tests {
         let (refused, _) = control(
             &mut server,
             ControlCommand::LayoutGet {
-                workspace: Some(crate::state::WORKSPACE_COUNT + 1),
+                workspace: Some(crate::layout::model::WORKSPACE_COUNT + 1),
             },
         );
         assert!(!refused.ok);
@@ -2977,8 +2977,8 @@ mod tests {
         layout.validate().expect("valid");
         assert_eq!(layout.workspaces[0].index, 2);
         assert_eq!(
-            crate::state::LayoutKind::from(layout.workspaces[0].layout),
-            crate::state::LayoutKind::Columns
+            crate::layout::model::LayoutKind::from(layout.workspaces[0].layout),
+            crate::layout::model::LayoutKind::Columns
         );
     }
 
@@ -4199,7 +4199,7 @@ mod tests {
     #[test]
     fn a_headless_spawn_refuses_rather_than_minting_the_reserved_popup_pane_id() {
         let mut server = SessionServer::new_named("dev");
-        let last = crate::state::POPUP_PANE_ID - 1;
+        let last = crate::pane::id::POPUP_PANE_ID - 1;
         pane_with_screen(&mut server, last, b"");
         server.layout = Some(one_pane_layout(last));
         assert_eq!(

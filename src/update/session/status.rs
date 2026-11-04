@@ -1,13 +1,13 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::{find_pane_in_namespace, find_pane_in_namespace_mut};
 use crate::pane::pty_events::{
     failed_rows_notice, finished_rows_notice, maybe_notify_pane_failure, maybe_notify_pane_status,
     maybe_notify_rows_done, maybe_notify_rows_failed,
 };
 use crate::session::protocol::PaneRuntimeState;
-use crate::state::PaneId;
 use crate::update::session::control_replies::{flush_attachment_replay_input, flush_replay_input};
 
 pub(crate) fn status_is_active_run(value: Option<&str>) -> bool {

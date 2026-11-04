@@ -4,7 +4,8 @@ use std::time::Instant;
 
 use tui_lipan::prelude::TextInput;
 
-use super::{AttachmentId, PaneId};
+use super::AttachmentId;
+use crate::pane::id::PaneId;
 
 /// What a screenshot action photographed, and so what its flash covers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

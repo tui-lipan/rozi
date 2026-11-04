@@ -293,13 +293,13 @@ fn ui_and_headless_control_commit_identical_documents_for_shared_edits() {
             C::LayoutSet {
                 workspace: 1,
                 layout: None,
-                master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)),
+                master_ratio: Some(f64::from(crate::layout::model::DEFAULT_RATIO)),
                 if_revision: None,
             },
             C::LayoutSet {
                 workspace: 1,
                 layout: None,
-                master_ratio: Some(f64::from(crate::state::DEFAULT_RATIO)),
+                master_ratio: Some(f64::from(crate::layout::model::DEFAULT_RATIO)),
                 if_revision: None,
             },
             C::LayoutSet {
@@ -718,8 +718,11 @@ fn a_parked_failed_spawn_is_removed_and_repairs_scrollable_focus_on_return() {
                 let ws = &mut test.ui.state_mut().current_mut().workspaces[0];
                 ws.panes.retain(|pane| pane.id != 3); // This case needs only a survivor and a failure.
                 ws.tile_tree = crate::layout::effective_tile_tree(ws, None);
-                ws.layout_kind = crate::state::LayoutKind::Scrollable;
-                ws.set_scrollable_viewport(Some(2), crate::state::ScrollableRevealEdge::Right);
+                ws.layout_kind = crate::layout::model::LayoutKind::Scrollable;
+                ws.set_scrollable_viewport(
+                    Some(2),
+                    crate::layout::model::ScrollableRevealEdge::Right,
+                );
                 ws.panes
                     .iter()
                     .find(|pane| pane.id == 2)

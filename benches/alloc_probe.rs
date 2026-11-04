@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneId};
+use rozi::pane::id::PaneId;
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 

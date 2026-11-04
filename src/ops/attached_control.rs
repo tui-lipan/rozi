@@ -481,7 +481,7 @@ mod tests {
     fn ask_from(
         backend: &mut TestBackend<AppRoot>,
         command: ControlCommand,
-        source_pane: Option<crate::state::PaneId>,
+        source_pane: Option<crate::pane::id::PaneId>,
         source_session: Option<&str>,
     ) -> mpsc::Receiver<ControlResponse> {
         let (reply, response) = mpsc::channel();

@@ -1,6 +1,7 @@
 use super::*;
 
-use crate::state::{PaneId, ScrollbackMatch, SearchScope};
+use crate::pane::id::PaneId;
+use crate::state::{ScrollbackMatch, SearchScope};
 use tui_lipan::style::RowStylePolicy;
 
 pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {

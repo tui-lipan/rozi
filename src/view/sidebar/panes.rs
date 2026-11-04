@@ -243,8 +243,11 @@ mod tests {
         for id in [20, 10, 30] {
             workspace.panes.push(Pane::new(id, 100, rect));
         }
-        workspace.tile_tree =
-            build_dwindle_tree(&[10, 20, 30], crate::state::SplitAxis::Horizontal, &[]);
+        workspace.tile_tree = build_dwindle_tree(
+            &[10, 20, 30],
+            crate::layout::model::SplitAxis::Horizontal,
+            &[],
+        );
         assert!(swap_tree_leaves(
             workspace.tile_tree.as_mut().expect("tree"),
             10,
@@ -285,7 +288,7 @@ mod tests {
         pinned.floating = true;
         pinned.pinned = true;
         state.current_mut().workspaces[0].panes.push(pinned);
-        let heading_of = |state: &State, id: crate::state::PaneId| {
+        let heading_of = |state: &State, id: crate::pane::id::PaneId| {
             let keys: Vec<String> = panes_rows(state)
                 .into_iter()
                 .filter_map(|row| row.key)

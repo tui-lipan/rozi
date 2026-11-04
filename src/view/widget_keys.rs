@@ -1,4 +1,4 @@
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 
 pub fn pane_window_key(id: PaneId, generation: u64) -> String {
     format!("rozi-pane-{id}-{generation}")

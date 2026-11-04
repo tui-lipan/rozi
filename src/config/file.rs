@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tui_lipan::input::KeyBinding;
 
 #[cfg(test)]
-use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
+use crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
 use crate::state::{AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
@@ -1104,10 +1104,10 @@ fn load_config_from_text_with_extensions(
         }
     }
     if let Some(name) = parsed.layout.default.as_deref() {
-        match crate::state::LayoutKind::from_label(name) {
+        match crate::layout::model::LayoutKind::from_label(name) {
             Some(kind) => config.layout.default = kind,
             None => {
-                let expected = crate::state::LayoutKind::all()
+                let expected = crate::layout::model::LayoutKind::all()
                     .iter()
                     .map(|kind| kind.label())
                     .collect::<Vec<_>>()
@@ -1780,13 +1780,13 @@ mod file_tests {
             toml::from_str("[layout]\ndefault = \"master\"").expect("config parses");
         assert_eq!(parsed.layout.default.as_deref(), Some("master"));
         assert_eq!(
-            crate::state::LayoutKind::from_label(parsed.layout.default.as_deref().unwrap()),
-            Some(crate::state::LayoutKind::Master)
+            crate::layout::model::LayoutKind::from_label(parsed.layout.default.as_deref().unwrap()),
+            Some(crate::layout::model::LayoutKind::Master)
         );
         // The built-in fallback stays dwindle when the key is absent.
         assert_eq!(
             LayoutConfig::default().default,
-            crate::state::LayoutKind::Dwindle
+            crate::layout::model::LayoutKind::Dwindle
         );
     }
 

@@ -6,7 +6,9 @@ use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
 
 use crate::config::Config;
 use crate::layout::anim::GeometryAnimation;
+use crate::layout::model::{TileGap, WORKSPACE_COUNT};
 use crate::layout::tiling::append_tiled_window;
+use crate::pane::id::PaneId;
 
 mod agent_attention;
 mod appearance;
@@ -17,7 +19,6 @@ mod extension_runtime;
 mod extension_workers;
 mod identity;
 mod keybindings;
-mod layout;
 mod mode;
 mod pane;
 mod pickers;
@@ -44,7 +45,6 @@ pub use extension_runtime::*;
 pub use extension_workers::*;
 pub use identity::*;
 pub use keybindings::*;
-pub use layout::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
@@ -61,8 +61,6 @@ pub use tab_settings::*;
 pub use workbar::*;
 pub use workspace::*;
 
-pub type PaneId = u32;
-
 /// Which pane tree a layout edit applies to. The scratchpad reuses [`Workspace`] as its client-local
 /// content model, but its presentation is an overlay rather than an attachment workspace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,23 +69,14 @@ pub enum LayoutTarget {
     Workspace(usize),
 }
 
-pub const POPUP_PANE_ID: PaneId = u32::MAX;
 pub const WORKBAR_HEIGHT: u16 = 1;
-pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
-pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
-pub const DEFAULT_RATIO: f32 = 0.58;
 /// Share for a split whose two sides have no size of their own to keep: a freshly spawned
 /// pane, or one dropped in from floating. A pane that already had a width brings it along
 /// instead - see `tiling::redock_split_ratio`.
 pub const EVEN_SPLIT_RATIO: f32 = 0.5;
-/// Default Scrollable column width as a fraction of the tile viewport.
-pub const DEFAULT_SCROLLABLE_WIDTH: f32 = 0.45;
 pub const MIN_SPLIT_RATIO: f32 = 0.20;
-pub const MAX_SPLIT_RATIO: f32 = 0.80;
 pub const RATIO_STEP: f32 = 0.04;
-/// Default weight for tile width against height when choosing a dwindle split direction.
-pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 /// An extension command started from Commands that has not yet finished or opened a picker.
 pub struct CommandPaletteHandoff {
@@ -1588,6 +1577,7 @@ impl State {
 mod render_visibility_tests {
     use super::*;
     use crate::config::Config;
+    use crate::layout::model::LayoutKind;
     use tui_lipan::prelude::Theme;
 
     #[test]

@@ -1,9 +1,10 @@
 use tui_lipan::prelude::*;
 
 use super::row::{self, Row, RowTarget, Shape, SidebarRow};
+use crate::pane::id::PaneId;
 use crate::platform::paths::path_segments;
 use crate::session::protocol::pane_status;
-use crate::state::{PaneId, State, TreeExpansionKey};
+use crate::state::{State, TreeExpansionKey};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentRow {
@@ -244,7 +245,7 @@ pub(crate) fn attachment_agent_rows(
                 .panes
                 .iter()
                 .enumerate()
-                .filter(|(_, pane)| pane.id != crate::state::POPUP_PANE_ID && !pane.closing)
+                .filter(|(_, pane)| pane.id != crate::pane::id::POPUP_PANE_ID && !pane.closing)
                 .flat_map(move |(pane_index, pane)| {
                     // Presented as merged with the hooks' report, the same as the occupant's state,
                     // so the status, activity, age, and sort order never disagree with automation.

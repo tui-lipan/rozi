@@ -5,10 +5,11 @@ use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::ops::theme::pane_frame_background;
+use crate::pane::id::POPUP_PANE_ID;
 use crate::pane::lifecycle::{
     PaneSpawnRequest, focused_spawn_cwd, open_timers_command, pane_env, request_pane_spawn,
 };
-use crate::state::{POPUP_PANE_ID, Pane, PaneIdentity};
+use crate::state::{Pane, PaneIdentity};
 
 pub(crate) fn popup_rect(bounds: FloatRect, top_gap: f32, width: f32, height: f32) -> FloatRect {
     let bounds = workspace_tile_bounds(bounds, top_gap);

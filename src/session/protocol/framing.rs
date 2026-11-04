@@ -2,12 +2,12 @@ use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
+use crate::pane::id::PaneId;
 use crate::session::protocol::constants::{
     FRAME_KIND_ACQUISITION_ACK, FRAME_KIND_CONTROL_JSON, FRAME_KIND_PANE_INPUT,
     FRAME_KIND_PANE_OUTPUT, FRAME_KIND_PRESENTATION_ACK, FRAME_KIND_PRESENTATION_INTEREST,
     MAX_FRAME_SIZE, PANE_FRAME_HEADER_LEN, PANE_OUTPUT_METADATA_LEN, PANE_OUTPUT_SEMANTICS_LEN,
 };
-use crate::state::PaneId;
 
 /// Producer bytes may only be superseded when the authoritative parser proves independence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

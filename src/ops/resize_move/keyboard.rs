@@ -3,11 +3,11 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::workspace_tile_bounds;
+use crate::layout::model::{Direction, LayoutKind};
 use crate::layout::tiling::{
     focused_is_first_in_nearest_axis_split, nearest_split_available, resize_tiled_split,
 };
 use crate::ops::focus::{active_pane_is_fullscreen, sync_scrollable_reveal};
-use crate::state::{self, Direction, LayoutKind};
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits, resize_focused_float};
 use super::tiling::{
@@ -59,7 +59,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
     if layout_kind == LayoutKind::Master {
         let workspace = ctx.state.active_workspace_mut();
         let axis = crate::ops::focus::split_axis_for_direction(direction);
-        if axis != state::SplitAxis::Horizontal {
+        if axis != crate::layout::model::SplitAxis::Horizontal {
             return;
         }
         let available = master_available_width(tile_bounds, tile_gap);
@@ -73,7 +73,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction:
     }
     if layout_kind == LayoutKind::Scrollable {
         let axis = crate::ops::focus::split_axis_for_direction(direction);
-        if axis != state::SplitAxis::Horizontal {
+        if axis != crate::layout::model::SplitAxis::Horizontal {
             return;
         }
         let available = tile_bounds.w.max(1.0);
@@ -132,10 +132,10 @@ fn keyboard_resize_pixels(direction: Direction, focused_is_first: bool, availabl
 mod tests {
     use super::*;
     use crate::input::Action;
+    use crate::layout::model::{LayoutKind, SplitAxis};
     use crate::ops::resize_move::test_util::{
         first_pane_extent, in_test_stack, steps, two_pane_backend,
     };
-    use crate::state::{LayoutKind, SplitAxis};
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
     use tui_lipan::core::event::{KeyCode, KeyEvent, KeyMods};
@@ -324,7 +324,7 @@ mod tests {
                 let workspace = state.active_workspace_mut();
                 workspace.layout_kind = LayoutKind::Scrollable;
                 for pane in &mut workspace.panes {
-                    pane.scrollable_width = crate::state::DEFAULT_SCROLLABLE_WIDTH;
+                    pane.scrollable_width = crate::layout::model::DEFAULT_SCROLLABLE_WIDTH;
                 }
             }
             backend.render();
@@ -353,7 +353,7 @@ mod tests {
                 let workspace = state.active_workspace_mut();
                 workspace.layout_kind = LayoutKind::Scrollable;
                 for pane in &mut workspace.panes {
-                    pane.scrollable_width = crate::state::DEFAULT_SCROLLABLE_WIDTH;
+                    pane.scrollable_width = crate::layout::model::DEFAULT_SCROLLABLE_WIDTH;
                 }
             }
             backend.render();

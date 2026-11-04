@@ -1,29 +1,14 @@
 use crate::layout::tiling::DwindleTree;
 
-use super::{DEFAULT_RATIO, Direction, LayoutKind, MoveSwapHint, Pane, PaneId, SplitAxis};
-
-pub const WORKSPACE_COUNT: usize = 9;
+use super::{MoveSwapHint, Pane};
+use crate::layout::model::{DEFAULT_RATIO, Direction, LayoutKind, ScrollableRevealEdge, SplitAxis};
+use crate::pane::id::PaneId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirectionalFocusHint {
     pub pane: PaneId,
     pub entry_direction: Direction,
     pub target: PaneId,
-}
-
-/// Which visible edge a Scrollable strip anchor aligns to when scrolling into view.
-/// Local viewport state only — never persisted in profiles or SharedLayout.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ScrollableRevealEdge {
-    /// Align the anchor pane's left edge with the visible left edge.
-    #[default]
-    Left,
-    /// Align the anchor pane's right edge with the visible right edge.
-    Right,
-    /// Hold the anchor pane's left edge this many cells right of the visible left edge (negative
-    /// when it sits scrolled past it). Reordering panes records the strip's scroll this way so a
-    /// pane can land in a visible slot without the columns around it sliding.
-    LeftOffset(i32),
 }
 
 pub struct Workspace {

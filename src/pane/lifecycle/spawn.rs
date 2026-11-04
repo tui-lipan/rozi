@@ -5,13 +5,15 @@ use crate::layout::anim::{self, GeometryAnimation};
 use crate::layout::geometry::{
     canvas_local_point_from_mouse, clamp_float_rect, default_floating_rect,
 };
+use crate::layout::model::ScrollableRevealEdge;
 use crate::layout::place_spawned_pane;
 use crate::layout::tiling::remove_tiled_window;
 use crate::ops::focus::request_pane_focus;
 use crate::ops::theme::pane_frame_background;
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::namespace::{find_pane, find_pane_mut, pane_env};
 use crate::pane::lifecycle::timers::open_timers_command;
-use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
+use crate::state::{Pane, PaneIdentity, State};
 
 /// The focused pane's local working directory, if it has a usable one.
 ///

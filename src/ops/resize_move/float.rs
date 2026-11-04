@@ -8,6 +8,7 @@ use crate::layout::geometry::{
     canvas_local_point_from_mouse, clamp_float_rect, clamp_floating_rect,
     grabbed_edge_on_outer_border, resize_float_rect_from_corner, workspace_tile_bounds,
 };
+use crate::layout::model::{Direction, LayoutKind, ResizeCorner, TileGap};
 use crate::layout::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
 };
@@ -19,10 +20,8 @@ use crate::ops::focus::{
     active_pane_mut, focus_pane, focus_pane_in_place, pin_scrollable_scroll, request_pane_focus,
     scrollable_scroll, settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
-use crate::state::{
-    self, Direction, EVEN_SPLIT_RATIO, LayoutKind, MoveSession, PaneId, ResizeCorner,
-    ResizeSession, State, TileGap, Workspace,
-};
+use crate::pane::id::PaneId;
+use crate::state::{EVEN_SPLIT_RATIO, MoveSession, ResizeSession, State, Workspace};
 
 use super::tiling::{
     master_available_width, resize_master_split_by_pixels, resize_scrollable_width_by_pixels,
@@ -487,7 +486,12 @@ fn resize_pane_state(
             placement_for(&placements, id)
         };
         if focused_rect.is_some_and(|rect| {
-            grabbed_edge_on_outer_border(rect, tile_bounds, corner, state::SplitAxis::Horizontal)
+            grabbed_edge_on_outer_border(
+                rect,
+                tile_bounds,
+                corner,
+                crate::layout::model::SplitAxis::Horizontal,
+            )
         }) {
             return;
         }
@@ -536,8 +540,14 @@ fn resize_pane_state(
     };
 
     for (axis, pixels) in [
-        (state::SplitAxis::Horizontal, effective_dx as f32),
-        (state::SplitAxis::Vertical, effective_dy as f32),
+        (
+            crate::layout::model::SplitAxis::Horizontal,
+            effective_dx as f32,
+        ),
+        (
+            crate::layout::model::SplitAxis::Vertical,
+            effective_dy as f32,
+        ),
     ] {
         if pixels == 0.0 {
             continue;
@@ -562,13 +572,13 @@ fn resize_pane_state(
     state.animation = GeometryAnimation::None;
 }
 
-fn split_edge_for_corner(axis: state::SplitAxis, corner: ResizeCorner) -> SplitEdge {
+fn split_edge_for_corner(axis: crate::layout::model::SplitAxis, corner: ResizeCorner) -> SplitEdge {
     match axis {
-        state::SplitAxis::Horizontal => match corner {
+        crate::layout::model::SplitAxis::Horizontal => match corner {
             ResizeCorner::UpperLeft | ResizeCorner::LowerLeft => SplitEdge::Leading,
             ResizeCorner::UpperRight | ResizeCorner::LowerRight => SplitEdge::Trailing,
         },
-        state::SplitAxis::Vertical => match corner {
+        crate::layout::model::SplitAxis::Vertical => match corner {
             ResizeCorner::UpperLeft | ResizeCorner::UpperRight => SplitEdge::Leading,
             ResizeCorner::LowerLeft | ResizeCorner::LowerRight => SplitEdge::Trailing,
         },
@@ -630,9 +640,10 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::model::SplitAxis;
     use crate::layout::tiling::DwindleTree;
     use crate::ops::resize_move::test_util::in_test_stack;
-    use crate::state::{Pane, SharedSessionState, SplitAxis};
+    use crate::state::{Pane, SharedSessionState};
     use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
@@ -845,7 +856,7 @@ mod tests {
     }
 
     fn scrollable_backend(focus: PaneId) -> TestBackend<AppRoot> {
-        scrollable_backend_with(4, crate::state::DEFAULT_SCROLLABLE_WIDTH, focus)
+        scrollable_backend_with(4, crate::layout::model::DEFAULT_SCROLLABLE_WIDTH, focus)
     }
 
     /// `count` Scrollable columns of `width` in a 100x30 viewport, with the strip revealing `focus`.
@@ -877,9 +888,9 @@ mod tests {
             workspace.focused_pane = Some(focus);
             workspace.scrollable_anchor = Some(focus);
             workspace.scrollable_reveal_edge = if focus == 1 {
-                crate::state::ScrollableRevealEdge::Left
+                crate::layout::model::ScrollableRevealEdge::Left
             } else {
-                crate::state::ScrollableRevealEdge::Right
+                crate::layout::model::ScrollableRevealEdge::Right
             };
             state.current_mut().focused_pane = Some(focus);
         }
@@ -958,7 +969,7 @@ mod tests {
                 after > before,
                 "scrollable LowerRight +{EXTREME} must grow (got {after}, before {before}); i16 wrap would shrink"
             );
-            assert_eq!(after, crate::state::MAX_SPLIT_RATIO);
+            assert_eq!(after, crate::layout::model::MAX_SPLIT_RATIO);
 
             let start = FloatRect {
                 x: 10.0,
@@ -1014,7 +1025,7 @@ mod tests {
                 crate::layout::tiling::cell_split_ratio(
                     crate::layout::tiling::scrollable_column_width(
                         100.0,
-                        crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                        crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                     ) + 20.0,
                     100.0,
                 ),

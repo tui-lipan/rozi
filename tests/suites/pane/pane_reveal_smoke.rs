@@ -6,8 +6,10 @@ use rozi::AppRoot;
 use rozi::layout::anim::{
     GeometryAnimation, PaneAnimationStyle, pane_opacity_target, retained_pane_timeout,
 };
+use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{POPUP_PANE_ID, Pane, PaneBorderMode, SplitAxis};
+use rozi::pane::id::POPUP_PANE_ID;
+use rozi::state::{Pane, PaneBorderMode};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, Key, MouseEvent, Rect};

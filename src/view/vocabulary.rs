@@ -770,7 +770,7 @@ mod tests {
 
     fn summary(
         session: &str,
-        pane: crate::state::PaneId,
+        pane: crate::pane::id::PaneId,
         label: &str,
         state: &str,
     ) -> AgentSummary {

@@ -156,9 +156,9 @@ fn workspace_slide_preserves_terminal_size_across_representative_layouts() {
         // One tiled layout, one floating layout, and monocle-as-fullscreen. The slide
         // contract is that the terminal keeps its settled size, which these three cover.
         for (layout, floating, fullscreen) in [
-            (rozi::state::LayoutKind::Dwindle, false, false),
-            (rozi::state::LayoutKind::Master, true, false),
-            (rozi::state::LayoutKind::Monocle, false, true),
+            (rozi::layout::model::LayoutKind::Dwindle, false, false),
+            (rozi::layout::model::LayoutKind::Master, true, false),
+            (rozi::layout::model::LayoutKind::Monocle, false, true),
         ] {
             let mut backend = backend();
             for index in [0, 1] {

@@ -4,15 +4,9 @@ use tui_lipan::prelude::FloatRect;
 use crate::layout::shared::FracRect;
 use crate::layout::tiling::DwindleTree;
 
-use super::{Direction, LayoutTarget, PaneId};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResizeCorner {
-    UpperLeft,
-    UpperRight,
-    LowerLeft,
-    LowerRight,
-}
+use super::LayoutTarget;
+use crate::layout::model::{Direction, ResizeCorner};
+use crate::pane::id::PaneId;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResizeSession {

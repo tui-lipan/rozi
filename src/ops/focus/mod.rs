@@ -3,15 +3,14 @@ use tui_lipan::prelude::*;
 use crate::AppRoot;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
+use crate::layout::model::{Direction, LayoutKind, ScrollableRevealEdge};
 use crate::layout::tiling;
 use crate::layout::{
     placement_for, scrollable_viewport_anchor, workspace_target_rects_excluding_with_visible,
     workspace_target_rects_with_float_bounds,
 };
-use crate::state::{
-    Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
-    Workspace,
-};
+use crate::pane::id::PaneId;
+use crate::state::{DirectionalFocusHint, Pane, State, Workspace};
 
 mod requests;
 mod workspace;
@@ -19,10 +18,10 @@ mod workspace;
 pub(crate) use requests::*;
 pub(crate) use workspace::*;
 
-pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::SplitAxis {
+pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::layout::model::SplitAxis {
     match direction {
-        Direction::Left | Direction::Right => crate::state::SplitAxis::Horizontal,
-        Direction::Up | Direction::Down => crate::state::SplitAxis::Vertical,
+        Direction::Left | Direction::Right => crate::layout::model::SplitAxis::Horizontal,
+        Direction::Up | Direction::Down => crate::layout::model::SplitAxis::Vertical,
     }
 }
 
@@ -162,7 +161,7 @@ pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
-        .filter(|pane| !pane.closing && pane.id != crate::state::POPUP_PANE_ID)
+        .filter(|pane| !pane.closing && pane.id != crate::pane::id::POPUP_PANE_ID)
         .collect::<Vec<_>>();
     if panes.is_empty() {
         return None;
@@ -1296,9 +1295,10 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::layout::model::LayoutKind;
     use crate::layout::tiling::{append_tiled_window, collect_tree_leaves};
     use crate::layout::workspace_target_rects_with_visible_bounds;
-    use crate::state::{LayoutKind, Pane};
+    use crate::state::Pane;
     use tui_lipan::prelude::Theme;
 
     fn state_with_tiled(ids: &[PaneId]) -> State {
@@ -2822,7 +2822,7 @@ mod tests {
             workspace.layout_kind = LayoutKind::Scrollable;
             workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                 &[10, 30, 20],
-                crate::state::SplitAxis::Horizontal,
+                crate::layout::model::SplitAxis::Horizontal,
                 &[0.5, 0.5],
             );
             workspace.focused_pane = Some(30);

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tui_lipan::prelude::{ItemDescription, SearchItem, TextInput};
 
-use super::PaneId;
+use crate::pane::id::PaneId;
 
 pub const MAX_MATCHES: usize = 2_000;
 

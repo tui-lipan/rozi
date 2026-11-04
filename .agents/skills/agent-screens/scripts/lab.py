@@ -60,10 +60,10 @@ def layout_cycle() -> list[str]:
     Read out of the source rather than copied, because a reorder there would otherwise leave this
     script confidently sending the wrong number of toggles.
     """
-    text = (REPO / "src/state/layout.rs").read_text(encoding="utf-8")
+    text = (REPO / "src/layout/model.rs").read_text(encoding="utf-8")
     match = re.search(r"pub fn all\(\) -> &'static \[LayoutKind\] \{\s*&\[(.*?)\]", text, re.S)
     if not match:
-        raise SystemExit("src/state/layout.rs has no `LayoutKind::all()` to read the cycle from")
+        raise SystemExit("src/layout/model.rs has no `LayoutKind::all()` to read the cycle from")
     return [name.lower() for name in re.findall(r"Self::(\w+)", match.group(1))]
 
 

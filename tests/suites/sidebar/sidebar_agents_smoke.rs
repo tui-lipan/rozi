@@ -8,7 +8,8 @@ use rozi::session::protocol::{
 fn agent(id: &str, label: &str) -> AgentIdentity {
     AgentIdentity::new(id, label)
 }
-use rozi::state::{Pane, PaneId};
+use rozi::pane::id::PaneId;
+use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};

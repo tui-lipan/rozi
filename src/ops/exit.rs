@@ -309,7 +309,7 @@ pub(crate) fn kill_workspace_with_confirmation(
         .collect();
 
     // One Update carries one Command, so the whole batch shares a single delayed prune.
-    let targets: Vec<(crate::state::PaneId, u64)> = pane_ids
+    let targets: Vec<(crate::pane::id::PaneId, u64)> = pane_ids
         .into_iter()
         .filter_map(|id| {
             crate::pane::lifecycle::close_pane_inner_without_focus(ctx, id, true)
@@ -326,10 +326,10 @@ pub(crate) fn kill_workspace_with_confirmation(
     // will close on its next iteration. No inactive workspace is consulted or mutated here.
     crate::ops::focus::choose_fallback_focus(&mut ctx.state);
     let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-    if workspace.layout_kind == crate::state::LayoutKind::Scrollable
+    if workspace.layout_kind == crate::layout::model::LayoutKind::Scrollable
         && workspace.tiled_ids().is_empty()
     {
-        workspace.set_scrollable_viewport(None, crate::state::ScrollableRevealEdge::Left);
+        workspace.set_scrollable_viewport(None, crate::layout::model::ScrollableRevealEdge::Left);
     }
     crate::ops::focus::request_current_pane_focus(ctx);
 
@@ -832,7 +832,7 @@ mod tests {
                     h: 24.0,
                 };
                 let workspace = &mut state.current_mut().workspaces[0];
-                workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+                workspace.layout_kind = crate::layout::model::LayoutKind::Scrollable;
                 workspace.panes.clear();
                 // Storage order differs from the strip order to make an accidental per-pane
                 // neighbor walk observable.
@@ -844,7 +844,7 @@ mod tests {
                 }
                 workspace.tile_tree = crate::layout::tiling::build_dwindle_tree(
                     &[10, 30, 20],
-                    crate::state::SplitAxis::Horizontal,
+                    crate::layout::model::SplitAxis::Horizontal,
                     &[0.5, 0.5],
                 );
                 workspace.focused_pane = Some(30);

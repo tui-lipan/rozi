@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use crate::pane::id::PaneId;
 use crate::session::protocol::{
     AgentRecord, AgentRuntime, PaneRuntimeState, PaneStatus, SessionInstanceId,
     effective_agent_runtimes,
@@ -12,7 +13,6 @@ pub(super) use crate::session::protocol::{
     CursorExpired, EventFields, EventKind, PaneForeground, SessionEvent, SessionSubscribeRecord,
     SessionSubscribeSnapshot, agent_state_changes, pane_status_fields,
 };
-use crate::state::PaneId;
 
 pub const DEFAULT_MAX_EVENTS: usize = 1024;
 pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;

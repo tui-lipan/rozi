@@ -172,7 +172,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 pinned: false,
                 fullscreen: false,
                 rect: None,
-                scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                scrollable_width: rozi::layout::model::DEFAULT_SCROLLABLE_WIDTH,
             }],
         }],
     };

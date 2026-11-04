@@ -1,6 +1,8 @@
 use crate::layout::anim::GeometryAnimation;
+use crate::layout::model::LayoutKind;
 use crate::layout::scrollable_viewport_anchor;
-use crate::state::{LayoutKind, PaneId, State, Workspace};
+use crate::pane::id::PaneId;
+use crate::state::{State, Workspace};
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     if state.scratch_visible {

@@ -521,7 +521,7 @@ pub fn persist_workbar_alert_string(
 }
 
 pub fn persist_layout_default(
-    kind: crate::state::LayoutKind,
+    kind: crate::layout::model::LayoutKind,
 ) -> std::result::Result<PathBuf, String> {
     let _edit = config_edit_lock();
     let path = config_path();

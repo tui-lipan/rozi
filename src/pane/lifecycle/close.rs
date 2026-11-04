@@ -7,11 +7,11 @@ use crate::ops::focus::{
     choose_fallback_focus, choose_fallback_focus_near, dwindle_close_neighbor, focus_pane,
     request_current_pane_focus, scrollable_close_neighbor,
 };
+use crate::pane::id::PaneId;
 use crate::pane::lifecycle::namespace::{
     clear_pane_local_state, find_pane, find_pane_in_namespace_mut, find_pane_mut, pane_is_local,
     remove_pane,
 };
-use crate::state::PaneId;
 use crate::{AppRoot, Msg};
 
 /// Kill a live workspace pane and start its close animation.
@@ -184,7 +184,11 @@ fn close_scratch_pane(
 struct WorkspaceCloseFocus {
     active_pane: bool,
     neighbor: Option<PaneId>,
-    anchor_remap: Option<(usize, Option<PaneId>, crate::state::ScrollableRevealEdge)>,
+    anchor_remap: Option<(
+        usize,
+        Option<PaneId>,
+        crate::layout::model::ScrollableRevealEdge,
+    )>,
 }
 
 fn plan_workspace_close_focus(
@@ -207,7 +211,7 @@ fn plan_workspace_close_focus(
         .and_then(|workspace| scrollable_close_neighbor(&attachment.workspaces[workspace], id));
     let anchor_remap = owner_workspace.and_then(|workspace_index| {
         let workspace = &attachment.workspaces[workspace_index];
-        (workspace.layout_kind == crate::state::LayoutKind::Scrollable
+        (workspace.layout_kind == crate::layout::model::LayoutKind::Scrollable
             && workspace.scrollable_anchor == Some(id))
         .then_some((
             workspace_index,

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::config::UserCommandAction;
 
-use super::PaneId;
+use crate::pane::id::PaneId;
 
 /// A PTY-creating action deferred until an ephemeral session finishes attaching.
 ///

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::layout::model::{LayoutKind, SplitAxis};
 use crate::layout::tiling::DwindleTree;
-use crate::state::{LayoutKind, PaneId, SplitAxis};
+use crate::pane::id::PaneId;
 
 /// Serde-stable tree shared by profile TOML and the session layout document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

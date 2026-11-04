@@ -205,7 +205,10 @@ fn probe_ui_at(path: &std::path::Path) -> Option<control::UiContextMetadata> {
 }
 
 /// Omitted pane targets on `--here` mean the verified caller, even in a many-pane session.
-pub(super) fn pin_here_target(command: &mut control::ControlCommand, pane: crate::state::PaneId) {
+pub(super) fn pin_here_target(
+    command: &mut control::ControlCommand,
+    pane: crate::pane::id::PaneId,
+) {
     use control::ControlCommand::*;
     let target = match command {
         CapturePane { target, .. }

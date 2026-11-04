@@ -2,7 +2,8 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::config::UserCommandAction;
-use crate::state::{PaneId, PaneIdentity};
+use crate::pane::id::PaneId;
+use crate::state::PaneIdentity;
 
 pub(crate) fn execute(ctx: &mut Context<AppRoot>, action: &UserCommandAction) -> Update {
     execute_with_env(ctx, action, Vec::new())
@@ -447,7 +448,7 @@ mod tests {
                     .current()
                     .pending_spawns
                     .iter()
-                    .find(|request| request.pane_id == crate::state::POPUP_PANE_ID)
+                    .find(|request| request.pane_id == crate::pane::id::POPUP_PANE_ID)
                     .expect("popup spawn queued for the remote server");
                 assert!(
                     request

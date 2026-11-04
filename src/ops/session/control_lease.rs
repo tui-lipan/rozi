@@ -381,7 +381,11 @@ pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Updat
 /// here, and one pointer event carries one id and four floats. Sent only for a shared workspace
 /// drag - the scratchpad is client-local, and a floating pane's rectangle already replicates
 /// through the layout document.
-pub(crate) fn publish_drag(ctx: &mut Context<AppRoot>, id: crate::state::PaneId, rect: FloatRect) {
+pub(crate) fn publish_drag(
+    ctx: &mut Context<AppRoot>,
+    id: crate::pane::id::PaneId,
+    rect: FloatRect,
+) {
     if ctx.state.scratch_visible || !ctx.state.current().session_attached {
         return;
     }

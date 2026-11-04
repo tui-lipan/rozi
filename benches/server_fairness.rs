@@ -50,7 +50,7 @@ fn spawn_placement(last_pane: u32) -> protocol::SpawnPlacementCommit {
                         pinned: false,
                         fullscreen: false,
                         rect: None,
-                        scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
+                        scrollable_width: rozi::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                     })
                     .collect(),
             }],

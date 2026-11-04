@@ -115,7 +115,7 @@ fn state_text(row: &GlobalAgentRow) -> String {
 /// only the row its program has on screen, so only that one reads as the active agent.
 fn published_row_active(
     state: &State,
-    pane: crate::state::PaneId,
+    pane: crate::pane::id::PaneId,
     key: &crate::session::protocol::RowKey,
 ) -> bool {
     state

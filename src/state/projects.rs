@@ -169,7 +169,7 @@ fn live_project_summaries(attachment: &crate::state::Attachment) -> Vec<ProjectS
         .workspaces
         .iter()
         .flat_map(|workspace| &workspace.panes)
-        .filter(|pane| pane.id != crate::state::POPUP_PANE_ID && !pane.closing)
+        .filter(|pane| pane.id != crate::pane::id::POPUP_PANE_ID && !pane.closing)
         .collect();
     panes.sort_by_key(|pane| pane.id);
     for pane in panes {
@@ -547,7 +547,7 @@ mod tests {
         root: &str,
         repository: Option<&str>,
         branch: &str,
-        panes: &[crate::state::PaneId],
+        panes: &[crate::pane::id::PaneId],
     ) -> ProjectSummary {
         ProjectSummary {
             session: session.into(),
@@ -559,7 +559,7 @@ mod tests {
         }
     }
 
-    fn agent(session: &str, pane: crate::state::PaneId, state: &str) -> AgentSummary {
+    fn agent(session: &str, pane: crate::pane::id::PaneId, state: &str) -> AgentSummary {
         AgentSummary {
             reference: crate::session::protocol::AgentRef::for_test(pane, 0, None),
             session: session.into(),

@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::state::PaneId;
+use crate::pane::id::PaneId;
 use crate::view;
 
 pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {

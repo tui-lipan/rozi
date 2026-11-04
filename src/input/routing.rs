@@ -2,9 +2,11 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::input::Action;
+use crate::layout::model::Direction;
 use crate::ops::focus::{focus_pane, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
-use crate::state::{Direction, Mode, PaneId, State};
+use crate::pane::id::PaneId;
+use crate::state::{Mode, State};
 
 /// Route a key that reached rozi's own handling: app command chords (leader/modifier) are
 /// resolved natively by tui-lipan before this runs (see `App::key_dispatch_policy` /

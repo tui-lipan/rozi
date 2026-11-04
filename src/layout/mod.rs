@@ -1,10 +1,11 @@
 //! Window-manager layout: tile trees and their geometry.
 //!
-//! This module owns the placement math itself; [`state::layout`](crate::state::layout) owns the
-//! per-workspace layout state it reads, and `view/` renders the rects it produces.
+//! This module owns the placement math and the plain layout vocabulary in [`model`]; `state/` owns
+//! the per-workspace layout state it reads, and `view/` renders the rects it produces.
 
 pub mod anim;
 pub mod geometry;
+pub mod model;
 pub mod shared;
 pub mod tiling;
 pub mod tree_ser;
@@ -19,9 +20,9 @@ use self::tiling::{
     allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
     collect_tree_leaves, insert_leaf_around_target, ratio_at,
 };
-use crate::state::{
-    EVEN_SPLIT_RATIO, LayoutKind, Pane, PaneId, ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
-};
+use crate::layout::model::{LayoutKind, ScrollableRevealEdge, SplitAxis, TileGap};
+use crate::pane::id::PaneId;
+use crate::state::{EVEN_SPLIT_RATIO, Pane, Workspace};
 
 /// What tiling geometry reads from one workspace.
 ///
@@ -73,7 +74,7 @@ impl TileSource for Workspace {
             .iter()
             .find(|pane| pane.id == id)
             .map(|pane| pane.scrollable_width)
-            .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH)
+            .unwrap_or(crate::layout::model::DEFAULT_SCROLLABLE_WIDTH)
     }
 
     fn scrollable_viewport(&self, tiled_ids: &[PaneId]) -> (Option<PaneId>, ScrollableRevealEdge) {
@@ -628,8 +629,8 @@ mod tests {
             None,
             bounds,
             0.0,
-            crate::state::TileGap::DEFAULT,
-            crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            crate::layout::model::TileGap::DEFAULT,
+            crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
         );
         workspace.focused_pane = Some(1);
 
@@ -640,8 +641,8 @@ mod tests {
             Some(1),
             bounds,
             0.0,
-            crate::state::TileGap::DEFAULT,
-            crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            crate::layout::model::TileGap::DEFAULT,
+            crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
         );
         // 120x40 splits side by side, and the new pane takes the right slot, so it arrives from the
         // right rather than from wherever the layout happens to grow.
@@ -711,8 +712,8 @@ mod tests {
                     previous_focused,
                     bounds,
                     0.0,
-                    crate::state::TileGap::DEFAULT,
-                    crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    crate::layout::model::TileGap::DEFAULT,
+                    crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
                 );
                 workspace.focused_pane = Some(id);
             }
@@ -742,8 +743,8 @@ mod tests {
                 previous_focused,
                 bounds,
                 0.0,
-                crate::state::TileGap::DEFAULT,
-                crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                crate::layout::model::TileGap::DEFAULT,
+                crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
             );
             workspace.focused_pane = Some(id);
         }
@@ -792,8 +793,8 @@ mod tests {
                     previous_focused,
                     bounds,
                     0.0,
-                    crate::state::TileGap::DEFAULT,
-                    crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                    crate::layout::model::TileGap::DEFAULT,
+                    crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
                 );
                 assert_eq!(placement, SpawnPlacement::Appended);
                 workspace.focused_pane = Some(id);
@@ -823,10 +824,14 @@ mod tests {
         });
         workspace.focused_pane = Some(4);
         workspace.scrollable_anchor = Some(3);
-        workspace.scrollable_reveal_edge = crate::state::ScrollableRevealEdge::Right;
+        workspace.scrollable_reveal_edge = crate::layout::model::ScrollableRevealEdge::Right;
 
-        let placements =
-            workspace_target_rects(&workspace, bounds, 0.0, crate::state::TileGap::DEFAULT);
+        let placements = workspace_target_rects(
+            &workspace,
+            bounds,
+            0.0,
+            crate::layout::model::TileGap::DEFAULT,
+        );
         let anchored = placements.iter().find(|p| p.id == 3).unwrap();
         assert!(
             anchored.rect.x >= bounds.x - f32::EPSILON
@@ -876,7 +881,7 @@ mod tests {
             docked,
             canvas,
             0.0,
-            crate::state::TileGap::DEFAULT,
+            crate::layout::model::TileGap::DEFAULT,
         )[0]
         .rect;
 

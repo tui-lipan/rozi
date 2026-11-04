@@ -13,7 +13,8 @@
 
 use rozi::AppRoot;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneBorderMode, PaneId, PaneTitlebarMode};
+use rozi::pane::id::PaneId;
+use rozi::state::{Pane, PaneBorderMode, PaneTitlebarMode};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect, UpdateLevel};
 
@@ -284,7 +285,8 @@ fn pane_chrome_does_not_keep_the_childs_hand_pointer() {
 #[test]
 fn pane_resize_pointers_distinguish_all_four_corners() {
     rozi::test_support::on_large_stack(|| {
-        use rozi::state::{LayoutTarget, ResizeCorner, ResizeSession};
+        use rozi::layout::model::ResizeCorner;
+        use rozi::state::{LayoutTarget, ResizeSession};
         use tui_lipan::PointerShape;
         let mut backend = backend();
         backend.state_mut().config.animations.enabled = false;

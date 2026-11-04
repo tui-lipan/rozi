@@ -24,7 +24,7 @@ fn agent_pane(status: &str) -> crate::pane::TerminalPane {
 
 fn install_search_scan(
     backend: &mut TestBackend<crate::AppRoot>,
-    target: crate::state::PaneId,
+    target: crate::pane::id::PaneId,
     query: &str,
 ) -> u64 {
     let pane_end = crate::pane::lifecycle::find_pane(backend.state(), target)
@@ -596,7 +596,7 @@ fn bell_events_include_focused_for_current_panes() {
             .state()
             .event_hub
             .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
-        let bell = |pane_id: crate::state::PaneId| {
+        let bell = |pane_id: crate::pane::id::PaneId| {
             let mut data = std::collections::BTreeMap::new();
             data.insert("pane".to_string(), pane_id.to_string());
             crate::session::protocol::SessionEvent {
@@ -801,7 +801,7 @@ fn unwatched_bell_marks(
 }
 
 fn finished_record(
-    pane_id: crate::state::PaneId,
+    pane_id: crate::pane::id::PaneId,
     generation: u64,
     completions: u64,
 ) -> crate::session::protocol::AgentRecord {
@@ -1965,7 +1965,7 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
         .expect("record a neighbour's resize");
     backend.state_mut().resizing_pane = Some(crate::state::ResizeSession {
         id: 1,
-        corner: crate::state::ResizeCorner::LowerRight,
+        corner: crate::layout::model::ResizeCorner::LowerRight,
         workspace: crate::state::LayoutTarget::Workspace(0),
         start_x: 0,
         start_y: 0,
@@ -3331,7 +3331,7 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         let generation = {
             let state = backend.state_mut();
             let mut pane = crate::state::Pane::new(
-                crate::state::POPUP_PANE_ID,
+                crate::pane::id::POPUP_PANE_ID,
                 100,
                 tui_lipan::prelude::FloatRect::default(),
             );
@@ -3348,7 +3348,7 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         backend
             .dispatch(Msg::SessionSpawnResult {
                 epoch,
-                pane_id: crate::state::POPUP_PANE_ID,
+                pane_id: crate::pane::id::POPUP_PANE_ID,
                 local: true,
                 generation,
                 pid: None,
@@ -3369,7 +3369,7 @@ fn a_failed_popup_spawn_tears_the_popup_down() {
         backend
             .dispatch(Msg::PruneClosed(
                 epoch,
-                crate::state::POPUP_PANE_ID,
+                crate::pane::id::POPUP_PANE_ID,
                 generation,
             ))
             .expect("prune the closed popup");
@@ -3469,7 +3469,7 @@ fn the_update_popup_exit_reports_what_is_left() {
             ));
             state.update_started = true;
             let mut pane = crate::state::Pane::new(
-                crate::state::POPUP_PANE_ID,
+                crate::pane::id::POPUP_PANE_ID,
                 100,
                 tui_lipan::prelude::FloatRect::default(),
             );
@@ -3485,7 +3485,7 @@ fn the_update_popup_exit_reports_what_is_left() {
         backend
             .dispatch(Msg::SessionExited {
                 epoch,
-                pane_id: crate::state::POPUP_PANE_ID,
+                pane_id: crate::pane::id::POPUP_PANE_ID,
                 local: true,
                 generation,
                 code,
@@ -3577,7 +3577,7 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
 
 /// A minimal authoritative layout: one workspace of live tiled panes, the shape a server sends on
 /// attach.
-fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::SharedLayout {
+fn attached_layout(panes: &[crate::pane::id::PaneId]) -> crate::layout::shared::SharedLayout {
     use crate::layout::shared::{
         SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis,
         SharedWorkspace,
@@ -3610,7 +3610,7 @@ fn attached_layout(panes: &[crate::state::PaneId]) -> crate::layout::shared::Sha
                     pinned: false,
                     fullscreen: false,
                     rect: None,
-                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    scrollable_width: crate::layout::model::DEFAULT_SCROLLABLE_WIDTH,
                 })
                 .collect(),
         }],

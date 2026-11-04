@@ -3,9 +3,9 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
-    CursorTrailColor, CursorTrailConfig, CursorTrailFillStyle, CursorTrailMode,
-    CursorTrailMotionStyle, PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle,
-    ScanDirection, SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
+    CursorTrailColor, CursorTrailConfig, CursorTrailMode, CursorTrailMotionStyle, CursorTrailStyle,
+    PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle, ScanDirection,
+    SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
 };
 
 use super::file::{
@@ -190,11 +190,11 @@ fn apply_cursor_trail(
         warnings,
     );
     trail_choice(
-        raw.fill.as_deref(),
-        "fill",
-        CursorTrailFillStyle::all(),
-        CursorTrailFillStyle::id,
-        &mut target.fill,
+        raw.style.as_deref(),
+        "style",
+        CursorTrailStyle::all(),
+        CursorTrailStyle::id,
+        &mut target.style,
         warnings,
     );
     if let Some(value) = raw.color.as_deref() {
@@ -269,9 +269,6 @@ fn apply_cursor_trail_particles(
     raw: &CursorTrailParticlesFileConfig,
     warnings: &mut Vec<String>,
 ) {
-    if let Some(value) = raw.enabled {
-        target.particles = value;
-    }
     let particle = &mut target.particle;
     let mut number = |value, key: &str, range, slot: &mut f32| {
         trail_number(value, &format!("particles.{key}"), range, slot, warnings);
@@ -537,7 +534,7 @@ mod tests {
             [cursor_trail]
             mode = "JUMP"
             motion = "glide"
-            fill = "tint"
+            style = "sparks"
             color = "#ff8000"
             stiffness = 0.7
             trailing_stiffness = 0.3
@@ -549,7 +546,6 @@ mod tests {
             taper = 0.5
             sextants = true
             [cursor_trail.particles]
-            enabled = true
             per_cell = 3
             max = 40
             lifetime_ms = 500
@@ -562,7 +558,7 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(trail.mode, CursorTrailMode::Jump);
         assert_eq!(trail.motion, CursorTrailMotionStyle::Glide);
-        assert_eq!(trail.fill, CursorTrailFillStyle::Tint);
+        assert_eq!(trail.style, CursorTrailStyle::Sparks);
         assert_eq!(trail.color, CursorTrailColor::Rgb(255, 128, 0));
         assert_eq!(trail.spring.stiffness, 0.7);
         assert_eq!(trail.spring.trailing_stiffness, 0.3);
@@ -573,7 +569,7 @@ mod tests {
             (trail.max_length, trail.opacity, trail.taper),
             (12.0, 0.9, 0.5)
         );
-        assert!(trail.sextants && trail.particles);
+        assert!(trail.sextants);
         assert_eq!(trail.particle.per_cell, 3.0);
         assert_eq!(trail.particle.max, 40);
         assert_eq!(trail.particle.lifetime, Duration::from_millis(500));

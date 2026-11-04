@@ -356,8 +356,8 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
 
 const CURSOR_TRAIL_KEYS: &[&str] = &[
     "mode",
+    "style",
     "motion",
-    "fill",
     "color",
     "stiffness",
     "trailing_stiffness",
@@ -372,7 +372,6 @@ const CURSOR_TRAIL_KEYS: &[&str] = &[
 ];
 
 const CURSOR_TRAIL_PARTICLE_KEYS: &[&str] = &[
-    "enabled",
     "per_cell",
     "max",
     "lifetime_ms",

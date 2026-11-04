@@ -25,7 +25,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 20] = [
+const SCENARIOS: [(&str, &str, fn()); 21] = [
     (
         "welcome",
         "the first-install welcome card, with and without its logo",
@@ -55,6 +55,11 @@ const SCENARIOS: [(&str, &str, fn()); 20] = [
         "session-picker-settings",
         "Sessions opening preference and its choice editor",
         session_picker_settings,
+    ),
+    (
+        "cursor-settings",
+        "the Cursor group in General: blink, trail, and the trail style choice",
+        cursor_settings,
     ),
     (
         "agent-picker",
@@ -1129,6 +1134,26 @@ fn session_picker() {
     }
 }
 
+fn cursor_settings() {
+    use rozi::layout::anim::{CursorTrailMode, CursorTrailStyle};
+    use rozi::state::SettingsAction::CycleCursorTrailStyle;
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.state_mut().config.animations.picker = rozi::layout::anim::PickerAnimationStyle::Off;
+    backend.state_mut().config.animations.cursor_trail.mode = CursorTrailMode::Jump;
+    backend.state_mut().config.animations.cursor_trail.style = CursorTrailStyle::Smear;
+    backend.state_mut().show_settings = true;
+    backend.state_mut().settings_navigation.tab = rozi::state::SettingsTab::General;
+    backend.state_mut().settings_selected = Some(CycleCursorTrailStyle);
+    backend.set_viewport(viewport(64, 40));
+    backend.render();
+    write_png(&mut backend, "cursor-settings-64x40");
+    backend
+        .update_level(Msg::SettingsActivate(CycleCursorTrailStyle))
+        .unwrap();
+    backend.render();
+    write_png(&mut backend, "cursor-settings-style-choice-64x40");
+}
+
 fn session_picker_settings() {
     let mut backend = TestBackend::new(AppRoot::default());
     backend.state_mut().config.animations.enabled = false;
@@ -1190,7 +1215,7 @@ fn session_picker_no_results() {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
         *state.current_mut() = rozi::state::Attachment::new();
-        state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+        state.current_mut().session_name = Some(rozi::session::naming::ephemeral_session_name());
         state.current_mut().session_attached = true;
         state.show_session_picker = true;
     }

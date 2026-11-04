@@ -63,7 +63,7 @@ variable expansion — is not interpreted.
 
 ## Cursor blinking
 
-Choose **Cursor blink** in Settings under General, or set `[cursor]` in `config.toml`.
+Choose **Blink** in Settings under General › Cursor, or set `[cursor]` in `config.toml`.
 Changes apply immediately to pickers, prompts, text editors, and terminal panes.
 
 | Key | Type | Default | Description |
@@ -426,16 +426,13 @@ See [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-cl
 
 `[animations.cursor_trail]` draws a smear that follows the cursor when it jumps: the cursor's own
 shape (block, bar, or underline) stretched from the cell it left to the cell it landed on, and
-pulled back into it. It is off until you set `mode`.
+pulled back into it. It is off until you set `mode`. In Settings, **General › Cursor › Trail**
+chooses when it shows and **Trail style** how it looks.
 
 ```toml
 [animations.cursor_trail]
 mode = "jump"
-fill = "solid"
-motion = "spring"
-
-[animations.cursor_trail.particles]
-enabled = true
+style = "sparks"
 ```
 
 With `"jump"`, a jump inside one pane is drawn once the cursor has held still for a moment, so a
@@ -444,29 +441,30 @@ to where it settled. A move to another pane draws at once.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Animations › Cursor trail. The animation master switch also disables it. |
-| `fill` | string | `"solid"` | `"solid"` draws the smear in the trail color with block characters for its edges, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"tint"` colors the background behind the text and leaves the cursor where it is. In Settings: General › Animations › Cursor trail fill. |
-| `motion` | string | `"spring"` | `"spring"` pulls each corner of the smear into the cursor with the spring values below, so it stretches and snaps, and a new jump mid-flight bends it. `"glide"` puts the front on the cursor at once and eases the tail in over `glide_ms`. In Settings: General › Animations › Cursor trail motion. |
+| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
+| `style` | string | `"smear"` | `"smear"` draws a solid smear in the trail color, with block characters for its edges, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"sparks"` is the smear throwing sparks. `"tint"` colors the background behind the text and leaves the cursor where it is. In Settings: General › Cursor › Trail style. |
+| `motion` | string | `"spring"` | `"spring"` pulls each corner of the smear into the cursor with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
 | `color` | string | `"cursor"` | `"cursor"` uses the color the program in the pane gave its cursor, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |
-| `stiffness` | float | `0.6` | Spring pull on the corners leading the motion, from 0 to 1. |
-| `trailing_stiffness` | float | `0.45` | Spring pull on the trailing corners, from 0 to 1. Lower than `stiffness` stretches the smear. |
+| `stiffness` | float | `0.5` | Spring pull on the corners leading the motion, from 0 to 1. |
+| `trailing_stiffness` | float | `0.16` | Spring pull on the trailing corners, from 0 to 1. Lower than `stiffness` stretches the smear. |
 | `trailing_exponent` | float | `3.0` | How quickly corners between leading and trailing fall back to the trailing pull, from 0.1 to 10. |
-| `damping` | float | `0.85` | How much speed the corners lose each step, from 0 (bouncy) to 1 (no momentum). |
+| `damping` | float | `0.82` | How much speed the corners lose each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
 | `max_length` | float | `25.0` | No part of the smear trails the cursor by more than this many cells, up to 500. `0` leaves it unbounded. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
 | `sextants` | bool | `false` | Also draw edges with the sextant characters of Symbols for Legacy Computing, for smoother diagonals. Turn it on only if your font has them. |
 
-The spring values work as the settings of the same name in smear-cursor.nvim, and default to its
-defaults, so a setup tuned for it carries over. A value out of range is ignored with a warning.
+The spring values work as the settings of the same name in smear-cursor.nvim, so a setup tuned for
+it carries over. Its own defaults (`stiffness = 0.6`, `trailing_stiffness = 0.45`,
+`damping = 0.85`) give a quicker, more compact smear than rozi's. A value out of range is ignored
+with a warning.
 
-`[animations.cursor_trail.particles]` throws sparks off the moving smear, drawn as braille dots
-that scatter, fall, and fade. In Settings: General › Animations › Cursor trail sparks.
+`[animations.cursor_trail.particles]` tunes the sparks `style = "sparks"` throws off the moving
+smear, drawn as braille dots that scatter, fall, and fade without covering text.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | Throws sparks. |
 | `per_cell` | float | `1.5` | Sparks per cell the smear travels, up to 20. |
 | `max` | integer | `100` | The most sparks alive at once, at least 1. |
 | `lifetime_ms` | integer | `300` | How long a spark lives at most, in milliseconds; each lives between 60% and all of it. |

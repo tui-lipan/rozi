@@ -112,9 +112,7 @@ settings_actions! {
     CyclePickerAnimation,
     CycleToastAnimation,
     CycleCursorTrailAnimation,
-    CycleCursorTrailFill,
-    CycleCursorTrailMotion,
-    ToggleCursorTrailParticles,
+    CycleCursorTrailStyle,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCursorBlink,
@@ -315,16 +313,12 @@ impl SettingsAction {
             | Self::CyclePickerAnimation
             | Self::CycleToastAnimation
             | Self::CycleCursorTrailAnimation
-            | Self::CycleCursorTrailFill
-            | Self::CycleCursorTrailMotion
-            | Self::ToggleCursorTrailParticles
+            | Self::CycleCursorTrailStyle
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")
             }
-            Self::CycleCursorTrailFill
-            | Self::CycleCursorTrailMotion
-            | Self::ToggleCursorTrailParticles
+            Self::CycleCursorTrailStyle
                 if config.animations.cursor_trail.mode
                     == crate::layout::anim::CursorTrailMode::Off =>
             {
@@ -819,9 +813,7 @@ mod tests {
             SettingsAction::CyclePickerAnimation,
             SettingsAction::CycleToastAnimation,
             SettingsAction::CycleCursorTrailAnimation,
-            SettingsAction::CycleCursorTrailFill,
-            SettingsAction::CycleCursorTrailMotion,
-            SettingsAction::ToggleCursorTrailParticles,
+            SettingsAction::CycleCursorTrailStyle,
             SettingsAction::CyclePaneOpenAnimation,
             SettingsAction::CyclePaneCloseAnimation,
         ];

@@ -243,29 +243,28 @@
 #portal_origin = [0.5, 0.5]
 #scan_direction = "top-left"
 # A smear that follows the cursor when it jumps. mode: "off", "focus" when focus moves to another
-# pane or prompt, or "jump" to also follow long moves inside one pane. fill: "solid" draws the smear
-# in block glyphs and the cursor itself while it moves, "tint" colors the background behind the text.
-# motion: "spring" stretches and snaps it with the spring values below, which mean what they mean in
-# smear-cursor.nvim; "glide" eases the tail in over glide_ms.
+# pane or prompt, or "jump" to also follow long moves inside one pane. style: "smear" draws it in
+# block glyphs and the cursor itself while it moves, "sparks" adds sparks, "tint" colors the
+# background behind the text. motion: "spring" stretches and snaps it with the spring values below,
+# which mean what they mean in smear-cursor.nvim; "glide" eases the tail in over glide_ms.
 #[animations.cursor_trail]
 #mode = "off"
-#fill = "solid"
+#style = "smear"
 #motion = "spring"
 # "cursor" for the cursor's own color, "accent" for the focused border's, or "#rrggbb".
 #color = "cursor"
-#stiffness = 0.6
-#trailing_stiffness = 0.45
+#stiffness = 0.5
+#trailing_stiffness = 0.16
 #trailing_exponent = 3.0
-#damping = 0.85
+#damping = 0.82
 #glide_ms = 160
 #max_length = 25.0
 #opacity = 1.0
 #taper = 0.0
 # Smoother diagonals for fonts with the sextants of Symbols for Legacy Computing.
 #sextants = false
-# Sparks thrown off the moving smear.
+# The sparks style = "sparks" throws off the moving smear.
 #[animations.cursor_trail.particles]
-#enabled = false
 #per_cell = 1.5
 #max = 100
 #lifetime_ms = 300

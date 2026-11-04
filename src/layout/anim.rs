@@ -433,23 +433,26 @@ pub enum CursorTrailMode {
 
 config_choice!(CursorTrailMode {
     Off => "off", "Off";
-    Focus => "focus", "Focus";
-    Jump => "jump", "Jump";
+    Focus => "focus", "Focus changes";
+    Jump => "jump", "All jumps";
 });
 
-/// How a cursor trail is drawn: `[animations.cursor_trail] fill`.
+/// How a cursor trail looks: `[animations.cursor_trail] style`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CursorTrailFillStyle {
-    /// In the trail color, with block glyphs for its edges; it draws the cursor while it moves.
-    #[default]
-    Solid,
-    /// As a tint behind the text.
+pub enum CursorTrailStyle {
+    /// A tint behind the text; the cursor stays where it is.
     Tint,
+    /// A solid smear of the cursor, drawn in block glyphs; it draws the cursor while it moves.
+    #[default]
+    Smear,
+    /// The smear, throwing sparks.
+    Sparks,
 }
 
-config_choice!(CursorTrailFillStyle {
-    Solid => "solid", "Solid";
+config_choice!(CursorTrailStyle {
     Tint => "tint", "Tint";
+    Smear => "smear", "Smear";
+    Sparks => "sparks", "Smear + sparks";
 });
 
 /// How a cursor trail moves: `[animations.cursor_trail] motion`.
@@ -483,8 +486,8 @@ pub enum CursorTrailColor {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CursorTrailConfig {
     pub mode: CursorTrailMode,
+    pub style: CursorTrailStyle,
     pub motion: CursorTrailMotionStyle,
-    pub fill: CursorTrailFillStyle,
     pub color: CursorTrailColor,
     pub spring: tui_lipan::CursorTrailSpring,
     pub glide_duration: Duration,
@@ -492,7 +495,6 @@ pub struct CursorTrailConfig {
     pub opacity: f32,
     pub taper: f32,
     pub sextants: bool,
-    pub particles: bool,
     pub particle: tui_lipan::CursorTrailParticles,
 }
 
@@ -501,8 +503,8 @@ impl Default for CursorTrailConfig {
         let trail = tui_lipan::CursorTrail::new();
         Self {
             mode: CursorTrailMode::default(),
+            style: CursorTrailStyle::default(),
             motion: CursorTrailMotionStyle::default(),
-            fill: CursorTrailFillStyle::default(),
             color: CursorTrailColor::default(),
             spring: tui_lipan::CursorTrailSpring::DEFAULT,
             glide_duration: tui_lipan::CursorTrail::DEFAULT_DURATION,
@@ -510,7 +512,6 @@ impl Default for CursorTrailConfig {
             opacity: trail.opacity,
             taper: trail.taper,
             sextants: trail.sextants,
-            particles: false,
             particle: tui_lipan::CursorTrailParticles::default(),
         }
     }

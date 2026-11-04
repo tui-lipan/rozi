@@ -12,7 +12,7 @@ use super::{AppRoot, exit_report, startup::StartupPlan};
 /// are off.
 pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail> {
     use crate::layout::anim::{
-        CursorTrailColor, CursorTrailFillStyle, CursorTrailMode, CursorTrailMotionStyle,
+        CursorTrailColor, CursorTrailMode, CursorTrailMotionStyle, CursorTrailStyle,
     };
 
     let animations = &config.animations;
@@ -31,15 +31,15 @@ pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail
                 duration: settings.glide_duration,
             },
         })
-        .fill(match settings.fill {
-            CursorTrailFillStyle::Solid => CursorTrailFill::Solid,
-            CursorTrailFillStyle::Tint => CursorTrailFill::Tint,
+        .fill(match settings.style {
+            CursorTrailStyle::Tint => CursorTrailFill::Tint,
+            CursorTrailStyle::Smear | CursorTrailStyle::Sparks => CursorTrailFill::Solid,
         })
         .opacity(settings.opacity)
         .taper(settings.taper)
         .max_length(settings.max_length)
         .sextants(settings.sextants)
-        .particles(settings.particles.then_some(settings.particle));
+        .particles((settings.style == CursorTrailStyle::Sparks).then_some(settings.particle));
     // `Cursor` leaves the color to the framework: the program's cursor color, then the
     // terminal's.
     match settings.color {

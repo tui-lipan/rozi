@@ -724,7 +724,7 @@ pub(super) struct AnimationFileConfig {
 pub(super) struct CursorTrailFileConfig {
     pub(super) mode: Option<String>,
     pub(super) motion: Option<String>,
-    pub(super) fill: Option<String>,
+    pub(super) style: Option<String>,
     pub(super) color: Option<String>,
     pub(super) stiffness: Option<f32>,
     pub(super) trailing_stiffness: Option<f32>,
@@ -742,7 +742,6 @@ pub(super) struct CursorTrailFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub(super) struct CursorTrailParticlesFileConfig {
-    pub(super) enabled: Option<bool>,
     pub(super) per_cell: Option<f32>,
     pub(super) max: Option<u16>,
     pub(super) lifetime_ms: Option<u64>,

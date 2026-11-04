@@ -245,15 +245,13 @@ fn settings_all_keeps_every_control_available() {
         assert!(frame.contains(&format!("{rows}/{rows}")), "{frame}");
         for label in [
             "Theme",
-            "Cursor blink",
+            "Blink",
+            "Trail",
+            "Trail style",
             "Play animations",
             "Workspace switching",
             "Session switching",
             "Pickers",
-            "Cursor trail",
-            "Cursor trail fill",
-            "Cursor trail motion",
-            "Cursor trail sparks",
             "Pane open",
             "Pane close",
             "Nerd icons",
@@ -301,9 +299,12 @@ fn settings_all_keeps_every_control_available() {
         ] {
             setting_row(&frame, label);
         }
+        let cursor = group_rows(&frame, "Cursor", "Animations");
+        setting_row(cursor, "Blink");
+        setting_row(cursor, "Trail");
+        setting_row(cursor, "Trail style");
         let animations = group_rows(&frame, "Animations", "Clipboard");
         setting_row(animations, "Play animations");
-        setting_row(animations, "Cursor trail");
         setting_row(animations, "Pane open");
         setting_row(animations, "Pane close");
         let pickers = group_rows(&frame, "Pickers", "Background");
@@ -728,7 +729,7 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
             ("workspace switching", "Workspace switching", "Enabled"),
             ("session switching", "Session switching", "Fade"),
             ("picker animation", "Pickers", "Scan"),
-            ("cursor trail", "Cursor trail", "Jump"),
+            ("cursor trail", "Trail", "All jumps"),
             ("pane open", "Pane open", "Slide"),
             ("pane close", "Pane close", "Particles"),
         ];
@@ -754,16 +755,15 @@ fn animation_rows_are_found_by_search_and_read_their_value() {
     });
 }
 
-/// The cursor trail rows reach the runtime, not just the config: picking a mode hands the
-/// framework a trail, the fill and sparks rows change it, the dependent rows grey out while the
+/// The cursor trail rows reach the runtime, not just the config: picking when it shows hands the
+/// framework a trail, the style row sets its fill and sparks, the style row greys out while the
 /// trail is off, and the animation master switch takes it away again.
 #[test]
 fn the_cursor_trail_rows_reach_the_runtime() {
     rozi::test_support::on_large_stack(|| {
-        use rozi::layout::anim::{CursorTrailFillStyle, CursorTrailMode};
+        use rozi::layout::anim::{CursorTrailMode, CursorTrailStyle};
         use rozi::state::SettingsAction::{
-            CycleCursorTrailAnimation, CycleCursorTrailFill, ToggleAnimations,
-            ToggleCursorTrailParticles,
+            CycleCursorTrailAnimation, CycleCursorTrailStyle, ToggleAnimations,
         };
         use tui_lipan::prelude::{CursorTrail, CursorTrailFill, CursorTrailTrigger};
         // Settings saves into the file this binary's tests share.
@@ -773,12 +773,10 @@ fn the_cursor_trail_rows_reach_the_runtime() {
         backend.state_mut().config.animations.cursor_trail = Default::default();
         type_query(&mut backend, "cursor trail");
         assert_eq!(backend.cursor_trail(), None, "off by default");
-        for dependent in [CycleCursorTrailFill, ToggleCursorTrailParticles] {
-            assert_eq!(
-                dependent.disabled_reason(&backend.state().config),
-                Some("Needs cursor trail")
-            );
-        }
+        assert_eq!(
+            CycleCursorTrailStyle.disabled_reason(&backend.state().config),
+            Some("Needs cursor trail")
+        );
 
         let pick = |backend: &mut TestBackend<AppRoot>, action: SettingsAction, index: usize| {
             let ring = action
@@ -791,45 +789,48 @@ fn the_cursor_trail_rows_reach_the_runtime() {
                 .dispatch(rozi::Msg::SettingsChoicePick(index))
                 .unwrap();
         };
+        let index = |all: &[CursorTrailStyle], wanted: CursorTrailStyle| {
+            all.iter()
+                .position(|style| *style == wanted)
+                .expect("offered")
+        };
         let jump = CursorTrailMode::all()
             .iter()
             .position(|mode| *mode == CursorTrailMode::Jump)
-            .expect("Jump is offered");
+            .expect("All jumps is offered");
         pick(&mut backend, CycleCursorTrailAnimation, jump);
         let expected = CursorTrail::new().trigger(CursorTrailTrigger::jump());
         assert_eq!(
             backend.cursor_trail(),
             Some(expected),
-            "the cursor's own color by default"
+            "a smear in the cursor's own color by default"
         );
         assert_eq!(
-            CycleCursorTrailFill.disabled_reason(&backend.state().config),
+            CycleCursorTrailStyle.disabled_reason(&backend.state().config),
             None
         );
 
-        let tint = CursorTrailFillStyle::all()
-            .iter()
-            .position(|fill| *fill == CursorTrailFillStyle::Tint)
-            .expect("Tint is offered");
-        pick(&mut backend, CycleCursorTrailFill, tint);
-        assert_eq!(
-            backend.cursor_trail().map(|trail| trail.fill),
-            Some(CursorTrailFill::Tint)
+        let styles = CursorTrailStyle::all();
+        pick(
+            &mut backend,
+            CycleCursorTrailStyle,
+            index(styles, CursorTrailStyle::Tint),
         );
-        backend
-            .dispatch(rozi::Msg::SettingsActivate(ToggleCursorTrailParticles))
-            .unwrap();
-        assert!(
-            backend
-                .cursor_trail()
-                .is_some_and(|trail| trail.particles.is_some()),
-            "sparks on"
+        let trail = backend.cursor_trail().expect("trail");
+        assert_eq!((trail.fill, trail.particles), (CursorTrailFill::Tint, None));
+        pick(
+            &mut backend,
+            CycleCursorTrailStyle,
+            index(styles, CursorTrailStyle::Sparks),
         );
+        let trail = backend.cursor_trail().expect("trail");
+        assert_eq!(trail.fill, CursorTrailFill::Solid);
+        assert!(trail.particles.is_some(), "sparks on");
         let saved = rozi::config::load_config().config.animations.cursor_trail;
         assert_eq!(
-            (saved.mode, saved.fill, saved.particles),
-            (CursorTrailMode::Jump, CursorTrailFillStyle::Tint, true),
-            "every row persists"
+            (saved.mode, saved.style),
+            (CursorTrailMode::Jump, CursorTrailStyle::Sparks),
+            "both rows persist"
         );
 
         backend
@@ -1266,7 +1267,7 @@ fn settings_categories_cover_all_controls_and_keep_motion_together() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = settings_backend(100, 50);
         for (tab, count, expected) in [
-            (SettingsTab::General, 29, "Pane close"),
+            (SettingsTab::General, 27, "Pane close"),
             (SettingsTab::Panes, 13, "Scratchpad"),
             (SettingsTab::Bars, 15, "Position"),
             (SettingsTab::Alerts, 22, "Bell urgency"),

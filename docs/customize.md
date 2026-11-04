@@ -252,19 +252,15 @@ toast = "slide"         # slide, fade, or off
 
 [animations.cursor_trail]
 mode = "jump"           # off, focus, or jump
-fill = "solid"          # solid or tint
-motion = "spring"       # spring or glide
-
-[animations.cursor_trail.particles]
-enabled = true
+style = "smear"         # smear, sparks, or tint
 ```
 
 The cursor trail smears the cursor from where it was to where it lands, and snaps it back into
-place. `"focus"` draws it when you move to another pane or a prompt; `"jump"` also draws it when the
-cursor jumps far inside one pane, for example to another line in an editor. It is off by default.
-Its spring settings work like smear-cursor.nvim's; see [Cursor trail](configuration.md#cursor-trail)
-for every setting. If your editor or terminal draws its own cursor trail, leave this off to avoid
-two trails.
+place. `"focus"` draws it when you move to another pane or a prompt; `"jump"` also draws it when
+the cursor jumps far inside one pane, for example to another line in an editor. It is off by
+default; **Settings › General › Cursor** holds it next to cursor blinking. Its spring settings work
+like smear-cursor.nvim's; see [Cursor trail](configuration.md#cursor-trail) for every setting. If
+your editor or terminal draws its own cursor trail, leave this off to avoid two trails.
 
 Each pane style has its own timing and motion curve. See
 [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-close-animation-styles).

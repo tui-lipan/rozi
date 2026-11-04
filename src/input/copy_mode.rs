@@ -519,6 +519,42 @@ mod tests {
         });
     }
 
+    /// The copy cursor is the host caret while copy mode lasts, which is what a cursor trail and
+    /// the user's cursor shape follow: moving it moves the drawn caret by the same cells.
+    #[test]
+    fn the_caret_follows_the_copy_cursor() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, target) = copy_mode_backend();
+            // A pane with a running program, focused, as the one copy mode was entered from.
+            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+            pane.opening = false;
+            pane.terminal_active = true;
+            let terminal = pane.keys.terminal.clone();
+            backend.render();
+            backend.focus_key(&terminal);
+            let caret_at = |backend: &mut TestBackend<AppRoot>, row, col| {
+                backend
+                    .state_mut()
+                    .copy_mode
+                    .as_mut()
+                    .expect("copy mode")
+                    .navigation
+                    .goto(row, col, 0);
+                backend.render();
+                let cursor = backend.capture_frame().cursor.expect("a caret is drawn");
+                assert!(cursor.visible, "the caret shows in copy mode");
+                (cursor.x, cursor.y)
+            };
+            let first = caret_at(&mut backend, 2, 3);
+            let second = caret_at(&mut backend, 5, 7);
+            assert_eq!(
+                (second.0 - first.0, second.1 - first.1),
+                (4, 3),
+                "the caret moves with the copy cursor: {first:?} -> {second:?}"
+            );
+        });
+    }
+
     #[test]
     fn wheel_scrolling_keeps_the_copy_cursor_on_its_screen_row() {
         crate::test_support::on_large_stack(|| {

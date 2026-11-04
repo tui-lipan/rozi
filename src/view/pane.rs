@@ -1302,6 +1302,9 @@ pub(crate) fn pane_element(
             exited,
             ctx.command_chord_pending(),
         ))
+        // Copy mode's cursor is the caret while it lasts, so it blinks in the user's shape and the
+        // cursor trail follows it.
+        .cursor_override(copy_mode_cursor(ctx, id))
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
@@ -2372,6 +2375,17 @@ fn copy_mode_selection(ctx: &Context<AppRoot>, id: PaneId) -> Option<TerminalSel
         })
     });
     Some(selection_for_render(&selection))
+}
+
+/// The copy-mode cursor of this pane as a viewport `(row, col)`, when copy mode targets it.
+fn copy_mode_cursor(ctx: &Context<AppRoot>, id: PaneId) -> Option<(u16, u16)> {
+    let copy = ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .filter(|copy| copy.target == id)?;
+    let (row, col) = copy.navigation.cursor();
+    Some((u16::try_from(row).ok()?, u16::try_from(col).ok()?))
 }
 
 fn copy_mode_is_cursor_only(ctx: &Context<AppRoot>, id: PaneId) -> bool {

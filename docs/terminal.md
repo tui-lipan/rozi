@@ -171,7 +171,7 @@ The mouse works in copy mode too. Drag to select text, or click to move the curs
 keys then pick up where the mouse left off: `$` extends a dragged selection to the end of its row,
 and `y` copies it and exits. The wheel scrolls the pane and keeps the cursor on the same screen
 row. While copy mode is open, the mouse belongs to it, even when the program in the pane tracks
-the mouse.
+the mouse, and a paste with the middle or right mouse button does not reach the pane.
 
 ### Search scrollback
 

@@ -149,6 +149,16 @@ pub(crate) fn prepare_pane_paste(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
 ) -> std::result::Result<(crate::session::client::SessionClient, bool), Update> {
+    // Copy mode owns the pane: like its keys, a middle-click or right-click paste reaches neither
+    // the program nor the live view.
+    if ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|copy| copy.target == id)
+    {
+        return Err(Update::none());
+    }
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.notified.update());
     }

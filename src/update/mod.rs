@@ -1148,6 +1148,16 @@ pub(crate) fn sync_modifier_key_reporting(ctx: &mut Context<AppRoot>) {
     ctx.set_modifier_key_reporting_keeps_shift(capturing);
 }
 
+/// The epilogue every handled message runs through, so state that several messages can disturb is
+/// repaired in one place rather than by each of them.
+///
+/// The full reconciliation sequence runs after every ordinary state-changing message, so a message
+/// does not have to know which derived state it touched. Two classes return early instead:
+/// `PostUpdateKind::SessionOutputOnly` (hot-path PTY output) runs only the command-dirty guard, and
+/// `PostUpdateKind::Passive` messages that leave the update at `UpdateLevel::None` (such as
+/// `TerminalPresented`) run nothing. A step added to the full sequence must therefore be cheap and
+/// idempotent (safe to run repeatedly), and must not rely on seeing those skipped messages. Each step is annotated with what it
+/// repairs.
 fn post_update_sync(
     ctx: &mut Context<AppRoot>,
     mut update: Update,
@@ -1167,11 +1177,15 @@ fn post_update_sync(
         return update;
     }
 
+    // Repairs: which panes the session is told this client is showing, after focus, workspace,
+    // layout or attachment changes.
     session::presentation::sync_interest(ctx);
+    // Repairs: closed panes whose retention window has ended.
     ctx.state.current_mut().retired_panes.expire();
     for attachment in ctx.state.background.values_mut() {
         attachment.retired_panes.expire();
     }
+    // Repairs: a scrollback search left pointing at a pane that has since closed.
     let stale_search = ctx.state.search.as_ref().is_some_and(|search| {
         crate::pane::lifecycle::find_pane(&ctx.state, search.target).is_none()
     });
@@ -1181,39 +1195,55 @@ fn post_update_sync(
         let command = update.command.take();
         update = Update::with_command(command);
     }
+    // Repairs: the alert pulse chain, armed when a pane or tab gains an alert and left to cancel
+    // itself when none remain.
     panes::arm_alert_pulse(ctx);
+    // Repairs: sidebar tree roots after cwd/project/session changes.
     sidebar::sync_tree_roots(ctx);
+    // Repairs: the Worktrees tab's repository after focus moves to a pane in another checkout.
     if sidebar::sync_worktrees_tab(ctx) {
         let command = update.command.take();
         update = Update::with_command(command);
     }
+    // Repairs: the worktree refresh tick, kept alive while something needs it.
     crate::ops::worktrees::ensure_tick(ctx);
+    // Repairs: the directory command-backed sidebar tabs poll, after the focused pane's cwd moves.
     sidebar::sync_command_cwd(ctx);
     // Stream producers follow their tab: dropped when a reload removes it, told when it is shown.
     crate::ops::sidebar_streams::reconcile(&mut ctx.state);
     crate::ops::sidebar_streams::sync_visibility(&mut ctx.state);
+    // Repairs: the repository refresh chain, so exactly one runs while a Files, Git or Worktrees
+    // tab is visible.
     sidebar::ensure_tree_refresh_armed(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
     sidebar::ensure_sessions_refresh_armed(ctx);
+    // Repairs: host metadata workers, after connection intent changes.
     hosts::sync(ctx);
+    // Repairs: placed extension processes, after attachments or generations change or a restart
+    // falls due.
     crate::ops::placement::sync(ctx);
+    // Repairs: the agents picker's cursor, kept on a matching row as snapshots arrive.
     if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);
     }
 
+    // Repairs: the theme's terminal palette inputs, after the host reports a new palette.
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);
     }
 
+    // Repairs: dialogs held back until a session is on screen (the welcome card, release notes).
     if crate::ops::welcome::show_if_due(ctx) || crate::ops::release_notes::show_if_due(ctx) {
         let command = update.command.take();
         update = Update::with_command(command);
     }
 
+    // Repairs: the command registry, after anything it renders from moves.
     crate::commands::sync_if_needed(ctx);
+    // Repairs: the hold that keeps the previous picture up while a new attach connects.
     crate::ops::session::arm_connect_hold(ctx);
 
     // The Keybindings search field owns every key while the list is showing; only its capture and
@@ -1227,7 +1257,9 @@ fn post_update_sync(
     {
         ctx.request_focus(crate::view::help_filter_key());
     }
+    // Repairs: modifier-key reporting, after a capture, picker or sidebar preview opens or closes.
     sync_modifier_key_reporting(ctx);
+    // Repairs: the host terminal's window title, after the focused pane or session changes.
     host_title::sync(ctx);
 
     // Before the layout diff below, so a pinned pane gathered onto this client's workspace (after a
@@ -1235,6 +1267,7 @@ fn post_update_sync(
     if crate::ops::focus::keep_pinned_panes_on_active_workspace(&mut ctx.state) {
         crate::ops::focus::request_current_pane_focus(ctx);
     }
+    // Repairs: each workspace's own remembered focus, which a pinned pane must not overwrite.
     crate::ops::focus::note_unpinned_focus(&mut ctx.state);
 
     // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The

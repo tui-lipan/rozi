@@ -367,7 +367,7 @@ const CURSOR_TRAIL_KEYS: &[&str] = &[
     "max_length",
     "opacity",
     "taper",
-    "sextants",
+    "glyphs",
     "particles",
 ];
 

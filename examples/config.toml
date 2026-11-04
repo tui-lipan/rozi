@@ -261,8 +261,9 @@
 #max_length = 0.0
 #opacity = 1.0
 #taper = 0.0
-# Smoother diagonals for fonts with the sextants of Symbols for Legacy Computing.
-#sextants = false
+# The characters edges are drawn with: "blocks" (every terminal), "sextants" or "octants" (the
+# diagonal shapes of Symbols for Legacy Computing), or "auto" for the richest set your terminal draws.
+#glyphs = "auto"
 # The sparks style = "sparks" throws off the moving smear.
 #[animations.cursor_trail.particles]
 #per_cell = 1.5

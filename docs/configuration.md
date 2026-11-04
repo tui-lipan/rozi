@@ -453,7 +453,7 @@ to where it settled. A move to another pane draws at once.
 | `max_length` | float | `0.0` | No part of the smear trails the cursor by more than this many cells, from the start of a jump, up to 500. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
-| `sextants` | bool | `false` | Also draw edges with the sextant characters of Symbols for Legacy Computing, for smoother diagonals. Turn it on only if your font has them. |
+| `glyphs` | string | `"auto"` | The characters the smear's edges are drawn with. `"blocks"` uses half, eighth, and quadrant blocks, which every terminal draws. `"sextants"` adds the sextants, diagonal wedges, and triangles of Symbols for Legacy Computing, which follow a diagonal far more closely, and `"octants"` adds its octants too. `"auto"` picks the richest set your terminal draws itself: octants in Ghostty; sextants in Kitty, WezTerm, and foot; blocks anywhere else. Choose a richer set by hand only if your font has those characters. |
 
 The spring values work as the settings of the same name in smear-cursor.nvim, so a setup tuned for
 it carries over. Its own defaults (`stiffness = 0.6`, `trailing_stiffness = 0.45`,

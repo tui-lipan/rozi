@@ -734,7 +734,7 @@ pub(super) struct CursorTrailFileConfig {
     pub(super) max_length: Option<f32>,
     pub(super) opacity: Option<f32>,
     pub(super) taper: Option<f32>,
-    pub(super) sextants: Option<bool>,
+    pub(super) glyphs: Option<String>,
     pub(super) particles: Option<CursorTrailParticlesFileConfig>,
 }
 

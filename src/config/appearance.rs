@@ -256,8 +256,17 @@ fn apply_cursor_trail(
         warnings,
     );
     trail_number(raw.taper, "taper", 0.0..=1.0, &mut target.taper, warnings);
-    if let Some(value) = raw.sextants {
-        target.sextants = value;
+    if let Some(value) = raw.glyphs.as_deref() {
+        use tui_lipan::CursorTrailGlyphs;
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => target.glyphs = CursorTrailGlyphs::Auto,
+            "blocks" => target.glyphs = CursorTrailGlyphs::Blocks,
+            "sextants" => target.glyphs = CursorTrailGlyphs::Sextants,
+            "octants" => target.glyphs = CursorTrailGlyphs::Octants,
+            _ => warnings.push(format!(
+                "Ignored unknown animations.cursor_trail.glyphs \"{value}\" (expected one of: auto, blocks, sextants, octants)"
+            )),
+        }
     }
     if let Some(particles) = raw.particles.as_ref() {
         apply_cursor_trail_particles(target, particles, warnings);
@@ -544,7 +553,7 @@ mod tests {
             max_length = 12
             opacity = 0.9
             taper = 0.5
-            sextants = true
+            glyphs = "Octants"
             [cursor_trail.particles]
             per_cell = 3
             max = 40
@@ -569,7 +578,7 @@ mod tests {
             (trail.max_length, trail.opacity, trail.taper),
             (12.0, 0.9, 0.5)
         );
-        assert!(trail.sextants);
+        assert_eq!(trail.glyphs, tui_lipan::CursorTrailGlyphs::Octants);
         assert_eq!(trail.particle.per_cell, 3.0);
         assert_eq!(trail.particle.max, 40);
         assert_eq!(trail.particle.lifetime, Duration::from_millis(500));

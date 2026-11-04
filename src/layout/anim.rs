@@ -494,7 +494,7 @@ pub struct CursorTrailConfig {
     pub max_length: f32,
     pub opacity: f32,
     pub taper: f32,
-    pub sextants: bool,
+    pub glyphs: tui_lipan::CursorTrailGlyphs,
     pub particle: tui_lipan::CursorTrailParticles,
 }
 
@@ -511,7 +511,7 @@ impl Default for CursorTrailConfig {
             max_length: trail.max_length,
             opacity: trail.opacity,
             taper: trail.taper,
-            sextants: trail.sextants,
+            glyphs: trail.glyphs,
             particle: tui_lipan::CursorTrailParticles::default(),
         }
     }

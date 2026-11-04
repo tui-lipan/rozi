@@ -438,7 +438,7 @@ impl SessionServer {
     pub(super) fn maybe_snapshot(&mut self) -> io::Result<()> {
         if !self.settings.resurrect
             || !self.snapshot_dirty()
-            || crate::state::is_ephemeral_session_name(&self.session_name)
+            || crate::session::naming::is_ephemeral_session_name(&self.session_name)
         {
             return Ok(());
         }
@@ -504,7 +504,7 @@ impl SessionServer {
         }
         if !self.settings.resurrect
             || !self.snapshot_dirty()
-            || crate::state::is_ephemeral_session_name(&self.session_name)
+            || crate::session::naming::is_ephemeral_session_name(&self.session_name)
         {
             return Ok(());
         }

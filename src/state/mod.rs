@@ -75,7 +75,6 @@ pub const OUTER_GAP: f32 = 1.0;
 /// pane, or one dropped in from floating. A pane that already had a width brings it along
 /// instead - see `tiling::redock_split_ratio`.
 pub const EVEN_SPLIT_RATIO: f32 = 0.5;
-pub const MIN_SPLIT_RATIO: f32 = 0.20;
 pub const RATIO_STEP: f32 = 0.04;
 
 /// An extension command started from Commands that has not yet finished or opened a picker.
@@ -129,7 +128,7 @@ pub struct PublishStreamState {
     /// withdraws a client's rows when it leaves, and a reconnect is a new client to it.
     pub last_rows: Vec<crate::session::protocol::PublishedRow>,
     pub sender: std::sync::mpsc::SyncSender<String>,
-    pub extension: Option<crate::config::ExtensionProvenance>,
+    pub extension: Option<crate::control::ExtensionProvenance>,
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
     /// within this binding.
     pub binding: Option<WorkerBinding>,
@@ -138,7 +137,7 @@ pub struct PublishStreamState {
 }
 
 pub struct ExtensionSubscriptionState {
-    pub extension: crate::config::ExtensionProvenance,
+    pub extension: crate::control::ExtensionProvenance,
     pub cancel: std::sync::mpsc::SyncSender<()>,
 }
 

@@ -6,11 +6,13 @@ use std::str::FromStr;
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::config::{ExtensionProvenance, SidebarTab, SidebarTabId};
+use crate::config::{SidebarTab, SidebarTabId};
+use crate::control::ExtensionProvenance;
+use crate::control::WorkerId;
 use crate::control::{ControlErrorCode, ControlResponse};
 use crate::state::{
     SidebarActionSpec, SidebarProducer, SidebarProducerKey, SidebarSnapshot, SidebarStreamEvent,
-    State, StreamRowRef, TreeExpansionKey, WorkerId,
+    State, StreamRowRef, TreeExpansionKey,
 };
 
 /// What a `sidebar-publish` request asked for, before the UI decides whether to admit it.

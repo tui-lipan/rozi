@@ -975,7 +975,7 @@ impl SessionServer {
                     Target::Broadcast,
                     ServerMessage::DragChanged {
                         author: client_id,
-                        drag: Some(crate::state::RemoteDrag { pane_id, rect }),
+                        drag: Some(crate::layout::shared::RemoteDrag { pane_id, rect }),
                     },
                 )]
             }

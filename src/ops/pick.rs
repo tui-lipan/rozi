@@ -4,10 +4,11 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::control::ControlResponse;
+use crate::control::pick::{PickRow, PickTab};
 use crate::ops::focus::{
     request_current_pane_focus, request_pick_focus, request_pick_prompt_focus,
 };
-use crate::state::{Mode, PickPage, PickReply, PickRow, PickState, PickTab};
+use crate::state::{Mode, PickPage, PickReply, PickState};
 
 /// Narrowest and widest a caller may make the modal.
 ///
@@ -24,10 +25,10 @@ pub(crate) struct PickOpen {
     pub placeholder: Option<String>,
     pub empty: Option<String>,
     pub width: Option<u16>,
-    pub actions: Vec<crate::state::PickAction>,
+    pub actions: Vec<crate::control::pick::PickAction>,
     pub tabs: Vec<PickTab>,
     pub tab: Option<String>,
-    pub extension: Option<crate::config::ExtensionProvenance>,
+    pub extension: Option<crate::control::ExtensionProvenance>,
 }
 
 /// The pages a picker opens with: one per usable declared tab, or the single implicit page.
@@ -138,8 +139,8 @@ pub(crate) fn open_pick_stream(
 pub(crate) fn open_prompt_stream(
     ctx: &mut Context<AppRoot>,
     id: u64,
-    prompt: crate::state::PickPromptFields,
-    extension: Option<crate::config::ExtensionProvenance>,
+    prompt: crate::control::pick::PickPromptFields,
+    extension: Option<crate::control::ExtensionProvenance>,
     sender: PickReply,
     ack: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
@@ -149,11 +150,11 @@ pub(crate) fn open_prompt_stream(
         placeholder: None,
         empty: None,
         width: None,
-        actions: vec![crate::state::PickAction {
+        actions: vec![crate::control::pick::PickAction {
             id: "submit".to_string(),
             key: "enter".to_string(),
             label: "submit".to_string(),
-            prompt: Some(crate::state::PickPromptSpec::Fields(prompt)),
+            prompt: Some(crate::control::pick::PickPromptSpec::Fields(prompt)),
             close: true,
             confirm: false,
         }],
@@ -175,7 +176,7 @@ pub(crate) fn open_prompt_stream(
 /// client's own.
 pub(crate) fn worker_title(
     ctx: &Context<AppRoot>,
-    worker: Option<crate::state::WorkerId>,
+    worker: Option<crate::control::WorkerId>,
     title: Option<String>,
     fallback: &str,
 ) -> std::result::Result<Option<String>, ControlResponse> {
@@ -528,7 +529,7 @@ fn report_action(ctx: &mut Context<AppRoot>, index: usize, input: Option<String>
     Update::full()
 }
 
-fn visible_selected_row(pick: &crate::state::PickState) -> Option<&crate::state::PickRow> {
+fn visible_selected_row(pick: &crate::state::PickState) -> Option<&crate::control::pick::PickRow> {
     let page = pick.page();
     let row = page.rows.get(page.selected)?;
     if page.query.trim().is_empty() {
@@ -556,7 +557,7 @@ mod tests {
     use std::sync::mpsc;
     use tui_lipan::TestBackend;
 
-    use crate::state::PickRow;
+    use crate::control::pick::PickRow;
 
     fn with_backend(body: impl FnOnce(&mut TestBackend<crate::AppRoot>) + Send + 'static) {
         crate::test_support::on_large_stack(move || {
@@ -815,12 +816,18 @@ mod tests {
         });
     }
 
-    fn action(id: &str, key: &str, prompt: Option<&str>, close: bool) -> crate::state::PickAction {
-        crate::state::PickAction {
+    fn action(
+        id: &str,
+        key: &str,
+        prompt: Option<&str>,
+        close: bool,
+    ) -> crate::control::pick::PickAction {
+        crate::control::pick::PickAction {
             id: id.to_string(),
             key: key.to_string(),
             label: id.to_string(),
-            prompt: prompt.map(|title| crate::state::PickPromptSpec::Title(title.to_string())),
+            prompt: prompt
+                .map(|title| crate::control::pick::PickPromptSpec::Title(title.to_string())),
             close,
             confirm: false,
         }
@@ -828,7 +835,7 @@ mod tests {
 
     fn open_with(
         backend: &mut TestBackend<crate::AppRoot>,
-        actions: Vec<crate::state::PickAction>,
+        actions: Vec<crate::control::pick::PickAction>,
         width: Option<u16>,
     ) -> crate::state::PickReplyReceiver {
         let (tx, rx) = crate::state::PickReply::channel();
@@ -986,8 +993,8 @@ mod tests {
         });
     }
 
-    fn confirming(id: &str, key: &str) -> crate::state::PickAction {
-        crate::state::PickAction {
+    fn confirming(id: &str, key: &str) -> crate::control::pick::PickAction {
+        crate::control::pick::PickAction {
             confirm: true,
             ..action(id, key, None, false)
         }
@@ -1159,13 +1166,13 @@ mod tests {
         placeholder: Option<&str>,
         value: Option<&str>,
         masked: bool,
-    ) -> crate::state::PickAction {
-        crate::state::PickAction {
+    ) -> crate::control::pick::PickAction {
+        crate::control::pick::PickAction {
             id: "edit".into(),
             key: "ctrl-e".into(),
             label: "edit".into(),
-            prompt: Some(crate::state::PickPromptSpec::Fields(
-                crate::state::PickPromptFields {
+            prompt: Some(crate::control::pick::PickPromptSpec::Fields(
+                crate::control::pick::PickPromptFields {
                     title: title.into(),
                     placeholder: placeholder.map(str::to_string),
                     value: value.map(str::to_string),
@@ -1250,7 +1257,9 @@ mod tests {
     fn a_from_query_prompt_starts_from_the_filter_text() {
         with_backend(|backend| {
             let mut action = prompt_fields("Open URL", None, Some("https://"), false);
-            if let Some(crate::state::PickPromptSpec::Fields(fields)) = action.prompt.as_mut() {
+            if let Some(crate::control::pick::PickPromptSpec::Fields(fields)) =
+                action.prompt.as_mut()
+            {
                 fields.from_query = true;
             }
             open_with(backend, vec![action], None);
@@ -1332,7 +1341,7 @@ mod tests {
         with_backend(|backend| {
             let (tx, rx) = crate::state::PickReply::channel();
             let (ack_tx, ack_rx) = mpsc::channel();
-            let provenance = crate::config::ExtensionProvenance {
+            let provenance = crate::control::ExtensionProvenance {
                 id: "git-tools".to_string(),
                 generation: "generation-a".to_string(),
             };
@@ -1382,7 +1391,7 @@ mod tests {
                     title: None,
                     placeholder: None,
                     empty: None,
-                    extension: Some(crate::config::ExtensionProvenance {
+                    extension: Some(crate::control::ExtensionProvenance {
                         id: "git-tools".to_string(),
                         generation: "retired".to_string(),
                     }),
@@ -1400,8 +1409,8 @@ mod tests {
         });
     }
 
-    fn tab(id: &str, label: Option<&str>) -> crate::state::PickTab {
-        crate::state::PickTab {
+    fn tab(id: &str, label: Option<&str>) -> crate::control::pick::PickTab {
+        crate::control::pick::PickTab {
             id: id.into(),
             label: label.map(str::to_string),
         }
@@ -1421,9 +1430,9 @@ mod tests {
 
     fn open_tabbed(
         backend: &mut TestBackend<crate::AppRoot>,
-        tabs: Vec<crate::state::PickTab>,
+        tabs: Vec<crate::control::pick::PickTab>,
         tab: Option<&str>,
-        actions: Vec<crate::state::PickAction>,
+        actions: Vec<crate::control::pick::PickAction>,
     ) -> crate::state::PickReplyReceiver {
         let (tx, rx) = crate::state::PickReply::channel();
         let (ack_tx, ack_rx) = mpsc::channel();

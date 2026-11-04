@@ -149,7 +149,7 @@ pub fn valid_attach_target(name: &str) -> bool {
 /// Whether `name` is a valid *user-created* session name. Rejects the reserved ephemeral prefix so
 /// create/rename never mints an `eph-…` name that would collide with an auto-managed session.
 pub fn valid_session_name(name: &str) -> bool {
-    valid_attach_target(name) && !crate::state::is_ephemeral_session_name(name)
+    valid_attach_target(name) && !crate::session::naming::is_ephemeral_session_name(name)
 }
 
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
@@ -228,8 +228,9 @@ fn sweep_sessions(
 
     let mut handles = Vec::with_capacity(endpoints.len());
     for (name, endpoint) in endpoints {
-        let capabilities = (with_agents && !crate::state::is_ephemeral_session_name(&name))
-            .then(crate::session::protocol::Capabilities::current);
+        let capabilities = (with_agents
+            && !crate::session::naming::is_ephemeral_session_name(&name))
+        .then(crate::session::protocol::Capabilities::current);
         handles.push(std::thread::spawn(move || {
             probe_session_endpoint(&name, &endpoint, capabilities.as_ref())
         }));
@@ -686,7 +687,7 @@ fn probe_session_endpoint(
         row: DiscoveredSession {
             name: name.to_string(),
             origin,
-            ephemeral: crate::state::is_ephemeral_session_name(name),
+            ephemeral: crate::session::naming::is_ephemeral_session_name(name),
             status,
             host: None,
             remote_target: None,

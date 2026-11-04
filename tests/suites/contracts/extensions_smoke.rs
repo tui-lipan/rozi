@@ -296,7 +296,7 @@ fn command_visibility_follows_the_extension_generation_inner() {
                     },
                     source_pane: None,
                     source_session: None,
-                    extension: Some(rozi::config::ExtensionProvenance {
+                    extension: Some(rozi::control::ExtensionProvenance {
                         id: "visibility".to_string(),
                         generation: generation.to_string(),
                     }),

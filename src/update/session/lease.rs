@@ -57,7 +57,7 @@ fn update_background_controller(
 
 fn snap_cleared_remote_drag(
     state: &mut crate::state::State,
-    cleared_remote_drag: Option<crate::state::RemoteDrag>,
+    cleared_remote_drag: Option<crate::layout::shared::RemoteDrag>,
 ) {
     let Some(drag) = cleared_remote_drag else {
         return;

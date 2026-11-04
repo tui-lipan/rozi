@@ -2257,7 +2257,7 @@ mod tests {
     #[test]
     fn a_carried_pane_tracks_directly_while_its_neighbours_still_animate() {
         let mut state = shared_state(2);
-        state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+        state.current_mut().remote_drag = Some(crate::layout::shared::RemoteDrag {
             pane_id: 1,
             rect: crate::layout::shared::FracRect {
                 x: 0.1,

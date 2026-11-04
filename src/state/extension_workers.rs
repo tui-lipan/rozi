@@ -15,9 +15,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use crate::config::ExtensionProvenance;
 use crate::config::Placement;
 use crate::config::SessionScope;
+use crate::control::{ExtensionProvenance, WorkerId};
 use crate::session::protocol::SessionInstanceId;
 use crate::session::remote::RemoteTarget;
 
@@ -88,9 +88,6 @@ pub enum WorkerKind {
     Command { id: String },
     Tab { id: String },
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct WorkerId(pub u64);
 
 #[derive(Clone, Debug)]
 pub struct Worker {

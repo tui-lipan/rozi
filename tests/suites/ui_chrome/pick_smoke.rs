@@ -1,7 +1,7 @@
 //! Smoke tests for the modal pick overlay rendering and interactions.
 
 use rozi::AppRoot;
-use rozi::state::PickRow;
+use rozi::control::pick::PickRow;
 use std::sync::mpsc;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
@@ -217,12 +217,12 @@ fn a_masked_prompt_hides_its_seed_value() {
         backend
             .dispatch(rozi::Msg::PickStreamOpen {
                 width: None,
-                actions: vec![rozi::state::PickAction {
+                actions: vec![rozi::control::pick::PickAction {
                     id: "token".into(),
                     key: "ctrl-n".into(),
                     label: "token".into(),
-                    prompt: Some(rozi::state::PickPromptSpec::Fields(
-                        rozi::state::PickPromptFields {
+                    prompt: Some(rozi::control::pick::PickPromptSpec::Fields(
+                        rozi::control::pick::PickPromptFields {
                             title: "Token".into(),
                             placeholder: None,
                             value: Some("super-secret-token".into()),
@@ -276,7 +276,7 @@ fn a_standalone_prompt_answers_with_its_text_or_cancels() {
             backend
                 .dispatch(rozi::Msg::PromptStreamOpen {
                     id,
-                    prompt: rozi::state::PickPromptFields {
+                    prompt: rozi::control::pick::PickPromptFields {
                         title: "Open URL".into(),
                         placeholder: None,
                         value: Some("https://example.com".into()),
@@ -436,7 +436,7 @@ fn tabbed_pick_backend(w: u16, h: u16) -> (TestBackend<AppRoot>, rozi::state::Pi
             width: None,
             actions: Vec::new(),
             tabs: ["Branches", "Worktrees"]
-                .map(|label| rozi::state::PickTab {
+                .map(|label| rozi::control::pick::PickTab {
                     id: label.to_lowercase(),
                     label: Some(label.into()),
                 })

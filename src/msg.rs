@@ -621,7 +621,7 @@ pub enum Msg {
     /// Control-listener authorization for a request carrying extension provenance, a worker
     /// credential, or arriving over a remote runtime's extension bridge.
     AuthorizeExtensionControl {
-        provenance: Option<crate::config::ExtensionProvenance>,
+        provenance: Option<crate::control::ExtensionProvenance>,
         credential: Option<String>,
         origin: control::RequestOrigin,
         reply: std::sync::mpsc::Sender<
@@ -632,8 +632,8 @@ pub enum Msg {
     /// binding, which filters the events it hears.
     ExtensionSubscriptionOpen {
         id: u64,
-        provenance: crate::config::ExtensionProvenance,
-        worker: Option<crate::state::WorkerId>,
+        provenance: crate::control::ExtensionProvenance,
+        worker: Option<crate::control::WorkerId>,
         cancel: std::sync::mpsc::SyncSender<()>,
         reply: std::sync::mpsc::Sender<
             std::result::Result<Option<crate::state::WorkerBinding>, control::ControlResponse>,
@@ -658,8 +658,8 @@ pub enum Msg {
         source_session: Option<crate::session::protocol::SessionInstanceId>,
         kind: crate::session::protocol::PublisherKind,
         name: Option<String>,
-        extension: Option<crate::config::ExtensionProvenance>,
-        worker: Option<crate::state::WorkerId>,
+        extension: Option<crate::control::ExtensionProvenance>,
+        worker: Option<crate::control::WorkerId>,
         sender: std::sync::mpsc::SyncSender<String>,
         ack: std::sync::mpsc::Sender<
             std::result::Result<crate::pane::id::PaneId, control::ControlResponse>,
@@ -683,11 +683,11 @@ pub enum Msg {
         placeholder: Option<String>,
         empty: Option<String>,
         width: Option<u16>,
-        actions: Vec<crate::state::PickAction>,
-        tabs: Vec<crate::state::PickTab>,
+        actions: Vec<crate::control::pick::PickAction>,
+        tabs: Vec<crate::control::pick::PickTab>,
         tab: Option<String>,
-        extension: Option<crate::config::ExtensionProvenance>,
-        worker: Option<crate::state::WorkerId>,
+        extension: Option<crate::control::ExtensionProvenance>,
+        worker: Option<crate::control::WorkerId>,
         sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
@@ -695,9 +695,9 @@ pub enum Msg {
     /// stream, opening straight onto the prompt.
     PromptStreamOpen {
         id: u64,
-        prompt: crate::state::PickPromptFields,
-        extension: Option<crate::config::ExtensionProvenance>,
-        worker: Option<crate::state::WorkerId>,
+        prompt: crate::control::pick::PickPromptFields,
+        extension: Option<crate::control::ExtensionProvenance>,
+        worker: Option<crate::control::WorkerId>,
         sender: crate::state::PickReply,
         ack: std::sync::mpsc::Sender<control::ControlResponse>,
     },
@@ -715,7 +715,7 @@ pub enum Msg {
     PickRowsReported {
         id: u64,
         tab: Option<String>,
-        rows: Vec<crate::state::PickRow>,
+        rows: Vec<crate::control::pick::PickRow>,
     },
     /// A tab of the picker was chosen; the index is into `PickState::pages`.
     PickTabSelected(usize),
@@ -809,7 +809,7 @@ pub enum Msg {
     SessionDragChanged {
         epoch: u64,
         author: ClientId,
-        drag: Option<crate::state::RemoteDrag>,
+        drag: Option<crate::layout::shared::RemoteDrag>,
     },
     SessionControllerChanged {
         epoch: u64,

@@ -1278,7 +1278,7 @@ mod tests {
                 command: start(&path, None, false),
                 source_pane: None,
                 source_session: None,
-                extension: Some(crate::config::ExtensionProvenance {
+                extension: Some(crate::control::ExtensionProvenance {
                     id: "ext".into(),
                     generation: "g".into(),
                 }),

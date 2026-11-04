@@ -418,11 +418,11 @@ pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
         .and_then(|attachment| attachment.session_name.clone());
     match scope {
         Some(target) => {
-            let name = held.unwrap_or_else(crate::state::remote_ephemeral_session_name);
+            let name = held.unwrap_or_else(crate::session::naming::remote_ephemeral_session_name);
             attach_ephemeral_by_name(ctx, name, Some(target.display_label()), Some(target))
         }
         None => {
-            let name = held.unwrap_or_else(crate::state::ephemeral_session_name);
+            let name = held.unwrap_or_else(crate::session::naming::ephemeral_session_name);
             attach_ephemeral_by_name(ctx, name, None, None)
         }
     }
@@ -815,9 +815,9 @@ fn restart_session_name(state: &mut crate::state::State, entry: &DiscoveredSessi
         return entry.name.clone();
     }
     if entry.remote_target.is_some() {
-        crate::state::remote_ephemeral_session_name()
+        crate::session::naming::remote_ephemeral_session_name()
     } else {
-        crate::state::fresh_ephemeral_session_name(state.mint_attachment_id())
+        crate::session::naming::fresh_ephemeral_session_name(state.mint_attachment_id())
     }
 }
 

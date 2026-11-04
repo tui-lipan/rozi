@@ -1929,9 +1929,9 @@ mod tests {
 
     mod collaboration {
         use super::*;
+        use crate::layout::shared::RemoteDrag;
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::ClientMessage;
-        use crate::state::RemoteDrag;
         use std::sync::mpsc::Receiver;
 
         const VIEWPORT: Rect = Rect {

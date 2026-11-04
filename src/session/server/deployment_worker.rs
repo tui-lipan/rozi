@@ -204,7 +204,7 @@ impl SessionServer {
         reply: ReplyTo,
         command: ControlCommand,
     ) -> Option<ControlResponse> {
-        if crate::state::is_ephemeral_session_name(&self.session_name) {
+        if crate::session::naming::is_ephemeral_session_name(&self.session_name) {
             return Some(ControlResponse::error_with(
                 ControlErrorCode::NotPermitted,
                 "temporary sessions cannot hold deployments",

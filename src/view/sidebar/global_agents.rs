@@ -187,7 +187,7 @@ mod tests {
     /// does rather than leaking the generated id.
     #[test]
     fn a_temporary_session_reads_as_ephemeral() {
-        let name = crate::state::ephemeral_session_name();
+        let name = crate::session::naming::ephemeral_session_name();
         assert_eq!(place_badge(&row(None, &name)), "ephemeral");
     }
 }

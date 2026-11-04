@@ -537,7 +537,7 @@ exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI
         source_pane: None,
         source_session: None,
         caller_context: None,
-        extension: Some(rozi::config::ExtensionProvenance {
+        extension: Some(rozi::control::ExtensionProvenance {
             id: "caller-claim-is-ignored".into(),
             generation: "client-claim".into(),
         }),

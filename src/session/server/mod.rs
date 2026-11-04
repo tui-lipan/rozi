@@ -1818,7 +1818,7 @@ impl SessionServer {
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
         let mut listener = listener;
-        if !crate::state::is_ephemeral_session_name(&self.session_name) {
+        if !crate::session::naming::is_ephemeral_session_name(&self.session_name) {
             self.ensure_deployment_worker(true)?;
         }
         // Tracks how long an ephemeral session has had no *attached* client. A named session
@@ -1886,7 +1886,7 @@ impl SessionServer {
             *no_client_since = None;
             return;
         }
-        if crate::state::is_ephemeral_session_name(&self.session_name) {
+        if crate::session::naming::is_ephemeral_session_name(&self.session_name) {
             let since = no_client_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= EPHEMERAL_NO_CLIENT_GRACE {
                 self.shutdown = true;

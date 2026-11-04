@@ -221,7 +221,7 @@ fn framed_messages_round_trip() {
     let servers = [
         ServerMessage::DragChanged {
             author: 7,
-            drag: Some(crate::state::RemoteDrag { pane_id: 3, rect }),
+            drag: Some(crate::layout::shared::RemoteDrag { pane_id: 3, rect }),
         },
         ServerMessage::DragChanged {
             author: 7,

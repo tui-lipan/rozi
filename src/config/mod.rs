@@ -27,7 +27,7 @@ pub use extensions::{
     ACTION_ENV, DiscoverReadiness, EXTENSION_API_VERSION, EXTENSION_DIAGNOSTICS_SCHEMA_VERSION,
     ExtensionCheckDocument, ExtensionCommandDiagnostic, ExtensionInfo, ExtensionLaunchDiagnostic,
     ExtensionLinkHandlerDiagnostic, ExtensionListDocument, ExtensionNavigationTargetDiagnostic,
-    ExtensionProvenance, ExtensionServiceDiagnostic, ExtensionSettings, ExtensionStatus,
+    ExtensionServiceDiagnostic, ExtensionSettings, ExtensionStatus,
     ExtensionSuggestedKeybindingDiagnostic, ExtensionSuggestedKeybindingStatus, GENERATION_ENV,
     INVOCATION_ENV, SESSION_NAME_ENV, SETTINGS_ENV, STATE_DIR_ENV,
 };

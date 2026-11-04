@@ -7,8 +7,8 @@ use crate::AppRoot;
 pub(crate) fn subscription_opened(
     ctx: &mut Context<AppRoot>,
     id: u64,
-    provenance: crate::config::ExtensionProvenance,
-    worker: Option<crate::state::WorkerId>,
+    provenance: crate::control::ExtensionProvenance,
+    worker: Option<crate::control::WorkerId>,
     cancel: std::sync::mpsc::SyncSender<()>,
     reply: std::sync::mpsc::Sender<
         std::result::Result<Option<crate::state::WorkerBinding>, crate::control::ControlResponse>,

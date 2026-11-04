@@ -103,7 +103,7 @@ impl RuntimeConnection {
             let link = link.clone();
             let hub = hub.clone();
             std::thread::spawn(move || {
-                crate::control::serve_connection(
+                crate::ops::control_listener::serve_connection(
                     connection,
                     link,
                     hub,

@@ -1,8 +1,9 @@
 use tui_lipan::prelude::{Context, Element, Span, Style, Text, Theme};
 
 use crate::AppRoot;
+use crate::session::naming::is_ephemeral_session_name;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
-use crate::state::{Attachment, is_ephemeral_session_name};
+use crate::state::Attachment;
 use crate::view::{fg_only, rozi_fg};
 
 /// Build the one-shot view rendered after the client leaves the event loop.

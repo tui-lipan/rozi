@@ -99,9 +99,11 @@ pub(crate) fn run_attach(
         AttachMode::Join => (false, false, false),
         AttachMode::JoinOrStart => (true, false, false),
         AttachMode::Create => (true, true, false),
-        AttachMode::Reconnect | AttachMode::Recreate => {
-            (crate::state::is_ephemeral_session_name(&name), false, true)
-        }
+        AttachMode::Reconnect | AttachMode::Recreate => (
+            crate::session::naming::is_ephemeral_session_name(&name),
+            false,
+            true,
+        ),
     };
     attach_local(
         epoch,
@@ -464,7 +466,7 @@ fn replace_incompatible_remote_server(
     name: &str,
     remote_config: &crate::config::RemoteConfig,
 ) -> Result<(), String> {
-    if crate::state::is_ephemeral_session_name(name) {
+    if crate::session::naming::is_ephemeral_session_name(name) {
         return super::remote::kill_remote_session(target, name, remote_config);
     }
     match super::remote::restart_remote_session(target, name, true, remote_config) {

@@ -2506,7 +2506,7 @@ mod tests {
                         },
                         source_pane: None,
                         source_session: None,
-                        extension: Some(crate::config::ExtensionProvenance {
+                        extension: Some(crate::control::ExtensionProvenance {
                             id: "tools".to_string(),
                             generation: "retired".to_string(),
                         }),

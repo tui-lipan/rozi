@@ -18,9 +18,11 @@ use tui_lipan::prelude::*;
 
 use crate::AppRoot;
 use crate::config::{
-    ExtensionProvenance, LaunchTemplate, NamedCommand, PlacedService, Placement, ServiceRestart,
-    SessionScope, SharedPlacements,
+    LaunchTemplate, NamedCommand, PlacedService, Placement, ServiceRestart, SessionScope,
+    SharedPlacements,
 };
+use crate::control::ExtensionProvenance;
+use crate::control::WorkerId;
 use crate::extension_runtime::client::{RuntimeConnection, RuntimeEvent};
 use crate::extension_runtime::protocol::{Capture, Message, SpawnCwd, SpawnFailure};
 use crate::extension_runtime::supervisor::{
@@ -28,7 +30,7 @@ use crate::extension_runtime::supervisor::{
 };
 use crate::state::{
     HostKey, HostRuntime, HostRuntimeStatus, InstanceKey, InstanceStatus, PendingLaunch,
-    PlacedInstance, State, Unavailable, WorkerBinding, WorkerId, WorkerKind, WorkerProcess,
+    PlacedInstance, State, Unavailable, WorkerBinding, WorkerKind, WorkerProcess,
     WorkerProcessState, WorkerPurpose, WorkerRuntime,
 };
 

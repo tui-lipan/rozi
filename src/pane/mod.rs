@@ -4,6 +4,7 @@
 //! per-pane app state and `view/pane.rs` renders it.
 
 pub(crate) mod capture_wait;
+pub mod chrome;
 pub mod id;
 pub mod launch;
 pub mod lifecycle;

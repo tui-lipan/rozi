@@ -349,7 +349,7 @@ pub(crate) fn render_workspace_panes(
         // or its background would cover the seam. Compact titlebars live in the frame border and
         // do not need this spacer.
         let left_seam = pane_config.show_titles
-            && pane_config.titlebar == crate::state::PaneTitlebarMode::Bar
+            && pane_config.titlebar == crate::pane::chrome::PaneTitlebarMode::Bar
             && tile_gap.horizontal < 0.0
             && !pane.floating
             && !pane.fullscreen
@@ -392,7 +392,7 @@ pub(crate) fn render_workspace_panes(
             && !pane.floating
             && !pane.fullscreen
             && pane_config.show_titles
-            && pane_config.titlebar == crate::state::PaneTitlebarMode::Bar
+            && pane_config.titlebar == crate::pane::chrome::PaneTitlebarMode::Bar
             && ctx
                 .state
                 .config
@@ -415,7 +415,8 @@ pub(crate) fn render_workspace_panes(
             && pane_config.show_titles
             && matches!(
                 pane_config.titlebar,
-                crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
+                crate::pane::chrome::PaneTitlebarMode::Border
+                    | crate::pane::chrome::PaneTitlebarMode::Integrated
             )
             && pane_has_tile_above(&placements, pane.id, tile_gap.vertical);
         // Ordinary geometry animations keep their established divider-title timing. Paint effects
@@ -548,7 +549,8 @@ pub(crate) fn render_workspace_panes(
         let title_on_dividers = pane_config.show_titles
             && matches!(
                 pane_config.titlebar,
-                crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
+                crate::pane::chrome::PaneTitlebarMode::Border
+                    | crate::pane::chrome::PaneTitlebarMode::Integrated
             );
         // Quiet seams first, alerting seams next, focused contacts last so junctions inherit the
         // highest-priority visible state. Divider alerts are deliberately static.
@@ -590,7 +592,7 @@ pub(crate) fn render_workspace_panes(
                             // `─` after any `├` junction, and no trailing gap before the line
                             // continues. Horizontal dividers extend one cell into a vertical for
                             // that junction, so inset past the junction cell when present.
-                            crate::state::PaneTitlebarMode::Border => {
+                            crate::pane::chrome::PaneTitlebarMode::Border => {
                                 let pane_left = placements
                                     .iter()
                                     .find(|placement| placement.id == below)
@@ -606,12 +608,12 @@ pub(crate) fn render_workspace_panes(
                                     .label_padding_axes(pad_left, 0)
                             }
                             // Fill the whole gap row with the titlebar strip, replacing the line.
-                            crate::state::PaneTitlebarMode::Integrated => line
+                            crate::pane::chrome::PaneTitlebarMode::Integrated => line
                                 .label(label)
                                 .label_alignment(Align::Stretch)
                                 .label_padding(0),
-                            crate::state::PaneTitlebarMode::Bar
-                            | crate::state::PaneTitlebarMode::Inset => line,
+                            crate::pane::chrome::PaneTitlebarMode::Bar
+                            | crate::pane::chrome::PaneTitlebarMode::Inset => line,
                         };
                     }
                     line.into()

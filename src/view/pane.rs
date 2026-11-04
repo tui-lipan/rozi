@@ -4,8 +4,9 @@ use tui_lipan::style::ThemeRole;
 use crate::config::{BadgeColor, PaneConfig};
 use crate::layout::model::{LayoutKind, TileGap};
 use crate::layout::tiling::PanePlacement;
+use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 use crate::pane::id::PaneId;
-use crate::state::{AlertMode, ChromeSlot, Pane, PaneBorderMode, PaneTitlebarMode, Workspace};
+use crate::state::{AlertMode, ChromeSlot, Pane, Workspace};
 use crate::{AppRoot, Msg};
 
 use super::animation;

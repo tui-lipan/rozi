@@ -1,7 +1,7 @@
 use crate::layout::tiling::DwindleTree;
 
 use super::{MoveSwapHint, Pane};
-use crate::layout::model::{DEFAULT_RATIO, Direction, LayoutKind, ScrollableRevealEdge, SplitAxis};
+use crate::layout::model::{Direction, LayoutKind, ScrollableRevealEdge, SplitAxis};
 use crate::pane::id::PaneId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,13 +44,9 @@ impl Workspace {
             tile_tree: None,
             focused_pane: None,
             synchronized: false,
-            layout_kind: LayoutKind::Dwindle,
-            start_axis: if index.is_multiple_of(2) {
-                SplitAxis::Horizontal
-            } else {
-                SplitAxis::Vertical
-            },
-            split_ratios: vec![DEFAULT_RATIO; 16],
+            layout_kind: LayoutKind::DEFAULT,
+            start_axis: SplitAxis::start_for_workspace(index),
+            split_ratios: LayoutKind::default_split_ratios(),
             last_move_swap: None,
             last_directional_focus: None,
             scrollable_anchor: None,

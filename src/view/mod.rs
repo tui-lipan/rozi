@@ -1303,10 +1303,10 @@ mod pane_layer_tests {
             PaneAnimationStyle::Scan,
         ] {
             for border_mode in [
-                crate::state::PaneBorderMode::Separate,
-                crate::state::PaneBorderMode::Merged,
-                crate::state::PaneBorderMode::Dividers,
-                crate::state::PaneBorderMode::None,
+                crate::pane::chrome::PaneBorderMode::Separate,
+                crate::pane::chrome::PaneBorderMode::Merged,
+                crate::pane::chrome::PaneBorderMode::Dividers,
+                crate::pane::chrome::PaneBorderMode::None,
             ] {
                 crate::test_support::isolate_user_dirs();
                 let mut backend = TestBackend::new(AppRoot::default());

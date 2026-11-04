@@ -14,7 +14,15 @@ const FLOOR: &[&str] = &[
     "src/layout/tree_ser.rs",
     "src/layout/geometry.rs",
     "src/pane/id.rs",
+    "src/pane/chrome.rs",
     "src/control/pick.rs",
+    "src/layout/shared/mod.rs",
+    "src/layout/shared/validate.rs",
+    "src/layout/shared/edit.rs",
+    "src/layout/shared/placement.rs",
+    "src/control.rs",
+    "src/control",
+    "src/session/protocol",
     "src/session/naming.rs",
 ];
 

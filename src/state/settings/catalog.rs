@@ -16,9 +16,10 @@ use crate::input::Action;
 use crate::layout::anim::{
     PaneAnimationStyle, PickerAnimationStyle, SessionAnimationStyle, ToastAnimationStyle,
 };
+use crate::pane::chrome::PaneBorderMode;
 use crate::state::{
-    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, badge_cap_styles,
-    cap_style_id, cap_style_label,
+    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, badge_cap_styles, cap_style_id,
+    cap_style_label,
 };
 
 use super::{SettingsAction, SettingsChoiceRing, SettingsTab};

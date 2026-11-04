@@ -11,6 +11,16 @@ pub enum SplitAxis {
 }
 
 impl SplitAxis {
+    /// The axis workspace `index` starts splitting along: alternating, so neighbouring workspaces
+    /// differ.
+    pub fn start_for_workspace(index: usize) -> Self {
+        if index.is_multiple_of(2) {
+            Self::Horizontal
+        } else {
+            Self::Vertical
+        }
+    }
+
     pub fn flipped(self) -> Self {
         match self {
             Self::Horizontal => Self::Vertical,
@@ -70,7 +80,18 @@ pub enum LayoutKind {
     Monocle,
 }
 
+/// How many split ratios a fresh workspace carries.
+pub const DEFAULT_SPLIT_RATIO_SLOTS: usize = 16;
+
 impl LayoutKind {
+    /// The layout a workspace starts with.
+    pub const DEFAULT: LayoutKind = LayoutKind::Dwindle;
+
+    /// The split ratios a fresh workspace starts with.
+    pub fn default_split_ratios() -> Vec<f32> {
+        vec![DEFAULT_RATIO; DEFAULT_SPLIT_RATIO_SLOTS]
+    }
+
     /// Every layout in cycle order. `toggled` walks this list, so the order here
     /// is the order `Action::ToggleLayout` rotates through.
     pub fn all() -> &'static [LayoutKind] {

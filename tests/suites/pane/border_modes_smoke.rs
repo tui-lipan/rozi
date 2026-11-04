@@ -5,10 +5,9 @@
 use rozi::AppRoot;
 use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
+use rozi::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 use rozi::pane::id::PaneId;
-use rozi::state::{
-    MoveSession, Pane, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, Workspace,
-};
+use rozi::state::{MoveSession, Pane, PaneBorderStyle, Workspace};
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 use tui_lipan::{CapturedFrame, TestBackend};
 

@@ -8,7 +8,8 @@ use tui_lipan::input::KeyBinding;
 
 #[cfg(test)]
 use crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
+use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
+use crate::state::{AlertMode, PaneBorderStyle, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::commands::build_named_commands;

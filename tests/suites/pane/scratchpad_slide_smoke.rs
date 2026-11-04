@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::layout::anim::GeometryAnimation;
-use rozi::state::{Pane, PaneBorderMode, PaneBorderStyle};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::{Pane, PaneBorderStyle};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 

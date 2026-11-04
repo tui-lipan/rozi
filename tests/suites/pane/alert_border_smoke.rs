@@ -3,7 +3,8 @@
 use rozi::AppRoot;
 use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{Color, FloatRect, Rect};
 

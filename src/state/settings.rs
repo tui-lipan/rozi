@@ -2,7 +2,7 @@ use tui_lipan::prelude::TextInput;
 
 use crate::config::Config;
 
-use super::{PaneBorderMode, PaneTitlebarMode};
+use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
 
 mod catalog;
 

@@ -116,7 +116,7 @@ impl StartupTasks {
             let listener_link = link.clone();
             let event_hub = self.event_hub.clone();
             std::thread::spawn(move || {
-                crate::control::run_listener(listener, listener_link, event_hub)
+                crate::ops::control_listener::run_listener(listener, listener_link, event_hub)
             });
         }
         let theme_tick = self.theme_tick;
@@ -289,9 +289,9 @@ impl TargetResolution {
         let auto_created = self.attach_session.is_none();
         let name = self.attach_session.clone().unwrap_or_else(|| {
             if self.remote.is_some() {
-                crate::state::remote_ephemeral_session_name()
+                crate::session::naming::remote_ephemeral_session_name()
             } else {
-                crate::state::ephemeral_session_name()
+                crate::session::naming::ephemeral_session_name()
             }
         });
         let intent = match (&self.profile, &self.cwd) {
@@ -889,7 +889,10 @@ mod tests {
         crate::test_support::isolate_user_dirs();
         let plan = plan_for(&[]);
         let request = startup_request(&plan);
-        assert_eq!(request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert_eq!(request.mode, crate::state::AttachMode::JoinOrStart);
         assert!(matches!(
             plan.session,

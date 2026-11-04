@@ -5,12 +5,10 @@ use std::time::Duration;
 
 use tui_lipan::prelude::{ExitQueue, GraphicsMediaPolicy};
 
-use super::{
-    Pane, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, Workspace,
-    is_ephemeral_session_name,
-};
+use super::{Pane, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, Workspace};
 use crate::layout::model::WORKSPACE_COUNT;
 use crate::pane::id::PaneId;
+use crate::session::naming::is_ephemeral_session_name;
 
 /// Identity of an attachment. Equal to the `runtime_epoch` the attachment was committed with, which
 /// is also the epoch its server frames carry, so a background attachment's output routes to it while
@@ -113,7 +111,7 @@ pub struct Attachment {
     /// when it becomes current so background protocol traffic never mutates the visible session.
     pub pending_background_layout: Option<(u64, crate::layout::shared::SharedLayout)>,
     /// Another client's in-flight tiled drag, scoped to this session attachment.
-    pub remote_drag: Option<crate::state::RemoteDrag>,
+    pub remote_drag: Option<crate::layout::shared::RemoteDrag>,
     /// Pane whose remote drag was cleared by a controller change. It gets one instant transition
     /// while the tiles around it animate back into the authoritative layout.
     pub remote_drag_snap: Cell<Option<PaneId>>,
@@ -539,7 +537,7 @@ mod tests {
     #[test]
     fn disconnect_clears_transient_remote_drag_state() {
         let mut attachment = Attachment::new();
-        attachment.remote_drag = Some(crate::state::RemoteDrag {
+        attachment.remote_drag = Some(crate::layout::shared::RemoteDrag {
             pane_id: 4,
             rect: crate::layout::shared::FracRect {
                 x: 0.0,

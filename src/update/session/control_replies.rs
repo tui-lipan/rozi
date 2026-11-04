@@ -248,7 +248,7 @@ pub(crate) fn drag_changed(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
     author: ClientId,
-    drag: Option<crate::state::RemoteDrag>,
+    drag: Option<crate::layout::shared::RemoteDrag>,
 ) -> Update {
     let is_current = epoch == ctx.state.runtime_epoch;
     let Some(attachment) = ctx.state.attachment_for_epoch_mut(epoch) else {

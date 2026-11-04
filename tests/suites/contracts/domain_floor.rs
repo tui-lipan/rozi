@@ -14,6 +14,8 @@ const FLOOR: &[&str] = &[
     "src/layout/tree_ser.rs",
     "src/layout/geometry.rs",
     "src/pane/id.rs",
+    "src/control/pick.rs",
+    "src/session/naming.rs",
 ];
 
 /// First path segments under `crate::` that a floor file must not reach.

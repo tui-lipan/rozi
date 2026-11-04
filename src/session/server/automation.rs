@@ -530,7 +530,7 @@ impl SessionServer {
 
     /// Bring deployments back up under a new generation, as a restart of the server does.
     pub(super) fn restart_deployments(&mut self) {
-        if !crate::state::is_ephemeral_session_name(&self.session_name)
+        if !crate::session::naming::is_ephemeral_session_name(&self.session_name)
             && let Err(error) = self.ensure_deployment_worker(true)
         {
             eprintln!("rozi: session automation unavailable: {error}");

@@ -611,7 +611,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
         return swap_to_fresh_ephemeral(ctx);
     }
     if ephemeral {
-        let restart_name = crate::state::remote_ephemeral_session_name();
+        let restart_name = crate::session::naming::remote_ephemeral_session_name();
         return attach_ephemeral_by_name(ctx, restart_name, remote_host, remote_target);
     }
     attach_session_by_name(ctx, name, remote_host, remote_target, true)
@@ -686,7 +686,7 @@ pub(crate) fn refresh_picker_after_kill(ctx: &mut Context<AppRoot>) -> Update {
 /// session has already been shut down or detached by the caller.
 pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     let epoch = ctx.state.mint_attachment_id();
-    let name = crate::state::fresh_ephemeral_session_name(epoch);
+    let name = crate::session::naming::fresh_ephemeral_session_name(epoch);
     // A fresh ephemeral is a session with no recipe named for it, so it seeds from
     // `[profile] default` exactly as the launch that started rozi did.
     let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
@@ -900,7 +900,7 @@ pub(crate) fn held_ephemeral_session_in<'a>(
                 && attachment
                     .session_name
                     .as_deref()
-                    .is_some_and(crate::state::is_ephemeral_session_name)
+                    .is_some_and(crate::session::naming::is_ephemeral_session_name)
         })
 }
 
@@ -961,9 +961,9 @@ pub(crate) fn attach_startup_ephemeral(
     // A remote scratch session lives on the far host, where a bare `eph-<pid>` could collide with
     // another client sharing that pid on a different machine.
     let name = if scope.is_some() {
-        crate::state::remote_ephemeral_session_name()
+        crate::session::naming::remote_ephemeral_session_name()
     } else {
-        crate::state::ephemeral_session_name()
+        crate::session::naming::ephemeral_session_name()
     };
     let intent = match ctx.state.current_mut().deferred_profile_seed.take() {
         Some((profile, path)) => crate::state::AttachIntent::ProfileSeed { profile, path },

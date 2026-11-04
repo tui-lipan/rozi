@@ -714,7 +714,7 @@ pub enum ServerMessage {
     /// [`Self::ControllerChanged`] instead, which every disconnect and lease move already emits.
     DragChanged {
         author: ClientId,
-        drag: Option<crate::state::RemoteDrag>,
+        drag: Option<crate::layout::shared::RemoteDrag>,
     },
     ControllerChanged {
         controller: Option<ClientId>,

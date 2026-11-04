@@ -21,14 +21,15 @@
 //! A compromised host can read every credential issued to it, so these rules are written for the
 //! union of what all of a host's workers may do: nothing here may hand a host more than that.
 
-use crate::config::ExtensionProvenance;
 use crate::config::SessionScope;
+use crate::control::ExtensionProvenance;
+use crate::control::WorkerId;
 use crate::control::{
     AgentTarget, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, ExtensionGrant,
     RequestOrigin,
 };
 use crate::pane::id::PaneId;
-use crate::state::{HostKey, State, Worker, WorkerBinding, WorkerId, WorkerRuntime};
+use crate::state::{HostKey, State, Worker, WorkerBinding, WorkerRuntime};
 
 /// Establish who sent a control request. See [`crate::control::RequestOrigin`].
 pub(crate) fn authorize(
@@ -710,7 +711,7 @@ mod tests {
             let wide = state
                 .extension_workers
                 .issue_scoped(
-                    crate::config::ExtensionProvenance {
+                    crate::control::ExtensionProvenance {
                         id: "attached".to_string(),
                         generation: "g1".to_string(),
                     },

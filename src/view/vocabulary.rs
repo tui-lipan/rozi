@@ -85,7 +85,7 @@ pub(crate) fn count(count: usize, noun: &str) -> String {
 
 /// A session's display name: [`EPHEMERAL`] for a temporary session, its own name otherwise.
 pub(crate) fn session_name(name: &str) -> &str {
-    if crate::state::is_ephemeral_session_name(name) {
+    if crate::session::naming::is_ephemeral_session_name(name) {
         EPHEMERAL
     } else {
         name

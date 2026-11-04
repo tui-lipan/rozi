@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use rozi::config::ExtensionProvenance;
+use rozi::control::ExtensionProvenance;
 use rozi::control::{
     CaptureRender, ControlCommand, ControlErrorCode, ControlRequest, ControlResponse, PaneWait,
 };

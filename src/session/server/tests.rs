@@ -6014,7 +6014,7 @@ fn only_the_controller_may_publish_a_drag() {
             .collect::<Vec<_>>(),
         vec![(
             controller,
-            Some(crate::state::RemoteDrag { pane_id: 7, rect })
+            Some(crate::layout::shared::RemoteDrag { pane_id: 7, rect })
         )],
         "the controller's lift is broadcast verbatim"
     );

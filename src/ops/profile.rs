@@ -20,7 +20,7 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
         .or_else(|| {
             ctx.state.current().session_name.as_deref().filter(|name| {
                 ctx.state.current().session_attached
-                    && !crate::state::is_ephemeral_session_name(name)
+                    && !crate::session::naming::is_ephemeral_session_name(name)
             })
         })
         .unwrap_or("");
@@ -579,7 +579,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     crate::ops::session::release_current_session(ctx);
 
     let epoch = ctx.state.mint_attachment_id();
-    let name = crate::state::fresh_ephemeral_session_name(epoch);
+    let name = crate::session::naming::fresh_ephemeral_session_name(epoch);
 
     // An empty profile still yields a working session: fall back to the default attachment.
     let attachment = crate::profiles::attachment_from_profile(&ctx.state.config, profile)

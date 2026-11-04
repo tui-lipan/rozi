@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::{HostKey, WorkerBinding, WorkerId};
+use super::{HostKey, WorkerBinding};
+use crate::control::WorkerId;
 use crate::extension_runtime::client::RuntimeConnection;
 
 /// Why a placed contribution is not running. Shown as-is; never answered by running it elsewhere.

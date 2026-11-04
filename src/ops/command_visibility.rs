@@ -11,8 +11,9 @@
 //! [`crate::commands::palette_visible`]: the palette lists what is worth offering, while a bound key
 //! is something the user chose.
 
-use crate::config::{ExtensionProvenance, NamedCommand};
+use crate::config::NamedCommand;
 use crate::control::ControlResponse;
+use crate::control::ExtensionProvenance;
 use crate::state::State;
 
 /// One extension's choice for one of its commands.

@@ -258,7 +258,7 @@ pub(crate) fn attached(
     ctx.state.current_mut().deferred_profile_seed = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
-    if !crate::state::is_ephemeral_session_name(&session) {
+    if !crate::session::naming::is_ephemeral_session_name(&session) {
         // Remembered per scope: the last session on `workbox` is what `--remote workbox` reopens,
         // and it must not become what a bare launch reaches for.
         crate::session::record_last_session(ctx.state.current().remote_target.as_ref(), &session);
@@ -375,7 +375,7 @@ pub(crate) fn attached(
     // streams had reported under its old identity.
     crate::ops::published_rows::resend_rows(&ctx.state);
 
-    let named = !crate::state::is_ephemeral_session_name(&session);
+    let named = !crate::session::naming::is_ephemeral_session_name(&session);
     if !populated {
         match &pending.request.intent {
             crate::state::AttachIntent::ProfileSeed { profile, path } => {

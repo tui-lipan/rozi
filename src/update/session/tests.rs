@@ -931,7 +931,7 @@ fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
             state.current_mut().connection = crate::state::ConnectionState::Connected;
             state.current_mut().remote_host = Some("workbox".to_string());
             state.current_mut().remote_target = Some(target.clone());
-            state.current_mut().remote_drag = Some(crate::state::RemoteDrag {
+            state.current_mut().remote_drag = Some(crate::layout::shared::RemoteDrag {
                 pane_id: 4,
                 rect: crate::layout::shared::FracRect {
                     x: 0.0,
@@ -1016,7 +1016,7 @@ fn parked_rename_updates_retained_identity() {
 fn current_rename_relabels_open_session_picker_row() {
     crate::test_support::on_large_stack(|| {
         let _persisted = crate::test_support::lock_persisted_state();
-        let ephemeral = crate::state::ephemeral_session_name();
+        let ephemeral = crate::session::naming::ephemeral_session_name();
         let mut backend = TestBackend::new(crate::AppRoot::default());
         {
             let state = backend.state_mut();
@@ -1690,8 +1690,8 @@ fn follower_backend() -> TestBackend<crate::AppRoot> {
     backend
 }
 
-fn drag_at(x: f32) -> crate::state::RemoteDrag {
-    crate::state::RemoteDrag {
+fn drag_at(x: f32) -> crate::layout::shared::RemoteDrag {
+    crate::layout::shared::RemoteDrag {
         pane_id: 4,
         rect: crate::layout::shared::FracRect {
             x,

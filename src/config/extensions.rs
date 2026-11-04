@@ -39,7 +39,7 @@ pub(crate) use keybindings::resolve as resolve_suggested_keybindings;
 use manifest::ExtensionManifestFile;
 pub(crate) use manifest::UserExtensionConfig;
 use paths::{absolute_path, normalize_path};
-pub use runtime::{ExtensionProvenance, GENERATION_ENV};
+pub use runtime::GENERATION_ENV;
 pub(crate) use runtime::{
     ExtensionRuntimeFingerprint, fingerprint, fingerprints_by_id, provenance_from_process,
     provenance_is_active, reconcile_generations,

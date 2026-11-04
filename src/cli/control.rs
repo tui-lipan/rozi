@@ -353,7 +353,7 @@ pub(crate) fn run_pick_cli(command: PickCli) -> Result<()> {
         let first_line = read_socket_line(&mut stdin)?;
         let spec: serde_json::Value =
             serde_json::from_str(first_line.trim()).unwrap_or(serde_json::Value::Null);
-        let tabs: Vec<crate::state::PickTab> = spec
+        let tabs: Vec<crate::control::pick::PickTab> = spec
             .get("tabs")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok())
@@ -544,7 +544,10 @@ pub(crate) fn run_prompt_cli(command: PromptCli) -> Result<()> {
 
 /// The tab the picker opens on, mirroring the UI: the requested one when it names a usable tab,
 /// otherwise the first usable one.
-fn opening_tab<'a>(tabs: &'a [crate::state::PickTab], requested: Option<&str>) -> Option<&'a str> {
+fn opening_tab<'a>(
+    tabs: &'a [crate::control::pick::PickTab],
+    requested: Option<&str>,
+) -> Option<&'a str> {
     let usable = crate::state::usable_pick_tabs(tabs);
     requested
         .and_then(|requested| usable.iter().find(|tab| tab.id == requested))
@@ -1119,15 +1122,15 @@ mod tests {
     #[test]
     fn opening_rows_fill_the_tab_the_picker_opens_on() {
         let tabs = [
-            crate::state::PickTab {
+            crate::control::pick::PickTab {
                 id: String::new(),
                 label: None,
             },
-            crate::state::PickTab {
+            crate::control::pick::PickTab {
                 id: "branches".into(),
                 label: None,
             },
-            crate::state::PickTab {
+            crate::control::pick::PickTab {
                 id: "tags".into(),
                 label: None,
             },
@@ -1139,7 +1142,7 @@ mod tests {
 
         // A tab past the cap does not exist to the UI, so its opening rows go to the first tab.
         let many: Vec<_> = (0..=crate::state::MAX_PICK_TABS)
-            .map(|index| crate::state::PickTab {
+            .map(|index| crate::control::pick::PickTab {
                 id: format!("t{index}"),
                 label: None,
             })

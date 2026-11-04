@@ -104,7 +104,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
                 .pending_session_attach
                 .as_ref()
                 .map(|pending| pending.request.name.as_str()),
-            Some(rozi::state::ephemeral_session_name().as_str())
+            Some(rozi::session::naming::ephemeral_session_name().as_str())
         );
     });
 }
@@ -121,7 +121,8 @@ fn unmatched_queries_offer_recovery_actions_and_leave_enter_inactive() {
             {
                 let state = backend.state_mut();
                 *state.current_mut() = rozi::state::Attachment::new();
-                state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+                state.current_mut().session_name =
+                    Some(rozi::session::naming::ephemeral_session_name());
                 state.current_mut().session_attached = true;
                 state.show_session_picker = true;
                 let mut picker =
@@ -243,7 +244,7 @@ fn padded_selection_insets_the_current_marker() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            let session_name = rozi::state::ephemeral_session_name();
+            let session_name = rozi::session::naming::ephemeral_session_name();
             state.current_mut().session_name = Some(session_name.clone());
             state.current_mut().session_attached = true;
             state.current_mut().pending_session_attach = None;
@@ -281,7 +282,8 @@ fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
+            state.current_mut().session_name =
+                Some(rozi::session::naming::ephemeral_session_name());
             state.current_mut().session_attached = true;
             // Startup queued its own attach; this client is meant to be settled on the session.
             state.current_mut().pending_session_attach = None;
@@ -322,7 +324,7 @@ fn a_parked_scratch_session_also_drops_the_hint() {
             state.current_mut().session_attached = true;
             state.current_mut().pending_session_attach = None;
             let mut parked = rozi::state::Attachment::new();
-            parked.session_name = Some(rozi::state::ephemeral_session_name());
+            parked.session_name = Some(rozi::session::naming::ephemeral_session_name());
             parked.session_attached = true;
             state.background.insert(7, parked);
             state.show_session_picker = true;

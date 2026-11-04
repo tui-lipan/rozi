@@ -131,6 +131,26 @@ pub struct FracRect {
     pub h: f32,
 }
 
+/// Another client's tiled drag, mirrored here so every attached client lifts the same pane out of
+/// the same tiling.
+///
+/// This is presence state, not layout: it rides its own wire messages instead of
+/// [`SharedLayout`](crate::layout::shared::SharedLayout), because a half-lifted pane must never be
+/// persisted, resurrected, or inherited by whoever takes the control lease next. It is cleared
+/// whenever the controller changes, so a disconnect mid-gesture heals into the authoritative
+/// layout rather than leaving a pane floating forever.
+///
+/// Only *tiled* drags need it. A floating pane's rectangle is already part of the shared document,
+/// so dragging one replicates through the ordinary layout commit.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RemoteDrag {
+    pub pane_id: PaneId,
+    /// The lifted rectangle, as fractions of the controller's canonical canvas - the same frame
+    /// [`SharedPane::rect`](crate::layout::shared::SharedPane::rect) uses, so a follower with a
+    /// different viewport letterboxes it exactly like a floating pane.
+    pub rect: FracRect,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SharedLayoutValidationError {
     UnsupportedVersion(u32),

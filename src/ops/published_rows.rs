@@ -25,8 +25,8 @@ pub(crate) struct PublishOpen {
     pub source_session: Option<SessionInstanceId>,
     pub kind: PublisherKind,
     pub name: Option<String>,
-    pub extension: Option<crate::config::ExtensionProvenance>,
-    pub worker: Option<crate::state::WorkerId>,
+    pub extension: Option<crate::control::ExtensionProvenance>,
+    pub worker: Option<crate::control::WorkerId>,
 }
 
 /// Longest `--name` a publisher may give itself.
@@ -596,10 +596,12 @@ mod tests {
         sender: std::sync::mpsc::SyncSender<String>,
     ) -> std::result::Result<crate::pane::id::PaneId, crate::control::ControlResponse> {
         let (ack, reply) = mpsc::channel();
-        let extension = open.extension.map(|id| crate::config::ExtensionProvenance {
-            id: id.to_string(),
-            generation: backend.state().extension_generations[id].clone(),
-        });
+        let extension = open
+            .extension
+            .map(|id| crate::control::ExtensionProvenance {
+                id: id.to_string(),
+                generation: backend.state().extension_generations[id].clone(),
+            });
         backend
             .dispatch(crate::Msg::PublishStreamOpen {
                 stream_id: open.stream_id,
@@ -1021,7 +1023,8 @@ mod tests {
     /// or for a session outside its placement, the same stream is refused.
     #[test]
     fn an_attached_scope_keeps_publishing_into_a_named_session_off_screen() {
-        use crate::config::{ExtensionProvenance, Placement, SessionScope};
+        use crate::config::{Placement, SessionScope};
+        use crate::control::ExtensionProvenance;
         use crate::session::remote::RemoteTarget;
         use crate::state::{HostKey, WorkerBinding, WorkerKind, WorkerRuntime};
         with_backend(|backend| {
@@ -1180,7 +1183,7 @@ mod tests {
             let worker = state
                 .extension_workers
                 .issue(
-                    crate::config::ExtensionProvenance {
+                    crate::control::ExtensionProvenance {
                         id: "probe".to_string(),
                         generation: "g1".to_string(),
                     },
@@ -1207,7 +1210,7 @@ mod tests {
                         source_session: session.map(SessionInstanceId::for_test),
                         kind: PublisherKind::Agent,
                         name: None,
-                        extension: Some(crate::config::ExtensionProvenance {
+                        extension: Some(crate::control::ExtensionProvenance {
                             id: "probe".to_string(),
                             generation: "g1".to_string(),
                         }),
@@ -1404,7 +1407,7 @@ mod tests {
                     source_session: None,
                     kind: PublisherKind::Activity,
                     name: None,
-                    extension: Some(crate::config::ExtensionProvenance {
+                    extension: Some(crate::control::ExtensionProvenance {
                         id: "dashboard".to_string(),
                         generation: "retired".to_string(),
                     }),

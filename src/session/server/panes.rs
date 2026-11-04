@@ -1159,7 +1159,7 @@ impl SessionServer {
     /// one orphaned directory per rozi run, forever, holding whatever those panes printed.
     /// Named sessions are left alone: their logs are the point.
     pub(super) fn discard_ephemeral_logs(&mut self) {
-        if !crate::state::is_ephemeral_session_name(&self.session_name) {
+        if !crate::session::naming::is_ephemeral_session_name(&self.session_name) {
             return;
         }
         // Close every handle first: Windows refuses to delete a file that is still open.

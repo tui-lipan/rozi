@@ -333,7 +333,7 @@ impl ReplyTo {
 /// turn `--session` into the way around a fence the UI endpoint enforces - a disabled extension's
 /// `send-text` would keep landing in panes. Refusing costs an extension the headless path until
 /// there is a real way to validate it, and says so rather than failing obscurely.
-fn unverifiable_extension_provenance(provenance: &crate::config::ExtensionProvenance) -> String {
+fn unverifiable_extension_provenance(provenance: &crate::control::ExtensionProvenance) -> String {
     format!(
         "a session server cannot check whether extension `{}` is still active, and will not act on its behalf; reach a running rozi instead, or clear ROZI_EXTENSION when the caller is not the extension",
         provenance.id
@@ -4439,7 +4439,7 @@ mod tests {
                     command,
                     source_pane: None,
                     source_session: None,
-                    extension: Some(crate::config::ExtensionProvenance {
+                    extension: Some(crate::control::ExtensionProvenance {
                         id: "git-tools".to_string(),
                         generation: "whatever-the-caller-claims".to_string(),
                     }),

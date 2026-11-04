@@ -7,6 +7,7 @@ pub(crate) mod command_visibility;
 pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;
+pub(crate) mod control_listener;
 pub(crate) mod exit;
 pub(crate) mod extension_workers;
 pub(crate) mod extensions;

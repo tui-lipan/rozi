@@ -1265,7 +1265,10 @@ fn starting_a_shell_from_the_picker_attaches_the_ephemeral_with_the_launch_seed(
             .pending_session_attach
             .as_ref()
             .expect("attaching the ephemeral session");
-        assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            pending.request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert!(
             state.launcher_seed.is_none(),
             "the parked launch panes are consumed, not left for a second start"
@@ -1911,7 +1914,10 @@ fn the_global_pickers_scratch_key_stays_local_behind_a_remote_session() {
             .pending_session_attach
             .as_ref()
             .expect("an attach is in flight");
-        assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            pending.request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert!(
             pending.request.remote.is_none(),
             "the global picker's scratch key must not inherit the attached session's host"
@@ -1954,7 +1960,10 @@ fn a_scratch_session_started_from_an_attached_session_opens_with_a_pane() {
             .pending_session_attach
             .as_ref()
             .expect("an attach is in flight");
-        assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            pending.request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert_eq!(
             state
                 .current()
@@ -1980,7 +1989,8 @@ fn a_remote_scratch_session_does_not_answer_for_the_local_one() {
         let mut backend = TestBackend::new(AppRoot::default());
         {
             let state = backend.state_mut();
-            state.current_mut().session_name = Some(crate::state::remote_ephemeral_session_name());
+            state.current_mut().session_name =
+                Some(crate::session::naming::remote_ephemeral_session_name());
             state.current_mut().session_attached = true;
             state.current_mut().remote_host = Some("workbox".into());
             state.current_mut().remote_target = Some(crate::session::remote::RemoteTarget::Alias(
@@ -2000,7 +2010,10 @@ fn a_remote_scratch_session_does_not_answer_for_the_local_one() {
             .pending_session_attach
             .as_ref()
             .expect("an attach is in flight rather than a silent close");
-        assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            pending.request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert!(pending.request.remote.is_none());
     });
 }
@@ -2037,7 +2050,7 @@ fn a_scoped_launcher_starts_its_shell_on_the_host_it_names() {
             .expect("an attach is in flight");
         assert_eq!(
             pending.request.name,
-            crate::state::remote_ephemeral_session_name()
+            crate::session::naming::remote_ephemeral_session_name()
         );
         assert_eq!(pending.request.remote_label().as_deref(), Some("workbox"));
         assert_eq!(
@@ -2104,7 +2117,7 @@ fn disconnecting_a_host_keeps_named_sessions_and_drops_only_the_disposable_scrat
             // Auto-created and never engaged: the definition of disposable.
             let mut scratch = crate::state::Attachment::new();
             scratch.epoch = 12;
-            scratch.session_name = Some(crate::state::remote_ephemeral_session_name());
+            scratch.session_name = Some(crate::session::naming::remote_ephemeral_session_name());
             scratch.session_attached = true;
             scratch.auto_created = true;
             scratch.engaged = false;
@@ -2242,7 +2255,10 @@ fn disconnecting_the_launcher_picker_host_moves_to_local_before_starting_a_shell
             .pending_session_attach
             .as_ref()
             .expect("local attach is pending");
-        assert_eq!(pending.request.name, crate::state::ephemeral_session_name());
+        assert_eq!(
+            pending.request.name,
+            crate::session::naming::ephemeral_session_name()
+        );
         assert!(pending.request.remote.is_none());
         assert!(backend.state().current().remote_target.is_none());
     });

@@ -78,7 +78,7 @@ impl Default for AppRoot {
             control_guard: None,
             startup_session: StartupSession::Attach {
                 request: state::AttachRequest::new(
-                    state::ephemeral_session_name(),
+                    crate::session::naming::ephemeral_session_name(),
                     state::AttachMode::JoinOrStart,
                 ),
                 auto_created: true,
@@ -161,7 +161,7 @@ impl AppRoot {
             Some(guard),
             StartupSession::Attach {
                 request: state::AttachRequest::new(
-                    state::ephemeral_session_name(),
+                    crate::session::naming::ephemeral_session_name(),
                     state::AttachMode::Join,
                 ),
                 auto_created: true,
@@ -183,7 +183,7 @@ impl AppRoot {
             None,
             StartupSession::Attach {
                 request: state::AttachRequest::new(
-                    state::ephemeral_session_name(),
+                    crate::session::naming::ephemeral_session_name(),
                     state::AttachMode::Join,
                 ),
                 auto_created: true,
@@ -1002,7 +1002,7 @@ mod tests {
                     None,
                     StartupSession::Attach {
                         request: state::AttachRequest::new(
-                            state::ephemeral_session_name(),
+                            crate::session::naming::ephemeral_session_name(),
                             state::AttachMode::Join,
                         ),
                         auto_created: true,

@@ -1,23 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use serde::{Deserialize, Serialize};
-
 use crate::config::{Config, ServiceConfig, UserCommandAction};
+use crate::control::ExtensionProvenance;
 
 pub const GENERATION_ENV: &str = "ROZI_EXTENSION_GENERATION";
-
-/// Provenance carried automatically by the CLI for a process launched by an extension.
-///
-/// The opaque generation is a fencing token, not authentication: it rejects processes from a
-/// retired runtime definition, but another process running as the same user is inside Rozi's trust
-/// boundary and may be able to observe it.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct ExtensionProvenance {
-    pub id: String,
-    pub generation: String,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExtensionCommandFingerprint {

@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::layout::anim::GeometryAnimation;
 use crate::layout::model::{TileGap, WORKSPACE_COUNT};
 use crate::layout::tiling::append_tiled_window;
+use crate::pane::chrome::PaneBorderMode;
 use crate::pane::id::PaneId;
 
 mod agent_attention;

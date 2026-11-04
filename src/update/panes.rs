@@ -460,7 +460,8 @@ fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::state::{Pane, PaneAlertPaint, PaneBorderMode};
+    use crate::pane::chrome::PaneBorderMode;
+    use crate::state::{Pane, PaneAlertPaint};
     use tui_lipan::prelude::{Color, Style};
 
     fn blocked_pane(id: PaneId) -> Pane {

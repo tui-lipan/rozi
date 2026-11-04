@@ -5,10 +5,8 @@ use tui_lipan::prelude::*;
 
 use crate::layout::anim::WindowAnimationConfig;
 use crate::layout::model::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{
-    AlertMode, AlertPaint, PaneAlertPaint, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode,
-    ThemePreset,
-};
+use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
+use crate::state::{AlertMode, AlertPaint, PaneAlertPaint, PaneBorderStyle, ThemePreset};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WmModifier {

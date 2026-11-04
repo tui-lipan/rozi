@@ -14,7 +14,8 @@ use rozi::layout::anim::{
 };
 use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::animation::Easing;
 use tui_lipan::core::event::{MouseButton, MouseKind};

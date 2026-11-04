@@ -2,7 +2,8 @@
 
 use rozi::AppRoot;
 use rozi::config::{CopyFeedback, CopyOnSelect, MiddleClickPaste, RightClickClipboardAction};
-use rozi::state::{AlertMode, PaneAlertPaint, PaneBorderMode, SettingsAction, SettingsTab};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::{AlertMode, PaneAlertPaint, SettingsAction, SettingsTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, KeyCode, KeyEvent, KeyMods, Rect};
 
@@ -1053,7 +1054,8 @@ fn settings_empty_search_does_not_edit_a_stale_selection() {
 #[test]
 fn merged_visibility_rows_render_save_and_restore_on_cancel() {
     rozi::test_support::on_large_stack(|| {
-        use rozi::state::{PaneTitlebarMode, SettingsAction};
+        use rozi::pane::chrome::PaneTitlebarMode;
+        use rozi::state::SettingsAction;
         // Reads the saved config back, so hold the file this binary's tests share.
         let _config = rozi::test_support::lock_config_file();
         let mut backend = settings_backend(100, 170);

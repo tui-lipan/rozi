@@ -8,8 +8,9 @@ use rozi::layout::anim::{
 };
 use rozi::layout::model::SplitAxis;
 use rozi::layout::tiling::build_dwindle_tree;
+use rozi::pane::chrome::PaneBorderMode;
 use rozi::pane::id::POPUP_PANE_ID;
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, Key, MouseEvent, Rect};
@@ -120,7 +121,7 @@ fn titled_reveal_backend(
     backend.set_viewport(Rect { w: 80, ..VIEWPORT });
     let state = backend.state_mut();
     state.config.pane.show_titles = true;
-    state.config.pane.titlebar = rozi::state::PaneTitlebarMode::Border;
+    state.config.pane.titlebar = rozi::pane::chrome::PaneTitlebarMode::Border;
     state.config.pane.border_mode = border_mode;
     let panes = &mut state.current_mut().workspaces[0].panes;
     panes
@@ -468,10 +469,10 @@ fn closing_reveals_pass_mouse_presses_to_the_surviving_pane() {
     rozi::test_support::on_deeper_stack(|| {
         for style in [PaneAnimationStyle::Portal, PaneAnimationStyle::Scan] {
             for titlebar in [
-                rozi::state::PaneTitlebarMode::Border,
-                rozi::state::PaneTitlebarMode::Integrated,
-                rozi::state::PaneTitlebarMode::Bar,
-                rozi::state::PaneTitlebarMode::Inset,
+                rozi::pane::chrome::PaneTitlebarMode::Border,
+                rozi::pane::chrome::PaneTitlebarMode::Integrated,
+                rozi::pane::chrome::PaneTitlebarMode::Bar,
+                rozi::pane::chrome::PaneTitlebarMode::Inset,
             ] {
                 let mut backend = backend(style);
                 {

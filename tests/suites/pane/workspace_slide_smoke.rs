@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use rozi::input::Action;
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::Pane;
 use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};

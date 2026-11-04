@@ -44,11 +44,31 @@ file name, to know which one you want.
 ### Domain floor
 
 Some files in the domain cores are cut free of the application layers: they must not import
-`crate::state`, `config`, `view`, `app`, `ops` or `update`, and must not name `AppRoot`. The list
-lives in `tests/suites/contracts/domain_floor.rs`, which enforces it. A file joins the list once it
-stops importing the layers; it never leaves the list to make a change compile. Plain vocabulary
-that both a core and a layer need (`layout/model.rs`, `pane/id.rs`) belongs in the core, not in
-`state/`.
+`crate::state`, `config`, `view`, `app`, `ops` or `update`, and must not name `AppRoot`. They are
+the plain vocabulary and documents the layers share: `layout/model.rs`, `pane/id.rs`,
+`pane/chrome.rs`, the shared layout document (`layout/shared/mod.rs`, `validate.rs`, `edit.rs`,
+`placement.rs`), the wire vocabulary (`control.rs`, `control/`, `session/protocol/`) and
+`session/naming.rs`. `tests/suites/contracts/domain_floor.rs` holds the list and enforces it. A file
+joins the list once it stops importing the layers; it never leaves the list to make a change
+compile. Plain vocabulary that both a core and a layer need belongs in the core, not in `state/`.
+
+The guard covers *direct* imports only. It does not make these files separable from `state`:
+`layout/tiling.rs`, which several of them reach for `DwindleTree`, still imports `Workspace` from
+`state`. Moving the tree into a state-free module, with `tiling.rs` keeping the `Workspace`
+adapters, is what would make the floor hold transitively.
+
+The code that reads or writes `State` for these documents sits next to them but outside the list:
+`layout/shared/project.rs` projects `State` into the document, `layout/shared/reconcile.rs`
+reconciles `State` toward it, and `ops/control_listener.rs` turns control requests into `Msg`.
+
+### Growing `Msg` and `State`
+
+- **Nesting `Msg`.** When a change reworks a subsystem that has its own group of `Msg` variants, it
+  nests that group as `Msg::Sidebar(sidebar::Msg)` with a dispatcher in `update/<domain>`, in the
+  same change. The largest groups are Session, Sidebar, Extensions, Worktree, Keybinding, Remote,
+  Settings and Pick. Sidebar goes first because it already has `update/sidebar/`.
+- **Grouping `State` fields.** Group fields into a struct only when the struct enforces a rule,
+  with methods that keep the fields consistent. Field count alone is not a reason.
 
 New code lands in an existing layer or an existing domain core. Adding a new top-level module means
 claiming a new domain, so say why in the change that introduces it.

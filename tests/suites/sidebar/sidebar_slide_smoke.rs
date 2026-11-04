@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use rozi::AppRoot;
 use rozi::config::{SidebarPosition, SidebarTab};
-use rozi::state::{Pane, PaneBorderMode};
+use rozi::pane::chrome::PaneBorderMode;
+use rozi::state::Pane;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 

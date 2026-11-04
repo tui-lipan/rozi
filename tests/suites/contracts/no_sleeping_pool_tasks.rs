@@ -8,19 +8,10 @@
 
 use std::path::Path;
 
+use crate::source_scan::{production_lines, rust_sources};
+
 /// Lines to look ahead from a `Command::spawn(` for a sleep in its body.
 const WINDOW: usize = 6;
-
-fn rust_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    for entry in std::fs::read_dir(dir).expect("read src dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            rust_sources(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
-        }
-    }
-}
 
 #[test]
 fn no_command_spawn_sleeps_on_a_pool_worker() {
@@ -31,23 +22,10 @@ fn no_command_spawn_sleeps_on_a_pool_worker() {
     let mut offenders = Vec::new();
     for path in sources {
         let text = std::fs::read_to_string(&path).expect("read source");
-        let lines: Vec<&str> = text.lines().collect();
-        // Unit tests legitimately sleep to drive timing, so stop at the test module. Match only a
-        // `#[cfg(test)]` that introduces a `mod`: several files gate a helper fn or `use` on
-        // `cfg(test)` well above their tests, and cutting there would blind the scan to most of
-        // the file (`src/session/client.rs` gates a helper at line 40).
-        let end = lines
-            .iter()
-            .enumerate()
-            .position(|(index, line)| {
-                line.trim_start().starts_with("#[cfg(test)]")
-                    && lines
-                        .get(index + 1)
-                        .is_some_and(|next| next.trim_start().starts_with("mod "))
-            })
-            .unwrap_or(lines.len());
-
-        for (index, line) in lines[..end].iter().enumerate() {
+        // Unit tests legitimately sleep to drive timing, so their modules are skipped.
+        let lines = production_lines(&path, &text);
+        let end = lines.len();
+        for (index, line) in lines.iter().enumerate() {
             if !line.contains("Command::spawn") {
                 continue;
             }

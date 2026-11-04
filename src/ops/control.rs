@@ -505,9 +505,7 @@ fn runtime_metrics(ctx: &Context<AppRoot>) -> ControlResponse {
         // Refresh asynchronously for the next sample; this response always uses the cache.
         client.request_runtime_metrics();
     }
-    ControlResponse::ok(crate::runtime_metrics::RuntimeMetrics::capture(
-        ctx.state.current(),
-    ))
+    ControlResponse::ok(ctx.state.current().runtime_metrics())
 }
 
 impl PaneInfo {

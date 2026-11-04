@@ -3,8 +3,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tui_lipan::DevToolsMetric;
 
-use crate::state::{Attachment, ORPHAN_OUTPUT_GLOBAL_CAP, ORPHAN_OUTPUT_KEY_CAP};
-
 /// A server sample older than three normal heartbeat intervals is stale.
 pub const SERVER_METRICS_STALE_AFTER: Duration = Duration::from_secs(15);
 
@@ -203,45 +201,6 @@ pub struct RuntimeMetrics {
 }
 
 impl RuntimeMetrics {
-    pub fn capture(attachment: &Attachment) -> Self {
-        let (client_inbound, client_outbound, piped_remote, server) = attachment
-            .session_client
-            .as_ref()
-            .map(|client| {
-                let stats = client.runtime_stats();
-                (
-                    stats.inbound,
-                    Some(stats.outbound),
-                    stats.piped_remote,
-                    stats.server,
-                )
-            })
-            .unwrap_or((None, None, None, None));
-        let orphan = attachment
-            .shared
-            .as_ref()
-            .map(|shared| shared.orphan_output_stats())
-            .unwrap_or_default();
-
-        Self {
-            terminal_graphics: tui_lipan::terminal_graphics_metrics(),
-            sampled_at_unix_ms: unix_time_millis(),
-            client_inbound,
-            client_outbound,
-            piped_remote,
-            orphan_output: OrphanOutputMetrics {
-                bytes: ByteBufferMetrics::new(
-                    orphan.retained,
-                    orphan.high_water,
-                    ORPHAN_OUTPUT_GLOBAL_CAP,
-                ),
-                keys: orphan.keys as u64,
-                capacity_keys: ORPHAN_OUTPUT_KEY_CAP as u64,
-            },
-            server,
-        }
-    }
-
     pub fn devtools_rows(&self) -> Vec<DevToolsMetric> {
         let absent_queue = QueueMetrics::default();
         let inbound = self.client_inbound.as_ref().unwrap_or(&absent_queue);

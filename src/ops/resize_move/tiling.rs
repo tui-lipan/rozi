@@ -6,7 +6,7 @@ use crate::layout::geometry::{
     clamp_float_rect, clamp_floating_rect, directional_score, lift_off_float_rect,
     workspace_tile_bounds,
 };
-use crate::layout::model::{Direction, LayoutKind, TileGap};
+use crate::layout::model::{Direction, EVEN_SPLIT_RATIO, LayoutKind, TileGap};
 use crate::layout::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
     move_tiled_window_around_target, ratio_at, redock_split_ratio, resize_tiled_split,
@@ -21,7 +21,7 @@ use crate::ops::focus::{
     settle_scrollable_after_reorder, sync_scrollable_reveal,
 };
 use crate::pane::id::PaneId;
-use crate::state::{EVEN_SPLIT_RATIO, MoveSwapHint, State, Workspace};
+use crate::state::{MoveSwapHint, State, Workspace};
 
 use super::float::{
     ensure_tile_tree, finish_pointer_layout_interaction, layout_has_resizable_splits,

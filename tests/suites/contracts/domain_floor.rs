@@ -6,7 +6,9 @@
 //! This guards the files that have already been cut free. Add a file here when it stops importing
 //! the layers; never remove one to make a change pass.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use crate::source_scan::{production_lines, rust_sources};
 
 /// Files and directories (relative to the crate root) that must not reach into the layers.
 const FLOOR: &[&str] = &[
@@ -24,6 +26,10 @@ const FLOOR: &[&str] = &[
     "src/control",
     "src/session/protocol",
     "src/session/naming.rs",
+    // Vocabulary the wire carries, reached from `session/protocol` and `control`.
+    "src/runtime_metrics.rs",
+    "src/extension_runtime/protocol.rs",
+    "src/recording/format.rs",
 ];
 
 /// First path segments under `crate::` that a floor file must not reach.
@@ -116,16 +122,6 @@ fn forbidden_references(lines: &[&str]) -> Vec<(usize, String)> {
     found
 }
 
-fn rust_sources(path: &Path, out: &mut Vec<PathBuf>) {
-    if path.is_dir() {
-        for entry in std::fs::read_dir(path).expect("read floor dir") {
-            rust_sources(&entry.expect("dir entry").path(), out);
-        }
-    } else if path.extension().is_some_and(|ext| ext == "rs") {
-        out.push(path.to_path_buf());
-    }
-}
-
 #[test]
 fn domain_floor_does_not_import_the_application_layers() {
     let mut sources = Vec::new();
@@ -138,22 +134,9 @@ fn domain_floor_does_not_import_the_application_layers() {
     let mut offenders = Vec::new();
     for path in sources {
         let text = std::fs::read_to_string(&path).expect("read source");
-        let lines: Vec<&str> = text.lines().collect();
-        // Unit tests may build `State` to exercise the core, so stop at the test module. Match
-        // only a `#[cfg(test)]` that opens a `mod`; a gated `use` or fn higher up must not blind
-        // the scan to the rest of the file.
-        let end = lines
-            .iter()
-            .enumerate()
-            .position(|(index, line)| {
-                line.trim_start().starts_with("#[cfg(test)]")
-                    && lines
-                        .get(index + 1)
-                        .is_some_and(|next| next.trim_start().starts_with("mod "))
-            })
-            .unwrap_or(lines.len());
-
-        for (line_number, what) in forbidden_references(&lines[..end]) {
+        // Unit tests may build `State` to exercise the core, so their modules are skipped.
+        let lines = production_lines(&path, &text);
+        for (line_number, what) in forbidden_references(&lines) {
             offenders.push(format!(
                 "{}:{line_number}: {what}: {}",
                 path.display(),

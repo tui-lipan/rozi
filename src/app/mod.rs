@@ -438,9 +438,7 @@ impl Component for AppRoot {
             ctx.link().send(Msg::HostTerminalColorsChanged);
         }
         if ctx.devtools_visible() {
-            ctx.set_devtools_metrics(|| {
-                crate::runtime_metrics::RuntimeMetrics::capture(ctx.state.current()).devtools_rows()
-            });
+            ctx.set_devtools_metrics(|| ctx.state.current().runtime_metrics().devtools_rows());
         }
         view::render(ctx)
     }

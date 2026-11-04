@@ -446,8 +446,8 @@ to where it settled. A move to another pane draws at once.
 | `motion` | string | `"spring"` | `"spring"` pulls each corner of the smear into the cursor with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
 | `color` | string | `"cursor"` | `"cursor"` uses the color the program in the pane gave its cursor, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |
 | `stiffness` | float | `0.5` | Spring pull on the corners leading the motion, from 0 to 1. |
-| `trailing_stiffness` | float | `0.16` | Spring pull on the trailing corners, from 0 to 1. Lower than `stiffness` stretches the smear. |
-| `trailing_exponent` | float | `3.0` | How quickly corners between leading and trailing fall back to the trailing pull, from 0.1 to 10. |
+| `trailing_stiffness` | float | `0.28` | Spring pull on the trailing corners, from 0 to 1. Lower than `stiffness` stretches the smear. |
+| `trailing_exponent` | float | `0.3` | Where the corners between leading and trailing sit, from 0.1 to 10: below 1 they follow the front, so a diagonal smear tapers to a point; above 1 they hang back with the tail. |
 | `damping` | float | `0.82` | How much speed the corners lose each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
 | `max_length` | float | `0.0` | No part of the smear trails the cursor by more than this many cells, from the start of a jump, up to 500. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
@@ -457,7 +457,8 @@ to where it settled. A move to another pane draws at once.
 
 The spring values work as the settings of the same name in smear-cursor.nvim, so a setup tuned for
 it carries over. Its own defaults (`stiffness = 0.6`, `trailing_stiffness = 0.45`,
-`damping = 0.85`) give a quicker, more compact smear than rozi's. A value out of range is ignored
+`trailing_exponent = 3.0`, `damping = 0.85`) give a more compact smear that keeps the cursor's full
+height on diagonals. A value out of range is ignored
 with a warning.
 
 `[animations.cursor_trail.particles]` tunes the sparks `style = "sparks"` throws off the moving

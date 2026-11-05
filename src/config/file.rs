@@ -1584,7 +1584,7 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
     let value: toml::Value = match toml::from_str(text) {
         Ok(value) => value,
         Err(err) => {
-            warnings.push(format!("Config parse failed for {}: {err}", path.display()));
+            warnings.push(parse_failure(path, &err));
             return None;
         }
     };
@@ -1600,10 +1600,19 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
             Some(parsed)
         }
         Err(err) => {
-            warnings.push(format!("Config parse failed for {}: {err}", path.display()));
+            warnings.push(parse_failure(path, &err));
             None
         }
     }
+}
+
+/// toml ends its error text with a newline; a warning is one message, so it ends with its text.
+fn parse_failure(path: &Path, err: &impl std::fmt::Display) -> String {
+    format!(
+        "Config parse failed for {}: {}",
+        path.display(),
+        err.to_string().trim_end()
+    )
 }
 
 fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<HookConfig> {
@@ -2116,7 +2125,8 @@ mod file_tests {
             loaded
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("Config parse failed")),
+                .any(|warning| warning.contains("Config parse failed")
+                    && warning == warning.trim_end()),
             "{:?}",
             loaded.warnings
         );
@@ -2131,7 +2141,8 @@ mod file_tests {
             loaded
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("Config parse failed")),
+                .any(|warning| warning.contains("Config parse failed")
+                    && warning == warning.trim_end()),
             "{:?}",
             loaded.warnings
         );

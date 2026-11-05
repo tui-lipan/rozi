@@ -101,7 +101,7 @@ pub(crate) fn custom_theme_base() -> Theme {
 fn load_custom_theme(path: &std::path::Path) -> std::result::Result<Theme, String> {
     load_theme_from_toml(path, custom_theme_base())
         .map(ensure_rozi_color)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string().trim_end().to_string())
 }
 
 /// Resolve a `[theme].name` to a concrete theme. `system_theme` supplies the host-derived

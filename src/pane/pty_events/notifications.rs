@@ -506,6 +506,9 @@ const TOAST_PADDING: (u16, u16) = (0, 1);
 /// Text between backticks names something the user can type or look for, such as a command, a
 /// session or a config key. It shows in the theme's accent color, without the backticks. A hint is
 /// set in the theme's muted color, so the message reads first.
+///
+/// Trailing whitespace is dropped from both. Error text from libraries and processes often ends
+/// with a newline, which would otherwise show as an empty last row inside the toast.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToastBody {
     message: String,
@@ -516,7 +519,7 @@ pub(crate) struct ToastBody {
 impl ToastBody {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
+            message: trimmed(message.into()),
             hint: None,
             marked_up: true,
         }
@@ -532,7 +535,7 @@ impl ToastBody {
 
     /// What to do about the message. An empty hint is no hint.
     pub(crate) fn hint(mut self, hint: impl Into<String>) -> Self {
-        let hint = hint.into();
+        let hint = trimmed(hint.into());
         self.hint = (!hint.is_empty()).then_some(hint);
         self
     }
@@ -575,6 +578,11 @@ impl ToastBody {
             }
         }
     }
+}
+
+fn trimmed(mut text: String) -> String {
+    text.truncate(text.trim_end().len());
+    text
 }
 
 impl From<String> for ToastBody {
@@ -955,6 +963,17 @@ mod tests {
             ToastBody::new("Service failed").hint("").source(),
             "Service failed"
         );
+    }
+
+    #[test]
+    fn trailing_whitespace_is_not_an_empty_last_row() {
+        let body = ToastBody::new("Config parse failed\nin `scrollback`\n").hint("Fix it \n");
+        assert_eq!(
+            body.source(),
+            "Config parse failed\nin `scrollback`\nFix it"
+        );
+        assert_eq!(ToastBody::new("\n").hint(" \n").source(), "");
+        assert_eq!(ToastBody::verbatim("~/a.cast\n").source(), "~/a.cast");
     }
 
     #[test]

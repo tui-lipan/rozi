@@ -97,6 +97,10 @@ Drag to select text. When you release the mouse, rozi copies the selection to th
 and on Linux also to the primary selection. The selection stays visible after copying and stays on
 the same lines while you scroll. `Ctrl+C` also copies the active selection to the regular clipboard.
 
+A copy leaves out blank lines at the start and end of the selection, so dragging past the end of
+the output does not copy the empty rows below it. Blank lines between text are kept. A selection of
+only blank lines copies nothing and leaves the clipboard as it was.
+
 A deliberate copy — `Ctrl+C`, a right-click copy, copy mode, or a hint — briefly lights up the
 copied text. Choose how with `copy_feedback`: a flash, a fade, a scan line that sweeps across the
 text, a double pulse, or nothing. Set `copy_feedback_on_select` to light up the copy a mouse

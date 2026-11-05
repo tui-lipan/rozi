@@ -45,12 +45,7 @@ pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
         let prepared = find_pane_mut(&mut ctx.state, state.target).and_then(|pane| {
             let total = pane.terminal.total_scrollback_rows();
             let selection = state.navigation.selection(total)?;
-            let text =
-                pane.terminal
-                    .selection_display_text(&selection, SelectionEnd::Inclusive, true);
-            if text.is_empty() {
-                return None;
-            }
+            let text = copy_text(&pane.terminal, &selection)?;
             let offset = pane.terminal.scrollback_offset();
             let viewport_rows = usize::from(pane.terminal.rows);
             // The flash paints an exclusive end, so widen it to include the cursor cell.
@@ -78,6 +73,17 @@ pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::with_command(feedback)
+}
+
+/// The text copy mode puts on the clipboard for `selection`, as any terminal copy does: without
+/// the blank lines at its start and end. `None` when nothing is left to copy.
+fn copy_text(
+    terminal: &crate::pane::TerminalPane,
+    selection: &TerminalSelection,
+) -> Option<String> {
+    let text = terminal.selection_display_text(selection, SelectionEnd::Inclusive, true);
+    let text = tui_lipan::utils::trim_blank_edge_lines(&text);
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 pub(crate) fn clear_copy_feedback(ctx: &mut Context<AppRoot>) {
@@ -309,6 +315,33 @@ pub(crate) fn apply_copy_search_match(
 mod tests {
     use super::*;
     use tui_lipan::TestBackend;
+
+    #[test]
+    fn copy_text_drops_blank_lines_at_the_selection_edges() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let target = backend.state().focused_pane().expect("focused pane");
+            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+            pane.terminal
+                .process_server_output(b"\r\n\r\none\r\n\r\ntwo\r\n\r\n\r\n");
+            let line = |line: usize, col: usize| TerminalPos { line, col };
+            // Rows: 0 and 1 blank, 2 "one", 3 blank, 4 "two", 5 and 6 blank.
+            for (anchor, cursor, copied) in [
+                (line(0, 0), line(6, 0), Some("one\n\ntwo")),
+                (line(2, 0), line(5, 0), Some("one\n\ntwo")),
+                (line(4, 0), line(4, 2), Some("two")),
+                (line(5, 0), line(6, 3), None),
+                (line(3, 0), line(3, 0), None),
+            ] {
+                let selection = TerminalSelection { anchor, cursor };
+                assert_eq!(
+                    copy_text(&pane.terminal, &selection).as_deref(),
+                    copied,
+                    "selection {selection:?}"
+                );
+            }
+        });
+    }
 
     #[test]
     fn framework_navigation_selection_keeps_the_cursor_cell_as_endpoint() {

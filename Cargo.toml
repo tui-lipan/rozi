@@ -85,7 +85,8 @@ exclude = [
 # 0.36.0: OnDrop tab drag previews the reordered tab positions before mouse release.
 # 0.38.0: copy feedback effects, copy-on-select feedback, clearing a selection after copy, and
 # the `AllScroll` pointer shape for split junctions.
-tui-lipan = { version = "0.39.0", features = [
+# 0.39.1: the cursor trail, with sparks that start on the smear and follow its bends.
+tui-lipan = { version = "0.39.1", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

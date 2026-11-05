@@ -165,7 +165,9 @@ program that calls a clipboard API directly uses the remote host's clipboard.
 
 Press `Ctrl+A`, then `[` to enter copy mode. It lets you move a cursor with the keyboard, select
 text, jump between shell prompts, and copy the last command's output. Press `/` in copy mode to
-search the focused pane. See [Keybindings](keybindings.md#copy-mode) for every key.
+search the focused pane. See [Keybindings](keybindings.md#copy-mode) for every key. The copy-mode
+cursor is your terminal's own cursor, in its usual shape. With the
+[cursor trail](configuration.md#cursor-trail) in `"jump"` mode, a smear follows its long moves.
 
 The mouse works in copy mode too. Drag to select text, or click to move the cursor there. The
 keys then pick up where the mouse left off: `$` extends a dragged selection to the end of its row,

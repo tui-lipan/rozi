@@ -1223,6 +1223,8 @@ fn post_update_sync(
     // Repairs: placed extension processes, after attachments or generations change or a restart
     // falls due.
     crate::ops::placement::sync(ctx);
+    // Repairs: the runtime cursor trail, after config or theme changes.
+    crate::app::sync_cursor_trail(ctx);
     // Repairs: the agents picker's cursor, kept on a matching row as snapshots arrive.
     if crate::ops::agents::sync_picker_selection(&mut ctx.state) {
         let command = update.command.take();

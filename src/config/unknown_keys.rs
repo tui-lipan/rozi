@@ -66,6 +66,7 @@ const ANIMATION_KEYS: &[&str] = &[
     "pane_style",
     "picker",
     "toast",
+    "cursor_trail",
     "pane_open_style",
     "pane_close_style",
     "geometry_ms",
@@ -258,7 +259,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
     collect_named_table(table, "", "environment", &["forward"], unknown);
     collect_named_table(table, "", "cursor", &["blink", "pointer"], unknown);
     collect_named_table(table, "", "input", INPUT_KEYS, unknown);
-    collect_named_table(table, "", "animations", ANIMATION_KEYS, unknown);
+    collect_animations(table, unknown);
     collect_named_table(table, "", "theme", &["name"], unknown);
     collect_named_table(table, "", "profile", &["default"], unknown);
     collect_named_table(
@@ -351,6 +352,50 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
         unknown,
     );
     collect_keys(table, unknown);
+}
+
+const CURSOR_TRAIL_KEYS: &[&str] = &[
+    "mode",
+    "style",
+    "motion",
+    "color",
+    "stiffness",
+    "trailing_stiffness",
+    "trailing_exponent",
+    "damping",
+    "glide_ms",
+    "max_length",
+    "opacity",
+    "taper",
+    "glyphs",
+    "particles",
+];
+
+const CURSOR_TRAIL_PARTICLE_KEYS: &[&str] = &[
+    "per_cell",
+    "max",
+    "lifetime_ms",
+    "spread",
+    "inherit",
+    "gravity",
+    "drag",
+];
+
+fn collect_animations(table: &Table, unknown: &mut Vec<String>) {
+    collect_named_table(table, "", "animations", ANIMATION_KEYS, unknown);
+    let Some(trail) = named_table(table, "animations")
+        .and_then(|animations| named_table(animations, "cursor_trail"))
+    else {
+        return;
+    };
+    report_unknown(trail, "animations.cursor_trail", CURSOR_TRAIL_KEYS, unknown);
+    collect_named_table(
+        trail,
+        "animations.cursor_trail",
+        "particles",
+        CURSOR_TRAIL_PARTICLE_KEYS,
+        unknown,
+    );
 }
 
 fn collect_pane(table: &Table, unknown: &mut Vec<String>) {

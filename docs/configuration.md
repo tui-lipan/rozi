@@ -63,7 +63,7 @@ variable expansion — is not interpreted.
 
 ## Cursor blinking
 
-Choose **Cursor blink** in Settings under General, or set `[cursor]` in `config.toml`.
+Choose **Blink** in Settings under General › Cursor, or set `[cursor]` in `config.toml`.
 Changes apply immediately to pickers, prompts, text editors, and terminal panes.
 
 | Key | Type | Default | Description |
@@ -330,6 +330,7 @@ pane raises the alert again.
 | `workspace_ms` | integer | `220` | Workspace slide duration in milliseconds. `0` switches instantly. |
 | `session` | string or bool | `"portal"` | `"portal"`, `"wave"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
+| `cursor_trail` | table | | A smear that follows the cursor when it jumps. See [Cursor trail](#cursor-trail). |
 | `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
 | `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge in 280 ms and sends it back out in 180 ms; Fade fades it in place in 150 ms and out in 100 ms. With either, the other toasts glide to make room or close a gap. Off shows and removes toasts at once. In Settings: General › Animations › Toasts. The animation master switch also disables it. |
 | `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
@@ -420,6 +421,62 @@ and axis-change transitions, use `geometry_ms`. The sidebar, scratchpad, and foc
 their own settings. A config change does not alter an animation that is already running.
 
 See [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-close-animation-styles).
+
+### Cursor trail
+
+`[animations.cursor_trail]` draws a smear that follows the cursor when it jumps: the cursor's own
+shape (block, bar, or underline) stretched from the cell it left to the cell it landed on, and
+pulled back into it. It is off until you set `mode`. In Settings, **General › Cursor › Trail**
+chooses when it shows and **Trail style** how it looks.
+
+```toml
+[animations.cursor_trail]
+mode = "jump"
+style = "sparks"
+```
+
+With `"jump"`, a jump inside one pane is drawn once the cursor has held still for a moment, so a
+cursor that lands in steps, such as a shell's newline and then its prompt, gets one smear straight
+to where it settled. A move to another pane draws at once.
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
+| `style` | string | `"smear"` | `"smear"` draws a solid smear in the trail color, with smooth edges drawn in the characters `glyphs` allows, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"sparks"` is the smear throwing sparks. `"tint"` is a fainter smear that never covers text or the cursor: it colors the background behind text and draws smooth edges only where there is none. In Settings: General › Cursor › Trail style. |
+| `motion` | string | `"spring"` | `"spring"` pulls the front of the smear after the cursor, and its tail after the front along the way it went, with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it along the turn in a smooth arc. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
+| `color` | string | `"cursor"` | `"cursor"` uses the color Rozi draws the cursor in: the theme's [`caret`](themes.md#top-level-fields) color, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |
+| `stiffness` | float | `0.5` | Spring pull on the front of the smear, from 0 to 1. |
+| `trailing_stiffness` | float | `0.28` | Spring pull on its tail, from 0 to 1. Lower than `stiffness` stretches the smear. |
+| `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10: `0.3` tapers it to about a quarter of the cursor, `3.0` keeps three quarters. It stays full near the cursor and thins mostly at its end. |
+| `damping` | float | `0.82` | How much speed the smear loses each step, from 0 (bouncy) to 1 (no momentum). |
+| `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
+| `max_length` | float | `0.0` | The smear's tail trails the cursor by no more than this along its way, from the start of a jump, up to 500, in cell widths as they look on screen: a row counts for as many as a cell is taller than wide. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
+| `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
+| `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
+| `glyphs` | string | `"auto"` | The characters the smear's edges are drawn with. `"blocks"` uses half, eighth, and quadrant blocks, which every terminal draws. `"sextants"` adds the sextants, diagonal wedges, and triangles of Symbols for Legacy Computing, which follow a diagonal far more closely, and `"octants"` adds its octants too. `"auto"` picks the richest set your terminal draws itself: octants in Ghostty; sextants in Kitty, WezTerm, and foot; blocks anywhere else. Choose a richer set by hand only if your font has those characters. |
+
+`stiffness`, `trailing_stiffness`, and `damping` work as the settings of the same name in
+smear-cursor.nvim, so a setup tuned for it feels the same, and a higher `trailing_exponent` keeps the
+smear fuller toward its tail there too. Its own defaults (`stiffness = 0.6`,
+`trailing_stiffness = 0.45`, `trailing_exponent = 3.0`, `damping = 0.85`) give a quicker, more
+compact smear that keeps most of the cursor's size to its tail. A value out of range is ignored
+with a warning.
+
+`[animations.cursor_trail.particles]` tunes the sparks `style = "sparks"` throws off the moving
+smear, drawn as braille dots that scatter, fall, and fade without covering text.
+
+| Key | Type | Default | Constraints and behavior |
+| --- | --- | --- | --- |
+| `per_cell` | float | `1.5` | Sparks per cell the smear travels, up to 20. |
+| `max` | integer | `100` | The most sparks alive at once, at least 1. |
+| `lifetime_ms` | integer | `300` | How long a spark lives at most, in milliseconds; each lives between 60% and all of it. |
+| `spread` | float | `6.0` | How fast a spark flies off in a random direction at most, in cells per second, up to 200. |
+| `inherit` | float | `0.25` | How much of the smear's own speed a spark keeps, from 0 to 1. |
+| `gravity` | float | `20.0` | Downward pull in cells per second squared, from -500 to 500. Negative values make sparks rise. |
+| `drag` | float | `3.0` | How quickly a spark slows, per second, up to 100. |
+
+If your editor or terminal draws its own cursor trail, such as smear-cursor.nvim or Kitty's
+`cursor_trail`, leave this off or use `"focus"`, so you do not see two trails at once.
 
 ## `[theme]`
 

@@ -697,6 +697,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) session: Option<SessionSpec>,
     pub(super) picker: Option<String>,
     pub(super) toast: Option<String>,
+    pub(super) cursor_trail: Option<CursorTrailFileConfig>,
     pub(super) focus_chrome: Option<bool>,
     pub(super) pane_style: Option<String>,
     pub(super) pane_open_style: Option<String>,
@@ -715,6 +716,39 @@ pub(super) struct AnimationFileConfig {
     pub(super) scale_from: Option<f32>,
     pub(super) portal_origin: Option<[f32; 2]>,
     pub(super) scan_direction: Option<String>,
+}
+
+/// `[animations.cursor_trail]`.
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub(super) struct CursorTrailFileConfig {
+    pub(super) mode: Option<String>,
+    pub(super) motion: Option<String>,
+    pub(super) style: Option<String>,
+    pub(super) color: Option<String>,
+    pub(super) stiffness: Option<f32>,
+    pub(super) trailing_stiffness: Option<f32>,
+    pub(super) trailing_exponent: Option<f32>,
+    pub(super) damping: Option<f32>,
+    pub(super) glide_ms: Option<u64>,
+    pub(super) max_length: Option<f32>,
+    pub(super) opacity: Option<f32>,
+    pub(super) taper: Option<f32>,
+    pub(super) glyphs: Option<String>,
+    pub(super) particles: Option<CursorTrailParticlesFileConfig>,
+}
+
+/// `[animations.cursor_trail.particles]`.
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub(super) struct CursorTrailParticlesFileConfig {
+    pub(super) per_cell: Option<f32>,
+    pub(super) max: Option<u16>,
+    pub(super) lifetime_ms: Option<u64>,
+    pub(super) spread: Option<f32>,
+    pub(super) inherit: Option<f32>,
+    pub(super) gravity: Option<f32>,
+    pub(super) drag: Option<f32>,
 }
 
 /// A motion curve: either the name of a builtin easing, or CSS cubic-Bézier control points.

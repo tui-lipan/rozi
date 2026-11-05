@@ -3,11 +3,15 @@ use std::time::Duration;
 use tui_lipan::animation::{CubicBezier, Easing};
 
 use crate::layout::anim::{
+    CursorTrailColor, CursorTrailConfig, CursorTrailMode, CursorTrailMotionStyle, CursorTrailStyle,
     PaneAnimationOverrides, PaneAnimationStyle, PickerAnimationStyle, ScanDirection,
     SessionAnimationStyle, ToastAnimationStyle, WindowAnimationConfig,
 };
 
-use super::file::{AnimationFileConfig, CurveSpec, PaddingSpec, SessionSpec};
+use super::file::{
+    AnimationFileConfig, CursorTrailFileConfig, CursorTrailParticlesFileConfig, CurveSpec,
+    PaddingSpec, SessionSpec,
+};
 
 /// Cap defensively: padding eats terminal grid on every side, so a large value would leave no
 /// usable pane. 8 cells is already generous for a cosmetic inset.
@@ -98,9 +102,211 @@ pub(super) fn apply_animations(
             )),
         }
     }
+    if let Some(trail) = raw.cursor_trail.as_ref() {
+        apply_cursor_trail(&mut target.cursor_trail, trail, warnings);
+    }
     apply_animation_flags(target, &raw);
     apply_animation_misc(target, &raw);
     target.pane_overrides = resolve_pane_overrides(&raw, warnings);
+}
+
+/// Parse a choice key of `[animations.cursor_trail]`, warning about an unknown value.
+fn trail_choice<T: Copy>(
+    value: Option<&str>,
+    key: &str,
+    all: &[T],
+    id: fn(T) -> &'static str,
+    target: &mut T,
+    warnings: &mut Vec<String>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    match all
+        .iter()
+        .copied()
+        .find(|choice| id(*choice).eq_ignore_ascii_case(value.trim()))
+    {
+        Some(choice) => *target = choice,
+        None => warnings.push(format!(
+            "Ignored unknown animations.cursor_trail.{key} \"{value}\" (expected one of: {})",
+            all.iter().copied().map(id).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+/// A number of `[animations.cursor_trail]` that must lie in `range`; anything else is dropped
+/// with a warning rather than clamped, like the other animation overrides.
+fn trail_number(
+    value: Option<f32>,
+    key: &str,
+    range: std::ops::RangeInclusive<f32>,
+    target: &mut f32,
+    warnings: &mut Vec<String>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if value.is_finite() && range.contains(&value) {
+        *target = value;
+    } else {
+        warnings.push(format!(
+            "Ignored animations.cursor_trail.{key} = {value} (expected {} to {})",
+            range.start(),
+            range.end()
+        ));
+    }
+}
+
+/// `#rrggbb` as a color.
+fn hex_color(value: &str) -> Option<(u8, u8, u8)> {
+    let hex = value.trim().strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let byte = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+    Some((byte(0)?, byte(2)?, byte(4)?))
+}
+
+fn apply_cursor_trail(
+    target: &mut CursorTrailConfig,
+    raw: &CursorTrailFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    trail_choice(
+        raw.mode.as_deref(),
+        "mode",
+        CursorTrailMode::all(),
+        CursorTrailMode::id,
+        &mut target.mode,
+        warnings,
+    );
+    trail_choice(
+        raw.motion.as_deref(),
+        "motion",
+        CursorTrailMotionStyle::all(),
+        CursorTrailMotionStyle::id,
+        &mut target.motion,
+        warnings,
+    );
+    trail_choice(
+        raw.style.as_deref(),
+        "style",
+        CursorTrailStyle::all(),
+        CursorTrailStyle::id,
+        &mut target.style,
+        warnings,
+    );
+    if let Some(value) = raw.color.as_deref() {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cursor" => target.color = CursorTrailColor::Cursor,
+            "accent" => target.color = CursorTrailColor::Accent,
+            _ => match hex_color(value) {
+                Some((r, g, b)) => target.color = CursorTrailColor::Rgb(r, g, b),
+                None => warnings.push(format!(
+                    "Ignored animations.cursor_trail.color \"{value}\" (expected cursor, accent, or #rrggbb)"
+                )),
+            },
+        }
+    }
+    let spring = &mut target.spring;
+    trail_number(
+        raw.stiffness,
+        "stiffness",
+        0.0..=1.0,
+        &mut spring.stiffness,
+        warnings,
+    );
+    trail_number(
+        raw.trailing_stiffness,
+        "trailing_stiffness",
+        0.0..=1.0,
+        &mut spring.trailing_stiffness,
+        warnings,
+    );
+    trail_number(
+        raw.trailing_exponent,
+        "trailing_exponent",
+        0.1..=10.0,
+        &mut spring.trailing_exponent,
+        warnings,
+    );
+    trail_number(
+        raw.damping,
+        "damping",
+        0.0..=1.0,
+        &mut spring.damping,
+        warnings,
+    );
+    if let Some(value) = raw.glide_ms {
+        target.glide_duration = Duration::from_millis(value);
+    }
+    trail_number(
+        raw.max_length,
+        "max_length",
+        0.0..=500.0,
+        &mut target.max_length,
+        warnings,
+    );
+    trail_number(
+        raw.opacity,
+        "opacity",
+        0.0..=1.0,
+        &mut target.opacity,
+        warnings,
+    );
+    trail_number(raw.taper, "taper", 0.0..=1.0, &mut target.taper, warnings);
+    if let Some(value) = raw.glyphs.as_deref() {
+        use tui_lipan::CursorTrailGlyphs;
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => target.glyphs = CursorTrailGlyphs::Auto,
+            "blocks" => target.glyphs = CursorTrailGlyphs::Blocks,
+            "sextants" => target.glyphs = CursorTrailGlyphs::Sextants,
+            "octants" => target.glyphs = CursorTrailGlyphs::Octants,
+            _ => warnings.push(format!(
+                "Ignored unknown animations.cursor_trail.glyphs \"{value}\" (expected one of: auto, blocks, sextants, octants)"
+            )),
+        }
+    }
+    if let Some(particles) = raw.particles.as_ref() {
+        apply_cursor_trail_particles(target, particles, warnings);
+    }
+}
+
+fn apply_cursor_trail_particles(
+    target: &mut CursorTrailConfig,
+    raw: &CursorTrailParticlesFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    let particle = &mut target.particle;
+    let mut number = |value, key: &str, range, slot: &mut f32| {
+        trail_number(value, &format!("particles.{key}"), range, slot, warnings);
+    };
+    number(raw.per_cell, "per_cell", 0.0..=20.0, &mut particle.per_cell);
+    number(raw.spread, "spread", 0.0..=200.0, &mut particle.spread);
+    number(raw.inherit, "inherit", 0.0..=1.0, &mut particle.inherit);
+    number(
+        raw.gravity,
+        "gravity",
+        -500.0..=500.0,
+        &mut particle.gravity,
+    );
+    number(raw.drag, "drag", 0.0..=100.0, &mut particle.drag);
+    match raw.max {
+        Some(0) => warnings.push(
+            "Ignored animations.cursor_trail.particles.max = 0 (expected 1 or more)".to_string(),
+        ),
+        Some(value) => particle.max = value,
+        None => {}
+    }
+    match raw.lifetime_ms {
+        Some(0) => warnings.push(
+            "Ignored animations.cursor_trail.particles.lifetime_ms = 0 (expected 1 or more)"
+                .to_string(),
+        ),
+        Some(value) => particle.lifetime = Duration::from_millis(value),
+        None => {}
+    }
 }
 
 fn apply_animation_style(
@@ -322,6 +528,97 @@ mod tests {
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("animations.picker"));
         assert!(warnings[1].contains("animations.toast"));
+    }
+
+    #[test]
+    fn the_cursor_trail_table_sets_every_knob_and_warns_about_bad_values() {
+        let parsed = |text: &str| {
+            let mut config = WindowAnimationConfig::default();
+            let mut warnings = Vec::new();
+            apply_animations(&mut config, toml::from_str(text).unwrap(), &mut warnings);
+            (config.cursor_trail, warnings)
+        };
+        let (trail, warnings) = parsed(
+            r##"
+            [cursor_trail]
+            mode = "JUMP"
+            motion = "glide"
+            style = "sparks"
+            color = "#ff8000"
+            stiffness = 0.7
+            trailing_stiffness = 0.3
+            trailing_exponent = 2.0
+            damping = 0.6
+            glide_ms = 240
+            max_length = 12
+            opacity = 0.9
+            taper = 0.5
+            glyphs = "Octants"
+            [cursor_trail.particles]
+            per_cell = 3
+            max = 40
+            lifetime_ms = 500
+            spread = 9
+            inherit = 0.5
+            gravity = -5
+            drag = 1
+            "##,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(trail.mode, CursorTrailMode::Jump);
+        assert_eq!(trail.motion, CursorTrailMotionStyle::Glide);
+        assert_eq!(trail.style, CursorTrailStyle::Sparks);
+        assert_eq!(trail.color, CursorTrailColor::Rgb(255, 128, 0));
+        assert_eq!(trail.spring.stiffness, 0.7);
+        assert_eq!(trail.spring.trailing_stiffness, 0.3);
+        assert_eq!(trail.spring.trailing_exponent, 2.0);
+        assert_eq!(trail.spring.damping, 0.6);
+        assert_eq!(trail.glide_duration, Duration::from_millis(240));
+        assert_eq!(
+            (trail.max_length, trail.opacity, trail.taper),
+            (12.0, 0.9, 0.5)
+        );
+        assert_eq!(trail.glyphs, tui_lipan::CursorTrailGlyphs::Octants);
+        assert_eq!(trail.particle.per_cell, 3.0);
+        assert_eq!(trail.particle.max, 40);
+        assert_eq!(trail.particle.lifetime, Duration::from_millis(500));
+        assert_eq!(
+            (
+                trail.particle.spread,
+                trail.particle.inherit,
+                trail.particle.gravity,
+                trail.particle.drag
+            ),
+            (9.0, 0.5, -5.0, 1.0)
+        );
+
+        let (trail, warnings) = parsed(
+            r#"
+            [cursor_trail]
+            mode = "zoom"
+            color = "pink"
+            damping = 1.5
+            [cursor_trail.particles]
+            max = 0
+            "#,
+        );
+        assert_eq!(
+            trail,
+            CursorTrailConfig::default(),
+            "bad values change nothing"
+        );
+        assert_eq!(warnings.len(), 4, "{warnings:?}");
+        for key in [
+            "cursor_trail.mode",
+            "cursor_trail.color",
+            "cursor_trail.damping",
+            "particles.max",
+        ] {
+            assert!(
+                warnings.iter().any(|warning| warning.contains(key)),
+                "{key}: {warnings:?}"
+            );
+        }
     }
 
     #[test]

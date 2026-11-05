@@ -111,6 +111,8 @@ settings_actions! {
     CycleSessionAnimation,
     CyclePickerAnimation,
     CycleToastAnimation,
+    CycleCursorTrailAnimation,
+    CycleCursorTrailStyle,
     ToggleNerdIcons,
     CycleWhichKey,
     CycleCursorBlink,
@@ -310,9 +312,17 @@ impl SettingsAction {
             | Self::CycleSessionAnimation
             | Self::CyclePickerAnimation
             | Self::CycleToastAnimation
+            | Self::CycleCursorTrailAnimation
+            | Self::CycleCursorTrailStyle
                 if !config.animations.enabled =>
             {
                 Some("Needs animations")
+            }
+            Self::CycleCursorTrailStyle
+                if config.animations.cursor_trail.mode
+                    == crate::layout::anim::CursorTrailMode::Off =>
+            {
+                Some("Needs cursor trail")
             }
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarBackground
@@ -802,11 +812,15 @@ mod tests {
             SettingsAction::CycleSessionAnimation,
             SettingsAction::CyclePickerAnimation,
             SettingsAction::CycleToastAnimation,
+            SettingsAction::CycleCursorTrailAnimation,
+            SettingsAction::CycleCursorTrailStyle,
             SettingsAction::CyclePaneOpenAnimation,
             SettingsAction::CyclePaneCloseAnimation,
         ];
         let mut config = Config::default();
         config.animations.enabled = true;
+        // With a trail on, so its own rows answer only to the master switch.
+        config.animations.cursor_trail.mode = crate::layout::anim::CursorTrailMode::Jump;
         for action in rows {
             assert_eq!(action.disabled_reason(&config), None, "{action:?}");
         }

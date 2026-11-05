@@ -8,6 +8,65 @@ use crate::{cli, config, control, ops, platform};
 
 use super::{AppRoot, exit_report, startup::StartupPlan};
 
+/// The trail `[animations.cursor_trail]` asks for, or `None` when it, or animations as a whole,
+/// are off.
+pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail> {
+    use crate::layout::anim::{
+        CursorTrailColor, CursorTrailMode, CursorTrailMotionStyle, CursorTrailStyle,
+    };
+
+    let animations = &config.animations;
+    let settings = animations.cursor_trail;
+    let trigger = match settings.mode {
+        _ if !animations.enabled => return None,
+        CursorTrailMode::Off => return None,
+        CursorTrailMode::Focus => CursorTrailTrigger::FocusChange,
+        CursorTrailMode::Jump => CursorTrailTrigger::jump(),
+    };
+    let mut trail = CursorTrail::new()
+        .trigger(trigger)
+        .motion(match settings.motion {
+            CursorTrailMotionStyle::Spring => CursorTrailMotion::Spring(settings.spring),
+            CursorTrailMotionStyle::Glide => CursorTrailMotion::Glide {
+                duration: settings.glide_duration,
+            },
+        })
+        .fill(match settings.style {
+            CursorTrailStyle::Tint => CursorTrailFill::Tint,
+            CursorTrailStyle::Smear | CursorTrailStyle::Sparks => CursorTrailFill::Solid,
+        })
+        .opacity(settings.opacity)
+        .taper(settings.taper)
+        .max_length(settings.max_length)
+        .glyphs(settings.glyphs)
+        .particles((settings.style == CursorTrailStyle::Sparks).then_some(settings.particle));
+    // `Cursor` leaves the color to the framework: the program's cursor color, then the
+    // terminal's.
+    match settings.color {
+        CursorTrailColor::Cursor => {}
+        CursorTrailColor::Accent => {
+            if !matches!(
+                theme.border_active,
+                Color::Reset | Color::Backdrop | Color::Transparent
+            ) {
+                trail = trail.color(theme.border_active);
+            }
+        }
+        CursorTrailColor::Rgb(r, g, b) => trail = trail.color(Color::Rgb(r, g, b)),
+    }
+    Some(trail)
+}
+
+/// Hand the runtime the trail the current config and theme ask for. Both change in many places
+/// (reloads, theme files, Settings, profiles), so the post-update sync calls this rather than
+/// each of them.
+pub(crate) fn sync_cursor_trail(ctx: &mut Context<super::AppRoot>) {
+    let trail = cursor_trail(&ctx.state.config, &ctx.state.theme);
+    if ctx.cursor_trail() != trail {
+        ctx.set_cursor_trail(trail);
+    }
+}
+
 pub(crate) fn clipboard_config(config: &Config) -> ClipboardConfig {
     // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
     // that is what we want: copy from a remote pane reaches the local clipboard. Disabling

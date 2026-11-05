@@ -1,5 +1,4 @@
 use tui_lipan::prelude::*;
-use tui_lipan::style::ThemeRole;
 
 use crate::config::{BadgeColor, PaneConfig};
 use crate::layout::model::{LayoutKind, TileGap};
@@ -1290,21 +1289,23 @@ pub(crate) fn pane_element(
     // element identical from one chunk of output to the next - that is what lets `session::output`
     // ask for a repaint instead of a rebuild of every pane in the window. Decorations ride along
     // separately so search hits and hint labels survive a paint-only frame.
+    let copy_cursor = copy_mode_cursor(ctx, id);
     let mut terminal_widget = Terminal::new()
         .screen(pane.terminal.screen_handle())
         .decorations(terminal_decorations_for_pane(ctx, pane))
         .paste_shortcut_behavior(TerminalPasteShortcutBehavior::Performable)
         // A mask over what the child program asks for: a pane wearing hint labels, one whose
         // command has exited, or any pane while a prefix chord is pending shows no caret regardless.
+        // Copy mode's own caret is Rozi's, so it still shows on an exited pane.
         .show_cursor(app_allows_cursor(
             ctx.state.hint_mode.as_ref().map(|hints| hints.target),
             id,
-            exited,
+            exited && copy_cursor.is_none(),
             ctx.command_chord_pending(),
         ))
         // Copy mode's cursor is the caret while it lasts, so it blinks in the user's shape and the
         // cursor trail follows it.
-        .cursor_override(copy_mode_cursor(ctx, id))
+        .cursor_override(copy_cursor)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
@@ -1372,18 +1373,10 @@ pub(crate) fn pane_element(
                     );
         }
     }
-    if let Some(selection) = copy_mode_selection(ctx, id) {
-        // Navigation cursor (no range yet) uses accent so it stays distinct from
-        // `text_selection`; an anchored range keeps the selection style.
-        if copy_mode_is_cursor_only(ctx, id)
-            && let Some(accent) = theme
-                .role(ThemeRole::Accent)
-                .resolved_fg()
-                .filter(|color| !color.is_sentinel())
-        {
-            terminal_widget = terminal_widget.selection_style(Style::new().bg(accent).fg(frame_bg));
-        }
-        terminal_widget = terminal_widget.selection(Some(selection));
+    if copy_cursor.is_some() {
+        // Copy mode controls the selection: its anchored range, or none while only the cursor
+        // moves, since the caret already marks that cell.
+        terminal_widget = terminal_widget.selection(copy_mode_selection(ctx, id));
     }
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane.keys.terminal.clone());
@@ -2355,8 +2348,8 @@ fn junction_target_at(targets: &[ResizeJunctionTarget], along: f32) -> Option<Pa
         .map(|target| target.pane_id)
 }
 
-/// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
-/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching copy extraction).
+/// Controlled selection for the copy-mode target pane: anchor→cursor inclusive (matching copy
+/// extraction), or none before an anchor is set.
 fn copy_mode_selection(ctx: &Context<AppRoot>, id: PaneId) -> Option<TerminalSelection> {
     let copy = ctx
         .state
@@ -2366,14 +2359,7 @@ fn copy_mode_selection(ctx: &Context<AppRoot>, id: PaneId) -> Option<TerminalSel
     let total = crate::pane::lifecycle::find_pane(&ctx.state, id)
         .map(|pane| pane.terminal.total_scrollback_rows())
         .unwrap_or(0);
-    let selection = copy.navigation.selection(total).unwrap_or_else(|| {
-        let (row, col) = copy.navigation.cursor();
-        let offset = copy.navigation.scrollback_offset();
-        TerminalSelection::new(TerminalPos {
-            line: absolute_line(total, offset, row),
-            col,
-        })
-    });
+    let selection = copy.navigation.selection(total)?;
     Some(selection_for_render(&selection))
 }
 
@@ -2386,14 +2372,6 @@ fn copy_mode_cursor(ctx: &Context<AppRoot>, id: PaneId) -> Option<(u16, u16)> {
         .filter(|copy| copy.target == id)?;
     let (row, col) = copy.navigation.cursor();
     Some((u16::try_from(row).ok()?, u16::try_from(col).ok()?))
-}
-
-fn copy_mode_is_cursor_only(ctx: &Context<AppRoot>, id: PaneId) -> bool {
-    ctx.state
-        .copy_mode
-        .as_ref()
-        .filter(|copy| copy.target == id)
-        .is_some_and(|copy| copy.navigation.anchor().is_none())
 }
 
 pub(crate) fn selection_for_render(selection: &TerminalSelection) -> TerminalSelection {

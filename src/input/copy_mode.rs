@@ -519,38 +519,94 @@ mod tests {
         });
     }
 
+    /// [`copy_mode_backend`] with its pane focused and running, as copy mode is entered from, or
+    /// with the pane's command already exited.
+    fn focused_copy_mode_backend(exited: bool) -> (TestBackend<AppRoot>, crate::pane::id::PaneId) {
+        let (mut backend, target) = copy_mode_backend();
+        let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+        pane.opening = false;
+        pane.terminal_active = true;
+        if exited {
+            pane.terminal.status = ManagedTerminalStatus::Exited(0);
+        }
+        let terminal = pane.keys.terminal.clone();
+        backend.render();
+        backend.focus_key(&terminal);
+        (backend, target)
+    }
+
+    /// Move the copy cursor to viewport `(row, col)` and return where the drawn caret lands.
+    fn caret_at(backend: &mut TestBackend<AppRoot>, row: usize, col: usize) -> (u16, u16) {
+        backend
+            .state_mut()
+            .copy_mode
+            .as_mut()
+            .expect("copy mode")
+            .navigation
+            .goto(row, col, 0);
+        backend.render();
+        let cursor = backend.capture_frame().cursor.expect("a caret is drawn");
+        assert!(cursor.visible, "the caret shows in copy mode");
+        (cursor.x, cursor.y)
+    }
+
     /// The copy cursor is the host caret while copy mode lasts, which is what a cursor trail and
-    /// the user's cursor shape follow: moving it moves the drawn caret by the same cells.
+    /// the user's cursor shape follow: moving it moves the drawn caret by the same cells. It is
+    /// Rozi's caret rather than the child's, so it shows on a pane whose command has exited too.
     #[test]
     fn the_caret_follows_the_copy_cursor() {
+        for exited in [false, true] {
+            crate::test_support::on_large_stack(move || {
+                let (mut backend, _) = focused_copy_mode_backend(exited);
+                let first = caret_at(&mut backend, 2, 3);
+                let second = caret_at(&mut backend, 5, 7);
+                assert_eq!(
+                    (second.0 - first.0, second.1 - first.1),
+                    (4, 3),
+                    "the caret moves with the copy cursor (exited: {exited}): \
+                     {first:?} -> {second:?}"
+                );
+            });
+        }
+    }
+
+    /// Before an anchor is set the caret alone marks the copy cursor: its cell is painted like its
+    /// neighbours, not as a one-cell selection under the caret. An anchored range is painted.
+    #[test]
+    fn only_an_anchored_copy_selection_is_painted() {
         crate::test_support::on_large_stack(|| {
-            let (mut backend, target) = copy_mode_backend();
-            // A pane with a running program, focused, as the one copy mode was entered from.
-            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
-            pane.opening = false;
-            pane.terminal_active = true;
-            let terminal = pane.keys.terminal.clone();
-            backend.render();
-            backend.focus_key(&terminal);
-            let caret_at = |backend: &mut TestBackend<AppRoot>, row, col| {
-                backend
-                    .state_mut()
-                    .copy_mode
-                    .as_mut()
-                    .expect("copy mode")
-                    .navigation
-                    .goto(row, col, 0);
-                backend.render();
-                let cursor = backend.capture_frame().cursor.expect("a caret is drawn");
-                assert!(cursor.visible, "the caret shows in copy mode");
-                (cursor.x, cursor.y)
-            };
-            let first = caret_at(&mut backend, 2, 3);
-            let second = caret_at(&mut backend, 5, 7);
+            let (mut backend, target) = focused_copy_mode_backend(false);
+            let (x, y) = caret_at(&mut backend, 2, 3);
+            let frame = backend.capture_frame();
+            let unselected = frame.cell(x - 1, y).bg;
             assert_eq!(
-                (second.0 - first.0, second.1 - first.1),
-                (4, 3),
-                "the caret moves with the copy cursor: {first:?} -> {second:?}"
+                frame.cell(x, y).bg,
+                unselected,
+                "the unanchored copy cursor's cell keeps its background"
+            );
+
+            // Drag over `line` on row 2, ending on the cursor cell, to anchor a range.
+            let total = find_pane_mut(backend.state_mut(), target)
+                .expect("pane")
+                .terminal
+                .total_scrollback_rows();
+            let line = absolute_line(total, 0, 2);
+            let drag = TerminalSelection {
+                anchor: TerminalPos { line, col: 0 },
+                cursor: TerminalPos { line, col: 3 },
+            };
+            backend
+                .dispatch(crate::Msg::PaneSelection(
+                    target,
+                    pointer_event(Some(drag), drag.cursor),
+                ))
+                .expect("pointer drag");
+            backend.render();
+            let frame = backend.capture_frame();
+            assert_ne!(
+                frame.cell(x - 1, y).bg,
+                unselected,
+                "an anchored copy selection is painted"
             );
         });
     }

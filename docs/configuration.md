@@ -443,22 +443,23 @@ to where it settled. A move to another pane draws at once.
 | --- | --- | --- | --- |
 | `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
 | `style` | string | `"smear"` | `"smear"` draws a solid smear in the trail color, with smooth edges drawn in the characters `glyphs` allows, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"sparks"` is the smear throwing sparks. `"tint"` is a fainter smear that never covers text or the cursor: it colors the background behind text and draws smooth edges only where there is none. In Settings: General › Cursor › Trail style. |
-| `motion` | string | `"spring"` | `"spring"` pulls each corner of the smear into the cursor with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
+| `motion` | string | `"spring"` | `"spring"` pulls the front of the smear after the cursor, and its tail after the front along the way it went, with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it along the turn. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
 | `color` | string | `"cursor"` | `"cursor"` uses the color the program in the pane gave its cursor, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |
-| `stiffness` | float | `0.5` | Spring pull on the corners leading the motion, from 0 to 1. |
-| `trailing_stiffness` | float | `0.28` | Spring pull on the trailing corners, from 0 to 1. Lower than `stiffness` stretches the smear. |
-| `trailing_exponent` | float | `0.3` | Where the corners between leading and trailing sit, from 0.1 to 10: below 1 they follow the front, so a diagonal smear tapers to a point; above 1 they hang back with the tail. |
-| `damping` | float | `0.82` | How much speed the corners lose each step, from 0 (bouncy) to 1 (no momentum). |
+| `stiffness` | float | `0.5` | Spring pull on the front of the smear, from 0 to 1. |
+| `trailing_stiffness` | float | `0.28` | Spring pull on its tail, from 0 to 1. Lower than `stiffness` stretches the smear. |
+| `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10: `0.3` tapers it to about a quarter of the cursor, `3.0` keeps three quarters. |
+| `damping` | float | `0.82` | How much speed the smear loses each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
-| `max_length` | float | `0.0` | No part of the smear trails the cursor by more than this many cells, from the start of a jump, up to 500. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
+| `max_length` | float | `0.0` | The smear's tail trails the cursor by no more than this many cells along its way, from the start of a jump, up to 500. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
 | `glyphs` | string | `"auto"` | The characters the smear's edges are drawn with. `"blocks"` uses half, eighth, and quadrant blocks, which every terminal draws. `"sextants"` adds the sextants, diagonal wedges, and triangles of Symbols for Legacy Computing, which follow a diagonal far more closely, and `"octants"` adds its octants too. `"auto"` picks the richest set your terminal draws itself: octants in Ghostty; sextants in Kitty, WezTerm, and foot; blocks anywhere else. Choose a richer set by hand only if your font has those characters. |
 
-The spring values work as the settings of the same name in smear-cursor.nvim, so a setup tuned for
-it carries over. Its own defaults (`stiffness = 0.6`, `trailing_stiffness = 0.45`,
-`trailing_exponent = 3.0`, `damping = 0.85`) give a more compact smear that keeps the cursor's full
-height on diagonals. A value out of range is ignored
+`stiffness`, `trailing_stiffness`, and `damping` work as the settings of the same name in
+smear-cursor.nvim, so a setup tuned for it feels the same, and a higher `trailing_exponent` keeps the
+smear fuller toward its tail there too. Its own defaults (`stiffness = 0.6`,
+`trailing_stiffness = 0.45`, `trailing_exponent = 3.0`, `damping = 0.85`) give a quicker, more
+compact smear that keeps most of the cursor's size to its tail. A value out of range is ignored
 with a warning.
 
 `[animations.cursor_trail.particles]` tunes the sparks `style = "sparks"` throws off the moving

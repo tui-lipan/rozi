@@ -792,8 +792,20 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
     }
 }
 
-/// Remote `sessions list --format json` output retained before the listing is rejected.
-const REMOTE_LIST_CAPTURE_LIMIT: usize = 8 * 1024 * 1024;
+/// Largest remote `sessions list --format json` output accepted.
+const REMOTE_LIST_LIMIT: usize = 8 * 1024 * 1024;
+
+/// Reject a listing captured with [`REMOTE_LIST_LIMIT`]` + 1` bytes retained. The extra byte is what
+/// tells a listing of exactly the limit apart from one that was cut off.
+fn check_remote_list_size(stdout: &[u8], host_label: &str) -> std::io::Result<()> {
+    if stdout.len() > REMOTE_LIST_LIMIT {
+        return Err(std::io::Error::other(format!(
+            "remote sessions list from {host_label} exceeded {} MiB",
+            REMOTE_LIST_LIMIT / (1024 * 1024)
+        )));
+    }
+    Ok(())
+}
 
 fn discover_remote_sessions(
     target: &crate::session::remote::RemoteTarget,
@@ -830,7 +842,7 @@ fn discover_remote_sessions(
         &mut command,
         None,
         crate::session::remote::SshDeadline::for_config(config).command(),
-        REMOTE_LIST_CAPTURE_LIMIT,
+        REMOTE_LIST_LIMIT + 1,
     )?;
     if output.status != Some(0) {
         crate::session::remote::binary::invalidate(target, config);
@@ -841,12 +853,7 @@ fn discover_remote_sessions(
             ),
         ));
     }
-    if output.stdout.len() >= REMOTE_LIST_CAPTURE_LIMIT {
-        return Err(std::io::Error::other(format!(
-            "remote sessions list from {host_label} exceeded {} MiB",
-            REMOTE_LIST_CAPTURE_LIMIT / (1024 * 1024)
-        )));
-    }
+    check_remote_list_size(&output.stdout, &host_label)?;
     let mut rows = parse_remote_list_json(&output.stdout, Some(host_label))?;
     for row in &mut rows {
         row.remote_target = Some(target.clone());
@@ -947,6 +954,14 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_list_of_exactly_the_limit_is_accepted() {
+        use super::{REMOTE_LIST_LIMIT, check_remote_list_size};
+        assert!(check_remote_list_size(&vec![b' '; REMOTE_LIST_LIMIT], "host").is_ok());
+        let error = check_remote_list_size(&vec![b' '; REMOTE_LIST_LIMIT + 1], "host").unwrap_err();
+        assert!(error.to_string().contains("exceeded 8 MiB"), "{error}");
+    }
+
     use super::*;
 
     #[test]

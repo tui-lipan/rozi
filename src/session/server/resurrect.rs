@@ -1122,11 +1122,14 @@ fn newest_unreadable_backup(parent: &Path, session_name: &str) -> Option<PathBuf
         .filter_map(|entry| {
             let dir_name = entry.file_name().into_string().ok()?;
             let (session, kind, suffix) = parse_staging_dir_name(&dir_name)?;
-            let written_nanos: u128 = suffix.split_once('.')?.1.parse().ok()?;
-            (session == session_name
-                && kind == STAGING_OLD
-                && entry.path().join("meta.json").is_file())
-            .then(|| (written_nanos, entry.path()))
+            let written_nanos: u128 = suffix
+                .split_once('.')
+                .and_then(|(_, nanos)| nanos.parse().ok())
+                .unwrap_or(0);
+            // The directory alone is the evidence: every backup was once a published snapshot, so
+            // one without its metadata is damaged, not absent, as a published one would be.
+            (session == session_name && kind == STAGING_OLD && entry.path().is_dir())
+                .then(|| (written_nanos, entry.path()))
         })
         .max_by_key(|(written_nanos, _)| *written_nanos)
         .map(|(_, path)| path)
@@ -1214,8 +1217,12 @@ impl std::error::Error for Unrestorable {}
 /// [`Unrestorable`] reason, so nothing starts empty over what is left of the snapshot.
 fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMeta> {
     let refuse = |reason| io::Error::new(io::ErrorKind::InvalidData, reason);
-    if !dir.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "no snapshot"));
+    match fs::metadata(dir) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no snapshot"));
+        }
+        Ok(meta) if meta.is_dir() => {}
+        _ => return Err(refuse(Unrestorable::Damaged)),
     }
     let bytes = fs::read(dir.join("meta.json")).map_err(|_| refuse(Unrestorable::Damaged))?;
     let header: SnapshotHeader =
@@ -1401,7 +1408,7 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
             // `meta.json`; trusting that would list a restorable session that forget can never
             // remove, because forget deletes `<root>/<session>` and the debris is not there.
             let dir_name = entry.file_name().into_string().ok()?;
-            if !crate::session::discovery::valid_session_name(&dir_name) {
+            if !crate::session::discovery::valid_session_name(&dir_name) || !entry.path().is_dir() {
                 return None;
             }
             snapshot_summary(&entry.path(), dir_name)
@@ -1798,6 +1805,44 @@ mod tests {
             server.restore().expect_err("nothing left").kind() == io::ErrorKind::NotFound,
             "with the directory gone there is no snapshot"
         );
+    }
+
+    /// The same holds for a backup that lost its `meta.json`: a backup was once a published
+    /// snapshot, so it is damaged rather than absent, and recovery publishes it for restore to
+    /// refuse instead of a server starting empty beside it.
+    #[test]
+    fn a_backup_missing_its_metadata_is_unreadable_rather_than_absent() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "backup-meta-missing";
+        let backup = root.join(staging_dir_name(session, STAGING_OLD, "4242.1"));
+        fs::create_dir_all(backup.join("panes")).unwrap();
+        fs::write(backup.join("panes").join("1.replay"), b"kept").unwrap();
+
+        let row = list_snapshot_summaries_by_recency()
+            .into_iter()
+            .find(|summary| summary.session == session)
+            .expect("listed");
+        assert!(!row.readable);
+        assert_eq!(unrestorable_snapshot(session), Some(Unrestorable::Damaged));
+        assert!(backup.exists(), "discovery never moves a backup");
+
+        let mut server = SessionServer::new_named_with_settings(
+            session,
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let err = server.restore().expect_err("refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::read(root.join(session).join("panes").join("1.replay")).unwrap(),
+            b"kept",
+            "recovery published what was left"
+        );
+
+        delete_snapshot_for(session).expect("forget");
+        assert!(unrestorable_snapshot(session).is_none());
     }
 
     /// A backup in a format this build cannot read is published again rather than swept, so a

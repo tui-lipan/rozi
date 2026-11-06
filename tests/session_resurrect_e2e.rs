@@ -505,6 +505,16 @@ fn a_server_refuses_to_start_over_a_snapshot_missing_its_metadata() {
     );
 }
 
+/// Nor over a backup that lost its metadata, which recovery publishes for the server to refuse.
+#[test]
+fn a_server_refuses_to_start_over_a_backup_missing_its_metadata() {
+    refuses_to_start_over(
+        |sessions, session| sessions.join(format!(".{session}.old-4242.1")),
+        |_| None,
+        "its snapshot is damaged",
+    );
+}
+
 fn refuses_to_start_over(
     snapshot_dir: impl Fn(&std::path::Path, &str) -> std::path::PathBuf,
     meta: impl Fn(&str) -> Option<String>,

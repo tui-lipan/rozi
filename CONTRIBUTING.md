@@ -112,6 +112,11 @@ Tests must not write to the developer's config, state, cache, or runtime directo
 - Do not use `std::env::set_var` to redirect `HOME`, `XDG_*`, `APPDATA`, or `ROZI_CONFIG` inside an
   in-process test. Passing environment variables to an isolated child process is safe.
 
+`cargo test --locked --test remote_ssh_localhost` also exercises key-based SSH to localhost.
+Those cases skip unless SSH is available and the localhost host key is trusted. Set
+`ROZI_REQUIRE_SSH_TEST=1` to fail instead of skipping. CI's localhost SSH transport job starts
+OpenSSH and configures an authorized key and `known_hosts` before running this target.
+
 Benchmarks are local evidence, not timing assertions. See
 [Benchmarks and profiling](dev/benchmarks.md) for the targets and comparison method.
 

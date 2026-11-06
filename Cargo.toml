@@ -87,7 +87,9 @@ exclude = [
 # the `AllScroll` pointer shape for split junctions.
 # 0.39.1: the cursor trail, with sparks that start on the smear and follow its bends.
 # 0.39.2: Kitty frames named in a file or shared memory with `m=1`, as mpv sends them.
-tui-lipan = { version = "0.39.2", features = [
+# 0.40.0: Kitty video frames hidden under the newest frame are skipped, so a pane playing mpv
+# hands the host one native frame instead of compositing the whole stack.
+tui-lipan = { version = "0.40.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

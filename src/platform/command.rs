@@ -96,7 +96,6 @@ where
     P: AsRef<std::ffi::OsStr>,
     A: AsRef<std::ffi::OsStr>,
 {
-    use std::io::Read;
     use std::process::Stdio;
 
     let mut command = std::process::Command::new(program);
@@ -109,7 +108,30 @@ where
     if let Some(cwd) = cwd.filter(|cwd| cwd.is_dir()) {
         command.current_dir(cwd);
     }
-    configure_command_group(&mut command);
+    run_bounded_command(&mut command, None, timeout, capture_limit)
+}
+
+/// Run a prepared command with bounded output and a deadline, including any stdin transfer.
+/// The process group/job is terminated and reaped before returning. Input must be a finite,
+/// nonblocking source such as a file or an in-memory script.
+pub(crate) fn run_bounded_command(
+    command: &mut std::process::Command,
+    input: Option<Box<dyn std::io::Read + Send>>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    command
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_command_group(command);
     let mut child = command.spawn()?;
     let group = match CommandGroup::new(&child) {
         Ok(group) => group,
@@ -119,6 +141,10 @@ where
             return Err(error);
         }
     };
+    let sender = input.map(|mut input| {
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        std::thread::spawn(move || std::io::copy(&mut input, &mut stdin))
+    });
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
     let capture = |mut stream: Box<dyn Read + Send>| {
@@ -144,8 +170,13 @@ where
     let (status, timed_out) = loop {
         // Reaping here also stops descendants deliberately backgrounded by a command whose shell
         // already exited, and does it before the pid is released rather than after.
-        if let Some(status) = group.reap_if_exited(&mut child)? {
-            break (Some(status), false);
+        match group.reap_if_exited(&mut child) {
+            Ok(Some(status)) => break (Some(status), false),
+            Ok(None) => {}
+            Err(error) => {
+                group.terminate(&mut child);
+                return Err(error);
+            }
         }
         if started.elapsed() >= timeout {
             group.terminate(&mut child);
@@ -153,6 +184,14 @@ where
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
+    if let Some(sender) = sender {
+        let sent = sender
+            .join()
+            .unwrap_or_else(|_| Err(std::io::Error::other("stdin writer panicked")));
+        if !timed_out && status.is_some_and(|status| status.success()) {
+            sent?;
+        }
+    }
     let stdout = stdout_thread.join().unwrap_or_default();
     let stderr = stderr_thread.join().unwrap_or_default();
     Ok(CommandOutput {
@@ -1098,6 +1137,23 @@ mod tests {
         let output = run_bounded_shell_command(
             &ShellCommand::new("/bin/sh").arg("-c"),
             "sleep 10 & wait",
+            std::time::Duration::from_millis(50),
+            1024,
+        )
+        .unwrap();
+        assert!(output.timed_out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_command_deadline_includes_a_blocked_stdin_transfer() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 10 & wait"]);
+        let started = std::time::Instant::now();
+        let output = run_bounded_command(
+            &mut command,
+            Some(Box::new(std::io::Cursor::new(vec![0; 1024 * 1024]))),
             std::time::Duration::from_millis(50),
             1024,
         )

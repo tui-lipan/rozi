@@ -455,10 +455,10 @@ fn run_remote_sessions_command(
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &remote_bin.path, args, remote_bin.family);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
-    if !output.status.success() {
+    let output =
+        super::bootstrap::run_ssh_command(&mut command, config.connection_timeout_secs, None)
+            .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
+    if output.status != Some(0) {
         super::binary::invalidate(target, config);
         return Err(super::sessions_command_failure(
             verb,
@@ -470,21 +470,22 @@ fn run_remote_sessions_command(
 
 pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String> {
     thread::spawn(move || {
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         let mut bytes = [0u8; 4096];
-        // Cap so a verbose ssh cannot grow without bound.
         const CAP: usize = 16 * 1024;
-        while buf.len() < CAP {
+        loop {
             match stderr.read(&mut bytes) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let take = n.min(CAP - buf.len());
-                    buf.push_str(&String::from_utf8_lossy(&bytes[..take]));
+                    let overflow = (buf.len() + n).saturating_sub(CAP);
+                    buf.drain(..overflow);
+                    buf.extend_from_slice(&bytes[..n]);
                 }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        buf
+        String::from_utf8_lossy(&buf).into_owned()
     })
 }
 
@@ -496,6 +497,42 @@ fn finished_stderr_tail(handle: thread::JoinHandle<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::RemoteConfig;
+
+    #[test]
+    fn stderr_collector_keeps_the_tail_and_decodes_across_reads() {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "session::remote::connect::tests::stderr_writer_child",
+                "--nocapture",
+            ])
+            .env("ROZI_STDERR_WRITER", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        let collector = spawn_stderr_collector(child.stderr.take().unwrap());
+        assert!(child.wait().unwrap().success());
+        let tail = collector.join().unwrap();
+        assert!(tail.ends_with("é終 diagnostic tail"), "{tail:?}");
+        assert!(!tail.contains('�'));
+        assert_eq!(tail.len(), 16 * 1024);
+    }
+
+    #[test]
+    fn stderr_writer_child() {
+        use std::io::Write;
+        if std::env::var_os("ROZI_STDERR_WRITER").is_none() {
+            return;
+        }
+        let mut stderr = std::io::stderr().lock();
+        stderr.write_all(&vec![b'x'; 32 * 1024 - 1]).unwrap();
+        for byte in "é終 diagnostic tail".as_bytes() {
+            stderr.write_all(&[*byte]).unwrap();
+            stderr.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 
     #[test]
     fn creating_a_remote_session_rejects_a_hostile_name_before_spawning_ssh() {

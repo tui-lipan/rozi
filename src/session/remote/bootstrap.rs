@@ -21,6 +21,31 @@ use super::{
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
+/// Bound authentication, execution and transfers as well as SSH's TCP connection phase.
+/// A disabled SSH connect timeout still gets a finite wall-clock budget.
+pub(super) fn run_ssh_command(
+    command: &mut Command,
+    connect_timeout_secs: u64,
+    input: Option<Box<dyn Read + Send>>,
+) -> io::Result<crate::platform::command::CommandOutput> {
+    let timeout = std::time::Duration::from_secs(
+        (if connect_timeout_secs == 0 {
+            15
+        } else {
+            connect_timeout_secs
+        })
+        .saturating_add(30),
+    );
+    let output = crate::platform::command::run_bounded_command(command, input, timeout, 64 * 1024)?;
+    if output.timed_out {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "ssh command timed out",
+        ));
+    }
+    Ok(output)
+}
+
 /// Result of probing a remote host for a usable rozi binary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeResult {
@@ -498,13 +523,13 @@ fn run_family_probe(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = command.output().map_err(|err| {
+    let output = run_ssh_command(&mut command, connect_timeout_secs, None).map_err(|err| {
         format!(
             "failed to probe remote shell family for {}: {err}",
             resolved.host
         )
     })?;
-    if !output.status.success() {
+    if output.status != Some(0) {
         return Err(format!(
             "remote shell probe of {} failed: {}",
             resolved.host,
@@ -531,18 +556,13 @@ fn run_probe_script(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script.as_bytes())
-            .map_err(|err| format!("failed to write probe script: {err}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("probe ssh failed: {err}"))?;
-    if !output.status.success() {
+    let output = run_ssh_command(
+        &mut command,
+        connect_timeout_secs,
+        Some(Box::new(io::Cursor::new(script.as_bytes().to_vec()))),
+    )
+    .map_err(|err| format!("probe ssh failed: {err}"))?;
+    if output.status != Some(0) {
         return Err(format!(
             "probe of {} failed: {}",
             resolved.host,
@@ -569,10 +589,9 @@ fn run_probe_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = command
-        .output()
+    let output = run_ssh_command(&mut command, connect_timeout_secs, None)
         .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
-    if !output.status.success() {
+    if output.status != Some(0) {
         return Err(format!(
             "probe of {} failed: {}",
             resolved.host,
@@ -902,25 +921,20 @@ printf 'installed=%s\n' "$final"
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut file = std::fs::File::open(local)
+    let file = std::fs::File::open(local)
         .map_err(|err| format!("cannot read {}: {err}", local.display()))?;
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("failed to start remote install: {err}"))?;
-    let transfer = {
-        let mut stdin = child.stdin.take().expect("piped install stdin");
-        io::copy(&mut file, &mut stdin)
-    };
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("remote install failed: {err}"))?;
-    if !output.status.success() {
+    let output = run_ssh_command(
+        &mut command,
+        config.connection_timeout_secs,
+        Some(Box::new(file)),
+    )
+    .map_err(|err| format!("remote install failed: {err}"))?;
+    if output.status != Some(0) {
         return Err(format!(
             "remote install failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    transfer.map_err(|err| format!("upload binary: {err}"))?;
     parse_installed_path(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -949,10 +963,9 @@ fn install_bytes_windows(
     scp.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let scp_out = scp
-        .output()
+    let scp_out = run_ssh_command(&mut scp, config.connection_timeout_secs, None)
         .map_err(|err| format!("failed to run scp to {}: {err}", resolved.host))?;
-    if !scp_out.status.success() {
+    if scp_out.status != Some(0) {
         return Err(format!(
             "scp upload to {} failed: {}",
             resolved.host,
@@ -1023,10 +1036,9 @@ try {{
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = command
-        .output()
+    let output = run_ssh_command(&mut command, config.connection_timeout_secs, None)
         .map_err(|err| format!("remote install finalize failed: {err}"))?;
-    if !output.status.success() {
+    if output.status != Some(0) {
         return Err(format!(
             "remote install finalize failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()

@@ -12,6 +12,19 @@ rozi split --title Tests --argv cargo test        # open a pane running a progra
 rozi --session dev capture-pane --target 3        # read a pane in a session nobody is viewing
 ```
 
+## Diagnostic report
+
+Run `rozi doctor` to print an aligned plain-text report for a bug report. It includes the rozi
+version, extension API and session protocol range, OS and architecture, install source, a recognized
+terminal name, configuration validity and diagnostic count, local session counts, SSH availability,
+and the installed extension count. Unknown terminal names appear as `unknown`. Extension process
+counts appear as `unavailable` when runtime status cannot be obtained.
+
+The report omits session names, file paths, hostnames, usernames, configuration contents, and raw
+environment values. It does not start or attach to a session or write files. Configuration diagnostics
+are counted without printing their text. Use `rozi doctor --config <PATH>` or `ROZI_CONFIG` to check
+another config file. A report with invalid configuration still exits successfully.
+
 ## Two endpoints
 
 A control command talks to one of two places, called its _endpoint_:

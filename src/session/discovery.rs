@@ -168,6 +168,77 @@ pub(crate) fn discover_sessions_with_snapshots() -> std::io::Result<Vec<Discover
     Ok(rows)
 }
 
+#[derive(Default)]
+pub(crate) struct SessionDiagnosticCounts {
+    pub running: usize,
+    pub incompatible: usize,
+    pub restorable: usize,
+    pub unknown: usize,
+}
+
+#[derive(Clone, Copy)]
+enum DiagnosticSessionStatus {
+    Running,
+    Incompatible,
+    Unknown,
+}
+
+/// Read-only diagnostics: use the same query and snapshot discovery as session listing,
+/// without creating the runtime directory or retiring stale endpoints.
+pub(crate) fn diagnostic_counts() -> std::io::Result<SessionDiagnosticCounts> {
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    let dir = crate::platform::paths::runtime_dir_path(&env);
+    let handles: Vec<_> = EndpointRegistry::list_session_endpoints(&dir)?
+        .into_iter()
+        .filter(|(name, _)| !crate::scratchpad::runtime::is_client_scratch_session(name))
+        .map(|(name, endpoint)| {
+            std::thread::spawn(move || {
+                diagnostic_session_status(&name, &endpoint).map(|status| (name, status))
+            })
+        })
+        .collect();
+    let mut counts = SessionDiagnosticCounts::default();
+    let mut live_names = std::collections::HashSet::new();
+    for handle in handles {
+        let Ok(Some((name, status))) = handle.join() else {
+            continue;
+        };
+        live_names.insert(name);
+        match status {
+            DiagnosticSessionStatus::Running => counts.running += 1,
+            DiagnosticSessionStatus::Incompatible => counts.incompatible += 1,
+            DiagnosticSessionStatus::Unknown => counts.unknown += 1,
+        }
+    }
+    counts.restorable = crate::session::server::list_snapshot_summaries_by_recency()
+        .iter()
+        .filter(|snapshot| !live_names.contains(&snapshot.session))
+        .count();
+    Ok(counts)
+}
+
+/// Classify a live endpoint. Stale or retiring endpoints have no count.
+fn diagnostic_session_status(
+    name: &str,
+    endpoint: &IpcEndpoint,
+) -> Option<DiagnosticSessionStatus> {
+    let mut stream = match endpoint.connect() {
+        Ok(stream) => stream,
+        Err(err) if connect_error_proves_stale(err.kind()) => return None,
+        Err(_) => return Some(DiagnosticSessionStatus::Unknown),
+    };
+    match query_status(name, &mut stream, None) {
+        Ok(answer) if answer.refusal.as_deref() == Some("protocol-mismatch") => {
+            Some(DiagnosticSessionStatus::Incompatible)
+        }
+        Ok(answer) if matches!(answer.status, DiscoveredSessionStatus::Running { .. }) => {
+            Some(DiagnosticSessionStatus::Running)
+        }
+        Err(err) if peer_hung_up(err.kind()) => None,
+        _ => Some(DiagnosticSessionStatus::Unknown),
+    }
+}
+
 /// Probe one named session without scanning or mutating unrelated discovery entries.
 pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>> {
     let endpoint = crate::session::server::session_endpoint(name)?;

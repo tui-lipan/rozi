@@ -400,6 +400,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
         advanced_only: false,
         note: "",
         rows: &[
+            row(
+                "doctor [--config <PATH>]",
+                "Print a privacy-safe diagnostic report",
+            ),
             row("install", "Install this binary as a managed `rozi`"),
             row(
                 "update [--check|--rollback]",
@@ -593,16 +597,19 @@ fn nightly_version_lines(commit: Option<&str>, built: Option<&str>) -> Vec<Strin
     lines
 }
 
-pub(crate) fn print_version() {
+pub(super) fn version_text() -> String {
     use crate::config::EXTENSION_API_VERSION;
     use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
-    println!("rozi {}", env!("CARGO_PKG_VERSION"));
+    let mut text = format!("rozi {}\n", env!("CARGO_PKG_VERSION"));
     for line in nightly_version_lines(NIGHTLY_COMMIT, NIGHTLY_BUILT) {
-        println!("{line}");
+        text.push_str(&format!("{line}\n"));
     }
-    println!("extension_api={EXTENSION_API_VERSION}");
-    println!("protocol_min={MIN_SUPPORTED_PROTOCOL}");
-    println!("protocol_max={PROTOCOL_VERSION}");
+    text.push_str(&format!("extension_api={EXTENSION_API_VERSION}\nprotocol_min={MIN_SUPPORTED_PROTOCOL}\nprotocol_max={PROTOCOL_VERSION}\n"));
+    text
+}
+
+pub(crate) fn print_version() {
+    super::output::print_or_stop(&version_text());
 }
 
 #[cfg(test)]

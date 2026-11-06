@@ -231,6 +231,9 @@ pub(crate) enum ParsedCli {
         advanced: bool,
     },
     Version,
+    Doctor {
+        config_path: Option<String>,
+    },
     /// Print the release notes this binary embeds for a release, or for itself, byte for byte
     /// (`--release-notes [VERSION]`).
     ReleaseNotes(Option<semver::Version>),
@@ -496,6 +499,28 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "unknown api subcommand `{other}`; expected `describe`, `schema`, `commands`, or `command`"
                     )),
                 };
+            }
+            "doctor" => {
+                if cli
+                    != (CliArgs {
+                        config_path: cli.config_path.clone(),
+                        ..CliArgs::default()
+                    })
+                    || socket_flag_seen
+                {
+                    return Err("doctor accepts only --config <PATH>".to_string());
+                }
+                let mut config_path = cli.config_path;
+                while let Some(option) = iter.next() {
+                    match option.as_str() {
+                        "--config" => {
+                            config_path =
+                                Some(require_value(&mut iter, "--config requires a path")?)
+                        }
+                        other => return Err(format!("unexpected argument `{other}` after doctor")),
+                    }
+                }
+                return Ok(ParsedCli::Doctor { config_path });
             }
             "install" => {
                 reject_trailing_control_args(&mut iter, "install")?;

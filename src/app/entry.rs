@@ -260,6 +260,11 @@ pub fn run() -> Result<()> {
             cli::print_help(advanced);
             return Ok(());
         }
+        cli::ParsedCli::Doctor { config_path } => {
+            apply_config_path(config_path);
+            cli::doctor::run();
+            return Ok(());
+        }
         cli::ParsedCli::Version => {
             cli::print_version();
             return Ok(());
@@ -410,6 +415,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::RecordHelp
         | cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
+        | cli::ParsedCli::Doctor { .. }
         | cli::ParsedCli::ReleaseNotes(_)
         | cli::ParsedCli::ApiDescribe
         | cli::ParsedCli::ApiSchema

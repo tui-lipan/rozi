@@ -4,11 +4,12 @@ This page lists common problems by what you see, with the cause, the fix, and a 
 that covers the behavior in full. Messages in code formatting are the exact text rozi prints, so
 you can search this page for them.
 
-rozi has no diagnostic log file; `[logging]` records the output of a pane, not rozi's own activity.
-These commands show what rozi knows:
+Run `rozi doctor` for a diagnostic report you can paste into a bug report.
+`[logging]` records the output of a pane, not rozi's own activity. These commands show what rozi knows:
 
 | Command | Shows |
 | --- | --- |
+| `rozi doctor` | A privacy-safe summary of the installation, configuration, and local sessions |
 | `rozi --version` | The version, the extension API, and the session protocol range |
 | `rozi update --check` | How rozi was installed and whether a newer release exists |
 | `rozi sessions list` | The sessions rozi can reach, including restorable ones |
@@ -383,8 +384,7 @@ for long-lived handling. See [Lifecycle](hooks.md#lifecycle).
 Search or open an issue at [github.com/tui-lipan/rozi/issues](https://github.com/tui-lipan/rozi/issues).
 Include:
 
-- the full output of `rozi --version`, including the nightly lines from a nightly build;
-- the install method, as reported by `rozi update --check`;
+- the output of `rozi doctor`;
 - the operating system and version, terminal emulator, and shell;
 - for a remote problem, the versions on both machines;
 - the smallest `config.toml` snippet that reproduces the problem;

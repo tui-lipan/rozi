@@ -116,9 +116,20 @@ The session server was started by a rozi build whose session protocol differs fr
 usually after an update. Sessions shows `Attach failed` with `` `dev` runs an incompatible
 version ``, and the Sessions sidebar marks the row `incompatible or unavailable`.
 
-To keep working in the old session first, run `rozi update --rollback`, attach, finish, and update
-again. Otherwise press `Ctrl+K` twice on the row in Sessions and start the session again. This ends
-its programs and deletes its snapshot. For a remote host, update rozi on both ends. See
+Restarting the session ends the programs running in its panes, so finish any work in them first:
+
+1. Run `rozi update --rollback` to go back to the version that started the session. This works on
+   installs made by the install scripts; with a package manager, install the previous version
+   instead.
+2. Attach to the session and finish what is running in it.
+3. Run `rozi update` again.
+
+Then restart the session: press `Ctrl+E` twice on its row in Sessions, or run
+`rozi sessions restart dev`. It reopens from its snapshot with its layout and terminal history, as
+[resurrection](sessions.md#resurrection) restores a session. To delete the session instead, press
+`Ctrl+K` twice on the row.
+
+For a remote host, update rozi on both ends. See
 [Version compatibility](remote.md#version-compatibility).
 
 ### A restored session re-ran a command I did not want

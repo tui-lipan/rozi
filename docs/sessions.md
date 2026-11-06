@@ -432,6 +432,12 @@ the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-t
 needs the option again here to stay unsaved. A session that isn't running is refused; start it with
 `rozi sessions new <NAME> --detach`.
 
+A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
+restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
+as [resurrection](#resurrection) restores them, while the programs in its panes end. On Windows the
+snapshot is the last one saved, so output from the final moments before the restart can be
+missing.
+
 ```bash
 rozi sessions new tests --detach --no-resurrect
 rozi --session tests split --cwd ~/src/api --argv cargo test
@@ -469,9 +475,10 @@ and removing collaborators.
   to two minutes; `Esc` cancels it. rozi never silently replaces a remote session that is gone. See
   [Reconnection and switching](remote.md#reconnection-and-switching).
 - A session server and client must be compatible. After upgrading rozi, restart an incompatible
-  named session or update the other end.
-- Restarting a session kills its processes and starts fresh panes, and keeps its deployed extensions.
-  It is not the same as detaching and reattaching.
+  named session, which reopens it from its snapshot, or update the other end.
+- Restarting a session kills its processes and keeps its deployed extensions. A compatible session
+  starts with fresh panes; an incompatible one restores its snapshot. It is not the same as
+  detaching and reattaching.
 - A session name belongs to one host. The same name on the local machine and on a remote host
   refers to two different sessions.
 

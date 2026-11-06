@@ -152,6 +152,36 @@ pub fn valid_session_name(name: &str) -> bool {
     valid_attach_target(name) && !crate::session::naming::is_ephemeral_session_name(name)
 }
 
+/// Whether `rozi update --rollback` can reach the build a session was started with: only an
+/// install the install scripts manage keeps the previous version to go back to.
+fn rollback_available() -> bool {
+    crate::platform::install_source::detect_current()
+        == crate::platform::install_source::InstallSource::Managed
+}
+
+/// What to do about local session `name` when its server runs a build this one cannot attach to,
+/// phrased to follow a semicolon: finish its work on the build that started it where a rollback can
+/// reach that build, then restart it, which reopens it from its snapshot but ends its programs.
+pub(crate) fn incompatible_session_advice(name: &str) -> String {
+    let restart = format!(
+        "`rozi sessions restart {name}` reopens it from its last snapshot and ends its programs"
+    );
+    if rollback_available() {
+        format!("to finish its work first, run `rozi update --rollback` and attach; then {restart}")
+    } else {
+        restart
+    }
+}
+
+/// The toast hint for a session row whose server runs a build this one cannot attach to.
+pub(crate) fn incompatible_session_hint() -> &'static str {
+    if rollback_available() {
+        "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
+    } else {
+        "Ctrl+E restarts it from its snapshot"
+    }
+}
+
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
     discover_sessions_excluding(None)
 }

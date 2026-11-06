@@ -354,8 +354,8 @@ pub(crate) fn activate_discovered_session(
     }
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
-    // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
-    // the row (Ctrl+K) still works even against a server we can't speak to.
+    // retry deadline, so reject it up front, keep the picker open, and point at the fix - restarting
+    // the row (Ctrl+E) still works even against a server we can't speak to.
     if matches!(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Unknown
@@ -367,7 +367,7 @@ pub(crate) fn activate_discovered_session(
                 "`{}` runs an incompatible version",
                 entry.name
             ))
-            .hint("Ctrl+K removes it"),
+            .hint(crate::session::discovery::incompatible_session_hint()),
         );
         return Update::full();
     }

@@ -36,8 +36,11 @@ instead of adding an unlinked snippet.
 - Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_TERMINAL=1`, `TERM_PROGRAM=rozi`,
   `TERM_PROGRAM_VERSION`, `ROZI_SOCKET`, and `ROZI_BIN`. Only `ROZI_TERMINAL` means "this process
   runs in a pane": client-run commands also get `ROZI=1` and a `ROZI_PANE` naming the focused pane,
-  and a pane may override `TERM_PROGRAM`. Client-run commands, client services, and the extension
-  supervisor strip an inherited `ROZI_TERMINAL`, and an extension manifest may not set it. The
+  and a pane may override `TERM_PROGRAM`. Every launch that can run user or extension code outside a
+  pane strips an inherited `ROZI_TERMINAL` before applying its own environment: the session
+  server, client-run commands, client services, hooks, the bounded command runner, and the
+  extension supervisor. A new launch like these, with null or piped standard streams, must do the
+  same. An extension manifest may not set it. The
   session server stamps `ROZI_TERMINAL` and the `TERM_PROGRAM` pair in its own version
   (`pty_config`), and its pane screens answer XTVERSION as `rozi <version>`
   (`pane::new_terminal_screen`); a pane's environment may still override the pair. Remote panes suppress

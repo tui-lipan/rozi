@@ -181,19 +181,30 @@ pub(crate) fn run_hooks_for_scope(
         let env = env.clone();
         let runner = runner.clone();
         let _ = crate::jobs::try_spawn(move || {
-            if let Ok(mut child) = std::process::Command::new(runner.program)
-                .args(runner.args)
-                .arg(command)
-                .envs(env)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
+            if let Ok(mut child) = hook_command(runner, command, env).spawn() {
                 let _ = child.wait();
             }
         });
     }
+}
+
+/// A hook runs with every standard stream disconnected, never in a pane. A client inside another
+/// rozi's pane has that pane's `ROZI_TERMINAL`, which does not describe the hook.
+fn hook_command(
+    runner: crate::platform::command::ShellCommand,
+    command: String,
+    env: Vec<(String, String)>,
+) -> std::process::Command {
+    let mut process = std::process::Command::new(runner.program);
+    process
+        .args(runner.args)
+        .arg(command)
+        .env_remove(crate::pane::TERMINAL_MARKER_ENV)
+        .envs(env)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    process
 }
 
 fn run_hooks(state: &crate::state::State, event: &Event) {
@@ -234,6 +245,16 @@ pub(crate) fn hook_env_for_scope(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hook_is_never_marked_as_running_in_a_pane() {
+        let runner = crate::platform::command::ShellCommand::new("/bin/sh").arg("-c");
+        assert!(
+            hook_command(runner, "true".to_string(), Vec::new())
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none())
+        );
+    }
 
     /// A placed worker hears what happens in a session within its binding, and nothing that
     /// happened while another host's session - or no session - was on screen.

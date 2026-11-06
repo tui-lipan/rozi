@@ -252,7 +252,10 @@ fn base_server_command(exe: &Path, name: &str, start: ServerStart<'_>) -> std::p
             "--server"
         });
     }
+    // A server is not in a pane, even when started from one. It stamps `ROZI_TERMINAL` into each
+    // pane it spawns; nothing else it starts should inherit it.
     command
+        .env_remove(crate::pane::TERMINAL_MARKER_ENV)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -684,6 +687,16 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn a_session_server_is_never_marked_as_running_in_a_pane() {
+        let command = base_server_command(Path::new("rozi"), "dev", ServerStart::default());
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none())
+        );
+    }
 
     /// One test rather than two: `on_hangup` is process-global and install-once, so a separate
     /// "rejects a second install" test would race the first install non-deterministically.

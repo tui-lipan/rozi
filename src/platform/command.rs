@@ -84,6 +84,26 @@ where
     run_bounded_argv_command_with_env(program, args, &[], None, timeout, capture_limit)
 }
 
+/// A bounded command runs with null and piped standard streams, never in a pane. A client inside
+/// another rozi's pane has that pane's `ROZI_TERMINAL`; an explicit `env` value still wins.
+fn bounded_command<P, A>(program: P, args: &[A], env: &[(String, String)]) -> std::process::Command
+where
+    P: AsRef<std::ffi::OsStr>,
+    A: AsRef<std::ffi::OsStr>,
+{
+    use std::process::Stdio;
+
+    let mut command = std::process::Command::new(program);
+    command
+        .args(args)
+        .env_remove(crate::pane::TERMINAL_MARKER_ENV)
+        .envs(env.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
 pub fn run_bounded_argv_command_with_env<P, A>(
     program: P,
     args: &[A],
@@ -97,15 +117,8 @@ where
     A: AsRef<std::ffi::OsStr>,
 {
     use std::io::Read;
-    use std::process::Stdio;
 
-    let mut command = std::process::Command::new(program);
-    command
-        .args(args)
-        .envs(env.iter().map(|(key, value)| (key, value)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut command = bounded_command(program, args, env);
     if let Some(cwd) = cwd.filter(|cwd| cwd.is_dir()) {
         command.current_dir(cwd);
     }
@@ -715,6 +728,26 @@ pub fn quote_posix_arg(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bounded_command_is_never_marked_as_running_in_a_pane() {
+        assert!(
+            bounded_command("true", &[] as &[&str], &[])
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none())
+        );
+        // A caller that names the marker itself still gets it.
+        let explicit = [(
+            crate::pane::TERMINAL_MARKER_ENV.to_string(),
+            "1".to_string(),
+        )];
+        assert!(
+            bounded_command("true", &[] as &[&str], &explicit)
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV
+                    && value == Some("1".as_ref()))
+        );
+    }
 
     #[cfg(unix)]
     #[test]

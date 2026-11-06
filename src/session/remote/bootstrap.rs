@@ -42,6 +42,12 @@ fn ssh_command_timeout(connect_timeout_secs: u64) -> std::time::Duration {
     )
 }
 
+/// PowerShell probes load the CLR and compile the path helper before inspecting binaries.
+/// Allow cold or contended Windows hosts more execution time than a simple session command.
+fn powershell_probe_timeout(connect_timeout_secs: u64) -> std::time::Duration {
+    ssh_command_timeout(connect_timeout_secs).saturating_add(std::time::Duration::from_secs(90))
+}
+
 /// Allow uploads at 64 KiB/s in addition to authentication and command execution, up to 30 min.
 fn ssh_transfer_timeout(connect_timeout_secs: u64, payload_bytes: u64) -> std::time::Duration {
     ssh_command_timeout(connect_timeout_secs)
@@ -543,7 +549,12 @@ fn run_family_probe(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = run_ssh_command(&mut command, connect_timeout_secs, None).map_err(|err| {
+    let timeout = if argv.first() == Some(&"powershell") {
+        powershell_probe_timeout(connect_timeout_secs)
+    } else {
+        ssh_command_timeout(connect_timeout_secs)
+    };
+    let output = run_ssh_command_with_timeout(&mut command, None, timeout).map_err(|err| {
         format!(
             "failed to probe remote shell family for {}: {err}",
             resolved.host
@@ -609,8 +620,12 @@ fn run_probe_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = run_ssh_command(&mut command, connect_timeout_secs, None)
-        .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
+    let output = run_ssh_command_with_timeout(
+        &mut command,
+        None,
+        powershell_probe_timeout(connect_timeout_secs),
+    )
+    .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
     if output.status != Some(0) {
         return Err(format!(
             "probe of {} failed: {}",
@@ -1702,6 +1717,16 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_probes_allow_cold_start_without_extending_session_commands() {
+        use std::time::Duration;
+        assert_eq!(powershell_probe_timeout(0), Duration::from_secs(135));
+        assert_eq!(powershell_probe_timeout(1), Duration::from_secs(121));
+        assert_eq!(powershell_probe_timeout(15), Duration::from_secs(135));
+        assert_eq!(ssh_command_timeout(1), Duration::from_secs(31));
+        assert_eq!(ssh_command_timeout(15), Duration::from_secs(45));
+    }
 
     #[test]
     fn ssh_transfer_budget_scales_with_payload_and_stays_bounded() {

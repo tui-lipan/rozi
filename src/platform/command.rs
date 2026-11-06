@@ -1162,6 +1162,85 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
+    #[test]
+    fn bounded_command_closes_inherited_output_after_parent_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let ready = root.path().join("descendant-ready");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "platform::command::tests::inherited_output_child",
+                "--nocapture",
+            ])
+            .env("ROZI_INHERITED_OUTPUT_CHILD", "parent")
+            .env("ROZI_INHERITED_OUTPUT_READY", &ready);
+        let timeout = std::time::Duration::from_secs(10);
+        let started = std::time::Instant::now();
+        let output = run_bounded_command(&mut command, None, timeout, 4096).unwrap();
+        assert_eq!(output.status, Some(0), "{output:?}");
+        assert!(!output.timed_out, "{output:?}");
+        assert!(
+            started.elapsed() < timeout,
+            "collector waited for a descendant's inherited pipe"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("descendant stdout"),
+            "{output:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("descendant stderr"),
+            "{output:?}"
+        );
+        #[cfg(windows)]
+        {
+            let pid = std::fs::read_to_string(ready).unwrap().parse().unwrap();
+            assert!(
+                !process_is_alive(pid),
+                "descendant {pid} survived job cleanup"
+            );
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::zombie_processes,
+        reason = "the bounded runner must reap the parent and terminate its orphaned descendant"
+    )]
+    fn inherited_output_child() {
+        let Ok(role) = std::env::var("ROZI_INHERITED_OUTPUT_CHILD") else {
+            return;
+        };
+        let ready = std::env::var_os("ROZI_INHERITED_OUTPUT_READY").unwrap();
+        if role == "descendant" {
+            use std::io::Write;
+            println!("descendant stdout");
+            eprintln!("descendant stderr");
+            std::io::stdout().flush().unwrap();
+            std::io::stderr().flush().unwrap();
+            std::fs::write(ready, std::process::id().to_string()).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            return;
+        }
+        let _descendant = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::command::tests::inherited_output_child",
+                "--nocapture",
+            ])
+            .env("ROZI_INHERITED_OUTPUT_CHILD", "descendant")
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !std::path::Path::new(&ready).exists() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(10),
+                "descendant never became ready"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn bounded_argv_command_preserves_argument_boundaries() {

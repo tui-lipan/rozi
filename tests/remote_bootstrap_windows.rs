@@ -13,8 +13,16 @@ fn write_transport_scripts(bin: &Path) {
         &source,
         r#"use std::path::PathBuf;
 use std::process::Command;
+use std::io::Write;
+
+fn trace(event: &str) {
+    let path = std::env::var_os("ROZI_TEST_TRANSPORT_TRACE").unwrap();
+    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+    writeln!(log, "{:?} pid={} {event}", std::time::SystemTime::now(), std::process::id()).unwrap();
+}
 
 fn main() {
+    trace("transport entered");
     let program = std::env::current_exe().unwrap();
     let name = program.file_stem().unwrap().to_string_lossy().to_ascii_lowercase();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -34,11 +42,22 @@ fn main() {
     } else {
         requested
     };
-    let status = Command::new(executable)
+    let started = std::time::Instant::now();
+    // Delay only the full probe, after family detection has already succeeded.
+    if std::env::var("ROZI_BOOTSTRAP_WINDOWS_CASE").as_deref() == Ok("slow_probe")
+        && remote.last().is_some_and(|arg| arg.len() > 1000)
+    {
+        trace("simulating 50-second remote startup");
+        std::thread::sleep(std::time::Duration::from_secs(50));
+    }
+    let mut child = Command::new(executable)
         .args(&remote[1..])
         .current_dir(home)
-        .status()
+        .spawn()
         .unwrap();
+    trace(&format!("remote child {} spawned; waiting", child.id()));
+    let status = child.wait().unwrap();
+    trace(&format!("remote child exited {status} after {:?}", started.elapsed()));
     std::process::exit(status.code().unwrap_or(1));
 }
 "#,
@@ -87,7 +106,7 @@ fn run_case(case: &str) {
         std::fs::create_dir_all(final_path.parent().unwrap()).unwrap();
     }
     match case {
-        "existing" => {
+        "existing" | "slow_probe" => {
             std::fs::copy(env!("CARGO_BIN_EXE_rozi"), &final_path).unwrap();
             std::fs::remove_file(bin.join("scp.exe")).unwrap();
         }
@@ -118,6 +137,10 @@ fn run_case(case: &str) {
     child
         .args(["--exact", "bootstrap_windows_child", "--nocapture"])
         .env("ROZI_BOOTSTRAP_WINDOWS_CASE", case)
+        .env(
+            "ROZI_TEST_TRANSPORT_TRACE",
+            root.path().join("transport.log"),
+        )
         .env("USERPROFILE", &home)
         .env("HOME", &home)
         .env("LOCALAPPDATA", &data_home)
@@ -132,15 +155,23 @@ fn run_case(case: &str) {
         .env_remove("ROZI_REMOTE_BINARY");
     if case == "failed_stage" {
         child.env("ROZI_REMOTE_BINARY", root.path().join("invalid-rozi.exe"));
-    } else if case != "existing" {
+    } else if !matches!(case, "existing" | "slow_probe") {
         child.env("ROZI_REMOTE_BINARY", env!("CARGO_BIN_EXE_rozi"));
     }
     let output = child.output().unwrap();
+    let trace = std::fs::read_to_string(root.path().join("transport.log")).unwrap_or_default();
+    if case == "slow_probe" {
+        assert!(
+            trace.contains("simulating 50-second remote startup"),
+            "delay was not exercised: {trace}"
+        );
+    }
     assert!(
         output.status.success(),
-        "{}\n{}",
+        "{}\n{}\ntransport trace:\n{}",
         String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&output.stderr),
+        trace
     );
 }
 
@@ -152,6 +183,11 @@ fn windows_upload_finalizes_in_a_home_path_with_spaces() {
 #[test]
 fn windows_probe_reuses_an_existing_managed_runtime() {
     run_case("existing");
+}
+
+#[test]
+fn windows_probe_allows_a_slow_remote_startup() {
+    run_case("slow_probe");
 }
 
 #[test]
@@ -177,6 +213,9 @@ fn bootstrap_windows_child() {
     let target = RemoteTarget::Alias("fixture".into());
     let config = RemoteConfig {
         install: RemoteInstallPolicy::Always,
+        // Several cases cold-start PowerShell and its compiler concurrently on a shared runner.
+        // The slow-probe case instead exercises production's default execution allowance.
+        connection_timeout_secs: if case == "slow_probe" { 1 } else { 120 },
         ..RemoteConfig::default()
     };
     let home = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
@@ -192,7 +231,7 @@ fn bootstrap_windows_child() {
                 std::fs::read(env!("CARGO_BIN_EXE_rozi")).unwrap()
             );
         }
-        "existing" => {
+        "existing" | "slow_probe" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
             assert_same_path(&path, &final_path);
         }

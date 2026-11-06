@@ -962,7 +962,8 @@ For a session attached with `--remote`, `run` panes outside the scratchpad and a
 commands open on the remote host. Neither receives `ROZI_EXTENSION_STATE_DIR`. A `run` pane in
 the scratchpad opens on the client and receives the client's state directory.
 
-A service's `env` cannot override the `ROZI_EXTENSION*` variables, and the runtime replaces any
+A service's `env` cannot override the `ROZI_EXTENSION*` variables or set `ROZI_TERMINAL`, which
+only a process running in a pane receives. The runtime replaces any
 `ROZI_BIN`, `ROZI_SOCKET`, or `ROZI_EXTENSION_CREDENTIAL` a placed service's `env` sets.
 
 Call `rozi` through `ROZI_BIN` rather than assuming it is on `PATH`, and pass `ROZI_SOCKET` back to

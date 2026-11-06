@@ -1199,6 +1199,8 @@ fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMe
 struct SnapshotHeader {
     version: u32,
     session: String,
+    #[serde(default)]
+    saved_at: u64,
 }
 
 /// Why `name` has a snapshot its server would refuse to restore, if it has one. Read-only, so a
@@ -1301,6 +1303,9 @@ pub struct SnapshotSummary {
     pub saved_at: u64,
     pub origin: crate::session::origin::SessionOrigin,
     pub panes: usize,
+    /// Whether this build can restore the snapshot. One it cannot, such as one saved by a build
+    /// with another snapshot format, is still listed: it is kept for the build that can read it.
+    pub readable: bool,
 }
 
 /// Every session that can come back, most recent first.
@@ -1319,6 +1324,7 @@ pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
             saved_at: deployed_at_unix_ms / 1000,
             origin: crate::session::origin::SessionOrigin::default(),
             panes: 0,
+            readable: true,
         });
     }
     summaries.sort_by(|a, b| {
@@ -1344,17 +1350,10 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
             // `meta.json`; trusting that would list a restorable session that forget can never
             // remove, because forget deletes `<root>/<session>` and the debris is not there.
             let dir_name = entry.file_name().into_string().ok()?;
-            let meta: SnapshotMeta =
-                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
-            (meta.version == SNAPSHOT_VERSION
-                && meta.session == dir_name
-                && crate::session::discovery::valid_session_name(&meta.session))
-            .then_some(SnapshotSummary {
-                session: meta.session.clone(),
-                saved_at: meta.saved_at,
-                origin: meta.effective_origin(),
-                panes: meta.panes.len(),
-            })
+            if !crate::session::discovery::valid_session_name(&dir_name) {
+                return None;
+            }
+            snapshot_summary(&entry.path(), dir_name)
         })
         .collect();
     // A session whose snapshot replacement was interrupted survives only in a backup directory.
@@ -1375,16 +1374,71 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
             saved_at: backup.meta.saved_at,
             origin: backup.meta.effective_origin(),
             panes: backup.meta.panes.len(),
+            readable: true,
         });
+    }
+    // A backup this build cannot read is what its server would publish again and then refuse to
+    // restore, so it is listed as such.
+    for session in backup_sessions(&root) {
+        if summaries.iter().any(|summary| summary.session == session) {
+            continue;
+        }
+        if let Some(summary) = newest_unreadable_backup(&root, &session)
+            .and_then(|backup| snapshot_summary(&backup, session))
+        {
+            summaries.push(summary);
+        }
     }
     summaries
 }
 
-/// Whether `name` has a snapshot discovery would list as restorable.
+/// The summary of the snapshot in `dir`, published or backed up as `session`. A snapshot this
+/// build cannot read is summarized from what every format shares, as unreadable; a directory
+/// without `meta.json` is no snapshot.
+fn snapshot_summary(dir: &Path, session: String) -> Option<SnapshotSummary> {
+    match read_restorable_meta(dir, &session) {
+        Ok(meta) => Some(SnapshotSummary {
+            session,
+            saved_at: meta.saved_at,
+            origin: meta.effective_origin(),
+            panes: meta.panes.len(),
+            readable: true,
+        }),
+        Err(err) if err.kind() == io::ErrorKind::InvalidData => Some(SnapshotSummary {
+            saved_at: fs::read(dir.join("meta.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<SnapshotHeader>(&bytes).ok())
+                .map_or(0, |header| header.saved_at),
+            session,
+            origin: crate::session::origin::SessionOrigin::default(),
+            panes: 0,
+            readable: false,
+        }),
+        Err(_) => None,
+    }
+}
+
+/// Every session with a backup directory in `parent`, readable or not.
+fn backup_sessions(parent: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Default::default();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, _) = parse_staging_dir_name(&dir_name)?;
+            (kind == STAGING_OLD && crate::session::discovery::valid_session_name(session))
+                .then(|| session.to_string())
+        })
+        .collect()
+}
+
+/// Whether `name` has a snapshot this build can restore.
 pub(crate) fn has_snapshot(name: &str) -> bool {
     list_snapshot_summaries_by_recency()
         .iter()
-        .any(|snapshot| snapshot.session == name)
+        .any(|snapshot| snapshot.session == name && snapshot.readable)
 }
 
 /// Publish an empty snapshot for `name` that discovery lists as restorable, for tests elsewhere in
@@ -1580,6 +1634,16 @@ mod tests {
         assert!(has_snapshot(session));
         assert!(!has_snapshot(foreign));
         assert!(!has_snapshot(mismatched));
+        // Neither can be restored here, but both are still there, kept for a build that can read
+        // them, so both are listed as unreadable rather than hidden.
+        for name in [foreign, mismatched] {
+            let row = summaries
+                .iter()
+                .find(|summary| summary.session == name)
+                .unwrap_or_else(|| panic!("{name} is listed\n{summaries:?}"));
+            assert!(!row.readable, "{name} is listed as unreadable");
+        }
+        assert!(listed[0].readable);
         // A client can say why a server would refuse the foreign one, and has no reason to give
         // for one it can restore.
         assert_eq!(

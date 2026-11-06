@@ -76,6 +76,18 @@ pub(crate) fn open_named_target(
     if !explicit_create && remote.is_none() && crate::session::server::has_snapshot(&name) {
         return crate::ops::session::attach_session_by_name(ctx, name, None, None, true);
     }
+    // One this build cannot read is the session too. Opening a profile under its name would start
+    // the session empty and discard it, so only an explicit create may do that.
+    if !explicit_create
+        && remote.is_none()
+        && let Some(reason) = crate::session::server::unrestorable_snapshot(&name)
+    {
+        return crate::ops::session::lifecycle::notify_unreadable_snapshot(
+            ctx,
+            &name,
+            Some(reason),
+        );
+    }
     if ctx.state.is_attached_to(&name, remote.as_ref()) {
         return Update::none();
     }

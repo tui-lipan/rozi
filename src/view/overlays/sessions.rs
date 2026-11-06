@@ -402,10 +402,15 @@ fn push_session_activation(
         return;
     };
     if restorable {
+        // A snapshot this build cannot read offers no restore; Enter explains why.
+        let readable = !matches!(
+            entry.status,
+            crate::session::discovery::DiscoveredSessionStatus::Unreadable
+        );
         actions.push(
             OverlayAction::new(
                 "enter",
-                "restore",
+                if readable { "restore" } else { "explain" },
                 Msg::SessionPickerActivate(picker.selected),
                 true,
             )
@@ -766,6 +771,7 @@ fn session_description(
 ) -> String {
     let status = match presence {
         SessionPresence::Restorable
+        | SessionPresence::Unreadable
         | SessionPresence::LastSeen
         | SessionPresence::Busy
         | SessionPresence::Unavailable => presence.label(),

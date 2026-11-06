@@ -110,8 +110,8 @@ sessions, saved sessions, then remembered ones. Within each group, local session
 each host's by name. Each tab keeps its own selection while Sessions is open, starting on its top
 row.
 
-A session with nothing running to attach to says so first — `Restorable`, `Last seen`, `Busy`, or
-`Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
+A session with nothing running to attach to says so first — `Restorable`, `Unreadable`, `Last seen`,
+`Busy`, or `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
 clients share it, and the profile it was created from.
 
 Opening Sessions does not start a remote connection. With `[remote] reconnect_on_launch = true`,
@@ -330,7 +330,11 @@ Processes themselves are not saved. Each command starts again in a fresh termina
 history shown above the new output. A missing directory, a missing history file, or a command that
 fails to start affects only its own pane; the rest of the snapshot still loads.
 
-To discard a snapshot, press `Ctrl+K` twice on its `restorable` row. `rozi sessions new <name>` also
+A snapshot in a format this rozi cannot read, such as one saved by another rozi version, is listed
+as `Unreadable`, and as `unreadable` by `rozi sessions list`. It is kept but not restored: Enter
+says why, and opening the session by name is refused rather than starting it empty.
+
+To discard a snapshot, press `Ctrl+K` twice on its `Restorable` or `Unreadable` row. `rozi sessions new <name>` also
 starts fresh instead of restoring a snapshot with that name, and keeps any
 [extensions deployed](extensions.md#deploy-to-a-session) to the session.
 
@@ -440,8 +444,8 @@ where the server is stopped at once, the restart uses the last snapshot it saved
 from the final moments before the restart can be missing.
 
 If the snapshot is in a format this rozi cannot read, the session is not started and its snapshot
-is kept. Start it with the rozi version that saved it, or run `rozi sessions new <NAME> --detach`
-to start it empty and discard the snapshot.
+is kept, listed as [`Unreadable`](#resurrection). Start it with the rozi version that saved it, or
+run `rozi sessions new <NAME> --detach` to start it empty and discard the snapshot.
 
 ```bash
 rozi sessions new tests --detach --no-resurrect

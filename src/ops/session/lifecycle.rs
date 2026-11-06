@@ -21,10 +21,13 @@ pub(crate) fn session_row_is_current(state: &State, entry: &DiscoveredSession) -
         && state.current().remote_target == entry.remote_target
 }
 
+/// A row with a saved snapshot and no server: restorable, or saved in a snapshot this build cannot
+/// read. Either one is forgotten rather than killed, and has no server to restart.
 pub(crate) fn session_row_is_restorable(entry: &DiscoveredSession) -> bool {
     matches!(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Restorable
+            | crate::session::discovery::DiscoveredSessionStatus::Unreadable
     )
 }
 
@@ -338,6 +341,24 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<AppRoot>, index: usize
     activate_discovered_session(ctx, entry)
 }
 
+/// Say that `name` cannot be restored because of `reason`, from
+/// [`unrestorable_snapshot`](crate::session::server::unrestorable_snapshot) when it is known.
+pub(crate) fn notify_unreadable_snapshot(
+    ctx: &mut Context<AppRoot>,
+    name: &str,
+    reason: Option<String>,
+) -> Update {
+    let reason =
+        reason.unwrap_or_else(|| "its snapshot is in a format this rozi cannot read".to_string());
+    crate::pane::pty_events::notify_error(
+        ctx,
+        "Restore failed",
+        crate::pane::pty_events::ToastBody::new(format!("`{name}`: {reason}"))
+            .hint("start it with the rozi version that saved it · Ctrl+K forgets it"),
+    );
+    Update::full()
+}
+
 /// Activate a discovered running session without resolving it through a mutable row index. Picker
 /// and sidebar callers keep separate ephemeral-discard confirmations.
 pub(crate) fn activate_discovered_session(
@@ -351,6 +372,18 @@ pub(crate) fn activate_discovered_session(
     // is not an error, and it is not worth a toast.
     if session_row_is_current(&ctx.state, &entry) {
         return Update::none();
+    }
+    // Starting its server would be refused, since the server will not start over a snapshot it
+    // cannot read, so say why here instead.
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Unreadable
+    ) {
+        let reason = match &entry.remote_target {
+            Some(_) => None,
+            None => crate::session::server::unrestorable_snapshot(&entry.name),
+        };
+        return notify_unreadable_snapshot(ctx, &entry.name, reason);
     }
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
@@ -1066,10 +1099,7 @@ pub(crate) fn shutdown_discovered_session(
         return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
             .map_err(std::io::Error::other);
     }
-    if matches!(
-        entry.status,
-        crate::session::discovery::DiscoveredSessionStatus::Restorable
-    ) {
+    if session_row_is_restorable(entry) {
         return crate::session::server::delete_snapshot(&entry.name);
     }
     shutdown_session(&entry.name)

@@ -124,6 +124,13 @@ pub(super) fn format_sessions_text(
                     "0".to_string(),
                     "—".to_string(),
                 ),
+                session::discovery::DiscoveredSessionStatus::Unreadable => (
+                    "unreadable",
+                    OutputTone::Error,
+                    "—".to_string(),
+                    "0".to_string(),
+                    "—".to_string(),
+                ),
                 session::discovery::DiscoveredSessionStatus::Busy => (
                     "busy",
                     OutputTone::Warning,

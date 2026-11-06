@@ -22,6 +22,10 @@ pub enum DiscoveredSessionStatus {
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
+    /// No server is running, and the snapshot saved under this name is one this build cannot
+    /// restore, such as one in another build's snapshot format. It is kept for a build that can;
+    /// starting the session here is refused rather than started empty over it.
+    Unreadable,
     /// Remembered from the last successful probe of a host this client is not connected to.
     ///
     /// Nothing here was confirmed by a live handshake: the pane count is what the host reported the
@@ -309,7 +313,11 @@ fn push_restorable_sessions(
         rows.push(DiscoveredSession {
             name,
             origin: snapshot.origin,
-            status: DiscoveredSessionStatus::Restorable,
+            status: if snapshot.readable {
+                DiscoveredSessionStatus::Restorable
+            } else {
+                DiscoveredSessionStatus::Unreadable
+            },
             ephemeral: false,
             host: None,
             remote_target: None,
@@ -908,6 +916,7 @@ pub fn parse_remote_list_json(
                     has_layout: row.layout.unwrap_or(false),
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
+                "unreadable" => DiscoveredSessionStatus::Unreadable,
                 "busy" => DiscoveredSessionStatus::Busy,
                 _ => DiscoveredSessionStatus::Unknown,
             };
@@ -958,6 +967,9 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                 }
                 DiscoveredSessionStatus::Restorable => {
                     obj["status"] = serde_json::json!("restorable")
+                }
+                DiscoveredSessionStatus::Unreadable => {
+                    obj["status"] = serde_json::json!("unreadable")
                 }
                 DiscoveredSessionStatus::Busy => obj["status"] = serde_json::json!("busy"),
                 DiscoveredSessionStatus::Unknown => obj["status"] = serde_json::json!("unknown"),
@@ -1263,6 +1275,7 @@ mod tests {
                     }),
                     ..Default::default()
                 },
+                readable: true,
                 panes: 1,
             }),
         );
@@ -1308,6 +1321,14 @@ mod tests {
                 remote_target: None,
                 status: DiscoveredSessionStatus::Restorable,
             },
+            DiscoveredSession {
+                name: "future".into(),
+                origin: Default::default(),
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+                status: DiscoveredSessionStatus::Unreadable,
+            },
         ];
         let json = sessions_to_json(&rows).unwrap();
         let parsed = parse_remote_list_json(json.as_bytes(), Some("workbox".into())).unwrap();
@@ -1319,6 +1340,7 @@ mod tests {
             DiscoveredSessionStatus::Running { panes: 2, .. }
         ));
         assert_eq!(parsed[1].status, DiscoveredSessionStatus::Restorable);
+        assert_eq!(parsed[2].status, DiscoveredSessionStatus::Unreadable);
     }
 
     /// A name is spelled into a socket path, so an unbounded one is a session that cannot be

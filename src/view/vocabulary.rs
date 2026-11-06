@@ -142,6 +142,8 @@ pub(crate) enum SessionPresence {
     Running,
     /// Saved, with no server running.
     Restorable,
+    /// Saved in a snapshot this build cannot restore, with no server running.
+    Unreadable,
     /// Remembered on a host nothing has reached this time.
     LastSeen,
     /// An endpoint that did not answer this poll.
@@ -173,6 +175,7 @@ impl SessionPresence {
         match status {
             DiscoveredSessionStatus::Running { .. } => Self::Running,
             DiscoveredSessionStatus::Restorable => Self::Restorable,
+            DiscoveredSessionStatus::Unreadable => Self::Unreadable,
             DiscoveredSessionStatus::LastSeen { .. } => Self::LastSeen,
             DiscoveredSessionStatus::Busy => Self::Busy,
             DiscoveredSessionStatus::Unknown => Self::Unavailable,
@@ -187,7 +190,7 @@ impl SessionPresence {
             Self::Background | Self::Reconnecting | Self::Offline => 1,
             Self::Running => 2,
             Self::Restorable => 3,
-            Self::LastSeen | Self::Busy | Self::Unavailable => 4,
+            Self::Unreadable | Self::LastSeen | Self::Busy | Self::Unavailable => 4,
         }
     }
 
@@ -207,6 +210,7 @@ impl SessionPresence {
             Self::Offline => "Offline",
             Self::Running => "Running",
             Self::Restorable => "Restorable",
+            Self::Unreadable => "Unreadable",
             Self::LastSeen => "Last seen",
             Self::Busy => "Busy",
             Self::Unavailable => "Unavailable",
@@ -222,7 +226,7 @@ impl SessionPresence {
             Self::Offline => MARKER_LOST,
             Self::Running => MARKER_ABSENT,
             Self::Restorable => MARKER_DORMANT,
-            Self::LastSeen | Self::Busy | Self::Unavailable => MARKER_QUIET,
+            Self::Unreadable | Self::LastSeen | Self::Busy | Self::Unavailable => MARKER_QUIET,
         }
     }
 
@@ -232,16 +236,20 @@ impl SessionPresence {
             Self::Background => styles.background,
             Self::Reconnecting => styles.reconnecting,
             Self::Offline => styles.offline,
-            Self::Running | Self::Restorable | Self::LastSeen | Self::Busy | Self::Unavailable => {
-                styles.label
-            }
+            Self::Running
+            | Self::Restorable
+            | Self::Unreadable
+            | Self::LastSeen
+            | Self::Busy
+            | Self::Unavailable => styles.label,
         }
     }
 
-    /// What opening the session does, as an action verb. `None` for the session already on screen.
+    /// What opening the session does, as an action verb. `None` for the session already on screen,
+    /// and for one this build cannot open.
     pub(crate) fn verb(self) -> Option<&'static str> {
         match self {
-            Self::Current => None,
+            Self::Current | Self::Unreadable => None,
             Self::Background => Some("switch"),
             Self::Reconnecting | Self::Offline | Self::LastSeen => Some("connect"),
             Self::Running | Self::Busy | Self::Unavailable => Some("attach"),
@@ -445,6 +453,7 @@ pub(crate) fn session_facts(
         DiscoveredSessionStatus::Running { panes, .. }
         | DiscoveredSessionStatus::LastSeen { panes } => Some(count(*panes, "pane")),
         DiscoveredSessionStatus::Restorable
+        | DiscoveredSessionStatus::Unreadable
         | DiscoveredSessionStatus::Busy
         | DiscoveredSessionStatus::Unknown => None,
     };
@@ -631,13 +640,14 @@ mod tests {
     use super::*;
     use crate::session::protocol::AgentSummary;
 
-    const PRESENCES: [SessionPresence; 9] = [
+    const PRESENCES: [SessionPresence; 10] = [
         SessionPresence::Current,
         SessionPresence::Background,
         SessionPresence::Reconnecting,
         SessionPresence::Offline,
         SessionPresence::Running,
         SessionPresence::Restorable,
+        SessionPresence::Unreadable,
         SessionPresence::LastSeen,
         SessionPresence::Busy,
         SessionPresence::Unavailable,

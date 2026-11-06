@@ -23,7 +23,7 @@ the terminal appears as `rozi (inside a pane)`.
 The report omits session names, file paths, hostnames, usernames, configuration contents, and raw
 environment values. It does not start or attach to a session or write files. Configuration warnings
 are counted in `config_warnings` without printing their text. The `config` field says `valid`,
-`valid, N warnings` for a config loaded with warnings such as ignored keys, or `rejected` when
+`valid, 1 warning` or `valid, N warnings` for a config loaded with warnings such as ignored keys, or `rejected` when
 the config could not be loaded. Use `rozi doctor --config <PATH>` or `ROZI_CONFIG` to check
 another config file. A report with rejected configuration still exits successfully.
 

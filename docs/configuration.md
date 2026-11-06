@@ -138,11 +138,14 @@ session's panes.
 
 rozi handles problems at two levels:
 
-- **The whole file is rejected** when it is unreadable, is not valid TOML, or has a value of the
-  wrong type. At startup rozi uses the defaults; on a live reload it keeps the last good
-  configuration. Either way it shows an error.
-- **One setting is skipped** when a key is unknown or a value is not one of the allowed choices.
-  rozi uses that setting's default, applies the rest of the file, and warns.
+- **The whole file is rejected** when it is unreadable or is not valid TOML. At startup rozi uses
+  the defaults; on a live reload it keeps the last good configuration. Either way it shows an
+  error.
+- **One setting is skipped** when a key is unknown, a value has the wrong type, or a value is not
+  one of the allowed choices. rozi uses that setting's default, applies the rest of the file, and
+  warns with the setting's full key, such as `animations.cursor_trail`. In a list of tables, such
+  as `[[rules]]` or `[[hints]]`, a wrong value skips its whole entry, named by its position from
+  zero: `rules[1]` is the second `[[rules]]` entry. The other entries still apply.
 
 Several warnings share one toast, and each is also printed to stderr. Some settings are clamped
 into range rather than skipped; their rows below say so.

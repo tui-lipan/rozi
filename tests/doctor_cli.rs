@@ -135,8 +135,8 @@ fn doctor_uses_real_validation_and_config_overrides_without_printing_errors() {
     let config = home.path().join("private-config.toml");
     for (text, verdict) in [
         ("invalid = [private-token", "rejected"),
-        ("[recording]\nmax_fps = 0\n", "valid, 1 warnings"),
-        ("stale_private_key = 'private-token'\n", "valid, 1 warnings"),
+        ("[recording]\nmax_fps = 0\n", "valid, 1 warning"),
+        ("stale_private_key = 'private-token'\n", "valid, 1 warning"),
     ] {
         std::fs::write(&config, text).unwrap();
         for args in [

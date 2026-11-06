@@ -35,11 +35,7 @@ pub(crate) fn run() {
         ),
         (
             "config".into(),
-            match (loaded.rejected, loaded.warnings.len()) {
-                (true, _) => "rejected".into(),
-                (false, 0) => "valid".into(),
-                (false, count) => format!("valid, {count} warnings"),
-            },
+            config_status(loaded.rejected, loaded.warnings.len()),
         ),
         ("config_warnings".into(), loaded.warnings.len().to_string()),
         (
@@ -87,6 +83,16 @@ pub(crate) fn run() {
 }
 
 /// Recognize terminal names rather than echoing an arbitrary value supplied by the environment.
+/// The `config` field: whether the file applied, and how many warnings it carried.
+fn config_status(rejected: bool, warnings: usize) -> String {
+    match (rejected, warnings) {
+        (true, _) => "rejected".into(),
+        (false, 0) => "valid".into(),
+        (false, 1) => "valid, 1 warning".into(),
+        (false, count) => format!("valid, {count} warnings"),
+    }
+}
+
 fn terminal_name(program: Option<&str>, term: Option<&str>) -> &'static str {
     const PROGRAMS: &[(&str, &str)] = &[
         ("ghostty", "ghostty"),
@@ -125,6 +131,14 @@ fn terminal_name(program: Option<&str>, term: Option<&str>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_status_counts_warnings_in_words() {
+        assert_eq!(config_status(false, 0), "valid");
+        assert_eq!(config_status(false, 1), "valid, 1 warning");
+        assert_eq!(config_status(false, 3), "valid, 3 warnings");
+        assert_eq!(config_status(true, 2), "rejected");
+    }
 
     #[test]
     fn terminal_environment_is_never_echoed() {

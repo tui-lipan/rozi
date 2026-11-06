@@ -27,8 +27,7 @@ use super::workbar::{
 pub struct LoadedConfig {
     pub config: Config,
     pub warnings: Vec<String>,
-    /// Document-level failure (an unreadable file, invalid TOML, or more unreadable values than one
-    /// load drops). `config` is then the defaults-plus-extensions fallback used at startup; a reload
+    /// Document-level failure: an unreadable file or invalid TOML. `config` is then the defaults-plus-extensions fallback used at startup; a reload
     /// must keep the last good runtime config instead.
     pub rejected: bool,
 }
@@ -143,8 +142,12 @@ struct CursorFileConfig {
     pointer: Option<String>,
 }
 
+/// The `[extensions]` part of a config file, read as the main loader reads the file: a value that
+/// does not fit its key elsewhere in the file does not keep the extensions settings from applying.
+/// The loader reports those values; this only needs what is left.
 pub(crate) fn parse_extensions_config(text: &str) -> Result<ExtensionsFileConfig, toml::de::Error> {
-    toml::from_str::<FileConfig>(text).map(|config| config.extensions)
+    let value: toml::Value = toml::from_str(text)?;
+    deserialize_dropping_unreadable(value, &mut Vec::new()).map(|config| config.extensions)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -278,23 +281,43 @@ pub(super) struct SidebarFileLayout {
 
 impl<'de> Deserialize<'de> for SidebarFileLayout {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        let mut value = toml::Value::deserialize(deserializer)?;
-        let mut visible = [false, false];
-        let mut migrated = false;
-        for (index, side) in ["left", "right"].into_iter().enumerate() {
-            if let Some(dock) = value.get_mut(side).and_then(toml::Value::as_table_mut)
-                && let Some(old) = dock.remove("visible")
-            {
-                visible[index] = old
-                    .as_bool()
-                    .ok_or_else(|| D::Error::custom("sidebar dock visible must be a boolean"))?;
-                migrated = true;
-            }
+        /// A dock as the file may spell it, with the previous startup flag beside its layout.
+        /// Deserialized field by field, so a bad value is reported at its own key.
+        #[derive(Deserialize, Default)]
+        #[serde(default, deny_unknown_fields)]
+        struct FileDock {
+            visible: Option<bool>,
+            width: Option<u16>,
+            panel_count: Option<usize>,
+            panels: Option<Vec<super::schema::SidebarDockPanel>>,
         }
+        #[derive(Deserialize, Default)]
+        #[serde(default, deny_unknown_fields)]
+        struct FileLayout {
+            left: Option<FileDock>,
+            right: Option<FileDock>,
+            hidden: Vec<String>,
+        }
+        let file = FileLayout::deserialize(deserializer)?;
+        let visible =
+            [&file.left, &file.right].map(|dock| dock.as_ref().and_then(|dock| dock.visible));
+        let migrated = visible.iter().any(Option::is_some);
+        let dock = |dock: Option<FileDock>| {
+            dock.map(|dock| super::schema::SidebarDockPatch {
+                width: dock.width,
+                panel_count: dock.panel_count,
+                panels: dock.panels,
+            })
+        };
         Ok(Self {
-            layout: value.try_into().map_err(D::Error::custom)?,
-            migrated_docks: migrated.then_some(visible),
+            layout: super::schema::SidebarDockLayout::from_patch(
+                super::schema::SidebarLayoutPatch {
+                    left: dock(file.left),
+                    right: dock(file.right),
+                    hidden: file.hidden,
+                },
+            ),
+            migrated_docks: migrated.then_some(visible.map(|visible| visible.unwrap_or(false))),
         })
     }
 }
@@ -1608,22 +1631,19 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
     }
 }
 
-/// How many unreadable values one load drops before it gives up on the file.
-const MAX_DROPPED_VALUES: usize = 64;
-
 /// Deserialize `value`, dropping each value that does not fit its key, with a warning naming the
 /// key, so one wrong value costs that setting alone rather than the whole file.
 ///
 /// The failing key comes from the error's path, and the value there is removed before trying
 /// again. Inside an entry of an array of tables the whole entry goes, since an entry with a field
 /// missing is not the entry the file describes; the other entries stay. An error with no path into
-/// the document still fails the load.
+/// the document still fails the load. Every retry removes a value, so the loop ends.
 fn deserialize_dropping_unreadable(
     mut value: toml::Value,
     warnings: &mut Vec<String>,
 ) -> Result<FileConfig, toml::de::Error> {
     let mut removed = RemovedEntries::default();
-    for _ in 0..MAX_DROPPED_VALUES {
+    loop {
         let err = match serde_path_to_error::deserialize::<_, FileConfig>(value.clone()) {
             Ok(parsed) => return Ok(parsed),
             Err(err) => err,
@@ -1640,7 +1660,6 @@ fn deserialize_dropping_unreadable(
             None => format!("Invalid config value `{}` ({reason}); ignored", dropped.key),
         });
     }
-    serde_path_to_error::deserialize::<_, FileConfig>(value).map_err(|err| err.into_inner())
 }
 
 /// Array entries already removed, by the key of their array, as indices in the file. Keys in
@@ -2480,6 +2499,71 @@ mod file_tests {
         );
         assert_eq!(loaded.config.shell, None);
         assert_eq!(loaded.config.frame_rate, 30);
+    }
+
+    /// A dock's layout is read key by key, so a bad value in one dock leaves the other dock and the
+    /// rest of the first one as written.
+    #[test]
+    fn a_wrong_value_in_one_sidebar_dock_keeps_the_other() {
+        let loaded = load_config_from_text(
+            r#"
+            [sidebar.layout.left]
+            width = "wide"
+            panel_count = 1
+
+            [sidebar.layout.right]
+            width = 50
+            visible = "yes"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `sidebar.layout.left.width` (expected an integer, found string \"wide\"); ignored",
+                "Invalid config value `sidebar.layout.right.visible` (expected a boolean, found string \"yes\"); ignored",
+            ],
+        );
+        let layout = &loaded.config.sidebar.layout;
+        assert_eq!(layout.right.width, 50);
+        assert_eq!(layout.left.panel_count, 1);
+        assert_eq!(
+            layout.left.width,
+            crate::config::SidebarDockLayout::default().left.width
+        );
+    }
+
+    /// However many values are wrong, each is dropped and the rest of the file still applies.
+    #[test]
+    fn many_wrong_values_never_reject_the_file() {
+        let disabled = (0..200)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let loaded = load_config_from_text(
+            &format!("frame_rate = 30\n\n[extensions]\ndisabled = [{disabled}]\n"),
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.rejected);
+        assert_eq!(loaded.warnings.len(), 200);
+        assert!(loaded.warnings[199].contains("`extensions.disabled[199]`"));
+        assert_eq!(loaded.config.frame_rate, 30);
+    }
+
+    /// The extension manager, installs, and session deployments read `[extensions]` on their own;
+    /// a bad value elsewhere must not hide it from them.
+    #[test]
+    fn extension_settings_survive_a_wrong_value_elsewhere() {
+        let parsed = crate::config::extensions::parse_user_extension_config(
+            "scrollback = \"lots\"\n\n[extensions]\ndisabled = [\"acme.tools\"]\n\n[extensions.\"acme.notes\"]\nwidth = 3\n",
+        )
+        .expect("the extensions settings are read");
+        assert_eq!(parsed.disabled, ["acme.tools"]);
+        assert!(parsed.settings.contains_key("acme.notes"));
+        assert!(
+            crate::config::extensions::parse_user_extension_config("[extensions\n").is_err(),
+            "a file that is not TOML still fails"
+        );
     }
 
     #[test]

@@ -2204,25 +2204,35 @@ impl Default for SidebarDockLayout {
     }
 }
 
+/// What a file or saved layout sets for one dock; anything left out keeps its default.
+#[derive(serde::Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SidebarDockPatch {
+    pub(crate) width: Option<u16>,
+    pub(crate) panel_count: Option<usize>,
+    pub(crate) panels: Option<Vec<SidebarDockPanel>>,
+}
+
+/// What a file or saved layout sets for both docks.
+#[derive(serde::Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct SidebarLayoutPatch {
+    pub(crate) left: Option<SidebarDockPatch>,
+    pub(crate) right: Option<SidebarDockPatch>,
+    pub(crate) hidden: Vec<String>,
+}
+
 impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
     fn deserialize<D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> std::result::Result<Self, D::Error> {
-        #[derive(serde::Deserialize, Default)]
-        #[serde(default, deny_unknown_fields)]
-        struct DockPatch {
-            width: Option<u16>,
-            panel_count: Option<usize>,
-            panels: Option<Vec<SidebarDockPanel>>,
-        }
-        #[derive(serde::Deserialize, Default)]
-        #[serde(default, deny_unknown_fields)]
-        struct LayoutPatch {
-            left: Option<DockPatch>,
-            right: Option<DockPatch>,
-            hidden: Vec<String>,
-        }
-        let patch = LayoutPatch::deserialize(deserializer)?;
+        SidebarLayoutPatch::deserialize(deserializer).map(Self::from_patch)
+    }
+}
+
+impl SidebarDockLayout {
+    /// The default layout with `patch` applied.
+    pub(crate) fn from_patch(patch: SidebarLayoutPatch) -> Self {
         let mut layout = Self {
             hidden: patch.hidden,
             ..Self::default()
@@ -2262,7 +2272,7 @@ impl<'de> serde::Deserialize<'de> for SidebarDockLayout {
                 }
             }
         }
-        Ok(layout)
+        layout
     }
 }
 

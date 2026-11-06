@@ -27,8 +27,8 @@ use super::workbar::{
 pub struct LoadedConfig {
     pub config: Config,
     pub warnings: Vec<String>,
-    /// Document-level failure (unreadable file, invalid TOML, or a type that cannot be recovered
-    /// per field). `config` is then the defaults-plus-extensions fallback used at startup; a reload
+    /// Document-level failure (an unreadable file, invalid TOML, or more unreadable values than one
+    /// load drops). `config` is then the defaults-plus-extensions fallback used at startup; a reload
     /// must keep the last good runtime config instead.
     pub rejected: bool,
 }
@@ -89,8 +89,8 @@ impl ShellFileValue {
     }
 }
 
-/// User `config.toml` schema. Unknown keys are collected as warnings rather than rejecting the
-/// document; invalid TOML and unrecoverable types still fail the parse.
+/// User `config.toml` schema. Unknown keys and values of the wrong type are reported as warnings
+/// rather than rejecting the document; only invalid TOML fails the parse.
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct FileConfig {
@@ -1592,17 +1592,202 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
         .as_table()
         .map(super::unknown_keys::collect_unknown_keys)
         .unwrap_or_default();
-    match FileConfig::deserialize(value) {
+    let mut dropped = Vec::new();
+    match deserialize_dropping_unreadable(value, &mut dropped) {
         Ok(parsed) => {
             for key in unknown {
                 warnings.push(format!("Unknown config key `{key}`; ignored"));
             }
+            warnings.extend(dropped);
             Some(parsed)
         }
         Err(err) => {
             warnings.push(parse_failure(path, &err));
             None
         }
+    }
+}
+
+/// How many unreadable values one load drops before it gives up on the file.
+const MAX_DROPPED_VALUES: usize = 64;
+
+/// Deserialize `value`, dropping each value that does not fit its key, with a warning naming the
+/// key, so one wrong value costs that setting alone rather than the whole file.
+///
+/// The failing key comes from the error's path, and the value there is removed before trying
+/// again. Inside an entry of an array of tables the whole entry goes, since an entry with a field
+/// missing is not the entry the file describes; the other entries stay. An error with no path into
+/// the document still fails the load.
+fn deserialize_dropping_unreadable(
+    mut value: toml::Value,
+    warnings: &mut Vec<String>,
+) -> Result<FileConfig, toml::de::Error> {
+    let mut removed = RemovedEntries::default();
+    for _ in 0..MAX_DROPPED_VALUES {
+        let err = match serde_path_to_error::deserialize::<_, FileConfig>(value.clone()) {
+            Ok(parsed) => return Ok(parsed),
+            Err(err) => err,
+        };
+        let Some(dropped) = remove_value_at(&mut value, err.path(), &mut removed) else {
+            return Err(err.into_inner());
+        };
+        let reason = describe_value_error(&err.inner().to_string());
+        warnings.push(match dropped.entry {
+            Some(entry) => format!(
+                "Invalid config value `{}` ({reason}); `{entry}` ignored",
+                dropped.key
+            ),
+            None => format!("Invalid config value `{}` ({reason}); ignored", dropped.key),
+        });
+    }
+    serde_path_to_error::deserialize::<_, FileConfig>(value).map_err(|err| err.into_inner())
+}
+
+/// Array entries already removed, by the key of their array, as indices in the file. Keys in
+/// warnings use the file's indices, not the shifted ones of what is left.
+#[derive(Default)]
+struct RemovedEntries(HashMap<String, Vec<usize>>);
+
+impl RemovedEntries {
+    /// The file index of what is now entry `index` of the array at `key`.
+    fn file_index(&self, key: &str, index: usize) -> usize {
+        let mut removed = self.0.get(key).cloned().unwrap_or_default();
+        removed.sort_unstable();
+        removed.into_iter().fold(
+            index,
+            |index, gone| if gone <= index { index + 1 } else { index },
+        )
+    }
+}
+
+/// What [`remove_value_at`] removed.
+struct DroppedValue {
+    /// The key whose value could not be read, as the file spells it.
+    key: String,
+    /// The array-of-tables entry removed with it, when it sat inside one.
+    entry: Option<String>,
+}
+
+/// Remove the value `path` reaches in `root`, or the array-of-tables entry holding it; `None`
+/// when the path reaches nothing below the root.
+fn remove_value_at(
+    root: &mut toml::Value,
+    path: &serde_path_to_error::Path,
+    removed: &mut RemovedEntries,
+) -> Option<DroppedValue> {
+    // Each step into the value as it is now, with the key of the value it steps from.
+    let mut steps: Vec<(Step, String)> = Vec::new();
+    // How many steps reach the outermost array-of-tables entry on the path, with its key.
+    let mut entry: Option<(usize, String)> = None;
+    let mut node = &*root;
+    let mut key = String::new();
+    for segment in path {
+        let (step, next, next_key) = match segment {
+            serde_path_to_error::Segment::Map { key: name } => {
+                let next = node.as_table().and_then(|table| table.get(name));
+                let next_key = if key.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{key}.{name}")
+                };
+                (Step::Key(name.clone()), next, next_key)
+            }
+            serde_path_to_error::Segment::Seq { index } => {
+                let next = node.as_array().and_then(|array| array.get(*index));
+                let next_key = format!("{key}[{}]", removed.file_index(&key, *index));
+                (Step::Index(*index), next, next_key)
+            }
+            serde_path_to_error::Segment::Enum { .. } | serde_path_to_error::Segment::Unknown => {
+                break;
+            }
+        };
+        let Some(next) = next else { break };
+        steps.push((step, key));
+        if entry.is_none() && matches!(steps.last(), Some((Step::Index(_), _))) && next.is_table() {
+            entry = Some((steps.len(), next_key.clone()));
+        }
+        node = next;
+        key = next_key;
+    }
+    let cut = entry.as_ref().map_or(steps.len(), |(depth, _)| *depth);
+    let ((last, parent_key), parents) = steps[..cut].split_last()?;
+    let mut parent = &mut *root;
+    for (step, _) in parents {
+        parent = match step {
+            Step::Key(name) => parent.as_table_mut()?.get_mut(name)?,
+            Step::Index(index) => parent.as_array_mut()?.get_mut(*index)?,
+        };
+    }
+    match last {
+        Step::Key(name) => {
+            parent.as_table_mut()?.remove(name)?;
+        }
+        Step::Index(index) => {
+            parent.as_array_mut()?.remove(*index);
+            let file_index = removed.file_index(parent_key, *index);
+            removed
+                .0
+                .entry(parent_key.clone())
+                .or_default()
+                .push(file_index);
+        }
+    }
+    let entry = entry.map(|(_, entry)| entry).filter(|entry| *entry != key);
+    Some(DroppedValue { key, entry })
+}
+
+/// One step into a TOML document.
+enum Step {
+    Key(String),
+    Index(usize),
+}
+
+/// A deserialize error in the words of the config file: what the key expects, then what it got,
+/// with TOML's names for shapes rather than the schema's type names.
+fn describe_value_error(message: &str) -> String {
+    // toml ends its message with the key, without array indices; the warning names it already.
+    let message = message.lines().next().unwrap_or_default().trim_end();
+    if let Some((found, expected)) = message
+        .strip_prefix("invalid type: ")
+        .and_then(|rest| rest.split_once(", expected "))
+    {
+        let found = match found {
+            "map" => "a table",
+            "sequence" => "an array",
+            other => other,
+        };
+        return format!("expected {}, found {found}", toml_shape(expected));
+    }
+    if let Some((value, expected)) = message
+        .strip_prefix("invalid value: ")
+        .and_then(|rest| rest.split_once(", expected "))
+    {
+        let shape = toml_shape(expected);
+        return match value.split_once(' ') {
+            Some(("integer" | "floating", number))
+                if shape == "an integer" || shape == "a number" =>
+            {
+                format!("{} is out of range", number.trim_start_matches("point "))
+            }
+            _ => format!("expected {shape}, found {value}"),
+        };
+    }
+    if message.starts_with("data did not match any variant of untagged enum") {
+        return "not a form this setting accepts".to_string();
+    }
+    message.to_string()
+}
+
+/// A serde expectation as the TOML shape a user writes.
+fn toml_shape(expected: &str) -> &str {
+    match expected {
+        "u8" | "u16" | "u32" | "u64" | "usize" | "i8" | "i16" | "i32" | "i64" | "isize" => {
+            "an integer"
+        }
+        "f32" | "f64" => "a number",
+        "a sequence" => "an array",
+        _ if expected.starts_with("struct ") || expected.ends_with("map") => "a table",
+        other => other,
     }
 }
 
@@ -2132,20 +2317,186 @@ mod file_tests {
         );
     }
 
-    #[test]
-    fn wrong_type_rejects_the_document() {
-        let loaded = load_config_from_text("scrollback = \"lots\"\n", Path::new("config.toml"));
-        assert!(loaded.rejected);
-        assert_eq!(loaded.config.scrollback, Config::default().scrollback);
-        assert!(
-            loaded
-                .warnings
+    fn assert_warns(loaded: &LoadedConfig, expected: &[&str]) {
+        assert!(!loaded.rejected, "{:?}", loaded.warnings);
+        assert_eq!(
+            loaded.warnings,
+            expected
                 .iter()
-                .any(|warning| warning.contains("Config parse failed")
-                    && warning == warning.trim_end()),
-            "{:?}",
-            loaded.warnings
+                .map(|warning| warning.to_string())
+                .collect::<Vec<_>>()
         );
+    }
+
+    /// A value of the wrong type costs that setting alone: the rest of the file applies.
+    #[test]
+    fn a_wrong_type_at_the_top_level_drops_only_that_value() {
+        let loaded = load_config_from_text(
+            "scrollback = \"lots\"\nframe_rate = 30\n",
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `scrollback` (expected an integer, found string \"lots\"); ignored",
+            ],
+        );
+        assert_eq!(loaded.config.scrollback, Config::default().scrollback);
+        assert_eq!(loaded.config.frame_rate, 30);
+    }
+
+    #[test]
+    fn a_wrong_type_in_a_nested_table_drops_only_that_value() {
+        let loaded = load_config_from_text(
+            r#"
+            frame_rate = 30
+
+            [animations]
+            cursor_trail = "jump"
+
+            [theme]
+            name = "nord"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `animations.cursor_trail` (expected a table, found string \"jump\"); ignored",
+            ],
+        );
+        assert_eq!(loaded.config.theme.name, "nord");
+        assert_eq!(loaded.config.frame_rate, 30);
+
+        let loaded = load_config_from_text(
+            "[animations.cursor_trail]\nopacity = \"half\"\nmax_length = 3.0\n",
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `animations.cursor_trail.opacity` (expected a number, found string \"half\"); ignored",
+            ],
+        );
+    }
+
+    /// In an array of tables a bad value drops its entry and leaves the others, and each is named by
+    /// its place in the file.
+    #[test]
+    fn a_wrong_type_in_an_array_of_tables_drops_only_that_entry() {
+        let loaded = load_config_from_text(
+            r#"
+            [[rules]]
+            match = "btop"
+            float = true
+
+            [[rules]]
+            match = "htop"
+            width = "wide"
+
+            [[hints]]
+            pattern = 5
+
+            [[hints]]
+            pattern = 7
+
+            [[hints]]
+            pattern = "JIRA-[0-9]+"
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `hints[0].pattern` (expected a string, found integer `5`); `hints[0]` ignored",
+                "Invalid config value `hints[1].pattern` (expected a string, found integer `7`); `hints[1]` ignored",
+                "Invalid config value `rules[1].width` (expected a number, found string \"wide\"); `rules[1]` ignored",
+            ],
+        );
+        assert_eq!(loaded.config.rules.len(), 1);
+        assert!(loaded.config.rules[0].float);
+        assert_eq!(loaded.config.hints.len(), 1);
+        assert_eq!(loaded.config.hints[0].pattern.as_str(), "JIRA-[0-9]+");
+    }
+
+    #[test]
+    fn several_wrong_values_are_each_dropped_and_named() {
+        let loaded = load_config_from_text(
+            r#"
+            scrollback = "lots"
+            frame_rate = 30
+            typo = 1
+
+            [animations]
+            cursor_trail = "jump"
+
+            [theme]
+            name = 7
+            "#,
+            Path::new("config.toml"),
+        );
+        assert!(!loaded.rejected);
+        assert_eq!(loaded.config.frame_rate, 30);
+        for key in [
+            "Unknown config key `typo`",
+            "`scrollback`",
+            "`animations.cursor_trail`",
+            "`theme.name`",
+        ] {
+            assert!(
+                loaded.warnings.iter().any(|warning| warning.contains(key)),
+                "{key} in {:?}",
+                loaded.warnings
+            );
+        }
+        assert_eq!(loaded.warnings.len(), 4, "{:?}", loaded.warnings);
+    }
+
+    /// Values the schema reads through alternatives, flattened tables, or plain arrays are dropped
+    /// by the closest key the file names.
+    #[test]
+    fn values_read_through_alternatives_and_arrays_are_dropped_by_their_key() {
+        let loaded = load_config_from_text(
+            r#"
+            shell = 5
+            frame_rate = 30
+
+            [extensions]
+            disabled = ["acme.tools", 5]
+
+            [[links.handlers]]
+            schemes = ["jira"]
+            run = 5
+            "#,
+            Path::new("config.toml"),
+        );
+        assert_warns(
+            &loaded,
+            &[
+                "Invalid config value `extensions.disabled[1]` (expected a string, found integer `5`); ignored",
+                "Invalid config value `links.handlers[0]` (expected a string, found integer `5`); ignored",
+                "Invalid config value `shell` (not a form this setting accepts); ignored",
+            ],
+        );
+        assert_eq!(loaded.config.shell, None);
+        assert_eq!(loaded.config.frame_rate, 30);
+    }
+
+    #[test]
+    fn an_out_of_range_number_is_dropped_with_its_value() {
+        let loaded = load_config_from_text("scrollback = -1\n", Path::new("config.toml"));
+        assert_warns(
+            &loaded,
+            &["Invalid config value `scrollback` (`-1` is out of range); ignored"],
+        );
+    }
+
+    #[test]
+    fn a_top_level_that_is_not_a_table_rejects_the_document() {
+        // TOML's top level is always a table, so the only way to fail there is a value no key
+        // owns; an array at the root is not valid TOML at all.
+        let loaded = load_config_from_text("[1, 2]\n", Path::new("config.toml"));
+        assert!(loaded.rejected);
     }
 
     #[test]

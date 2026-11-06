@@ -10,7 +10,8 @@
 //!
 //! The gate is on the file rather than the test function because every helper and import here
 //! exists only to serve it, and `-D warnings` turns each one into an error once the test is
-//! compiled out. Windows resurrection deserves its own test with a shell it can actually run.
+//! compiled out. Windows resurrection has its own test, with a shell it can actually run, in
+//! `session_resurrect_e2e_windows.rs`.
 #![cfg(unix)]
 
 mod common;

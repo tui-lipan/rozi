@@ -15,6 +15,11 @@ fn hung_ssh_is_killed_and_reaped() {
     run_case("hang");
 }
 
+#[test]
+fn hung_remote_session_list_is_killed_and_reaped() {
+    run_case("list_hang");
+}
+
 fn run_case(case: &str) {
     let root = tempfile::tempdir().unwrap();
     let ssh = root.path().join("ssh");
@@ -24,12 +29,10 @@ fn run_case(case: &str) {
 while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 shift
 shift
-case "$*" in
-  *"'sessions' 'kill'"*)
-    if [ "$ROZI_SSH_CASE" = hang ]; then
-      echo $$ > "$ROZI_SSH_PID"
-      exec sleep 120
-    fi ;;
+case "$ROZI_SSH_CASE:$*" in
+  "hang:"*"'sessions' 'kill'"* | "list_hang:"*"'sessions' 'list'"*)
+    echo $$ > "$ROZI_SSH_PID"
+    exec sleep 120 ;;
   *"--remote-serve"*)
     # More than the collector cap and a normal pipe buffer. Broken stderr must fail SSH.
     head -c 262144 /dev/zero >&2 || exit 91 ;;
@@ -75,7 +78,7 @@ fn remote_subprocess_child() {
     use rozi::config::{RemoteConfig, RemoteHostConfig};
     use rozi::session::remote::{connect_remote, kill_remote_session, parse_remote_target};
     let config = RemoteConfig {
-        connection_timeout_secs: if case == "hang" { 1 } else { 10 },
+        connection_timeout_secs: if case == "noisy" { 10 } else { 1 },
         hosts: [(
             "fixture".into(),
             RemoteHostConfig {
@@ -88,9 +91,16 @@ fn remote_subprocess_child() {
     };
     let target = parse_remote_target("fixture").unwrap();
     let session = std::env::var("ROZI_TEST_SESSION").unwrap();
-    if case == "hang" {
+    if case == "hang" || case == "list_hang" {
         let started = Instant::now();
-        let error = kill_remote_session(&target, &session, &config).unwrap_err();
+        let error = if case == "hang" {
+            kill_remote_session(&target, &session, &config).unwrap_err()
+        } else {
+            let source = rozi::session::discovery::SessionSource::Remote(target.clone());
+            rozi::session::discovery::discover_sessions_from(&source, &config)
+                .unwrap_err()
+                .to_string()
+        };
         assert!(error.contains("timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(40));
         let pid: i32 = std::fs::read_to_string(std::env::var_os("ROZI_SSH_PID").unwrap())

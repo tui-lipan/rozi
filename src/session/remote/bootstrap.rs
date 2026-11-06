@@ -21,48 +21,94 @@ use super::{
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
-/// Bound authentication and execution as well as SSH's TCP connection phase.
-/// A disabled SSH connect timeout still gets a finite wall-clock budget.
-pub(super) fn run_ssh_command(
-    command: &mut Command,
+/// Output retained from each stream of a bounded ssh or scp invocation.
+const SSH_CAPTURE_LIMIT: usize = 64 * 1024;
+
+/// Wall-clock budget for one bounded `ssh` or `scp` invocation.
+///
+/// `ConnectTimeout` bounds only the TCP connection, so a connected ssh whose remote command hangs
+/// would otherwise run forever. The budget covers connecting, authenticating, and running the
+/// command. Where ssh may prompt, it also covers the user's answer: on a client without connection
+/// multiplexing, every invocation can authenticate again, and typing a password must not count as
+/// remote latency. A disabled `ConnectTimeout` still gets a finite budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SshDeadline {
     connect_timeout_secs: u64,
-    input: Option<Box<dyn Read + Send>>,
-) -> io::Result<crate::platform::command::CommandOutput> {
-    run_ssh_command_with_timeout(command, input, ssh_command_timeout(connect_timeout_secs))
+    interactive: bool,
 }
 
-fn ssh_command_timeout(connect_timeout_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(
-        (if connect_timeout_secs == 0 {
+impl SshDeadline {
+    /// The budget for an ssh built from `config` with its own `ConnectTimeout`.
+    pub(crate) fn for_config(config: &RemoteConfig) -> Self {
+        Self::new(config, config.connection_timeout_secs)
+    }
+
+    /// The budget for an ssh built from `config` with an explicit `ConnectTimeout`.
+    fn new(config: &RemoteConfig, connect_timeout_secs: u64) -> Self {
+        Self::with_prompts(
+            connect_timeout_secs,
+            super::askpass::SshPrompts::interactive().allows_prompt(config.batch_mode),
+        )
+    }
+
+    /// `interactive` is whether this ssh may prompt at all, `batch_mode` included.
+    fn with_prompts(connect_timeout_secs: u64, interactive: bool) -> Self {
+        Self {
+            connect_timeout_secs,
+            interactive,
+        }
+    }
+
+    /// A session command, POSIX probe, or other short remote command.
+    pub(crate) fn command(self) -> std::time::Duration {
+        let connect = if self.connect_timeout_secs == 0 {
             15
         } else {
-            connect_timeout_secs
-        })
-        .saturating_add(30),
-    )
+            self.connect_timeout_secs
+        };
+        let base = std::time::Duration::from_secs(connect.saturating_add(30));
+        if self.interactive {
+            base.saturating_add(super::askpass::INTERACTIVE_AUTH_ALLOWANCE)
+        } else {
+            base
+        }
+    }
+
+    /// A remote PowerShell command. PowerShell loads the CLR and compiles the path helper before
+    /// it does any work, so cold or contended Windows hosts get more execution time.
+    fn powershell(self) -> std::time::Duration {
+        self.command()
+            .saturating_add(std::time::Duration::from_secs(90))
+    }
+
+    /// An upload, allowed 64 KiB/s on top of [`Self::command`], up to 30 minutes overall.
+    fn transfer(self, payload_bytes: u64) -> std::time::Duration {
+        self.command()
+            .saturating_add(std::time::Duration::from_secs(
+                payload_bytes.div_ceil(64 * 1024),
+            ))
+            .min(std::time::Duration::from_secs(30 * 60))
+    }
 }
 
-/// PowerShell probes load the CLR and compile the path helper before inspecting binaries.
-/// Allow cold or contended Windows hosts more execution time than a simple session command.
-fn powershell_probe_timeout(connect_timeout_secs: u64) -> std::time::Duration {
-    ssh_command_timeout(connect_timeout_secs).saturating_add(std::time::Duration::from_secs(90))
-}
-
-/// Allow uploads at 64 KiB/s in addition to authentication and command execution, up to 30 min.
-fn ssh_transfer_timeout(connect_timeout_secs: u64, payload_bytes: u64) -> std::time::Duration {
-    ssh_command_timeout(connect_timeout_secs)
-        .saturating_add(std::time::Duration::from_secs(
-            payload_bytes.div_ceil(64 * 1024),
-        ))
-        .min(std::time::Duration::from_secs(30 * 60))
-}
-
-fn run_ssh_command_with_timeout(
+/// Run one ssh or scp within `timeout`, capturing up to 64 KiB of each output stream.
+pub(crate) fn run_ssh_command(
     command: &mut Command,
     input: Option<Box<dyn Read + Send>>,
     timeout: std::time::Duration,
 ) -> io::Result<crate::platform::command::CommandOutput> {
-    let output = crate::platform::command::run_bounded_command(command, input, timeout, 64 * 1024)?;
+    run_ssh_command_capturing(command, input, timeout, SSH_CAPTURE_LIMIT)
+}
+
+/// Like [`run_ssh_command`], with an explicit per-stream capture limit.
+pub(crate) fn run_ssh_command_capturing(
+    command: &mut Command,
+    input: Option<Box<dyn Read + Send>>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> io::Result<crate::platform::command::CommandOutput> {
+    let output =
+        crate::platform::command::run_bounded_command(command, input, timeout, capture_limit)?;
     if output.timed_out {
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,
@@ -549,12 +595,13 @@ fn run_family_probe(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let deadline = SshDeadline::new(config, connect_timeout_secs);
     let timeout = if argv.first() == Some(&"powershell") {
-        powershell_probe_timeout(connect_timeout_secs)
+        deadline.powershell()
     } else {
-        ssh_command_timeout(connect_timeout_secs)
+        deadline.command()
     };
-    let output = run_ssh_command_with_timeout(&mut command, None, timeout).map_err(|err| {
+    let output = run_ssh_command(&mut command, None, timeout).map_err(|err| {
         format!(
             "failed to probe remote shell family for {}: {err}",
             resolved.host
@@ -589,8 +636,8 @@ fn run_probe_script(
         .stderr(Stdio::piped());
     let output = run_ssh_command(
         &mut command,
-        connect_timeout_secs,
         Some(Box::new(io::Cursor::new(script.as_bytes().to_vec()))),
+        SshDeadline::new(config, connect_timeout_secs).command(),
     )
     .map_err(|err| format!("probe ssh failed: {err}"))?;
     if output.status != Some(0) {
@@ -620,10 +667,10 @@ fn run_probe_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = run_ssh_command_with_timeout(
+    let output = run_ssh_command(
         &mut command,
         None,
-        powershell_probe_timeout(connect_timeout_secs),
+        SshDeadline::new(config, connect_timeout_secs).powershell(),
     )
     .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
     if output.status != Some(0) {
@@ -962,10 +1009,10 @@ printf 'installed=%s\n' "$final"
         .metadata()
         .map_err(|err| format!("cannot stat {}: {err}", local.display()))?
         .len();
-    let output = run_ssh_command_with_timeout(
+    let output = run_ssh_command(
         &mut command,
         Some(Box::new(file)),
-        ssh_transfer_timeout(config.connection_timeout_secs, payload_bytes),
+        SshDeadline::for_config(config).transfer(payload_bytes),
     )
     .map_err(|err| format!("remote install failed: {err}"))?;
     if output.status != Some(0) {
@@ -1005,10 +1052,10 @@ fn install_bytes_windows(
     let payload_bytes = std::fs::metadata(local)
         .map_err(|err| format!("cannot stat {}: {err}", local.display()))?
         .len();
-    let scp_out = run_ssh_command_with_timeout(
+    let scp_out = run_ssh_command(
         &mut scp,
         None,
-        ssh_transfer_timeout(config.connection_timeout_secs, payload_bytes),
+        SshDeadline::for_config(config).transfer(payload_bytes),
     )
     .map_err(|err| format!("failed to run scp to {}: {err}", resolved.host))?;
     if scp_out.status != Some(0) {
@@ -1082,8 +1129,14 @@ try {{
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = run_ssh_command(&mut command, config.connection_timeout_secs, None)
-        .map_err(|err| format!("remote install finalize failed: {err}"))?;
+    // Finalization stages, verifies, and moves the binary in PowerShell, which needs the same
+    // cold-start allowance as the probes.
+    let output = run_ssh_command(
+        &mut command,
+        None,
+        SshDeadline::for_config(config).powershell(),
+    )
+    .map_err(|err| format!("remote install finalize failed: {err}"))?;
     if output.status != Some(0) {
         return Err(format!(
             "remote install finalize failed: {}",
@@ -1719,13 +1772,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn powershell_probes_allow_cold_start_without_extending_session_commands() {
+    fn powershell_commands_allow_cold_start_without_extending_session_commands() {
         use std::time::Duration;
-        assert_eq!(powershell_probe_timeout(0), Duration::from_secs(135));
-        assert_eq!(powershell_probe_timeout(1), Duration::from_secs(121));
-        assert_eq!(powershell_probe_timeout(15), Duration::from_secs(135));
-        assert_eq!(ssh_command_timeout(1), Duration::from_secs(31));
-        assert_eq!(ssh_command_timeout(15), Duration::from_secs(45));
+        let unattended = |secs| SshDeadline::with_prompts(secs, false);
+        assert_eq!(unattended(0).powershell(), Duration::from_secs(135));
+        assert_eq!(unattended(1).powershell(), Duration::from_secs(121));
+        assert_eq!(unattended(15).powershell(), Duration::from_secs(135));
+        assert_eq!(unattended(1).command(), Duration::from_secs(31));
+        assert_eq!(unattended(15).command(), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn ssh_that_may_prompt_gets_the_interactive_auth_allowance() {
+        use super::super::askpass::INTERACTIVE_AUTH_ALLOWANCE;
+        use std::time::Duration;
+        let interactive = SshDeadline::with_prompts(15, true);
+        assert_eq!(
+            interactive.command(),
+            Duration::from_secs(45) + INTERACTIVE_AUTH_ALLOWANCE
+        );
+        assert_eq!(
+            interactive.powershell(),
+            Duration::from_secs(135) + INTERACTIVE_AUTH_ALLOWANCE
+        );
+        assert_eq!(
+            interactive.transfer(64 * 1024),
+            Duration::from_secs(46) + INTERACTIVE_AUTH_ALLOWANCE
+        );
+        // Explicit and unattended batch mode refuse prompts, so they keep the short budget.
+        let mut batch = RemoteConfig {
+            batch_mode: true,
+            ..RemoteConfig::default()
+        };
+        assert_eq!(
+            SshDeadline::for_config(&batch).command(),
+            Duration::from_secs(45)
+        );
+        batch = RemoteConfig::default().unattended();
+        assert_eq!(
+            SshDeadline::for_config(&batch).command(),
+            Duration::from_secs(45)
+        );
     }
 
     #[test]
@@ -1741,15 +1828,26 @@ mod tests {
             (15, u64::MAX, 1800),
             (u64::MAX, u64::MAX, 1800),
         ] {
-            assert_eq!(
-                ssh_transfer_timeout(connect_secs, payload_bytes),
-                Duration::from_secs(expected_secs),
-                "connect={connect_secs}, bytes={payload_bytes}"
-            );
+            for interactive in [false, true] {
+                let deadline = SshDeadline::with_prompts(connect_secs, interactive);
+                let expected = Duration::from_secs(expected_secs);
+                let expected = if interactive && expected_secs < 1800 {
+                    expected + super::super::askpass::INTERACTIVE_AUTH_ALLOWANCE
+                } else {
+                    expected
+                };
+                assert_eq!(
+                    deadline.transfer(payload_bytes),
+                    expected,
+                    "connect={connect_secs}, bytes={payload_bytes}, interactive={interactive}"
+                );
+            }
         }
-        // Finalization, probes, and session commands use the short budget regardless of payload.
-        assert_eq!(ssh_command_timeout(0), Duration::from_secs(45));
-        assert_eq!(ssh_command_timeout(1), Duration::from_secs(31));
+        // Probes and session commands use the short budget regardless of payload.
+        assert_eq!(
+            SshDeadline::with_prompts(0, false).command(),
+            Duration::from_secs(45)
+        );
     }
 
     #[test]

@@ -43,10 +43,18 @@ fn main() {
         requested
     };
     let started = std::time::Instant::now();
-    // Delay only the full probe, after family detection has already succeeded.
-    if std::env::var("ROZI_BOOTSTRAP_WINDOWS_CASE").as_deref() == Ok("slow_probe")
-        && remote.last().is_some_and(|arg| arg.len() > 1000)
-    {
+    // Delay only a full PowerShell script, after family detection has already succeeded: the
+    // probe before anything is uploaded, or the finalization once the upload is staged.
+    let script = remote.last().is_some_and(|arg| arg.len() > 1000);
+    let staged = std::fs::read_dir(&home).unwrap().filter_map(Result::ok).any(|entry| {
+        entry.file_name().to_string_lossy().starts_with("rozi.install.")
+    });
+    let delayed = match std::env::var("ROZI_BOOTSTRAP_WINDOWS_CASE").as_deref() {
+        Ok("slow_probe") => script && !staged,
+        Ok("slow_finalize") => script && staged,
+        _ => false,
+    };
+    if delayed {
         trace("simulating 50-second remote startup");
         std::thread::sleep(std::time::Duration::from_secs(50));
     }
@@ -102,7 +110,7 @@ fn run_case(case: &str) {
     write_transport_scripts(&bin);
 
     let final_path = managed(&data_home);
-    if case != "upload" {
+    if !matches!(case, "upload" | "slow_finalize") {
         std::fs::create_dir_all(final_path.parent().unwrap()).unwrap();
     }
     match case {
@@ -119,7 +127,7 @@ fn run_case(case: &str) {
         "failed_stage" => {
             std::fs::write(root.path().join("invalid-rozi.exe"), b"not an exe").unwrap()
         }
-        "upload" => {}
+        "upload" | "slow_finalize" => {}
         _ => panic!("unknown case"),
     }
 
@@ -160,7 +168,7 @@ fn run_case(case: &str) {
     }
     let output = child.output().unwrap();
     let trace = std::fs::read_to_string(root.path().join("transport.log")).unwrap_or_default();
-    if case == "slow_probe" {
+    if matches!(case, "slow_probe" | "slow_finalize") {
         assert!(
             trace.contains("simulating 50-second remote startup"),
             "delay was not exercised: {trace}"
@@ -191,6 +199,11 @@ fn windows_probe_allows_a_slow_remote_startup() {
 }
 
 #[test]
+fn windows_finalize_allows_a_slow_remote_startup() {
+    run_case("slow_finalize");
+}
+
+#[test]
 fn windows_refuses_a_directory_target() {
     run_case("directory");
 }
@@ -213,9 +226,13 @@ fn bootstrap_windows_child() {
     let target = RemoteTarget::Alias("fixture".into());
     let config = RemoteConfig {
         install: RemoteInstallPolicy::Always,
-        // Several cases cold-start PowerShell and its compiler concurrently on a shared runner.
-        // The slow-probe case instead exercises production's default execution allowance.
-        connection_timeout_secs: if case == "slow_probe" { 1 } else { 120 },
+        // The slow cases shrink the connection timeout so a 50-second remote startup exceeds the
+        // short command budget and fits only the PowerShell allowance. The rest use the default.
+        connection_timeout_secs: if case.starts_with("slow_") {
+            1
+        } else {
+            RemoteConfig::default().connection_timeout_secs
+        },
         ..RemoteConfig::default()
     };
     let home = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
@@ -223,7 +240,7 @@ fn bootstrap_windows_child() {
     let final_path = managed(&data_home);
 
     match case.as_str() {
-        "upload" => {
+        "upload" | "slow_finalize" => {
             let path = ensure_remote_binary(&target, &config, true).unwrap();
             assert_same_path(&path, &final_path);
             assert_eq!(

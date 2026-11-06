@@ -9,6 +9,7 @@ use crate::config::RemoteConfig;
 use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
+use super::askpass::INTERACTIVE_AUTH_ALLOWANCE;
 use super::bootstrap::{
     append_remote_rozi_command, append_ssh_destination, ssh_base_command,
     ssh_base_command_with_connect_timeout,
@@ -342,15 +343,6 @@ fn resolve_attach_binary(
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
 const DEFAULT_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Extra budget for a connection that may still have to be authenticated by hand.
-///
-/// `ssh` authenticates before the remote proxy can say anything, so a password typed into the
-/// in-app prompt is spent *inside* this read. Charging the user's typing to the remote's latency is
-/// what turns a slow password into "did not send a valid preamble". Generous, because the wait ends
-/// the moment the answer is given — and because a genuinely dead remote closes the pipe rather than
-/// going quiet, which fails immediately whatever this says.
-const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
-
 /// How long to wait for the proxy's preamble.
 fn preamble_timeout(config: &RemoteConfig) -> Duration {
     preamble_timeout_for(
@@ -455,9 +447,12 @@ fn run_remote_sessions_command(
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &remote_bin.path, args, remote_bin.family);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output =
-        super::bootstrap::run_ssh_command(&mut command, config.connection_timeout_secs, None)
-            .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
+    let output = super::bootstrap::run_ssh_command(
+        &mut command,
+        None,
+        super::bootstrap::SshDeadline::for_config(config).command(),
+    )
+    .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
     if output.status != Some(0) {
         super::binary::invalidate(target, config);
         return Err(super::sessions_command_failure(

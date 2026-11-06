@@ -792,6 +792,9 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
     }
 }
 
+/// Remote `sessions list --format json` output retained before the listing is rejected.
+const REMOTE_LIST_CAPTURE_LIMIT: usize = 8 * 1024 * 1024;
+
 fn discover_remote_sessions(
     target: &crate::session::remote::RemoteTarget,
     config: &crate::config::RemoteConfig,
@@ -811,8 +814,9 @@ fn discover_remote_sessions(
         .map_err(|error| std::io::Error::other(error.message))?;
     crate::session::remote::validate_remote_executable_token(&remote_bin.path)
         .map_err(std::io::Error::other)?;
-    // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
-    // rather than stall the picker's recurring discovery sweep on a TCP connect.
+    // `ssh_base_command` applies `ConnectTimeout`, so an unreachable configured host fails fast
+    // rather than stalling the picker's recurring discovery sweep on a TCP connect. The deadline
+    // covers a connected ssh whose remote shell or listing never finishes.
     let mut command = crate::session::remote::ssh_base_command(&resolved, config);
     crate::session::remote::append_ssh_destination(&mut command, &resolved);
     crate::session::remote::append_remote_rozi_command(
@@ -822,8 +826,13 @@ fn discover_remote_sessions(
         remote_bin.family,
     );
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command.output()?;
-    if !output.status.success() {
+    let output = crate::session::remote::run_ssh_command_capturing(
+        &mut command,
+        None,
+        crate::session::remote::SshDeadline::for_config(config).command(),
+        REMOTE_LIST_CAPTURE_LIMIT,
+    )?;
+    if output.status != Some(0) {
         crate::session::remote::binary::invalidate(target, config);
         return Err(std::io::Error::other(
             crate::session::remote::sessions_command_failure(
@@ -831,6 +840,12 @@ fn discover_remote_sessions(
                 &String::from_utf8_lossy(&output.stderr),
             ),
         ));
+    }
+    if output.stdout.len() >= REMOTE_LIST_CAPTURE_LIMIT {
+        return Err(std::io::Error::other(format!(
+            "remote sessions list from {host_label} exceeded {} MiB",
+            REMOTE_LIST_CAPTURE_LIMIT / (1024 * 1024)
+        )));
     }
     let mut rows = parse_remote_list_json(&output.stdout, Some(host_label))?;
     for row in &mut rows {

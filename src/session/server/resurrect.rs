@@ -795,6 +795,25 @@ impl SessionServer {
         }
     }
 
+    fn validate_restored_layout(
+        &mut self,
+        layout: Option<SharedLayout>,
+    ) -> (Option<SharedLayout>, bool) {
+        let Some(layout_ref) = &layout else {
+            return (None, false);
+        };
+        if layout_ref.validate().is_ok()
+            && (layout_ref.workspaces.is_empty()
+                || self.validate_shared_layout_against_panes(layout_ref))
+        {
+            return (layout, false);
+        }
+        self.snapshot_notice(
+            "Saved layout is invalid; restoring the panes without their saved placement.".into(),
+        );
+        (None, true)
+    }
+
     pub(super) fn restore(&mut self) -> io::Result<usize> {
         if self.recover_interrupted_snapshot()? {
             self.snapshot_notice(
@@ -866,30 +885,12 @@ impl SessionServer {
                     self.replay_foreground_command(saved.pane_id, generation, line);
                 }
             }
-            if let Some(layout) = &mut layout {
-                for workspace in &mut layout.workspaces {
-                    for pane in &mut workspace.panes {
-                        if pane.pane_id == saved.pane_id {
-                            pane.generation = generation;
-                        }
-                    }
-                }
-            }
+            update_restored_layout_generation(&mut layout, saved.pane_id, generation);
         }
-        if let Some(layout_ref) = &layout
-            && (layout_ref.validate().is_err()
-                || (!layout_ref.workspaces.is_empty()
-                    && !self.validate_shared_layout_against_panes(layout_ref)))
-        {
-            damaged = true;
-            self.snapshot_notice(
-                "Saved layout is invalid; restoring the panes without their saved placement."
-                    .into(),
-            );
-            layout = None;
-        }
-        if damaged {
-            preserve_damaged_snapshot(&path, &self.session_name)?;
+        let (layout, invalid_layout) = self.validate_restored_layout(layout);
+        damaged |= invalid_layout;
+        if damaged && copy_damaged_snapshot(&path, &self.session_name).is_err() {
+            self.snapshot_notice("Could not keep a separate copy of the damaged snapshot.".into());
         }
         self.layout = layout;
         self.layout_rev = u64::from(self.layout.is_some());
@@ -1294,6 +1295,21 @@ fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMe
     serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))
 }
 
+fn update_restored_layout_generation(
+    layout: &mut Option<SharedLayout>,
+    pane_id: PaneId,
+    generation: u64,
+) {
+    let Some(layout) = layout else { return };
+    for workspace in &mut layout.workspaces {
+        for pane in &mut workspace.panes {
+            if pane.pane_id == pane_id {
+                pane.generation = generation;
+            }
+        }
+    }
+}
+
 /// A complete snapshot is safe to publish and to discard older backups for.
 fn complete_snapshot(dir: &Path, session: &str) -> io::Result<SnapshotMeta> {
     let meta = read_restorable_meta(dir, session)?;
@@ -1321,6 +1337,41 @@ fn refuse_newer_snapshot(dir: &Path) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Keep the published copy usable if this server dies before its next save. Snapshot files are
+/// immutable, so hard links preserve evidence without duplicating all of the retained history.
+fn copy_damaged_snapshot(path: &Path, session: &str) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("snapshot has no parent"))?;
+    let suffix = format!(
+        "{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    copy_snapshot_files(
+        path,
+        &parent.join(staging_dir_name(session, STAGING_DAMAGED, &suffix)),
+    )?;
+    sync_directory(parent)
+}
+
+fn copy_snapshot_files(source: &Path, target: &Path) -> io::Result<()> {
+    crate::platform::fs_security::ensure_private_dir(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let destination = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_snapshot_files(&entry.path(), &destination)?;
+        } else if fs::hard_link(entry.path(), &destination).is_err() {
+            fs::copy(entry.path(), &destination)?;
+        }
+    }
+    sync_directory(target)
 }
 
 fn preserve_damaged_snapshot(path: &Path, session: &str) -> io::Result<()> {
@@ -2183,6 +2234,10 @@ mod tests {
             }
             server.panes.clear();
             assert_eq!(server.restore().unwrap(), 2);
+            assert!(
+                canonical.exists(),
+                "a crash before the next save can still restore the published snapshot"
+            );
             assert_eq!(server.layout.is_some(), !broken_layout);
             assert!(
                 !server

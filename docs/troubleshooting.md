@@ -293,8 +293,8 @@ Check each of these:
 2. **The timing.** Some settings apply only to new panes, new session servers, new SSH connections,
    or the next launch. For example, `scrollback` and `shell` affect new panes, and
    `session.resurrect` and `logging.*` need a new session server.
-3. **Rejection.** If the file is invalid, a live reload keeps the last good configuration and shows
-   an error.
+3. **Warnings and rejection.** A setting with a wrong value is skipped with a warning. If the whole
+   file is invalid TOML, a live reload keeps the last good configuration and shows an error.
 4. **Extensions.** rozi does not watch extension directories; run
    `rozi run-action reload-extensions`.
 
@@ -303,13 +303,25 @@ See [When a change takes effect](configuration.md#when-a-change-takes-effect) an
 
 ### `Config parse failed for …`
 
-The whole file was rejected because it is unreadable, is not valid TOML, or has a value of the wrong
-type. At startup rozi uses the defaults; on a reload it keeps the last good configuration. The text
-after the path names the line and problem.
+The whole file was rejected because it is unreadable or is not valid TOML. At startup rozi uses the
+defaults; on a reload it keeps the last good configuration. The text after the path names the line
+and problem. See also [Invalid configuration](configuration.md#invalid-configuration).
 
-A flat `[hooks]` table, such as `[hooks] pane-exited = "…"`, also causes this error. Write each hook
-as a `[[hooks]]` entry with `event` and `run` keys instead; see [Hooks](hooks.md). See also
-[Invalid configuration](configuration.md#invalid-configuration).
+### `Invalid config value …; ignored`
+
+rozi skipped one setting because its value has the wrong type or is out of range, and applied the
+rest of the file. The warning names the full key and what it expects:
+
+```text
+Invalid config value `animations.cursor_trail` (expected a table, found string "jump"); ignored
+```
+
+Here `cursor_trail` is a table of its own: write `[animations.cursor_trail]` with `mode = "jump"`
+inside it. See [Cursor trail](configuration.md#cursor-trail). When the key sits in a list of tables, the warning ends
+with the entry it skipped, such as `` `rules[1]` ignored `` for the second `[[rules]]` entry.
+
+A flat `[hooks]` table, such as `[hooks] pane-exited = "…"`, is skipped this way too. Write each
+hook as a `[[hooks]]` entry with `event` and `run` keys instead; see [Hooks](hooks.md).
 
 ### `Unknown config key …; ignored`
 

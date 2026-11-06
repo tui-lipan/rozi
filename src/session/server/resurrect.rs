@@ -185,6 +185,7 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
     let parent = final_path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "snapshot path has no parent")
     })?;
+    refuse_newer_snapshot(&final_path)?;
     crate::platform::fs_security::ensure_private_dir(parent)?;
     let suffix = format!(
         "{}.{}",
@@ -717,48 +718,93 @@ impl SessionServer {
         })
     }
 
-    /// Put back a snapshot a crash left half replaced, then sweep the replacement's debris.
-    ///
-    /// A writer interrupted between its two renames leaves the session only in its backup
-    /// directory. The newest valid backup is renamed into place; a staging directory is never
-    /// promoted, because it may have been abandoned partway through being written. Whatever is
-    /// left is removed, including when the published snapshot survived and only the final
-    /// cleanup was lost.
-    ///
-    /// Only the server that owns this session name may do this: it is the only writer, and it has
-    /// not started one yet. A client sees the same directories while a live server is inside that
-    /// rename window, so discovery only ever reads them.
-    pub(super) fn recover_interrupted_snapshot(&self) -> io::Result<()> {
+    /// Only the owning server repairs snapshots; client discovery remains read-only.
+    /// Backups survive until the published metadata and every replay are readable.
+    pub(super) fn recover_interrupted_snapshot(&self) -> io::Result<bool> {
         let path = self.snapshot_path()?;
+        refuse_newer_snapshot(&path)?;
         let Some(parent) = path.parent() else {
-            return Ok(());
+            return Ok(false);
         };
-        if !path.exists()
-            && let Some(backup) = newest_valid_backup(parent, &self.session_name)
-                .or_else(|| newest_unreadable_backup(parent, &self.session_name))
-        {
-            fs::rename(&backup, &path)?;
-            sync_directory(parent)?;
+        let mut recovered = false;
+        if complete_snapshot(&path, &self.session_name).is_err() {
+            if let Some(backup) = newest_valid_backup(parent, &self.session_name) {
+                if path.exists() {
+                    preserve_damaged_snapshot(&path, &self.session_name)?;
+                    recovered = true;
+                }
+                fs::rename(&backup, &path)?;
+                sync_directory(parent)?;
+            } else if !path.exists()
+                && let Some(backup) = newest_unreadable_backup(parent, &self.session_name)
+            {
+                fs::rename(&backup, &path)?;
+                sync_directory(parent)?;
+            }
         }
-        // Every backup is a snapshot that was once published. Once one is published again the
-        // rest are older and can go; until then they are the only copy, so only staging goes.
-        let kinds: &[&str] = if path.exists() {
+        let kinds: &[&str] = if complete_snapshot(&path, &self.session_name).is_ok() {
             &[STAGING_TMP, STAGING_OLD]
         } else {
             &[STAGING_TMP]
         };
         remove_staging_dirs_of_kind(parent, &self.session_name, kinds);
-        Ok(())
+        Ok(recovered)
+    }
+
+    fn snapshot_notice(&mut self, message: String) {
+        eprintln!("rozi: {message}");
+        self.session_notify(
+            message,
+            Some("Session recovery".into()),
+            crate::control::NotifyLevel::Error,
+        );
+    }
+
+    fn restore_layout(&mut self, path: &Path, layout_rev: u64) -> (Option<SharedLayout>, bool) {
+        let result = fs::read(path.join("layout.json"));
+        if matches!(&result, Err(err) if err.kind() == io::ErrorKind::NotFound && layout_rev == 0) {
+            return (None, false);
+        }
+        if let Some(layout) = result
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        {
+            return (Some(layout), false);
+        }
+        self.snapshot_notice(
+            "Saved layout could not be read; restoring the panes without their saved placement."
+                .into(),
+        );
+        (None, true)
+    }
+
+    fn restore_replay(&mut self, path: &Path, saved: &SnapshotPane) -> (Vec<u8>, bool) {
+        match fs::read(replay_file(path, saved.pane_id)) {
+            Ok(replay) => (replay, false),
+            Err(_) => {
+                self.snapshot_notice(format!(
+                    "History for pane {}{} could not be read; restoring it with empty history.",
+                    saved.pane_id,
+                    saved
+                        .title
+                        .as_ref()
+                        .map_or(String::new(), |title| format!(" (`{title}`)")),
+                ));
+                (Vec::new(), true)
+            }
+        }
     }
 
     pub(super) fn restore(&mut self) -> io::Result<usize> {
-        self.recover_interrupted_snapshot()?;
+        if self.recover_interrupted_snapshot()? {
+            self.snapshot_notice(
+                "Restored the session from a backup; kept the damaged snapshot.".into(),
+            );
+        }
         let path = self.snapshot_path()?;
         let meta = read_restorable_meta(&path, &self.session_name)?;
         self.origin = meta.effective_origin();
-        let mut layout: Option<SharedLayout> = fs::read(path.join("layout.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let (mut layout, mut damaged) = self.restore_layout(&path, meta.layout_rev);
         let mut restored = 0;
         let mut resumed = std::collections::HashSet::new();
         // Restore has no client to inject integration into the shell's argv and environment.
@@ -773,8 +819,8 @@ impl SessionServer {
         for saved in meta.panes {
             let generation = self.next_generation;
             self.next_generation += 1;
-            let replay = fs::read(path.join("panes").join(format!("{}.replay", saved.pane_id)))
-                .unwrap_or_default();
+            let (replay, missing) = self.restore_replay(&path, &saved);
+            damaged |= missing;
             let (agent_resume, typed) = match self.restore_action(&saved, &mut resumed) {
                 RestoreAction::ResumeAgent(resume) => (Some(resume), None),
                 RestoreAction::Type(line) => (None, Some(line)),
@@ -835,7 +881,15 @@ impl SessionServer {
                 || (!layout_ref.workspaces.is_empty()
                     && !self.validate_shared_layout_against_panes(layout_ref)))
         {
+            damaged = true;
+            self.snapshot_notice(
+                "Saved layout is invalid; restoring the panes without their saved placement."
+                    .into(),
+            );
             layout = None;
+        }
+        if damaged {
+            preserve_damaged_snapshot(&path, &self.session_name)?;
         }
         self.layout = layout;
         self.layout_rev = u64::from(self.layout.is_some());
@@ -1036,6 +1090,7 @@ impl SessionServer {
 pub(super) const STAGING_TMP: &str = "tmp";
 /// The published snapshot a write is replacing, kept until the replacement is in place.
 pub(super) const STAGING_OLD: &str = "old";
+const STAGING_DAMAGED: &str = "damaged";
 
 /// `.{session}.{kind}-{suffix}`: a staging or backup directory next to the published snapshot.
 pub(super) fn staging_dir_name(session_name: &str, kind: &str, suffix: &str) -> String {
@@ -1049,7 +1104,7 @@ pub(super) fn staging_dir_name(session_name: &str, kind: &str, suffix: &str) -> 
 fn parse_staging_dir_name(name: &str) -> Option<(&str, &str, &str)> {
     let (session, rest) = name.strip_prefix('.')?.split_once('.')?;
     let (kind, suffix) = rest.split_once('-')?;
-    (!session.is_empty() && matches!(kind, STAGING_TMP | STAGING_OLD))
+    (!session.is_empty() && matches!(kind, STAGING_TMP | STAGING_OLD | STAGING_DAMAGED))
         .then_some((session, kind, suffix))
 }
 
@@ -1078,8 +1133,7 @@ fn valid_backups(parent: &Path) -> Vec<(String, Backup)> {
             if kind != STAGING_OLD {
                 return None;
             }
-            let meta: SnapshotMeta =
-                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
+            let meta = complete_snapshot(&entry.path(), session).ok()?;
             let written_nanos = suffix
                 .split_once('.')
                 .and_then(|(_, nanos)| nanos.parse().ok())
@@ -1138,7 +1192,11 @@ fn newest_unreadable_backup(parent: &Path, session_name: &str) -> Option<PathBuf
 /// Best-effort sweep of abandoned staging/backup directories for one session. A leftover that
 /// resists removal is not worth failing a delete over: it is already invisible to discovery.
 fn remove_staging_dirs(parent: &Path, session_name: &str) {
-    remove_staging_dirs_of_kind(parent, session_name, &[STAGING_TMP, STAGING_OLD]);
+    remove_staging_dirs_of_kind(
+        parent,
+        session_name,
+        &[STAGING_TMP, STAGING_OLD, STAGING_DAMAGED],
+    );
 }
 
 fn remove_staging_dirs_of_kind(parent: &Path, session_name: &str, kinds: &[&str]) {
@@ -1236,6 +1294,54 @@ fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMe
     serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))
 }
 
+/// A complete snapshot is safe to publish and to discard older backups for.
+fn complete_snapshot(dir: &Path, session: &str) -> io::Result<SnapshotMeta> {
+    let meta = read_restorable_meta(dir, session)?;
+    for pane in &meta.panes {
+        let file = fs::File::open(replay_file(dir, pane.pane_id))?;
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                Unrestorable::Damaged,
+            ));
+        }
+    }
+    Ok(meta)
+}
+
+fn refuse_newer_snapshot(dir: &Path) -> io::Result<()> {
+    if let Some(header) = fs::read(dir.join("meta.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SnapshotHeader>(&bytes).ok())
+        && header.version > SNAPSHOT_VERSION
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            Unrestorable::Format(header.version),
+        ));
+    }
+    Ok(())
+}
+
+fn preserve_damaged_snapshot(path: &Path, session: &str) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("snapshot has no parent"))?;
+    let suffix = format!(
+        "{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    fs::rename(
+        path,
+        parent.join(staging_dir_name(session, STAGING_DAMAGED, &suffix)),
+    )?;
+    sync_directory(parent)
+}
+
 /// The part of `meta.json` every snapshot format shares.
 #[derive(Deserialize)]
 struct SnapshotHeader {
@@ -1266,9 +1372,11 @@ pub(crate) fn unrestorable_snapshot(name: &str) -> Option<Unrestorable> {
         }
         newest_unreadable_backup(parent, name)?
     };
-    read_restorable_meta(&dir, name)
-        .err()
-        .and_then(|err| Unrestorable::of(&err).cloned())
+    let err = read_restorable_meta(&dir, name).err()?;
+    if refuse_newer_snapshot(&dir).is_ok() && newest_valid_backup(dir.parent()?, name).is_some() {
+        return None;
+    }
+    Unrestorable::of(&err).cloned()
 }
 
 /// What to do about session `name`, whose snapshot this build will not restore for `reason`.
@@ -1454,7 +1562,17 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
 /// build cannot read is summarized from what every format shares, as unreadable; a directory
 /// without `meta.json` is no snapshot.
 fn snapshot_summary(dir: &Path, session: String) -> Option<SnapshotSummary> {
-    match read_restorable_meta(dir, &session) {
+    let meta = read_restorable_meta(dir, &session).or_else(|err| {
+        if refuse_newer_snapshot(dir).is_ok()
+            && let Some(backup) = dir
+                .parent()
+                .and_then(|parent| newest_valid_backup(parent, &session))
+        {
+            return read_restorable_meta(&backup, &session);
+        }
+        Err(err)
+    });
+    match meta {
         Ok(meta) => Some(SnapshotSummary {
             session,
             saved_at: meta.saved_at,
@@ -1881,6 +1999,264 @@ mod tests {
         );
         assert!(!abandoned.exists(), "staging still goes");
         let _ = fs::remove_dir_all(root);
+    }
+
+    fn integrity_server(root: &Path) -> SessionServer {
+        SessionServer::new_named_with_settings(
+            "integrity",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.to_path_buf()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        )
+    }
+
+    fn snapshot_tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut tree = std::collections::BTreeMap::new();
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                tree.insert(path.clone(), Vec::new());
+                tree.extend(snapshot_tree(&path));
+            } else {
+                tree.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+        tree
+    }
+
+    #[test]
+    fn newer_canonical_is_untouched_by_restore_and_later_save() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("snapshots");
+        crate::platform::fs_security::ensure_private_dir(&root).unwrap();
+        let mut server = integrity_server(root.as_path());
+        write_meta(
+            &root.as_path().join("integrity"),
+            "integrity",
+            SNAPSHOT_VERSION + 1,
+            8,
+        );
+        write_meta(
+            &root.as_path().join(".integrity.old-1.2"),
+            "integrity",
+            SNAPSHOT_VERSION,
+            7,
+        );
+        fs::create_dir(root.as_path().join(".integrity.tmp-1.3")).unwrap();
+        let before = snapshot_tree(root.as_path());
+        let err = server.restore().unwrap_err();
+        assert_eq!(
+            Unrestorable::of(&err),
+            Some(&Unrestorable::Format(SNAPSHOT_VERSION + 1))
+        );
+        assert!(
+            restore_refusal("integrity", &err)
+                .to_string()
+                .contains("format")
+        );
+        server.mark_dirty();
+        server.maybe_snapshot().unwrap();
+        assert!(server.wait_for_snapshots().is_err());
+        assert_eq!(snapshot_tree(root.as_path()), before);
+    }
+
+    #[test]
+    fn corrupt_canonical_recovers_newest_complete_backup_and_keeps_damage() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("snapshots");
+        crate::platform::fs_security::ensure_private_dir(&root).unwrap();
+        let mut server = integrity_server(root.as_path());
+        let canonical = root.as_path().join("integrity");
+        fs::create_dir(&canonical).unwrap();
+        fs::write(canonical.join("meta.json"), b"corrupt").unwrap();
+        write_meta(
+            &root.as_path().join(".integrity.old-1.1"),
+            "integrity",
+            SNAPSHOT_VERSION,
+            4,
+        );
+        write_meta(
+            &root.as_path().join(".integrity.old-1.2"),
+            "integrity",
+            SNAPSHOT_VERSION,
+            7,
+        );
+        // A newer backup missing a replay must not displace the complete one.
+        let mut job = server.capture_snapshot(Instant::now()).unwrap();
+        job.meta.saved_at = 9;
+        job.meta.panes.push(SnapshotPane {
+            pane_id: 1,
+            generation: 1,
+            scrollback: None,
+            launch: None,
+            foreground: None,
+            agent_resume: None,
+            cwd: None,
+            keep_open: false,
+            title: None,
+            palette: test_pane().palette,
+            cols: 40,
+            rows: 5,
+        });
+        let incomplete = root.as_path().join(".integrity.old-1.3");
+        fs::create_dir(&incomplete).unwrap();
+        fs::write(
+            incomplete.join("meta.json"),
+            serde_json::to_vec(&job.meta).unwrap(),
+        )
+        .unwrap();
+        let summary = snapshot_summary(&canonical, "integrity".into()).unwrap();
+        assert!(summary.readable);
+        assert_eq!(summary.saved_at, 7);
+        assert_eq!(
+            fs::read(canonical.join("meta.json")).unwrap(),
+            b"corrupt",
+            "discovery is read-only"
+        );
+        assert_eq!(server.restore().unwrap(), 0);
+        assert_eq!(
+            read_restorable_meta(&canonical, "integrity")
+                .unwrap()
+                .saved_at,
+            7
+        );
+        assert!(
+            server
+                .notifications
+                .back()
+                .unwrap()
+                .message
+                .contains("backup")
+        );
+        let damaged = fs::read_dir(root.as_path())
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".integrity.damaged-")
+            })
+            .unwrap()
+            .path();
+        assert_eq!(fs::read(damaged.join("meta.json")).unwrap(), b"corrupt");
+        server.recover_interrupted_snapshot().unwrap();
+        assert!(damaged.exists());
+        server.delete_snapshot().unwrap();
+        assert!(fs::read_dir(root.as_path()).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn damaged_history_and_layout_restore_remaining_content_with_notices() {
+        for (broken_layout, unreadable_replay) in [(false, false), (true, false), (false, true)] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("snapshots");
+            crate::platform::fs_security::ensure_private_dir(&root).unwrap();
+            let mut server = integrity_server(root.as_path());
+            server.settings.shell = vec!["/bin/sh".into()];
+            for id in [1, 2] {
+                let mut pane = test_pane();
+                pane.title = Some(format!("editor-{id}"));
+                pane.screen_mut()
+                    .process_bytes(format!("history-{id}").as_bytes());
+                server.panes.insert(id, pane);
+            }
+            server.layout = Some(super::super::tests::shared_layout_for_panes(&[
+                (1, 1),
+                (2, 1),
+            ]));
+            server.layout_rev = 1;
+            server.mark_dirty();
+            server.maybe_snapshot().unwrap();
+            server.wait_for_snapshots().unwrap();
+            let canonical = root.as_path().join("integrity");
+            fs::remove_file(replay_file(&canonical, 1)).unwrap();
+            if unreadable_replay {
+                fs::create_dir(replay_file(&canonical, 1)).unwrap();
+            }
+            if broken_layout {
+                fs::write(canonical.join("layout.json"), b"broken").unwrap();
+            }
+            server.panes.clear();
+            assert_eq!(server.restore().unwrap(), 2);
+            assert_eq!(server.layout.is_some(), !broken_layout);
+            assert!(
+                !server
+                    .panes
+                    .get_mut(&1)
+                    .unwrap()
+                    .screen_without_change()
+                    .render_snapshot()
+                    .text
+                    .contains("history-1")
+            );
+            assert!(
+                server
+                    .panes
+                    .get_mut(&2)
+                    .unwrap()
+                    .screen_without_change()
+                    .render_snapshot()
+                    .text
+                    .contains("history-2")
+            );
+            assert!(
+                server
+                    .notifications
+                    .iter()
+                    .any(|notice| notice.message.contains("editor-1")
+                        && notice.message.contains("empty history"))
+            );
+            assert_eq!(
+                server.notifications.len(),
+                if broken_layout { 2 } else { 1 }
+            );
+            let (client, _stream) = super::super::tests::add_client(&mut server);
+            server.handle_message(
+                client,
+                protocol::ClientMessage::Attach {
+                    capabilities: None,
+                    session: "integrity".into(),
+                    protocol_version: PROTOCOL_VERSION,
+                    min_protocol_version: PROTOCOL_VERSION,
+                    label: "restore-test".into(),
+                    read_only: false,
+                    shares_filesystem: true,
+                    expected_server_nonce: None,
+                },
+            );
+            let messages =
+                super::super::tests::decode_outbox_controls(server.client(client).unwrap());
+            assert!(messages.iter().any(|message| matches!(message,
+                ServerMessage::SessionNotifications { notifications, .. }
+                    if notifications.iter().any(|notice| notice.message.contains("editor-1"))
+            )));
+            let damaged = fs::read_dir(root.as_path())
+                .unwrap()
+                .flatten()
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".integrity.damaged-")
+                })
+                .unwrap()
+                .path();
+            assert!(replay_file(&damaged, 2).exists());
+            server.mark_dirty();
+            server.snapshot_before_shutdown().unwrap();
+            server.recover_interrupted_snapshot().unwrap();
+            assert!(
+                damaged.exists(),
+                "periodic writes and startup sweeps keep evidence"
+            );
+            server.delete_snapshot().unwrap();
+            assert!(fs::read_dir(root.as_path()).unwrap().next().is_none());
+        }
     }
 
     #[test]

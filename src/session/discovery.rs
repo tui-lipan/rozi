@@ -431,7 +431,8 @@ pub fn session_with_instance(
         .into_iter()
         .filter_map(|handle| handle.join().ok().flatten())
     {
-        if answer.refusal.as_deref() == Some("protocol-mismatch") {
+        if answer.refusal.as_deref() == Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE)
+        {
             other_versions.push(name);
             continue;
         }
@@ -496,7 +497,9 @@ impl UnverifiedSession {
     /// Why a server that answered the status query still gave no origin.
     fn from_answer(name: String, answer: &QueryAnswer) -> Self {
         let reason = match answer.refusal.as_deref() {
-            Some("protocol-mismatch") => "runs a different rozi version".to_string(),
+            Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE) => {
+                "runs a different rozi version".to_string()
+            }
             Some(code) => format!("refused the query ({code})"),
             None => "answered without its status".to_string(),
         };
@@ -1129,7 +1132,7 @@ mod tests {
                 crate::session::protocol::write_frame(
                     &mut stream,
                     &ServerMessage::Error {
-                        code: "protocol-mismatch".to_string(),
+                        code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: "speaks another version".to_string(),
                     },
                 )

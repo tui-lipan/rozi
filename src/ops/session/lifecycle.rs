@@ -1090,13 +1090,19 @@ fn stop_discovered_session_for_restart(
     }
     // The row may be out of date. With no server to replace there is nothing to restart, and
     // attaching would restore the session's snapshot rather than give it fresh panes.
-    if !crate::session::server::stop_named_session_for_restart(&entry.name)? {
-        return Err(std::io::Error::new(
+    match crate::session::server::stop_named_session_for_restart(&entry.name)? {
+        None => Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Session `{}` is not running", entry.name),
-        ));
+        )),
+        // The attach that follows starts the session from whatever snapshot is left. A server
+        // stopped by its process still left one, which a restart with fresh panes must not reopen.
+        Some(crate::session::server::StoppedForRestart::Stopped) => {
+            crate::session::server::discard_snapshot_for_restart(&entry.name)
+        }
+        // Restored on purpose: the work in an incompatible server survives only in its snapshot.
+        Some(crate::session::server::StoppedForRestart::Incompatible) => Ok(()),
     }
-    Ok(())
 }
 
 pub(crate) fn shutdown_session(name: &str) -> std::io::Result<()> {

@@ -17,6 +17,12 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
 /// process started under the same name is never claimed, on any platform. Every failure after the
 /// spawn stops the spawned server, so a reported failure never leaves a session behind.
 pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result<()> {
+    start_detached_session(name, resurrect, true)
+}
+
+/// Start a detached server for `name`. `fresh` discards any snapshot left under the name;
+/// otherwise the server restores it, as a session reopened from the picker does.
+fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Result<()> {
     if !crate::session::discovery::valid_session_name(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -38,7 +44,7 @@ pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result
         &exe,
         name,
         crate::platform::server_lifecycle::ServerStart {
-            fresh: true,
+            fresh,
             startup_nonce: Some(&nonce),
             no_resurrect: !resurrect,
         },
@@ -86,6 +92,9 @@ pub(crate) fn create_detached_session(name: &str, resurrect: bool) -> io::Result
 /// Stop a running named session and start it again with fresh panes, keeping its deployments, and
 /// return once the new server answers. A session that is not running is refused, because
 /// `sessions new` is what starts one.
+///
+/// A server from an incompatible build is the exception: it saves a final snapshot as it stops,
+/// and the new server restores the session from it rather than starting it empty.
 pub(crate) fn restart_named_session(name: &str, resurrect: bool) -> io::Result<()> {
     if !crate::session::discovery::valid_session_name(name) {
         return Err(io::Error::new(
@@ -99,15 +108,16 @@ pub(crate) fn restart_named_session(name: &str, resurrect: bool) -> io::Result<(
             "rozi was updated on disk; run the new binary to restart sessions",
         ));
     }
-    if !super::stop_named_session_for_restart(name)? {
+    let Some(stopped) = super::stop_named_session_for_restart(name)? else {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!(
                 "Session `{name}` is not running. Start it with: rozi sessions new {name} --detach"
             ),
         ));
-    }
-    create_detached_session(name, resurrect)
+    };
+    let restore = resurrect && stopped == super::StoppedForRestart::Incompatible;
+    start_detached_session(name, resurrect, !restore)
 }
 
 fn already_running(name: &str) -> io::Error {

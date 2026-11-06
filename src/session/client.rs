@@ -1397,7 +1397,7 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
     if let ServerMessage::Error { code, message } = attached {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
-        let detail = if code == "protocol-mismatch" {
+        let detail = if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE {
             format!("runs an incompatible rozi version ({message}); kill it and start a new one")
         } else {
             message.clone()
@@ -1891,7 +1891,7 @@ mod tests {
     #[test]
     fn attach_error_is_returned_without_starting_client_threads() {
         let error = validate_attached(&ServerMessage::Error {
-            code: "protocol-mismatch".to_string(),
+            code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
             message: "server uses protocol 2".to_string(),
         })
         .expect_err("attach must fail");

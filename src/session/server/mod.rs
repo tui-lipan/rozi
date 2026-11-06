@@ -52,7 +52,9 @@ pub use pane_log::PaneLog;
 #[cfg(test)]
 pub(crate) use resurrect::write_empty_snapshot_for_test;
 pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
-pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
+pub(crate) use resurrect::{
+    discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
+};
 mod runtime;
 mod shutdown;
 mod subscriptions;
@@ -61,7 +63,8 @@ mod worktree;
 pub(crate) use create::{create_detached_session, restart_named_session};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
 pub(crate) use shutdown::{
-    shutdown_named_session, shutdown_named_session_if_present, stop_named_session_for_restart,
+    StoppedForRestart, shutdown_named_session, shutdown_named_session_if_present,
+    stop_named_session_for_restart,
 };
 use worktree::{WorktreeJob, WorktreeWorker};
 

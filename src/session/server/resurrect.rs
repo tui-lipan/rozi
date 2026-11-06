@@ -1144,6 +1144,19 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
     deployments.and(snapshot)
 }
 
+/// Discard `name`'s snapshot, and only that, so the server started next under the name begins with
+/// fresh panes and keeps its deployments. Only for a session whose server has already stopped.
+pub(crate) fn discard_snapshot_for_restart(name: &str) -> io::Result<()> {
+    SessionServer::new_named_with_settings(
+        name,
+        ServerSettings {
+            resurrect: true,
+            ..ServerSettings::default()
+        },
+    )
+    .delete_snapshot()
+}
+
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()

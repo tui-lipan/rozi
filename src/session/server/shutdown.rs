@@ -22,7 +22,8 @@ enum Ending {
     /// Delete the session: its snapshot and deployments go too.
     Delete,
     /// Something starts under this name next. Its deployments stay, and a server stopped any way
-    /// but the protocol leaves a snapshot for that start to discard.
+    /// but the protocol leaves a snapshot for that start to discard, or to restore when the server
+    /// was [incompatible](StoppedForRestart::Incompatible).
     Restart,
 }
 
@@ -81,34 +82,64 @@ pub(crate) fn shutdown_named_session_if_present(name: &str) -> io::Result<bool> 
     Ok(true)
 }
 
+/// How a server stopped for a restart went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoppedForRestart {
+    /// It stopped through the protocol, or was already gone.
+    Stopped,
+    /// It refused this build's protocol version, so it was stopped by its process instead.
+    ///
+    /// That stop is a stop signal on Unix, which a server of any version answers by saving a final
+    /// snapshot it keeps. On Windows it is a forced termination, and the newest periodic snapshot
+    /// is what remains. Either way the snapshot belongs to the session's own server, so a restart
+    /// can restore it rather than start the session empty.
+    Incompatible,
+}
+
 /// Stop a named session's server so it can start again under the same name, keeping its
-/// deployments. Reports whether a server was there to stop.
+/// deployments. Reports whether a server was there to stop, and how it stopped.
 ///
 /// A server this build cannot talk to, such as one left running across an update, is stopped by
 /// its process instead, the same fallback a kill uses.
-pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<bool> {
+pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<Option<StoppedForRestart>> {
     let endpoint = super::session_endpoint(name)?;
     if !path_entry_exists(endpoint.path())? {
-        return Ok(false);
+        return Ok(None);
     }
-    shutdown_existing_named_session(&endpoint, name, Ending::Restart)?;
-    Ok(true)
+    shutdown_existing_named_session(&endpoint, name, Ending::Restart).map(Some)
+}
+
+/// Whether a refused shutdown handshake was a protocol-version refusal.
+#[derive(Debug)]
+struct GracefulFailure {
+    error: io::Error,
+    incompatible: bool,
+}
+
+impl From<io::Error> for GracefulFailure {
+    fn from(error: io::Error) -> Self {
+        Self {
+            error,
+            incompatible: false,
+        }
+    }
 }
 
 fn shutdown_existing_named_session(
     endpoint: &IpcEndpoint,
     name: &str,
     ending: Ending,
-) -> io::Result<()> {
+) -> io::Result<StoppedForRestart> {
     let mut stream = match endpoint.connect() {
         Ok(stream) => stream,
         Err(connect_error) => {
-            return handle_connect_failure(endpoint, name, connect_error, ending);
+            return handle_connect_failure(endpoint, name, connect_error, ending)
+                .map(|()| StoppedForRestart::Stopped);
         }
     };
 
     let server_pid = stream.peer_pid();
-    let graceful = (|| {
+    let graceful = (|| -> Result<(), GracefulFailure> {
         stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
         stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
         graceful_shutdown(&mut stream, name, ending)
@@ -126,20 +157,28 @@ fn shutdown_existing_named_session(
             let retirement = wait_for_retirement(endpoint, server_pid)?;
             drop(stream);
             return match retirement {
-                Retirement::Retired => snapshot_error.map_or(Ok(()), Err),
+                Retirement::Retired => snapshot_error.map_or(Ok(StoppedForRestart::Stopped), Err),
                 Retirement::Recreated => Err(recreated_server_error(name)),
                 Retirement::TimedOut => Err(retirement_timeout_error(name)),
             };
         }
-        Err(error) => error,
+        Err(failure) => failure,
     };
     drop(stream);
+    let stopped = if graceful_error.incompatible {
+        StoppedForRestart::Incompatible
+    } else {
+        StoppedForRestart::Stopped
+    };
+    let graceful_error = graceful_error.error;
 
     let Some(server_pid) = server_pid else {
         // Without a local peer pid there is no safe forced-termination path. Do not unlink a live
         // endpoint or pretend an incompatible live server was stopped.
         return match probe_endpoint(endpoint, None)? {
-            EndpointProbe::Retired => cleanup_stale_session(endpoint, name, ending),
+            EndpointProbe::Retired => {
+                cleanup_stale_session(endpoint, name, ending).map(|()| StoppedForRestart::Stopped)
+            }
             EndpointProbe::Live | EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
                 Err(io::Error::other(format!(
                     "could not shut down session {name:?}: {graceful_error}; peer pid unavailable"
@@ -154,7 +193,10 @@ fn shutdown_existing_named_session(
     // an endpoint that cannot report its peer) must be left completely alone.
     match probe_endpoint(endpoint, Some(server_pid))? {
         EndpointProbe::Live => crate::platform::server_lifecycle::terminate_server(server_pid),
-        EndpointProbe::Retired => return cleanup_stale_session(endpoint, name, ending),
+        EndpointProbe::Retired => {
+            return cleanup_stale_session(endpoint, name, ending)
+                .map(|()| StoppedForRestart::Stopped);
+        }
         EndpointProbe::Recreated => return Err(recreated_server_error(name)),
         EndpointProbe::LivePeerUnknown | EndpointProbe::Busy => {
             return Err(io::Error::other(format!(
@@ -163,7 +205,7 @@ fn shutdown_existing_named_session(
         }
     }
     match wait_for_retirement(endpoint, Some(server_pid))? {
-        Retirement::Retired => cleanup_stale_session(endpoint, name, ending),
+        Retirement::Retired => cleanup_stale_session(endpoint, name, ending).map(|()| stopped),
         Retirement::Recreated => Err(recreated_server_error(name)),
         Retirement::TimedOut => Err(io::Error::new(
             io::ErrorKind::TimedOut,
@@ -280,7 +322,11 @@ fn retirement_timeout_error(name: &str) -> io::Error {
     )
 }
 
-fn graceful_shutdown(stream: &mut IpcConnection, name: &str, ending: Ending) -> io::Result<()> {
+fn graceful_shutdown(
+    stream: &mut IpcConnection,
+    name: &str,
+    ending: Ending,
+) -> Result<(), GracefulFailure> {
     protocol::write_frame(
         stream,
         &protocol::attach_message(
@@ -293,11 +339,61 @@ fn graceful_shutdown(stream: &mut IpcConnection, name: &str, ending: Ending) -> 
     match protocol::read_frame::<_, ServerMessage>(stream)? {
         ServerMessage::Attached { .. } => {
             protocol::write_frame(stream, &ending.message())?;
-            stream.flush()
+            Ok(stream.flush()?)
         }
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("server refused shutdown handshake: {other:?}"),
-        )),
+        other => Err(GracefulFailure {
+            incompatible: matches!(
+                &other,
+                ServerMessage::Error { code, .. } if code == protocol::PROTOCOL_MISMATCH_ERROR_CODE
+            ),
+            error: io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("server refused shutdown handshake: {other:?}"),
+            ),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::ipc::PipedConnection;
+
+    /// Run the shutdown handshake against a scripted server that answers the attach with `reply`.
+    fn handshake_against(reply: ServerMessage) -> Result<(), GracefulFailure> {
+        let (server_reader, client_writer) = std::io::pipe().expect("client->server pipe");
+        let (client_reader, server_writer) = std::io::pipe().expect("server->client pipe");
+        let server = std::thread::spawn(move || {
+            let mut conn = PipedConnection::from_reader_writer(server_writer, server_reader);
+            let attach: ClientMessage = protocol::read_frame(&mut conn).expect("read attach");
+            assert!(matches!(attach, ClientMessage::Attach { .. }), "{attach:?}");
+            protocol::write_frame(&mut conn, &reply).expect("reply");
+        });
+        let mut client = IpcConnection::from_piped(PipedConnection::from_reader_writer(
+            client_writer,
+            client_reader,
+        ));
+        let result = graceful_shutdown(&mut client, "skew", Ending::Restart);
+        server.join().expect("scripted server");
+        result
+    }
+
+    /// A restart restores the session only when its server refused this build's protocol, the one
+    /// case where the fallback stop leaves a snapshot that is the session's work rather than debris.
+    #[test]
+    fn only_a_protocol_refusal_marks_a_server_incompatible() {
+        let refusal = handshake_against(ServerMessage::Error {
+            code: protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
+            message: "server supports 41-41".to_string(),
+        })
+        .expect_err("a refused handshake cannot shut the server down");
+        assert!(refusal.incompatible, "{:?}", refusal.error);
+
+        let other = handshake_against(ServerMessage::Error {
+            code: "auth".to_string(),
+            message: "refused".to_string(),
+        })
+        .expect_err("a refused handshake cannot shut the server down");
+        assert!(!other.incompatible, "{:?}", other.error);
     }
 }

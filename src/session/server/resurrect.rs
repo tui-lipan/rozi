@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const SNAPSHOT_VERSION: u32 = 3;
 
 /// How long shutdown waits for an in-flight durable write before abandoning it.
-const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+pub(super) const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// Longest opaque native agent session reference a snapshot is allowed to hand back to a process.
 ///
@@ -735,11 +735,19 @@ impl SessionServer {
         };
         if !path.exists()
             && let Some(backup) = newest_valid_backup(parent, &self.session_name)
+                .or_else(|| newest_unreadable_backup(parent, &self.session_name))
         {
             fs::rename(&backup, &path)?;
             sync_directory(parent)?;
         }
-        remove_staging_dirs(parent, &self.session_name);
+        // Every backup is a snapshot that was once published. Once one is published again the
+        // rest are older and can go; until then they are the only copy, so only staging goes.
+        let kinds: &[&str] = if path.exists() {
+            &[STAGING_TMP, STAGING_OLD]
+        } else {
+            &[STAGING_TMP]
+        };
+        remove_staging_dirs_of_kind(parent, &self.session_name, kinds);
         Ok(())
     }
 
@@ -1111,9 +1119,33 @@ fn newest_valid_backup(parent: &Path, session_name: &str) -> Option<PathBuf> {
         .map(|backup| backup.path)
 }
 
+/// The newest backup of `session_name` this build cannot read, such as one a build with another
+/// snapshot version moved aside. Publishing it again keeps the session for a build that can read
+/// it; `restore` then refuses it rather than this build losing it.
+fn newest_unreadable_backup(parent: &Path, session_name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(parent).ok()?;
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, suffix) = parse_staging_dir_name(&dir_name)?;
+            let written_nanos: u128 = suffix.split_once('.')?.1.parse().ok()?;
+            (session == session_name
+                && kind == STAGING_OLD
+                && entry.path().join("meta.json").is_file())
+            .then(|| (written_nanos, entry.path()))
+        })
+        .max_by_key(|(written_nanos, _)| *written_nanos)
+        .map(|(_, path)| path)
+}
+
 /// Best-effort sweep of abandoned staging/backup directories for one session. A leftover that
 /// resists removal is not worth failing a delete over: it is already invisible to discovery.
 fn remove_staging_dirs(parent: &Path, session_name: &str) {
+    remove_staging_dirs_of_kind(parent, session_name, &[STAGING_TMP, STAGING_OLD]);
+}
+
+fn remove_staging_dirs_of_kind(parent: &Path, session_name: &str, kinds: &[&str]) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
@@ -1122,7 +1154,7 @@ fn remove_staging_dirs(parent: &Path, session_name: &str) {
         if name
             .to_str()
             .and_then(parse_staging_dir_name)
-            .is_some_and(|(session, _, _)| session == session_name)
+            .is_some_and(|(session, kind, _)| session == session_name && kinds.contains(&kind))
         {
             let _ = fs::remove_dir_all(entry.path());
         }
@@ -1546,10 +1578,10 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    /// A backup in a format this build cannot read is not moved into place, so the session is not
-    /// handed a snapshot `restore` would then refuse.
+    /// A backup in a format this build cannot read is published again rather than swept, so a
+    /// build that reads it still finds the session; this build only refuses to restore it.
     #[test]
-    fn recovery_ignores_a_backup_of_another_snapshot_version() {
+    fn recovery_keeps_a_backup_of_another_snapshot_version() {
         let root = std::env::temp_dir().join(format!(
             "rozi-snapshot-version-{}-{:?}",
             std::process::id(),
@@ -1570,8 +1602,17 @@ mod tests {
             SNAPSHOT_VERSION + 1,
             9,
         );
+        let abandoned = root.join(staging_dir_name("versioned", STAGING_TMP, "1.3"));
+        fs::create_dir_all(&abandoned).unwrap();
         assert!(server.restore().is_err());
-        assert!(!root.join("versioned").exists());
+        let meta: SnapshotMeta =
+            serde_json::from_slice(&fs::read(root.join("versioned/meta.json")).unwrap()).unwrap();
+        assert_eq!(
+            meta.version,
+            SNAPSHOT_VERSION + 1,
+            "the backup is published as it was"
+        );
+        assert!(!abandoned.exists(), "staging still goes");
         let _ = fs::remove_dir_all(root);
     }
 

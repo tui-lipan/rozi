@@ -90,8 +90,9 @@ pub(crate) enum StoppedForRestart {
     /// It refused this build's protocol version, so it was stopped by its process instead.
     ///
     /// That stop is a stop signal on Unix, which a server of any version answers by saving a final
-    /// snapshot it keeps. On Windows it is a forced termination, and the newest periodic snapshot
-    /// is what remains. Either way the snapshot belongs to the session's own server, so a restart
+    /// snapshot it keeps; it is killed only once its own snapshot grace has passed, leaving the
+    /// newest periodic snapshot. On Windows it is a forced termination, and the newest periodic
+    /// snapshot is what remains. Either way the snapshot belongs to the session's own server, so a restart
     /// can restore it rather than start the session empty.
     Incompatible,
 }
@@ -192,6 +193,15 @@ fn shutdown_existing_named_session(
     // endpoint immediately before termination and require the same peer pid; a different peer (or
     // an endpoint that cannot report its peer) must be left completely alone.
     match probe_endpoint(endpoint, Some(server_pid))? {
+        // An incompatible server is still healthy and answers the stop signal by saving a final
+        // snapshot, which the restart then restores. Give that save the time its own shutdown
+        // allows it, plus a margin to exit, before killing it.
+        EndpointProbe::Live if stopped == StoppedForRestart::Incompatible => {
+            crate::platform::server_lifecycle::terminate_server_after(
+                server_pid,
+                super::resurrect::SNAPSHOT_SHUTDOWN_GRACE + Duration::from_secs(1),
+            );
+        }
         EndpointProbe::Live => crate::platform::server_lifecycle::terminate_server(server_pid),
         EndpointProbe::Retired => {
             return cleanup_stale_session(endpoint, name, ending)

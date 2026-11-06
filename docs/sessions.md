@@ -40,7 +40,7 @@ rozi sessions new scratch --detach    # start in the background, without a UI
 rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions new scratch --detach --remote workbox  # ... on another machine
 rozi sessions list
-rozi sessions restart dev             # start a running session again with fresh panes
+rozi sessions restart dev             # restart a running session, ending its programs
 rozi sessions kill dev
 ```
 
@@ -434,9 +434,10 @@ needs the option again here to stay unsaved. A session that isn't running is ref
 
 A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
 restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
-as [resurrection](#resurrection) restores them, while the programs in its panes end. On Windows the
-snapshot is the last one saved, so output from the final moments before the restart can be
-missing.
+as [resurrection](#resurrection) restores them, while the programs in its panes end. The old server
+saves a final snapshot as it stops; if that takes longer than a few seconds, or on Windows, where
+the server is stopped at once, the restart uses the last snapshot it saved instead, so output from
+the final moments before the restart can be missing.
 
 ```bash
 rozi sessions new tests --detach --no-resurrect

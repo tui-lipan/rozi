@@ -118,9 +118,10 @@ version ``, and the Sessions sidebar marks the row `incompatible or unavailable`
 
 Restarting the session ends the programs running in its panes, so finish any work in them first:
 
-1. Run `rozi update --rollback` to go back to the version that started the session. This works on
-   installs made by the install scripts; with a package manager, install the previous version
-   instead.
+1. Run `rozi update --rollback` to go back to the previous version. This works on installs made by
+   the install scripts; with a package manager, install the previous version instead. Rollback
+   keeps only one previous version, so if the session was started more than one update ago and
+   still refuses to attach, install the version that started it.
 2. Attach to the session and finish what is running in it.
 3. Run `rozi update` again.
 
@@ -129,7 +130,8 @@ Then restart the session: press `Ctrl+E` twice on its row in Sessions, or run
 [resurrection](sessions.md#resurrection) restores a session. To delete the session instead, press
 `Ctrl+K` twice on the row.
 
-For a remote host, update rozi on both ends. See
+For a session on a remote host, these steps apply to the rozi installed on that host. To attach
+from this machine again afterwards, update rozi on both ends. See
 [Version compatibility](remote.md#version-compatibility).
 
 ### A restored session re-ran a command I did not want

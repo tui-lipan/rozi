@@ -416,17 +416,17 @@ mod imp {
         Ok(())
     }
 
-    /// `SIGTERM`, then `SIGKILL` if the process is still alive after the grace window.
+    /// `SIGTERM`, then `SIGKILL` if the process is still alive after `grace`.
     ///
     /// The server is not our child (it was detached at bootstrap, or predates this client
     /// entirely), so liveness is polled with `kill(pid, 0)` rather than `waitpid`.
-    pub fn terminate_server(pid: u32) {
+    pub fn terminate_server(pid: u32, grace: std::time::Duration) {
         use std::time::{Duration, Instant};
 
         let pid = pid as libc::pid_t;
         unsafe { libc::kill(pid, libc::SIGTERM) };
 
-        let deadline = Instant::now() + Duration::from_millis(1500);
+        let deadline = Instant::now() + grace;
         while Instant::now() < deadline {
             if !alive(pid) {
                 return;
@@ -583,7 +583,7 @@ mod imp {
     /// with it - the Windows equivalent of the Unix `SIGTERM`-then-`SIGKILL` escalation, minus the
     /// grace window (there is no signal to ask nicely with; the graceful ask was the protocol
     /// `Shutdown` message that already failed by the time we get here).
-    pub fn terminate_server(pid: u32) {
+    pub fn terminate_server(pid: u32, _grace: std::time::Duration) {
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
             if handle.is_null() {
@@ -634,7 +634,14 @@ pub fn contain_children() -> io::Result<()> {
 /// Forcibly terminate a server that would not stop through the protocol. Best-effort and silent:
 /// there is no recovery to offer a caller whose last resort just failed.
 pub fn terminate_server(pid: u32) {
-    imp::terminate_server(pid);
+    terminate_server_after(pid, std::time::Duration::from_millis(1500));
+}
+
+/// [`terminate_server`], with `grace` for a server that can still stop on its own: on Unix the
+/// stop signal comes first and the kill only after `grace`. Windows has no signal to ask with, so
+/// there the termination is immediate.
+pub fn terminate_server_after(pid: u32, grace: std::time::Duration) {
+    imp::terminate_server(pid, grace);
 }
 
 /// Whether this host can run rozi at all, with a user-facing reason when it cannot

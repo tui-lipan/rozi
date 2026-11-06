@@ -27,6 +27,11 @@ pub const PANE_SIZE_PROTOCOL: u32 = 21;
 /// otherwise answer by reconnecting straight back into the session it was removed from.
 pub const EVICTED_ERROR_CODE: &str = "evicted";
 
+/// `code` on the [`super::ServerMessage::Error`] a server answers an attach with when the two
+/// builds share no protocol version. Every build since protocol negotiation began uses this code,
+/// so a client can recognise an older server it cannot otherwise read.
+pub const PROTOCOL_MISMATCH_ERROR_CODE: &str = "protocol-mismatch";
+
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;

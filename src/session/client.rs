@@ -423,6 +423,10 @@ impl SessionClient {
         expected_server_nonce: Option<String>,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
+        let session: String = session.into();
+        // Advice for a refused attach names commands that act on this machine, which reach a
+        // remote session's server only through `--remote`.
+        let advice_for = shares_filesystem.then(|| session.clone());
         let server_pid = stream.peer_pid();
         let piped_buffer = stream.piped_buffer_stats_handle();
         let mut reader = stream.try_clone()?;
@@ -455,7 +459,7 @@ impl SessionClient {
         // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
-        let effective_protocol = validate_attached(&attached)?;
+        let effective_protocol = validate_attached(advice_for.as_deref(), &attached)?;
         let capabilities = match &attached {
             ServerMessage::Attached { capabilities, .. } => {
                 protocol::Capabilities::negotiated(capabilities.as_ref())
@@ -1393,12 +1397,20 @@ impl ClientOutbound {
 }
 
 /// Validate the attach reply and return the negotiated wire version.
-fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
+/// `local_session` names the session when its server runs on this machine, for advice on a refusal.
+fn validate_attached(local_session: Option<&str>, attached: &ServerMessage) -> io::Result<u32> {
+    let advice = || match local_session {
+        Some(name) => crate::session::discovery::incompatible_session_advice(name),
+        None => "update rozi on both ends, or restart the session on its host".to_string(),
+    };
     if let ServerMessage::Error { code, message } = attached {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
-        let detail = if code == "protocol-mismatch" {
-            format!("runs an incompatible rozi version ({message}); kill it and start a new one")
+        let detail = if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE {
+            format!(
+                "runs an incompatible rozi version ({message}); {}",
+                advice()
+            )
         } else {
             message.clone()
         };
@@ -1426,7 +1438,8 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "runs an incompatible rozi version (negotiated protocol {effective}; client supports {MIN_SUPPORTED_PROTOCOL}-{PROTOCOL_VERSION}); kill it and start a new one"
+                "runs an incompatible rozi version (negotiated protocol {effective}; client supports {MIN_SUPPORTED_PROTOCOL}-{PROTOCOL_VERSION}); {}",
+                advice()
             ),
         ));
     }
@@ -1890,15 +1903,43 @@ mod tests {
 
     #[test]
     fn attach_error_is_returned_without_starting_client_threads() {
-        let error = validate_attached(&ServerMessage::Error {
-            code: "protocol-mismatch".to_string(),
-            message: "server uses protocol 2".to_string(),
-        })
+        let error = validate_attached(
+            Some("dev"),
+            &ServerMessage::Error {
+                code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
+                message: "server uses protocol 2".to_string(),
+            },
+        )
         .expect_err("attach must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("incompatible rozi version"));
-        assert!(validate_attached(&attached_message()).is_ok());
-        assert!(validate_attached(&ServerMessage::Ping { seq: 1 }).is_err());
+        assert!(validate_attached(Some("dev"), &attached_message()).is_ok());
+        assert!(validate_attached(Some("dev"), &ServerMessage::Ping { seq: 1 }).is_err());
+    }
+
+    /// A refusal says what restarting costs and how, never only to kill the session. The command it
+    /// names acts on this machine, so a remote session gets advice that does not depend on it.
+    #[test]
+    fn an_incompatible_server_is_answered_with_what_restarting_it_costs() {
+        let refusal = || ServerMessage::Error {
+            code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
+            message: "server uses protocol 2".to_string(),
+        };
+        let local = validate_attached(Some("dev"), &refusal())
+            .expect_err("attach must fail")
+            .to_string();
+        assert!(
+            local.contains(
+                "`rozi sessions restart dev` reopens it from its last snapshot and ends its programs"
+            ),
+            "{local}"
+        );
+        assert!(!local.contains("kill it"), "{local}");
+        let remote = validate_attached(None, &refusal())
+            .expect_err("attach must fail")
+            .to_string();
+        assert!(remote.contains("update rozi on both ends"), "{remote}");
+        assert!(!remote.contains("rozi sessions restart"), "{remote}");
     }
 
     #[test]

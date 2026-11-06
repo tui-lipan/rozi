@@ -21,10 +21,13 @@ pub(crate) fn session_row_is_current(state: &State, entry: &DiscoveredSession) -
         && state.current().remote_target == entry.remote_target
 }
 
+/// A row with a saved snapshot and no server: restorable, or saved in a snapshot this build cannot
+/// read. Either one is forgotten rather than killed, and has no server to restart.
 pub(crate) fn session_row_is_restorable(entry: &DiscoveredSession) -> bool {
     matches!(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Restorable
+            | crate::session::discovery::DiscoveredSessionStatus::Unreadable
     )
 }
 
@@ -338,6 +341,33 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<AppRoot>, index: usize
     activate_discovered_session(ctx, entry)
 }
 
+/// Say that `name` cannot be restored because of `reason`, from
+/// [`unrestorable_snapshot`](crate::session::server::unrestorable_snapshot) when it is known.
+pub(crate) fn notify_unreadable_snapshot(
+    ctx: &mut Context<AppRoot>,
+    name: &str,
+    reason: Option<crate::session::server::Unrestorable>,
+) -> Update {
+    // A remote row's reason is the host's to know; this machine only knows it was listed so.
+    let (body, hint) = match reason {
+        Some(reason) if reason.another_version_reads_it() => (
+            reason.to_string(),
+            "start it with the rozi version that saved it · Ctrl+K forgets it",
+        ),
+        Some(reason) => (reason.to_string(), "Ctrl+K forgets it"),
+        None => (
+            "its snapshot cannot be restored by rozi on its host".to_string(),
+            "Ctrl+K forgets it",
+        ),
+    };
+    crate::pane::pty_events::notify_error(
+        ctx,
+        "Restore failed",
+        crate::pane::pty_events::ToastBody::new(format!("`{name}`: {body}")).hint(hint),
+    );
+    Update::full()
+}
+
 /// Activate a discovered running session without resolving it through a mutable row index. Picker
 /// and sidebar callers keep separate ephemeral-discard confirmations.
 pub(crate) fn activate_discovered_session(
@@ -352,10 +382,22 @@ pub(crate) fn activate_discovered_session(
     if session_row_is_current(&ctx.state, &entry) {
         return Update::none();
     }
+    // Starting its server would be refused, since the server will not start over a snapshot it
+    // cannot read, so say why here instead.
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Unreadable
+    ) {
+        let reason = match &entry.remote_target {
+            Some(_) => None,
+            None => crate::session::server::unrestorable_snapshot(&entry.name),
+        };
+        return notify_unreadable_snapshot(ctx, &entry.name, reason);
+    }
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
-    // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
-    // the row (Ctrl+K) still works even against a server we can't speak to.
+    // retry deadline, so reject it up front, keep the picker open, and point at the fix - restarting
+    // the row (Ctrl+E) still works even against a server we can't speak to.
     if matches!(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Unknown
@@ -367,7 +409,13 @@ pub(crate) fn activate_discovered_session(
                 "`{}` runs an incompatible version",
                 entry.name
             ))
-            .hint("Ctrl+K removes it"),
+            .hint(crate::session::discovery::incompatible_session_hint(
+                entry
+                    .remote_target
+                    .as_ref()
+                    .map(|target| target.display_label())
+                    .as_deref(),
+            )),
         );
         return Update::full();
     }
@@ -1060,10 +1108,7 @@ pub(crate) fn shutdown_discovered_session(
         return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
             .map_err(std::io::Error::other);
     }
-    if matches!(
-        entry.status,
-        crate::session::discovery::DiscoveredSessionStatus::Restorable
-    ) {
+    if session_row_is_restorable(entry) {
         return crate::session::server::delete_snapshot(&entry.name);
     }
     shutdown_session(&entry.name)
@@ -1090,13 +1135,19 @@ fn stop_discovered_session_for_restart(
     }
     // The row may be out of date. With no server to replace there is nothing to restart, and
     // attaching would restore the session's snapshot rather than give it fresh panes.
-    if !crate::session::server::stop_named_session_for_restart(&entry.name)? {
-        return Err(std::io::Error::new(
+    match crate::session::server::stop_named_session_for_restart(&entry.name)? {
+        None => Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Session `{}` is not running", entry.name),
-        ));
+        )),
+        // The attach that follows starts the session from whatever snapshot is left. A server
+        // stopped by its process still left one, which a restart with fresh panes must not reopen.
+        Some(crate::session::server::StoppedForRestart::Stopped) => {
+            crate::session::server::discard_snapshot_for_restart(&entry.name)
+        }
+        // Restored on purpose: the work in an incompatible server survives only in its snapshot.
+        Some(crate::session::server::StoppedForRestart::Incompatible) => Ok(()),
     }
-    Ok(())
 }
 
 pub(crate) fn shutdown_session(name: &str) -> std::io::Result<()> {

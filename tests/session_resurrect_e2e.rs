@@ -10,7 +10,8 @@
 //!
 //! The gate is on the file rather than the test function because every helper and import here
 //! exists only to serve it, and `-D warnings` turns each one into an error once the test is
-//! compiled out. Windows resurrection deserves its own test with a shell it can actually run.
+//! compiled out. Windows resurrection has its own test, with a shell it can actually run, in
+//! `session_resurrect_e2e_windows.rs`.
 #![cfg(unix)]
 
 mod common;
@@ -475,4 +476,106 @@ fn wait_for_meta(snapshot: &std::path::Path, expected: &str) {
         "session snapshot at {} did not record {expected:?}",
         snapshot.display()
     );
+}
+
+/// A server must not start over a snapshot it cannot read: running empty, its first save would
+/// replace the snapshot, and with it the session, for the build that can read it.
+#[test]
+fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
+    // Left by another build's interrupted save, in a format this build does not read.
+    refuses_to_start_over(
+        |sessions, session| sessions.join(format!(".{session}.old-4242.1")),
+        |session| {
+            Some(format!(
+                r#"{{"version":99,"session":"{session}","future":true}}"#
+            ))
+        },
+        "its snapshot is in format 99",
+    );
+}
+
+/// A published snapshot whose metadata is gone is damaged, not absent: what is left of it may
+/// still be salvaged, so it is not started over either.
+#[test]
+fn a_server_refuses_to_start_over_a_snapshot_missing_its_metadata() {
+    refuses_to_start_over(
+        |sessions, session| sessions.join(session),
+        |_| None,
+        "its snapshot is damaged",
+    );
+}
+
+/// Nor over a backup that lost its metadata, which recovery publishes for the server to refuse.
+#[test]
+fn a_server_refuses_to_start_over_a_backup_missing_its_metadata() {
+    refuses_to_start_over(
+        |sessions, session| sessions.join(format!(".{session}.old-4242.1")),
+        |_| None,
+        "its snapshot is damaged",
+    );
+}
+
+fn refuses_to_start_over(
+    snapshot_dir: impl Fn(&std::path::Path, &str) -> std::path::PathBuf,
+    meta: impl Fn(&str) -> Option<String>,
+    reason: &str,
+) {
+    let session = unique_session_name();
+    let test_root = private_temp_dir();
+    let runtime_base = test_root.join("runtime");
+    let state_base = test_root.join("state");
+    let config_base = test_root.join("config");
+    for dir in [&runtime_base, &state_base, &config_base] {
+        fs::create_dir_all(dir).expect("create isolated base");
+    }
+    let config_path = config_base.join("config.toml");
+    fs::write(&config_path, "[session]\nresurrect = true\n").expect("write test config");
+    let sessions = state_base.join("rozi").join("sessions");
+    let saved = snapshot_dir(&sessions, &session);
+    fs::create_dir_all(saved.join("panes")).expect("create snapshot");
+    let meta = meta(&session);
+    if let Some(meta) = &meta {
+        fs::write(saved.join("meta.json"), meta).expect("write snapshot meta");
+    }
+    fs::write(saved.join("panes").join("1.replay"), b"kept").expect("write snapshot replay");
+
+    let mut child = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll server") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the server started over a snapshot it cannot read");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("stderr"), &mut stderr)
+        .expect("read server stderr");
+    assert!(!status.success(), "{stderr}");
+    assert!(stderr.contains(reason), "the refusal says why: {stderr}");
+    let published = sessions.join(&session);
+    assert_eq!(
+        fs::read_to_string(published.join("meta.json")).ok(),
+        meta,
+        "the snapshot is published, its metadata unchanged"
+    );
+    assert_eq!(
+        fs::read(published.join("panes").join("1.replay")).expect("published replay"),
+        b"kept"
+    );
+    assert!(
+        !subprocess_endpoint(&runtime_base, &session).path().exists(),
+        "no endpoint is left behind"
+    );
+    let _ = fs::remove_dir_all(test_root);
 }

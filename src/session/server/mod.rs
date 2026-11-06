@@ -52,7 +52,10 @@ pub use pane_log::PaneLog;
 #[cfg(test)]
 pub(crate) use resurrect::write_empty_snapshot_for_test;
 pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
-pub(crate) use resurrect::{has_snapshot, list_snapshot_names_by_recency};
+pub(crate) use resurrect::{
+    Unrestorable, discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
+    unrestorable_snapshot, unrestorable_snapshot_error,
+};
 mod runtime;
 mod shutdown;
 mod subscriptions;
@@ -61,7 +64,8 @@ mod worktree;
 pub(crate) use create::{create_detached_session, restart_named_session};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
 pub(crate) use shutdown::{
-    shutdown_named_session, shutdown_named_session_if_present, stop_named_session_for_restart,
+    StoppedForRestart, shutdown_named_session, shutdown_named_session_if_present,
+    stop_named_session_for_restart,
 };
 use worktree::{WorktreeJob, WorktreeWorker};
 
@@ -2470,8 +2474,14 @@ pub fn run_named_session_mode_with_nonce(
         server.delete_snapshot()?;
     } else if server.settings.resurrect
         && let Err(err) = server.restore()
+        // No snapshot is no reason not to start. One this build cannot read is: running empty,
+        // the server's first save would replace it, losing it for the build that can read it.
+        && err.kind() != io::ErrorKind::NotFound
     {
-        eprintln!("rozi: could not restore session {name:?}: {err}");
+        if let Some(endpoint) = &server.endpoint {
+            endpoint.remove_stale();
+        }
+        return Err(resurrect::restore_refusal(name, &err));
     }
     let result = server.run_listener(listener);
     // A rename replaces the endpoint, so retire the current one rather than the original. Claim the

@@ -341,6 +341,7 @@ pub(crate) fn cached_sessions_for_target(
                 // that stays offline would watch its remembered pane counts decay to zero.
                 | crate::session::discovery::DiscoveredSessionStatus::LastSeen { panes } => *panes,
                 crate::session::discovery::DiscoveredSessionStatus::Restorable
+                | crate::session::discovery::DiscoveredSessionStatus::Unreadable
                 | crate::session::discovery::DiscoveredSessionStatus::Busy
                 | crate::session::discovery::DiscoveredSessionStatus::Unknown => 0,
             },

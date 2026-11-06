@@ -22,6 +22,10 @@ pub enum DiscoveredSessionStatus {
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
+    /// No server is running, and the snapshot saved under this name is one this build cannot
+    /// restore, such as one in another build's snapshot format. It is kept for a build that can;
+    /// starting the session here is refused rather than started empty over it.
+    Unreadable,
     /// Remembered from the last successful probe of a host this client is not connected to.
     ///
     /// Nothing here was confirmed by a live handshake: the pane count is what the host reported the
@@ -150,6 +154,41 @@ pub fn valid_attach_target(name: &str) -> bool {
 /// create/rename never mints an `eph-…` name that would collide with an auto-managed session.
 pub fn valid_session_name(name: &str) -> bool {
     valid_attach_target(name) && !crate::session::naming::is_ephemeral_session_name(name)
+}
+
+/// Whether `rozi update --rollback` can reach the build a session was started with: only an
+/// install the install scripts manage keeps the previous version to go back to.
+fn rollback_available() -> bool {
+    crate::platform::install_source::detect_current()
+        == crate::platform::install_source::InstallSource::Managed
+}
+
+/// What to do about local session `name` when its server runs a build this one cannot attach to,
+/// phrased to follow a semicolon: finish its work on the build that started it where a rollback can
+/// reach that build, then restart it, which reopens it from its snapshot but ends its programs.
+pub(crate) fn incompatible_session_advice(name: &str) -> String {
+    let restart = format!(
+        "`rozi sessions restart {name}` reopens it from its last snapshot and ends its programs"
+    );
+    if rollback_available() {
+        format!("to finish its work first, run `rozi update --rollback` and attach; then {restart}")
+    } else {
+        restart
+    }
+}
+
+/// The toast hint for a session row whose server runs a build this one cannot attach to. A remote
+/// row's server runs the host's install, so neither this machine's rollback nor its restart
+/// behavior applies to it.
+pub(crate) fn incompatible_session_hint(remote_host: Option<&str>) -> String {
+    match remote_host {
+        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E restarts it"),
+        None if rollback_available() => {
+            "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
+                .to_string()
+        }
+        None => "Ctrl+E restarts it from its snapshot".to_string(),
+    }
 }
 
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
@@ -345,7 +384,11 @@ fn push_restorable_sessions(
         rows.push(DiscoveredSession {
             name,
             origin: snapshot.origin,
-            status: DiscoveredSessionStatus::Restorable,
+            status: if snapshot.readable {
+                DiscoveredSessionStatus::Restorable
+            } else {
+                DiscoveredSessionStatus::Unreadable
+            },
             ephemeral: false,
             host: None,
             remote_target: None,
@@ -502,7 +545,8 @@ pub fn session_with_instance(
         .into_iter()
         .filter_map(|handle| handle.join().ok().flatten())
     {
-        if answer.refusal.as_deref() == Some("protocol-mismatch") {
+        if answer.refusal.as_deref() == Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE)
+        {
             other_versions.push(name);
             continue;
         }
@@ -567,7 +611,9 @@ impl UnverifiedSession {
     /// Why a server that answered the status query still gave no origin.
     fn from_answer(name: String, answer: &QueryAnswer) -> Self {
         let reason = match answer.refusal.as_deref() {
-            Some("protocol-mismatch") => "runs a different rozi version".to_string(),
+            Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE) => {
+                "runs a different rozi version".to_string()
+            }
             Some(code) => format!("refused the query ({code})"),
             None => "answered without its status".to_string(),
         };
@@ -963,6 +1009,7 @@ pub fn parse_remote_list_json(
                     has_layout: row.layout.unwrap_or(false),
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
+                "unreadable" => DiscoveredSessionStatus::Unreadable,
                 "busy" => DiscoveredSessionStatus::Busy,
                 _ => DiscoveredSessionStatus::Unknown,
             };
@@ -1014,6 +1061,9 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                 DiscoveredSessionStatus::Restorable => {
                     obj["status"] = serde_json::json!("restorable")
                 }
+                DiscoveredSessionStatus::Unreadable => {
+                    obj["status"] = serde_json::json!("unreadable")
+                }
                 DiscoveredSessionStatus::Busy => obj["status"] = serde_json::json!("busy"),
                 DiscoveredSessionStatus::Unknown => obj["status"] = serde_json::json!("unknown"),
             }
@@ -1034,6 +1084,16 @@ mod tests {
     }
 
     use super::*;
+
+    /// A remote row's server runs the host's install, so its hint must not offer this machine's
+    /// rollback, whatever kind of install this one is.
+    #[test]
+    fn an_incompatible_remote_session_is_pointed_at_its_host() {
+        let hint = incompatible_session_hint(Some("devbox"));
+        assert!(hint.contains("on `devbox`"), "{hint}");
+        assert!(!hint.contains("rozi update --rollback"), "{hint}");
+        assert!(incompatible_session_hint(None).contains("restarts it from its snapshot"));
+    }
 
     #[test]
     fn ssh_failures_requiring_user_action_stop_retries() {
@@ -1230,7 +1290,7 @@ mod tests {
                 crate::session::protocol::write_frame(
                     &mut stream,
                     &ServerMessage::Error {
-                        code: "protocol-mismatch".to_string(),
+                        code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: "speaks another version".to_string(),
                     },
                 )
@@ -1316,6 +1376,7 @@ mod tests {
                     }),
                     ..Default::default()
                 },
+                readable: true,
                 panes: 1,
             }),
         );
@@ -1361,6 +1422,14 @@ mod tests {
                 remote_target: None,
                 status: DiscoveredSessionStatus::Restorable,
             },
+            DiscoveredSession {
+                name: "future".into(),
+                origin: Default::default(),
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+                status: DiscoveredSessionStatus::Unreadable,
+            },
         ];
         let json = sessions_to_json(&rows).unwrap();
         let parsed = parse_remote_list_json(json.as_bytes(), Some("workbox".into())).unwrap();
@@ -1372,6 +1441,7 @@ mod tests {
             DiscoveredSessionStatus::Running { panes: 2, .. }
         ));
         assert_eq!(parsed[1].status, DiscoveredSessionStatus::Restorable);
+        assert_eq!(parsed[2].status, DiscoveredSessionStatus::Unreadable);
     }
 
     /// A name is spelled into a socket path, so an unbounded one is a session that cannot be

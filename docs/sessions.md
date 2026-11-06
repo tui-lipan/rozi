@@ -40,7 +40,7 @@ rozi sessions new scratch --detach    # start in the background, without a UI
 rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions new scratch --detach --remote workbox  # ... on another machine
 rozi sessions list
-rozi sessions restart dev             # start a running session again with fresh panes
+rozi sessions restart dev             # restart a running session, ending its programs
 rozi sessions kill dev
 ```
 
@@ -110,8 +110,8 @@ sessions, saved sessions, then remembered ones. Within each group, local session
 each host's by name. Each tab keeps its own selection while Sessions is open, starting on its top
 row.
 
-A session with nothing running to attach to says so first — `Restorable`, `Last seen`, `Busy`, or
-`Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
+A session with nothing running to attach to says so first — `Restorable`, `Unreadable`, `Last seen`,
+`Busy`, or `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
 clients share it, and the profile it was created from.
 
 Opening Sessions does not start a remote connection. With `[remote] reconnect_on_launch = true`,
@@ -330,7 +330,12 @@ Processes themselves are not saved. Each command starts again in a fresh termina
 history shown above the new output. A missing directory, a missing history file, or a command that
 fails to start affects only its own pane; the rest of the snapshot still loads.
 
-To discard a snapshot, press `Ctrl+K` twice on its `restorable` row. `rozi sessions new <name>` also
+A snapshot this rozi cannot read, because another rozi version saved it in another format or because
+it is damaged, is listed as `Unreadable`, and as `unreadable` by `rozi sessions list`. It is kept but
+not restored: Enter says why, and opening the session by name is refused rather than starting it
+empty.
+
+To discard a snapshot, press `Ctrl+K` twice on its `Restorable` or `Unreadable` row. `rozi sessions new <name>` also
 starts fresh instead of restoring a snapshot with that name, and keeps any
 [extensions deployed](extensions.md#deploy-to-a-session) to the session.
 
@@ -432,6 +437,18 @@ the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-t
 needs the option again here to stay unsaved. A session that isn't running is refused; start it with
 `rozi sessions new <NAME> --detach`.
 
+A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
+restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
+as [resurrection](#resurrection) restores them, while the programs in its panes end. The old server
+saves a final snapshot as it stops; if that takes longer than about ten seconds, or on Windows,
+where the server is stopped at once, the restart uses the last snapshot it saved instead, so output
+from the final moments before the restart can be missing.
+
+If this rozi cannot read the snapshot, the session is not started and its snapshot is kept, listed
+as [`Unreadable`](#resurrection). For a snapshot in another format, start the session with the rozi
+version that saved it. Otherwise, run `rozi sessions new <NAME> --detach` to start it empty and
+discard the snapshot.
+
 ```bash
 rozi sessions new tests --detach --no-resurrect
 rozi --session tests split --cwd ~/src/api --argv cargo test
@@ -469,9 +486,10 @@ and removing collaborators.
   to two minutes; `Esc` cancels it. rozi never silently replaces a remote session that is gone. See
   [Reconnection and switching](remote.md#reconnection-and-switching).
 - A session server and client must be compatible. After upgrading rozi, restart an incompatible
-  named session or update the other end.
-- Restarting a session kills its processes and starts fresh panes, and keeps its deployed extensions.
-  It is not the same as detaching and reattaching.
+  named session, which reopens it from its snapshot, or update the other end.
+- Restarting a session kills its processes and keeps its deployed extensions. A compatible session
+  starts with fresh panes; an incompatible one restores its snapshot. It is not the same as
+  detaching and reattaching.
 - A session name belongs to one host. The same name on the local machine and on a remote host
   refers to two different sessions.
 

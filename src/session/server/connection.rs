@@ -1347,7 +1347,7 @@ impl SessionServer {
                 return vec![(
                     Target::Sender,
                     ServerMessage::Error {
-                        code: "protocol-mismatch".to_string(),
+                        code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
                     },
                 )];
@@ -1485,7 +1485,7 @@ impl SessionServer {
                 return vec![(
                     Target::Sender,
                     ServerMessage::Error {
-                        code: "protocol-mismatch".to_string(),
+                        code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
                     },
                 )];

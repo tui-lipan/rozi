@@ -19,6 +19,8 @@ use crate::session::protocol::PROTOCOL_VERSION;
 const COMPATIBILITY_SCHEMA_VERSION: u32 = 1;
 const COMPATIBILITY_FILE: &str = "rozi-compatibility.json";
 const MAX_COMPATIBILITY_BYTES: usize = 16 * 1024;
+/// The caution row for a release on another session protocol.
+const SESSION_RESTART_NOTE: &str = "restart sessions to attach · ends their programs";
 
 /// A public release newer than the running build, and what it takes to move to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,16 +82,18 @@ impl AvailableUpdate {
     /// The extension API is a public contract, so the note names its step. The session protocol is
     /// an internal counter that moves with every wire change: only whether it differs matters, and
     /// its number stays out of the notice.
+    /// A release on another session protocol cannot attach to running sessions until they restart,
+    /// and restarting one ends the programs in its panes. Both belong in the one row.
     fn compatibility_note(&self) -> Option<String> {
         let compatibility = self.compatibility.as_ref()?;
         let extension_bump = (compatibility.extension_api > EXTENSION_API_VERSION)
             .then_some(compatibility.extension_api);
         let protocol_changes = compatibility.session_protocol != PROTOCOL_VERSION;
         let Some(extension_api) = extension_bump else {
-            return protocol_changes.then(|| "restart running sessions".to_string());
+            return protocol_changes.then(|| SESSION_RESTART_NOTE.to_string());
         };
         let action = if protocol_changes {
-            "review extensions, restart sessions after"
+            "review extensions, then restart sessions · ends their programs"
         } else {
             "review extensions first"
         };
@@ -339,7 +343,7 @@ mod tests {
         assert_eq!(
             note,
             format!(
-                "extension API {EXTENSION_API_VERSION}→{} · review extensions, restart sessions after",
+                "extension API {EXTENSION_API_VERSION}→{} · review extensions, then restart sessions · ends their programs",
                 EXTENSION_API_VERSION + 1
             )
         );
@@ -353,7 +357,7 @@ mod tests {
 
         let protocol = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION + 1).toast_body(false);
         assert!(
-            protocol.ends_with("\nrestart running sessions"),
+            protocol.ends_with("\nrestart sessions to attach · ends their programs"),
             "{protocol}"
         );
 
@@ -368,7 +372,11 @@ mod tests {
     fn any_session_protocol_change_needs_a_restart() {
         let lower = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION - 1);
         assert!(lower.needs_caution());
-        assert!(lower.installed_body().ends_with("restart running sessions"));
+        assert!(
+            lower
+                .installed_body()
+                .ends_with("restart sessions to attach · ends their programs")
+        );
     }
 
     /// The body is rows a glance can take in, not a sentence: the step, then what to do.

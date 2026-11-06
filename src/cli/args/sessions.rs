@@ -43,7 +43,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "restart <NAME> [--no-resurrect] [--remote <HOST>]",
-                "Start a running session again with fresh panes",
+                "Restart a running session, ending its programs",
             ),
             row(
                 "kill <NAME> [--remote <HOST>]",

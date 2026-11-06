@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const SNAPSHOT_VERSION: u32 = 3;
 
 /// How long shutdown waits for an in-flight durable write before abandoning it.
-const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+pub(super) const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// Longest opaque native agent session reference a snapshot is allowed to hand back to a process.
 ///
@@ -194,8 +194,8 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
             .unwrap_or_default()
             .as_nanos()
     );
-    let temp = parent.join(format!(".{session_name}.tmp-{suffix}"));
-    let backup = parent.join(format!(".{session_name}.old-{suffix}"));
+    let temp = parent.join(staging_dir_name(&session_name, STAGING_TMP, &suffix));
+    let backup = parent.join(staging_dir_name(&session_name, STAGING_OLD, &suffix));
     crate::platform::fs_security::ensure_private_dir(&temp)?;
     let panes_dir = temp.join("panes");
     crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
@@ -227,6 +227,10 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
         )?;
     }
     sync_directory(&temp)?;
+    // Between this rename and the next, the published directory is missing and only the backup
+    // holds the session. A crash inside that window is repaired by the next server for this
+    // session, in [`SessionServer::recover_interrupted_snapshot`]; discovery lists the backup
+    // meanwhile so the session stays visible.
     if final_path.exists() {
         fs::rename(&final_path, &backup)?;
     }
@@ -713,16 +717,44 @@ impl SessionServer {
         })
     }
 
-    pub(super) fn restore(&mut self) -> io::Result<usize> {
+    /// Put back a snapshot a crash left half replaced, then sweep the replacement's debris.
+    ///
+    /// A writer interrupted between its two renames leaves the session only in its backup
+    /// directory. The newest valid backup is renamed into place; a staging directory is never
+    /// promoted, because it may have been abandoned partway through being written. Whatever is
+    /// left is removed, including when the published snapshot survived and only the final
+    /// cleanup was lost.
+    ///
+    /// Only the server that owns this session name may do this: it is the only writer, and it has
+    /// not started one yet. A client sees the same directories while a live server is inside that
+    /// rename window, so discovery only ever reads them.
+    pub(super) fn recover_interrupted_snapshot(&self) -> io::Result<()> {
         let path = self.snapshot_path()?;
-        let meta: SnapshotMeta =
-            serde_json::from_slice(&fs::read(path.join("meta.json"))?).map_err(io::Error::other)?;
-        if meta.version != SNAPSHOT_VERSION || meta.session != self.session_name {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported or mismatched session snapshot",
-            ));
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        if !path.exists()
+            && let Some(backup) = newest_valid_backup(parent, &self.session_name)
+                .or_else(|| newest_unreadable_backup(parent, &self.session_name))
+        {
+            fs::rename(&backup, &path)?;
+            sync_directory(parent)?;
         }
+        // Every backup is a snapshot that was once published. Once one is published again the
+        // rest are older and can go; until then they are the only copy, so only staging goes.
+        let kinds: &[&str] = if path.exists() {
+            &[STAGING_TMP, STAGING_OLD]
+        } else {
+            &[STAGING_TMP]
+        };
+        remove_staging_dirs_of_kind(parent, &self.session_name, kinds);
+        Ok(())
+    }
+
+    pub(super) fn restore(&mut self) -> io::Result<usize> {
+        self.recover_interrupted_snapshot()?;
+        let path = self.snapshot_path()?;
+        let meta = read_restorable_meta(&path, &self.session_name)?;
         self.origin = meta.effective_origin();
         let mut layout: Option<SharedLayout> = fs::read(path.join("layout.json"))
             .ok()
@@ -1000,23 +1032,126 @@ impl SessionServer {
     }
 }
 
+/// A snapshot being written, before it is published.
+pub(super) const STAGING_TMP: &str = "tmp";
+/// The published snapshot a write is replacing, kept until the replacement is in place.
+pub(super) const STAGING_OLD: &str = "old";
+
+/// `.{session}.{kind}-{suffix}`: a staging or backup directory next to the published snapshot.
+pub(super) fn staging_dir_name(session_name: &str, kind: &str, suffix: &str) -> String {
+    format!(".{session_name}.{kind}-{suffix}")
+}
+
+/// The session and kind a staging or backup directory name belongs to, with its suffix.
+///
+/// A session name cannot contain `.`, so the first separator ends it and `foo` never claims a
+/// directory of `foo-bar`.
+fn parse_staging_dir_name(name: &str) -> Option<(&str, &str, &str)> {
+    let (session, rest) = name.strip_prefix('.')?.split_once('.')?;
+    let (kind, suffix) = rest.split_once('-')?;
+    (!session.is_empty() && matches!(kind, STAGING_TMP | STAGING_OLD))
+        .then_some((session, kind, suffix))
+}
+
+/// A backup directory left by an interrupted replacement, with the snapshot it holds.
+struct Backup {
+    path: PathBuf,
+    meta: SnapshotMeta,
+    /// When the write that moved it aside started, from its suffix; orders backups that share a
+    /// `saved_at` second.
+    written_nanos: u128,
+}
+
+/// Every backup directory in `parent` whose snapshot this build can restore, by session.
+///
+/// A backup counts only when its `meta.json` names the session its directory name does and has
+/// this build's snapshot version, the same test a published snapshot passes.
+fn valid_backups(parent: &Path) -> Vec<(String, Backup)> {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, suffix) = parse_staging_dir_name(&dir_name)?;
+            if kind != STAGING_OLD {
+                return None;
+            }
+            let meta: SnapshotMeta =
+                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
+            let written_nanos = suffix
+                .split_once('.')
+                .and_then(|(_, nanos)| nanos.parse().ok())
+                .unwrap_or(0);
+            (meta.version == SNAPSHOT_VERSION && meta.session == session).then(|| {
+                (
+                    session.to_string(),
+                    Backup {
+                        path: entry.path(),
+                        meta,
+                        written_nanos,
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+fn backup_order(backup: &Backup) -> (u64, u128) {
+    (backup.meta.saved_at, backup.written_nanos)
+}
+
+/// The newest restorable backup of `session_name`, if a replacement was interrupted.
+fn newest_valid_backup(parent: &Path, session_name: &str) -> Option<PathBuf> {
+    valid_backups(parent)
+        .into_iter()
+        .filter(|(session, _)| session == session_name)
+        .map(|(_, backup)| backup)
+        .max_by_key(backup_order)
+        .map(|backup| backup.path)
+}
+
+/// The newest backup of `session_name` this build cannot read, such as one a build with another
+/// snapshot version moved aside. Publishing it again keeps the session for a build that can read
+/// it; `restore` then refuses it rather than this build losing it.
+fn newest_unreadable_backup(parent: &Path, session_name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(parent).ok()?;
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, suffix) = parse_staging_dir_name(&dir_name)?;
+            let written_nanos: u128 = suffix
+                .split_once('.')
+                .and_then(|(_, nanos)| nanos.parse().ok())
+                .unwrap_or(0);
+            // The directory alone is the evidence: every backup was once a published snapshot, so
+            // one without its metadata is damaged, not absent, as a published one would be.
+            (session == session_name && kind == STAGING_OLD && entry.path().is_dir())
+                .then(|| (written_nanos, entry.path()))
+        })
+        .max_by_key(|(written_nanos, _)| *written_nanos)
+        .map(|(_, path)| path)
+}
+
 /// Best-effort sweep of abandoned staging/backup directories for one session. A leftover that
 /// resists removal is not worth failing a delete over: it is already invisible to discovery.
 fn remove_staging_dirs(parent: &Path, session_name: &str) {
-    let prefixes = [
-        format!(".{session_name}.tmp-"),
-        format!(".{session_name}.old-"),
-    ];
+    remove_staging_dirs_of_kind(parent, session_name, &[STAGING_TMP, STAGING_OLD]);
+}
+
+fn remove_staging_dirs_of_kind(parent: &Path, session_name: &str, kinds: &[&str]) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        // A session name cannot contain `.`, so the separator keeps `foo` from matching `foo-bar`.
-        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+        if name
+            .to_str()
+            .and_then(parse_staging_dir_name)
+            .is_some_and(|(session, kind, _)| session == session_name && kinds.contains(&kind))
+        {
             let _ = fs::remove_dir_all(entry.path());
         }
     }
@@ -1035,6 +1170,147 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
     let deployments = server.deployments.remove_all();
     let snapshot = server.delete_snapshot();
     deployments.and(snapshot)
+}
+
+/// Why this build will not restore a snapshot that is there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Unrestorable {
+    /// Saved in another snapshot format, which the rozi version that saved it can read.
+    Format(u32),
+    /// Missing or malformed metadata, which no rozi version can read.
+    Damaged,
+    /// Its metadata names another session than the one it is saved as.
+    OtherSession(String),
+}
+
+impl Unrestorable {
+    /// Whether another rozi version could restore it.
+    pub(crate) fn another_version_reads_it(&self) -> bool {
+        matches!(self, Self::Format(_))
+    }
+
+    /// The reason a refusal carries, if `err` is one.
+    fn of(err: &io::Error) -> Option<&Self> {
+        err.get_ref()?.downcast_ref()
+    }
+}
+
+impl std::fmt::Display for Unrestorable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Format(found) => write!(
+                f,
+                "its snapshot is in format {found}, and this rozi reads format {SNAPSHOT_VERSION}"
+            ),
+            Self::Damaged => f.write_str("its snapshot is damaged"),
+            Self::OtherSession(session) => {
+                write!(f, "its snapshot belongs to session `{session}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Unrestorable {}
+
+/// The snapshot in `dir`, if this build can restore it. Only a missing `dir` is `NotFound`: there is
+/// no snapshot. Any other failure, a missing `meta.json` included, is `InvalidData` carrying the
+/// [`Unrestorable`] reason, so nothing starts empty over what is left of the snapshot.
+fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMeta> {
+    let refuse = |reason| io::Error::new(io::ErrorKind::InvalidData, reason);
+    match fs::metadata(dir) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no snapshot"));
+        }
+        Ok(meta) if meta.is_dir() => {}
+        _ => return Err(refuse(Unrestorable::Damaged)),
+    }
+    let bytes = fs::read(dir.join("meta.json")).map_err(|_| refuse(Unrestorable::Damaged))?;
+    let header: SnapshotHeader =
+        serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))?;
+    if header.version != SNAPSHOT_VERSION {
+        return Err(refuse(Unrestorable::Format(header.version)));
+    }
+    if header.session != session_name {
+        return Err(refuse(Unrestorable::OtherSession(header.session)));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))
+}
+
+/// The part of `meta.json` every snapshot format shares.
+#[derive(Deserialize)]
+struct SnapshotHeader {
+    version: u32,
+    session: String,
+    #[serde(default)]
+    saved_at: u64,
+}
+
+/// Why `name` has a snapshot its server would refuse to restore, if it has one. Read-only, so a
+/// client can explain a server that would not start; see [`saved_snapshot_summaries`] for why a
+/// client never moves a backup.
+pub(crate) fn unrestorable_snapshot(name: &str) -> Option<Unrestorable> {
+    let server = SessionServer::new_named_with_settings(
+        name,
+        ServerSettings {
+            resurrect: true,
+            ..ServerSettings::default()
+        },
+    );
+    let path = server.snapshot_path().ok()?;
+    let dir = if path.exists() {
+        path
+    } else {
+        let parent = path.parent()?;
+        if newest_valid_backup(parent, name).is_some() {
+            return None;
+        }
+        newest_unreadable_backup(parent, name)?
+    };
+    read_restorable_meta(&dir, name)
+        .err()
+        .and_then(|err| Unrestorable::of(&err).cloned())
+}
+
+/// What to do about session `name`, whose snapshot this build will not restore for `reason`.
+pub(crate) fn unrestorable_snapshot_error(name: &str, reason: &Unrestorable) -> io::Error {
+    let other_version = if reason.another_version_reads_it() {
+        "start it with the rozi version that saved it, or "
+    } else {
+        ""
+    };
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "session `{name}` was not started because {reason}; {other_version}run \
+             `rozi sessions new {name} --detach` to start it empty and discard the snapshot"
+        ),
+    )
+}
+
+/// Why a server did not start over the snapshot its restore failed on with `err`.
+pub(super) fn restore_refusal(name: &str, err: &io::Error) -> io::Error {
+    match Unrestorable::of(err) {
+        Some(reason) => unrestorable_snapshot_error(name, reason),
+        None => io::Error::new(
+            err.kind(),
+            format!(
+                "session `{name}` was not started because its snapshot could not be read: {err}"
+            ),
+        ),
+    }
+}
+
+/// Discard `name`'s snapshot, and only that, so the server started next under the name begins with
+/// fresh panes and keeps its deployments. Only for a session whose server has already stopped.
+pub(crate) fn discard_snapshot_for_restart(name: &str) -> io::Result<()> {
+    SessionServer::new_named_with_settings(
+        name,
+        ServerSettings {
+            resurrect: true,
+            ..ServerSettings::default()
+        },
+    )
+    .delete_snapshot()
 }
 
 #[cfg(unix)]
@@ -1085,6 +1361,9 @@ pub struct SnapshotSummary {
     pub saved_at: u64,
     pub origin: crate::session::origin::SessionOrigin,
     pub panes: usize,
+    /// Whether this build can restore the snapshot. One it cannot, such as one saved by a build
+    /// with another snapshot format, is still listed: it is kept for the build that can read it.
+    pub readable: bool,
 }
 
 /// Every session that can come back, most recent first.
@@ -1103,6 +1382,7 @@ pub fn list_snapshot_summaries_by_recency() -> Vec<SnapshotSummary> {
             saved_at: deployed_at_unix_ms / 1000,
             origin: crate::session::origin::SessionOrigin::default(),
             panes: 0,
+            readable: true,
         });
     }
     summaries.sort_by(|a, b| {
@@ -1117,10 +1397,10 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
     let Some(root) = default_snapshot_dir() else {
         return Vec::new();
     };
-    let Ok(entries) = fs::read_dir(root) else {
+    let Ok(entries) = fs::read_dir(&root) else {
         return Vec::new();
     };
-    entries
+    let mut summaries: Vec<SnapshotSummary> = entries
         .flatten()
         .filter_map(|entry| {
             // Identity is the directory the snapshot is *published* under, not the name recorded
@@ -1128,26 +1408,95 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
             // `meta.json`; trusting that would list a restorable session that forget can never
             // remove, because forget deletes `<root>/<session>` and the debris is not there.
             let dir_name = entry.file_name().into_string().ok()?;
-            let meta: SnapshotMeta =
-                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
-            (meta.version == SNAPSHOT_VERSION
-                && meta.session == dir_name
-                && crate::session::discovery::valid_session_name(&meta.session))
-            .then_some(SnapshotSummary {
-                session: meta.session.clone(),
-                saved_at: meta.saved_at,
-                origin: meta.effective_origin(),
-                panes: meta.panes.len(),
-            })
+            if !crate::session::discovery::valid_session_name(&dir_name) || !entry.path().is_dir() {
+                return None;
+            }
+            snapshot_summary(&entry.path(), dir_name)
+        })
+        .collect();
+    // A session whose snapshot replacement was interrupted survives only in a backup directory.
+    // It is listed so it can be restored or forgotten, but only read here: a live server is inside
+    // this same window during every write, so a client renaming or deleting the backup would race
+    // the writer that owns it. The next server for the session moves it back into place.
+    let mut backups: Vec<(String, Backup)> = valid_backups(&root)
+        .into_iter()
+        .filter(|(session, _)| crate::session::discovery::valid_session_name(session))
+        .collect();
+    backups.sort_by_key(|(_, backup)| std::cmp::Reverse(backup_order(backup)));
+    for (session, backup) in backups {
+        if summaries.iter().any(|summary| summary.session == session) {
+            continue;
+        }
+        summaries.push(SnapshotSummary {
+            session,
+            saved_at: backup.meta.saved_at,
+            origin: backup.meta.effective_origin(),
+            panes: backup.meta.panes.len(),
+            readable: true,
+        });
+    }
+    // A backup this build cannot read is what its server would publish again and then refuse to
+    // restore, so it is listed as such.
+    for session in backup_sessions(&root) {
+        if summaries.iter().any(|summary| summary.session == session) {
+            continue;
+        }
+        if let Some(summary) = newest_unreadable_backup(&root, &session)
+            .and_then(|backup| snapshot_summary(&backup, session))
+        {
+            summaries.push(summary);
+        }
+    }
+    summaries
+}
+
+/// The summary of the snapshot in `dir`, published or backed up as `session`. A snapshot this
+/// build cannot read is summarized from what every format shares, as unreadable; a directory
+/// without `meta.json` is no snapshot.
+fn snapshot_summary(dir: &Path, session: String) -> Option<SnapshotSummary> {
+    match read_restorable_meta(dir, &session) {
+        Ok(meta) => Some(SnapshotSummary {
+            session,
+            saved_at: meta.saved_at,
+            origin: meta.effective_origin(),
+            panes: meta.panes.len(),
+            readable: true,
+        }),
+        Err(err) if err.kind() == io::ErrorKind::InvalidData => Some(SnapshotSummary {
+            saved_at: fs::read(dir.join("meta.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<SnapshotHeader>(&bytes).ok())
+                .map_or(0, |header| header.saved_at),
+            session,
+            origin: crate::session::origin::SessionOrigin::default(),
+            panes: 0,
+            readable: false,
+        }),
+        Err(_) => None,
+    }
+}
+
+/// Every session with a backup directory in `parent`, readable or not.
+fn backup_sessions(parent: &Path) -> std::collections::BTreeSet<String> {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Default::default();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, _) = parse_staging_dir_name(&dir_name)?;
+            (kind == STAGING_OLD && crate::session::discovery::valid_session_name(session))
+                .then(|| session.to_string())
         })
         .collect()
 }
 
-/// Whether `name` has a snapshot discovery would list as restorable.
+/// Whether `name` has a snapshot this build can restore.
 pub(crate) fn has_snapshot(name: &str) -> bool {
     list_snapshot_summaries_by_recency()
         .iter()
-        .any(|snapshot| snapshot.session == name)
+        .any(|snapshot| snapshot.session == name && snapshot.readable)
 }
 
 /// Publish an empty snapshot for `name` that discovery lists as restorable, for tests elsewhere in
@@ -1285,6 +1634,253 @@ mod tests {
 
         delete_snapshot_for(published).expect("forget the published session");
         assert!(!root.join(published).exists());
+    }
+
+    fn write_meta(dir: &Path, session: &str, version: u32, saved_at: u64) {
+        fs::create_dir_all(dir).expect("create snapshot dir");
+        fs::write(
+            dir.join("meta.json"),
+            serde_json::to_vec(&SnapshotMeta {
+                version,
+                session: session.to_string(),
+                saved_at,
+                layout_rev: 0,
+                origin: Default::default(),
+                created_from_profile: None,
+                panes: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .expect("write snapshot meta");
+    }
+
+    /// A session caught between a snapshot's two renames lives only in its backup. Discovery must
+    /// still offer it, without touching the directory a live writer may be about to rename, and
+    /// forget must clear it.
+    #[test]
+    fn a_session_left_only_in_its_backup_is_listed_read_only_and_forgettable() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "backup-only";
+        let backup = root.join(staging_dir_name(session, STAGING_OLD, "4242.200"));
+        let older = root.join(staging_dir_name(session, STAGING_OLD, "4242.100"));
+        write_meta(&backup, session, SNAPSHOT_VERSION, 7);
+        write_meta(&older, session, SNAPSHOT_VERSION, 3);
+        // Neither of these makes a session restorable: a backup of another build's snapshot
+        // format, and one whose metadata names a different session than its directory.
+        let foreign = "backup-foreign";
+        write_meta(
+            &root.join(staging_dir_name(foreign, STAGING_OLD, "1.1")),
+            foreign,
+            SNAPSHOT_VERSION + 1,
+            9,
+        );
+        let mismatched = "backup-mismatch";
+        write_meta(
+            &root.join(staging_dir_name(mismatched, STAGING_OLD, "1.1")),
+            session,
+            SNAPSHOT_VERSION,
+            9,
+        );
+
+        let summaries = list_snapshot_summaries_by_recency();
+        let listed: Vec<_> = summaries
+            .iter()
+            .filter(|summary| summary.session == session)
+            .collect();
+        assert_eq!(listed.len(), 1, "one row per session\n{summaries:?}");
+        assert_eq!(listed[0].saved_at, 7, "the newest backup describes it");
+        assert!(has_snapshot(session));
+        assert!(!has_snapshot(foreign));
+        assert!(!has_snapshot(mismatched));
+        // Neither can be restored here, but both are still there, kept for a build that can read
+        // them, so both are listed as unreadable rather than hidden.
+        for name in [foreign, mismatched] {
+            let row = summaries
+                .iter()
+                .find(|summary| summary.session == name)
+                .unwrap_or_else(|| panic!("{name} is listed\n{summaries:?}"));
+            assert!(!row.readable, "{name} is listed as unreadable");
+        }
+        assert!(listed[0].readable);
+        // A client can say why a server would refuse the foreign one, and has no reason to give
+        // for one it can restore.
+        assert_eq!(
+            unrestorable_snapshot(foreign),
+            Some(Unrestorable::Format(SNAPSHOT_VERSION + 1))
+        );
+        assert_eq!(unrestorable_snapshot(session), None);
+        assert!(
+            backup.exists() && older.exists() && !root.join(session).exists(),
+            "discovery never moves or removes a backup"
+        );
+
+        // With the published snapshot back, it is the one listed and the backup adds nothing.
+        write_meta(&root.join(session), session, SNAPSHOT_VERSION, 11);
+        let summaries = list_snapshot_summaries_by_recency();
+        let listed: Vec<_> = summaries
+            .iter()
+            .filter(|summary| summary.session == session)
+            .collect();
+        assert_eq!(listed.len(), 1, "{summaries:?}");
+        assert_eq!(listed[0].saved_at, 11);
+
+        for name in [session, foreign, mismatched] {
+            delete_snapshot_for(name).expect("forget");
+            assert!(!has_snapshot(name));
+        }
+        let leftovers: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".backup-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// The writer can also die after publishing the replacement but before removing the backup.
+    /// The published snapshot is the one restored, and the backup is swept rather than kept.
+    #[test]
+    fn recovery_keeps_a_published_snapshot_and_sweeps_the_backup_left_beside_it() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-leftover-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let server = SessionServer::new_named_with_settings(
+            "leftover",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                ..ServerSettings::default()
+            },
+        );
+        write_meta(&root.join("leftover"), "leftover", SNAPSHOT_VERSION, 5);
+        let backup = root.join(staging_dir_name("leftover", STAGING_OLD, "1.2"));
+        write_meta(&backup, "leftover", SNAPSHOT_VERSION, 9);
+        let stale_version = root.join(staging_dir_name("other", STAGING_OLD, "1.2"));
+        write_meta(&stale_version, "other", SNAPSHOT_VERSION - 1, 9);
+
+        server.recover_interrupted_snapshot().unwrap();
+
+        let meta: SnapshotMeta =
+            serde_json::from_slice(&fs::read(root.join("leftover/meta.json")).unwrap()).unwrap();
+        assert_eq!(meta.saved_at, 5, "a published snapshot is never replaced");
+        assert!(!backup.exists());
+        assert!(stale_version.exists(), "only this session's debris goes");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A published snapshot that lost its `meta.json` is damaged, not absent: it is listed as
+    /// unreadable, restore refuses it, and what is left of it stays where it is.
+    #[test]
+    fn a_snapshot_missing_its_metadata_is_unreadable_rather_than_absent() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "meta-missing";
+        let replay = root.join(session).join("panes").join("1.replay");
+        fs::create_dir_all(replay.parent().unwrap()).unwrap();
+        fs::write(&replay, b"kept").unwrap();
+
+        let row = list_snapshot_summaries_by_recency()
+            .into_iter()
+            .find(|summary| summary.session == session)
+            .expect("listed");
+        assert!(!row.readable);
+        assert!(!has_snapshot(session));
+        assert_eq!(unrestorable_snapshot(session), Some(Unrestorable::Damaged));
+        let mut server = SessionServer::new_named_with_settings(
+            session,
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let err = server.restore().expect_err("refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&replay).unwrap(), b"kept");
+
+        delete_snapshot_for(session).expect("forget");
+        assert!(unrestorable_snapshot(session).is_none());
+        assert!(
+            server.restore().expect_err("nothing left").kind() == io::ErrorKind::NotFound,
+            "with the directory gone there is no snapshot"
+        );
+    }
+
+    /// The same holds for a backup that lost its `meta.json`: a backup was once a published
+    /// snapshot, so it is damaged rather than absent, and recovery publishes it for restore to
+    /// refuse instead of a server starting empty beside it.
+    #[test]
+    fn a_backup_missing_its_metadata_is_unreadable_rather_than_absent() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "backup-meta-missing";
+        let backup = root.join(staging_dir_name(session, STAGING_OLD, "4242.1"));
+        fs::create_dir_all(backup.join("panes")).unwrap();
+        fs::write(backup.join("panes").join("1.replay"), b"kept").unwrap();
+
+        let row = list_snapshot_summaries_by_recency()
+            .into_iter()
+            .find(|summary| summary.session == session)
+            .expect("listed");
+        assert!(!row.readable);
+        assert_eq!(unrestorable_snapshot(session), Some(Unrestorable::Damaged));
+        assert!(backup.exists(), "discovery never moves a backup");
+
+        let mut server = SessionServer::new_named_with_settings(
+            session,
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let err = server.restore().expect_err("refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            fs::read(root.join(session).join("panes").join("1.replay")).unwrap(),
+            b"kept",
+            "recovery published what was left"
+        );
+
+        delete_snapshot_for(session).expect("forget");
+        assert!(unrestorable_snapshot(session).is_none());
+    }
+
+    /// A backup in a format this build cannot read is published again rather than swept, so a
+    /// build that reads it still finds the session; this build only refuses to restore it.
+    #[test]
+    fn recovery_keeps_a_backup_of_another_snapshot_version() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-version-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "versioned",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                ..ServerSettings::default()
+            },
+        );
+        write_meta(
+            &root.join(staging_dir_name("versioned", STAGING_OLD, "1.2")),
+            "versioned",
+            SNAPSHOT_VERSION + 1,
+            9,
+        );
+        let abandoned = root.join(staging_dir_name("versioned", STAGING_TMP, "1.3"));
+        fs::create_dir_all(&abandoned).unwrap();
+        assert!(server.restore().is_err());
+        let meta: SnapshotMeta =
+            serde_json::from_slice(&fs::read(root.join("versioned/meta.json")).unwrap()).unwrap();
+        assert_eq!(
+            meta.version,
+            SNAPSHOT_VERSION + 1,
+            "the backup is published as it was"
+        );
+        assert!(!abandoned.exists(), "staging still goes");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

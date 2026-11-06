@@ -1576,7 +1576,7 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
     assert!(
         matches!(
             responses.as_slice(),
-            [(_, ServerMessage::Error { code, .. })] if code == "protocol-mismatch"
+            [(_, ServerMessage::Error { code, .. })] if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE
         ),
         "older peers are rejected"
     );
@@ -2459,7 +2459,7 @@ fn attach_reports_protocol_mismatch() {
         },
     );
     assert!(
-        matches!(responses.as_slice(), [(_, ServerMessage::Error { code, .. })] if code == "protocol-mismatch")
+        matches!(responses.as_slice(), [(_, ServerMessage::Error { code, .. })] if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE)
     );
 }
 

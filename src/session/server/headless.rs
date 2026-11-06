@@ -366,7 +366,7 @@ impl SessionServer {
                 return vec![(
                     Target::Sender,
                     ServerMessage::Error {
-                        code: "protocol-mismatch".to_string(),
+                        code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
                     },
                 )];
@@ -3105,7 +3105,7 @@ mod tests {
         );
         assert!(matches!(
             messages.as_slice(),
-            [(Target::Sender, ServerMessage::Error { code, .. })] if code == "protocol-mismatch"
+            [(Target::Sender, ServerMessage::Error { code, .. })] if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE
         ));
     }
 

@@ -173,8 +173,10 @@ An update installs the new build for the next launch; it restarts nothing that i
   by pressing `Ctrl+E` twice in Sessions, or with `rozi sessions restart <NAME>`. Restarting a
   session ends the programs running in its panes.
 - A new client attaches to an old server normally while the session protocol is unchanged. When a
-  release raises the protocol, the old server refuses the new client, so restart the session before
-  attaching.
+  release changes the protocol, the old server refuses the new client. Restarting such a session
+  reopens it from its snapshot, with its layout and terminal history. To finish work in it first,
+  run `rozi update --rollback`, attach and finish, then update again and restart it. See
+  [`runs an incompatible rozi version`](troubleshooting.md#runs-an-incompatible-rozi-version).
 - Updating a local client does not change sessions on a remote host.
 
 On Windows, run the install script again when an update needs to replace the stable launcher

@@ -77,20 +77,24 @@ fn doctor_reports_without_creating_user_directories() {
         "install_source",
         "terminal",
         "config",
-        "config_errors",
+        "config_warnings",
         "sessions_running",
         "sessions_incompatible",
         "sessions_restorable",
         "extensions_installed",
-        "extensions_running",
-        "extensions_failed",
         "ssh_on_path",
     ] {
         assert!(fields.contains_key(key), "missing {key}: {fields:?}");
     }
     assert_eq!(fields["config"], "valid");
-    assert_eq!(fields["config_errors"], "0");
+    assert_eq!(fields["config_warnings"], "0");
     assert_eq!(fields["terminal"], "unknown");
+    assert!(!fields.contains_key("config_errors"));
+    let in_pane = report(
+        rozi(home.path()).arg("doctor").env("TERM_PROGRAM", "rozi"),
+        home.path(),
+    );
+    assert_eq!(in_pane["terminal"], "rozi (inside a pane)");
     assert_eq!(fields["ssh_on_path"], "no");
     assert_eq!(fields["sessions_running"], "0");
     assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
@@ -106,15 +110,19 @@ fn doctor_reports_without_creating_user_directories() {
 fn doctor_uses_real_validation_and_config_overrides_without_printing_errors() {
     let home = tempfile::tempdir().unwrap();
     let config = home.path().join("private-config.toml");
-    for text in ["invalid = [private-token", "[recording]\nmax_fps = 0\n"] {
+    for (text, verdict) in [
+        ("invalid = [private-token", "rejected"),
+        ("[recording]\nmax_fps = 0\n", "valid, 1 warnings"),
+        ("stale_private_key = 'private-token'\n", "valid, 1 warnings"),
+    ] {
         std::fs::write(&config, text).unwrap();
         for args in [
             vec!["--config", config.to_str().unwrap(), "doctor"],
             vec!["doctor", "--config", config.to_str().unwrap()],
         ] {
             let fields = report(rozi(home.path()).args(args), home.path());
-            assert_eq!(fields["config"], "invalid");
-            assert!(fields["config_errors"].parse::<usize>().unwrap() > 0);
+            assert_eq!(fields["config"], verdict);
+            assert!(fields["config_warnings"].parse::<usize>().unwrap() > 0);
             assert_eq!(std::fs::read_to_string(&config).unwrap(), text);
         }
     }
@@ -139,8 +147,8 @@ fn doctor_counts_installed_extensions_without_creating_runtime_state() {
     let fields = report(rozi(home.path()).arg("doctor"), home.path());
     assert_eq!(fields["extensions_installed"], "1");
     assert_eq!(fields["config"], "valid");
-    assert_eq!(fields["extensions_running"], "unavailable");
-    assert_eq!(fields["extensions_failed"], "unavailable");
+    assert!(!fields.contains_key("extensions_running"));
+    assert!(!fields.contains_key("extensions_failed"));
     assert!(!paths::runtime_dir_path(&env).exists());
     assert!(!paths::state_dir(&env).exists());
     assert!(!paths::config_dir(&env).exists());

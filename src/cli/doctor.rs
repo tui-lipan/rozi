@@ -30,14 +30,13 @@ pub(crate) fn run() {
         ),
         (
             "config".into(),
-            if loaded.rejected || !loaded.warnings.is_empty() {
-                "invalid"
-            } else {
-                "valid"
-            }
-            .into(),
+            match (loaded.rejected, loaded.warnings.len()) {
+                (true, _) => "rejected".into(),
+                (false, 0) => "valid".into(),
+                (false, count) => format!("valid, {count} warnings"),
+            },
         ),
-        ("config_errors".into(), loaded.warnings.len().to_string()),
+        ("config_warnings".into(), loaded.warnings.len().to_string()),
         (
             "ssh_on_path".into(),
             if crate::platform::command::program_exists("ssh") {
@@ -74,10 +73,6 @@ pub(crate) fn run() {
     }
     let entries = crate::config::scan_extensions_for_cli().entries();
     fields.push(("extensions_installed".into(), entries.len().to_string()));
-    // A loaded manifest does not mean its processes are running. Runtime status belongs to
-    // individual clients and sessions; collecting it would require additional control requests.
-    fields.push(("extensions_running".into(), "unavailable".into()));
-    fields.push(("extensions_failed".into(), "unavailable".into()));
     let width = fields.iter().map(|(key, _)| key.len()).max().unwrap_or(0);
     let report: String = fields
         .into_iter()
@@ -96,7 +91,7 @@ fn terminal_name(program: Option<&str>, term: Option<&str>) -> &'static str {
         ("vscode", "VS Code"),
         ("kitty", "kitty"),
         ("alacritty", "alacritty"),
-        ("rozi", "rozi"),
+        ("rozi", "rozi (inside a pane)"),
         ("tmux", "tmux"),
     ];
     const TERMS: &[(&str, &str)] = &[
@@ -134,6 +129,10 @@ mod tests {
             "wezterm"
         );
         assert_eq!(terminal_name(None, Some("xterm-kitty")), "kitty");
+        assert_eq!(
+            terminal_name(Some("rozi"), Some("xterm-256color")),
+            "rozi (inside a pane)"
+        );
         for private in [
             "/home/private/terminal",
             "user@host",

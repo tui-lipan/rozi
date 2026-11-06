@@ -2366,6 +2366,7 @@ fn pty_config(
         .fold(config, |config, key| config.env_remove(*key))
         .env("TERM_PROGRAM", crate::pane::TERMINAL_PROGRAM)
         .env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"))
+        .env(crate::pane::TERMINAL_MARKER_ENV, "1")
         // XON/XOFF would let a stray `Ctrl+S` - or `Ctrl+Shift+S`, which the legacy key encoding
         // sends as the same byte - pause the pane's output until `Ctrl+Q`, leaving it looking
         // frozen. Hand the byte to the child instead, where readline uses it for forward search.

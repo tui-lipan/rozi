@@ -7896,6 +7896,12 @@ fn the_server_names_itself_as_every_panes_terminal() {
     );
 }
 
+#[test]
+fn every_pane_child_is_marked_as_running_in_a_rozi_terminal() {
+    let output = pane_child_output(r#"printf '[%s]' "$ROZI_TERMINAL""#, &[]);
+    assert!(output.contains("[1]"), "child output: {output:?}");
+}
+
 mod transactions;
 
 fn media_test_server() -> SessionServer {

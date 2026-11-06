@@ -36,6 +36,8 @@ fn rozi(home: &Path) -> Command {
         .env_remove("ROZI_SOCKET")
         .env_remove("ROZI")
         .env_remove("ROZI_PANE")
+        .env_remove("ROZI_SOURCE_PANE")
+        .env_remove("ROZI_TERMINAL")
         .env("TERM_PROGRAM", "private-user@private-host")
         .env("TERM", "/home/private-user/terminal")
         .env("UNRELATED_SECRET", "private-token")
@@ -92,27 +94,30 @@ fn doctor_reports_without_creating_user_directories() {
     assert_eq!(fields["config_warnings"], "0");
     assert_eq!(fields["terminal"], "unknown");
     assert!(!fields.contains_key("config_errors"));
-    // A pane may override `TERM_PROGRAM`; the pane marker still decides.
+    // A pane may override `TERM_PROGRAM`; the terminal marker still decides.
     let in_pane = report(
         rozi(home.path())
             .arg("doctor")
             .env("ROZI", "1")
             .env("ROZI_PANE", "7")
+            .env("ROZI_TERMINAL", "1")
             .env("TERM_PROGRAM", "kitty")
             .env("TERM", "xterm-kitty"),
         home.path(),
     );
     assert_eq!(in_pane["terminal"], "rozi (inside a pane)");
-    // An extension or service gets `ROZI=1` without a pane.
-    let outside_pane = report(
+    // A command the client runs outside any pane names the focused pane in `ROZI_PANE`.
+    let client_command = report(
         rozi(home.path())
             .arg("doctor")
             .env("ROZI", "1")
+            .env("ROZI_PANE", "7")
+            .env("ROZI_SOURCE_PANE", "7")
             .env("TERM_PROGRAM", "kitty")
             .env("TERM", "xterm-kitty"),
         home.path(),
     );
-    assert_eq!(outside_pane["terminal"], "kitty");
+    assert_eq!(client_command["terminal"], "kitty");
     assert_eq!(fields["ssh_on_path"], "no");
     assert_eq!(fields["sessions_running"], "0");
     assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);

@@ -33,9 +33,11 @@ instead of adding an unlinked snippet.
   bare `source_pane` without it.
   Agent reports and releases carrying it also route to the caller's current or background
   attachment instead of the session on screen.
-- Spawned panes receive `ROZI=1`, `ROZI_PANE`, `TERM_PROGRAM=rozi`, `TERM_PROGRAM_VERSION`,
-  `ROZI_SOCKET`, and `ROZI_BIN`. The session server stamps the `TERM_PROGRAM` pair in its own
-  version (`pty_config`), and its pane screens answer XTVERSION as `rozi <version>`
+- Spawned panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_TERMINAL=1`, `TERM_PROGRAM=rozi`,
+  `TERM_PROGRAM_VERSION`, `ROZI_SOCKET`, and `ROZI_BIN`. Only `ROZI_TERMINAL` means "this process
+  runs in a pane": client-run commands also get `ROZI=1` and a `ROZI_PANE` naming the focused pane,
+  and a pane may override `TERM_PROGRAM`. The session server stamps `ROZI_TERMINAL` and the
+  `TERM_PROGRAM` pair in its own version (`pty_config`), and its pane screens answer XTVERSION as `rozi <version>`
   (`pane::new_terminal_screen`); a pane's environment may still override the pair. Remote panes suppress
   local `ROZI_SOCKET` and `ROZI_BIN`, and so does a pane spawned headlessly through
   `rozi --session <NAME> split` or restored by resurrection, which has no UI to name.

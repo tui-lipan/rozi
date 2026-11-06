@@ -99,10 +99,19 @@ fn control_forward_failure(code: Option<i32>, stderr: &str, session: &str, host:
             None => "remote control failed: ssh was terminated by a signal".to_string(),
         };
     }
-    let stderr = stderr.replace(
-        "run `rozi sessions list`",
-        &format!("run `rozi sessions list --remote {host}`"),
-    );
+    let stderr = stderr
+        .replace(
+            "run `rozi sessions list`",
+            &format!("run `rozi sessions list --remote {host}`"),
+        )
+        .replace(
+            &format!("`rozi sessions restart {session}`"),
+            &format!("`rozi sessions restart {session} --remote {host}`"),
+        )
+        .replace(
+            "run `rozi update --rollback`",
+            &format!("run `rozi update --rollback` on `{host}`"),
+        );
     format!("remote control failed: {stderr}")
 }
 
@@ -362,6 +371,19 @@ mod tests {
 
         assert!(
             message.contains("rozi sessions list --remote workbox"),
+            "{message}"
+        );
+
+        // A far side refusing the session for running another build names commands to run there.
+        let refused = crate::session::headless::SessionControlError::Refused {
+            session: "dev".to_string(),
+            code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
+            message: "server is older".to_string(),
+        }
+        .to_string();
+        let message = control_forward_failure(Some(UNREACHABLE_EXIT), &refused, "dev", "workbox");
+        assert!(
+            message.contains("`rozi sessions restart dev --remote workbox`"),
             "{message}"
         );
     }

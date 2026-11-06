@@ -44,7 +44,11 @@ pub enum SessionControlError {
     Transport(String),
     /// The server answered with a protocol-level refusal (`protocol-mismatch`,
     /// `session-mismatch`), which is a wrong or mismatched peer rather than a rejected command.
-    Refused { code: String, message: String },
+    Refused {
+        session: String,
+        code: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for SessionControlError {
@@ -55,7 +59,18 @@ impl std::fmt::Display for SessionControlError {
                 "no running session named `{name}` (run `rozi sessions list`)"
             ),
             Self::Transport(message) => write!(f, "{message}"),
-            Self::Refused { code, message } => write!(f, "{code}: {message}"),
+            // The one refusal a user can act on is a server from another rozi build, and the
+            // remedy is the same one an attach gives.
+            Self::Refused {
+                session,
+                code,
+                message,
+            } if code == protocol::PROTOCOL_MISMATCH_ERROR_CODE => write!(
+                f,
+                "session `{session}` runs an incompatible rozi version ({message}); {}",
+                crate::session::discovery::incompatible_session_advice(session)
+            ),
+            Self::Refused { code, message, .. } => write!(f, "{code}: {message}"),
         }
     }
 }
@@ -142,9 +157,11 @@ pub fn run_session_subscribe(
             let _ = stream.set_read_timeout(None);
             Ok((stream, response))
         }
-        ServerMessage::Error { code, message } => {
-            Err(SessionControlError::Refused { code, message })
-        }
+        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+            session: name.to_string(),
+            code,
+            message,
+        }),
         other => Err(SessionControlError::Transport(format!(
             "session `{name}` answered with an unexpected {} message",
             message_kind(&other)
@@ -308,9 +325,11 @@ fn exchange(
         .map_err(|err| SessionControlError::Transport(format!("no answer from `{name}`: {err}")))?
     {
         ServerMessage::SessionControlResult { response, .. } => Ok(response),
-        ServerMessage::Error { code, message } => {
-            Err(SessionControlError::Refused { code, message })
-        }
+        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+            session: name.to_string(),
+            code,
+            message,
+        }),
         other => Err(SessionControlError::Transport(format!(
             "session `{name}` answered with an unexpected {} message",
             message_kind(&other)
@@ -334,6 +353,35 @@ fn message_kind(message: &ServerMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A control command against a server from another build gets the same way out an attach does,
+    /// not the bare refusal code; every other refusal keeps its code.
+    #[test]
+    fn an_incompatible_server_refusal_says_how_to_keep_or_restart_the_session() {
+        let refusal = |code: &str| {
+            SessionControlError::Refused {
+                session: "dev".to_string(),
+                code: code.to_string(),
+                message: "client protocol 51-51 is incompatible with server protocol 41-41"
+                    .to_string(),
+            }
+            .to_string()
+        };
+        let mismatch = refusal(protocol::PROTOCOL_MISMATCH_ERROR_CODE);
+        assert!(
+            mismatch
+                .starts_with("session `dev` runs an incompatible rozi version (client protocol"),
+            "{mismatch}"
+        );
+        assert!(
+            mismatch.contains(
+                "`rozi sessions restart dev` reopens it from its last snapshot and ends its programs"
+            ),
+            "{mismatch}"
+        );
+        let other = refusal("session-mismatch");
+        assert!(other.starts_with("session-mismatch: "), "{other}");
+    }
 
     /// A wait that outlives the ordinary request budget must still be waited for. Holding it to
     /// [`REQUEST_TIMEOUT`] reported `Resource temporarily unavailable` a few seconds in, while the

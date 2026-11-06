@@ -367,7 +367,13 @@ pub(crate) fn activate_discovered_session(
                 "`{}` runs an incompatible version",
                 entry.name
             ))
-            .hint(crate::session::discovery::incompatible_session_hint()),
+            .hint(crate::session::discovery::incompatible_session_hint(
+                entry
+                    .remote_target
+                    .as_ref()
+                    .map(|target| target.display_label())
+                    .as_deref(),
+            )),
         );
         return Update::full();
     }

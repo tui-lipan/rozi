@@ -173,12 +173,17 @@ pub(crate) fn incompatible_session_advice(name: &str) -> String {
     }
 }
 
-/// The toast hint for a session row whose server runs a build this one cannot attach to.
-pub(crate) fn incompatible_session_hint() -> &'static str {
-    if rollback_available() {
-        "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
-    } else {
-        "Ctrl+E restarts it from its snapshot"
+/// The toast hint for a session row whose server runs a build this one cannot attach to. A remote
+/// row's server runs the host's install, so neither this machine's rollback nor its restart
+/// behavior applies to it.
+pub(crate) fn incompatible_session_hint(remote_host: Option<&str>) -> String {
+    match remote_host {
+        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E restarts it"),
+        None if rollback_available() => {
+            "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
+                .to_string()
+        }
+        None => "Ctrl+E restarts it from its snapshot".to_string(),
     }
 }
 
@@ -966,6 +971,16 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A remote row's server runs the host's install, so its hint must not offer this machine's
+    /// rollback, whatever kind of install this one is.
+    #[test]
+    fn an_incompatible_remote_session_is_pointed_at_its_host() {
+        let hint = incompatible_session_hint(Some("devbox"));
+        assert!(hint.contains("on `devbox`"), "{hint}");
+        assert!(!hint.contains("rozi update --rollback"), "{hint}");
+        assert!(incompatible_session_hint(None).contains("restarts it from its snapshot"));
+    }
 
     #[test]
     fn ssh_failures_requiring_user_action_stop_retries() {

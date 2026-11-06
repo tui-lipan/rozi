@@ -66,6 +66,15 @@ const MAX_FRAME: usize = 64 * 1024;
 /// password manager, short enough that a modal nobody answers cannot pin an ssh process forever.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Extra wall-clock budget for an ssh that may still have to be authenticated by hand.
+///
+/// `ssh` authenticates before its remote command can say anything, so a password typed into a
+/// prompt is spent inside any deadline on that ssh. Charging the user's typing to the remote's
+/// latency is what turns a slow password into "did not send a valid preamble" or "timed out".
+/// Generous, because the wait ends the moment the answer is given, and because a genuinely dead
+/// remote closes the pipe rather than going quiet, which fails immediately whatever this says.
+pub(crate) const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
+
 /// What the prompt is asking for, which decides whether the answer is masked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

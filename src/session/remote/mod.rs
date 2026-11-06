@@ -20,7 +20,10 @@ pub mod worktrees;
 pub use askpass::AskpassKind;
 pub use bootstrap::ensure_remote_binary;
 pub(crate) use bootstrap::ensure_remote_binary_in_ui;
-pub(crate) use bootstrap::{append_remote_rozi_command, append_ssh_destination, ssh_base_command};
+pub(crate) use bootstrap::{
+    SshDeadline, append_remote_rozi_command, append_ssh_destination, run_ssh_command_capturing,
+    ssh_base_command,
+};
 pub use connect::RemoteConnectError;
 pub(crate) use connect::connect_remote_within;
 pub use connect::{

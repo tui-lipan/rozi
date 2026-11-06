@@ -9,6 +9,7 @@ use crate::config::RemoteConfig;
 use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
+use super::askpass::INTERACTIVE_AUTH_ALLOWANCE;
 use super::bootstrap::{
     append_remote_rozi_command, append_ssh_destination, ssh_base_command,
     ssh_base_command_with_connect_timeout,
@@ -342,15 +343,6 @@ fn resolve_attach_binary(
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
 const DEFAULT_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Extra budget for a connection that may still have to be authenticated by hand.
-///
-/// `ssh` authenticates before the remote proxy can say anything, so a password typed into the
-/// in-app prompt is spent *inside* this read. Charging the user's typing to the remote's latency is
-/// what turns a slow password into "did not send a valid preamble". Generous, because the wait ends
-/// the moment the answer is given — and because a genuinely dead remote closes the pipe rather than
-/// going quiet, which fails immediately whatever this says.
-const INTERACTIVE_AUTH_ALLOWANCE: Duration = Duration::from_secs(180);
-
 /// How long to wait for the proxy's preamble.
 fn preamble_timeout(config: &RemoteConfig) -> Duration {
     preamble_timeout_for(
@@ -455,10 +447,13 @@ fn run_remote_sessions_command(
     append_ssh_destination(&mut command, &resolved);
     append_remote_rozi_command(&mut command, &remote_bin.path, args, remote_bin.family);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
-    if !output.status.success() {
+    let output = super::bootstrap::run_ssh_command(
+        &mut command,
+        None,
+        super::bootstrap::SshDeadline::for_config(config).command(),
+    )
+    .map_err(|err| format!("remote sessions {verb} ssh failed: {err}"))?;
+    if output.status != Some(0) {
         super::binary::invalidate(target, config);
         return Err(super::sessions_command_failure(
             verb,
@@ -470,21 +465,25 @@ fn run_remote_sessions_command(
 
 pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String> {
     thread::spawn(move || {
-        let mut buf = String::new();
+        let mut buf = Vec::new();
         let mut bytes = [0u8; 4096];
-        // Cap so a verbose ssh cannot grow without bound.
         const CAP: usize = 16 * 1024;
-        while buf.len() < CAP {
+        loop {
             match stderr.read(&mut bytes) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let take = n.min(CAP - buf.len());
-                    buf.push_str(&String::from_utf8_lossy(&bytes[..take]));
+                    let overflow = (buf.len() + n).saturating_sub(CAP);
+                    buf.drain(..overflow);
+                    buf.extend_from_slice(&bytes[..n]);
                 }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
-        buf
+        // The byte cap can cut through the first retained character. Discard its suffix
+        // before decoding, while preserving lossy diagnostics for invalid bytes elsewhere.
+        let start = buf.iter().take_while(|byte| **byte & 0xc0 == 0x80).count();
+        String::from_utf8_lossy(&buf[start..]).into_owned()
     })
 }
 
@@ -496,6 +495,51 @@ fn finished_stderr_tail(handle: thread::JoinHandle<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::RemoteConfig;
+
+    #[test]
+    fn stderr_collector_keeps_the_tail_and_decodes_across_reads() {
+        for (case, expected_len) in [("ascii", 16 * 1024), ("utf8", 16 * 1024 - 1)] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "session::remote::connect::tests::stderr_writer_child",
+                    "--nocapture",
+                ])
+                .env("ROZI_STDERR_WRITER", case)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            let mut child = command.spawn().unwrap();
+            let collector = spawn_stderr_collector(child.stderr.take().unwrap());
+            assert!(child.wait().unwrap().success());
+            let tail = collector.join().unwrap();
+            assert!(tail.ends_with("é終 diagnostic tail"), "{tail:?}");
+            assert!(!tail.contains('�'));
+            assert_eq!(tail.len(), expected_len);
+            if case == "utf8" {
+                assert!(tail.starts_with("é"));
+            }
+        }
+    }
+
+    #[test]
+    fn stderr_writer_child() {
+        use std::io::Write;
+        let Ok(case) = std::env::var("ROZI_STDERR_WRITER") else {
+            return;
+        };
+        let mut stderr = std::io::stderr().lock();
+        if case == "utf8" {
+            stderr.write_all("é".repeat(16 * 1024).as_bytes()).unwrap();
+        } else {
+            stderr.write_all(&vec![b'x'; 32 * 1024 - 1]).unwrap();
+        }
+        for byte in "é終 diagnostic tail".as_bytes() {
+            stderr.write_all(&[*byte]).unwrap();
+            stderr.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
 
     #[test]
     fn creating_a_remote_session_rejects_a_hostile_name_before_spawning_ssh() {

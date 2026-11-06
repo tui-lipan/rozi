@@ -704,7 +704,7 @@ See [Sessions](sessions.md).
 | --- | --- | --- | --- |
 | `default_host` | string | none | Host used by `--remote` without a value. |
 | `reconnect_on_launch` | bool | `true` | Reconnect hosts you deliberately connected, without SSH prompts or installation. Disconnecting a host removes it from future launches. |
-| `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. |
+| `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. Also sets how long each probe, install step, and remote `sessions` command may run before rozi stops it. Uploads get extra time for the binary's size. Answering an SSH prompt has a separate allowance. Raise this value if commands on a slow host time out. `0` turns off `ConnectTimeout` and uses the default command limit. |
 | `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
 | `server_alive_count_max` | integer | `3` | Minimum `1`. |
 | `install` | string | `"prompt"` | Whether to install rozi on the remote host: `"prompt"`, `"always"`, or `"never"`. Noninteractive runs never install. |

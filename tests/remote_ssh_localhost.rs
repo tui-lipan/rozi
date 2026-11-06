@@ -8,7 +8,7 @@
 //!   flag, the piped transport, and a real attach — and runs everywhere.
 //! - [`attaches_to_a_real_session_over_ssh_to_localhost`] adds genuine `ssh`, the one piece the
 //!   first cannot approximate. Skipped unless key-based ssh to localhost already works
-//!   non-interactively, since that is a machine setup this repository has no business creating.
+//!   non-interactively. Set `ROZI_REQUIRE_SSH_TEST=1` to require it, as CI does.
 //!
 //! `binary_path` is pinned to the test binary so the probe short-circuits and **nothing is ever
 //! installed on the host**.
@@ -28,24 +28,27 @@ use common::unique_session_name;
 
 /// Whether `ssh localhost` completes without any prompt. Anything else means "not set up here".
 fn localhost_ssh_available() -> bool {
-    if !rozi::platform::command::program_exists("ssh") {
-        return false;
-    }
-    std::process::Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "localhost",
-            "--",
-            "true",
-        ])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    let available = rozi::platform::command::program_exists("ssh")
+        && std::process::Command::new("ssh")
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=yes",
+                "localhost",
+                "--",
+                "true",
+            ])
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+    assert!(
+        available || std::env::var("ROZI_REQUIRE_SSH_TEST").as_deref() != Ok("1"),
+        "ROZI_REQUIRE_SSH_TEST=1 requires key-based ssh to localhost and a trusted host key"
+    );
+    available
 }
 
 /// Config pinned to this test's binary, so probe/install never touches the host.

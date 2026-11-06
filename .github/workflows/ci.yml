@@ -80,6 +80,34 @@ jobs:
         if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest'
         run: cargo build --locked --release
 
+  remote-ssh:
+    name: localhost SSH transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ROZI_REQUIRE_SSH_TEST: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
+        with:
+          toolchain: "1.96"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Set up key-based SSH to localhost
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+          sudo systemctl start ssh
+          install -d -m 700 "$HOME/.ssh"
+          ssh-keygen -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519"
+          cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes localhost true
+      - name: Test real SSH transport
+        run: cargo test --locked --test remote_ssh_localhost
+
   # NetBSD ships no rozi binary and nothing in the matrix above runs there, but it is the one
   # target that catches a whole class of `cfg` mistake those three cannot: code written as `linux`
   # versus `not(linux)`, which silently hands every other Unix the macOS spelling. That is exactly

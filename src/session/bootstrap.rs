@@ -291,6 +291,19 @@ fn attach_local(
                     .as_mut()
                     .and_then(|child| child.try_wait().ok().flatten());
                 if Instant::now() >= deadline || early_exit.is_some() {
+                    let unrestorable = early_exit
+                        .filter(|_| !create_only)
+                        .and_then(|_| crate::session::server::unrestorable_snapshot(&name));
+                    if let Some(reason) = unrestorable {
+                        link.send(Msg::SessionAttachFailed {
+                            epoch,
+                            message: crate::session::server::unrestorable_snapshot_error(
+                                &name, &reason,
+                            )
+                            .to_string(),
+                        });
+                        return;
+                    }
                     let detail = match early_exit {
                         Some(status) => {
                             format!("session server exited before it was ready ({status})")

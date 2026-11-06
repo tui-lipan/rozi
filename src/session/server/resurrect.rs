@@ -754,14 +754,7 @@ impl SessionServer {
     pub(super) fn restore(&mut self) -> io::Result<usize> {
         self.recover_interrupted_snapshot()?;
         let path = self.snapshot_path()?;
-        let meta: SnapshotMeta =
-            serde_json::from_slice(&fs::read(path.join("meta.json"))?).map_err(io::Error::other)?;
-        if meta.version != SNAPSHOT_VERSION || meta.session != self.session_name {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported or mismatched session snapshot",
-            ));
-        }
+        let meta = read_restorable_meta(&path, &self.session_name)?;
         self.origin = meta.effective_origin();
         let mut layout: Option<SharedLayout> = fs::read(path.join("layout.json"))
             .ok()
@@ -1176,6 +1169,77 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
     deployments.and(snapshot)
 }
 
+/// The snapshot in `dir`, if this build can restore it. A missing `meta.json` is `NotFound`: there is
+/// no snapshot. Any other failure is `InvalidData` saying why the snapshot that is there cannot be
+/// read.
+fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMeta> {
+    let bytes = fs::read(dir.join("meta.json"))?;
+    let damaged = || io::Error::new(io::ErrorKind::InvalidData, "its snapshot is damaged");
+    let header: SnapshotHeader = serde_json::from_slice(&bytes).map_err(|_| damaged())?;
+    if header.version != SNAPSHOT_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "its snapshot is in format {}, and this rozi reads format {SNAPSHOT_VERSION}",
+                header.version
+            ),
+        ));
+    }
+    if header.session != session_name {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("its snapshot belongs to session `{}`", header.session),
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| damaged())
+}
+
+/// The part of `meta.json` every snapshot format shares.
+#[derive(Deserialize)]
+struct SnapshotHeader {
+    version: u32,
+    session: String,
+}
+
+/// Why `name` has a snapshot its server would refuse to restore, if it has one. Read-only, so a
+/// client can explain a server that would not start; see [`saved_snapshot_summaries`] for why a
+/// client never moves a backup.
+pub(crate) fn unrestorable_snapshot(name: &str) -> Option<String> {
+    let server = SessionServer::new_named_with_settings(
+        name,
+        ServerSettings {
+            resurrect: true,
+            ..ServerSettings::default()
+        },
+    );
+    let path = server.snapshot_path().ok()?;
+    let dir = if path.exists() {
+        path
+    } else {
+        let parent = path.parent()?;
+        if newest_valid_backup(parent, name).is_some() {
+            return None;
+        }
+        newest_unreadable_backup(parent, name)?
+    };
+    match read_restorable_meta(&dir, name) {
+        Err(err) if err.kind() == io::ErrorKind::InvalidData => Some(err.to_string()),
+        _ => None,
+    }
+}
+
+/// What to do about a session whose snapshot this build cannot restore, after `reason` says why.
+pub(crate) fn unrestorable_snapshot_error(name: &str, reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "session `{name}` was not started because {reason}; start it with the rozi version \
+             that saved it, or run `rozi sessions new {name} --detach` to start it empty and \
+             discard the snapshot"
+        ),
+    )
+}
+
 /// Discard `name`'s snapshot, and only that, so the server started next under the name begins with
 /// fresh panes and keeps its deployments. Only for a session whose server has already stopped.
 pub(crate) fn discard_snapshot_for_restart(name: &str) -> io::Result<()> {
@@ -1516,6 +1580,19 @@ mod tests {
         assert!(has_snapshot(session));
         assert!(!has_snapshot(foreign));
         assert!(!has_snapshot(mismatched));
+        // A client can say why a server would refuse the foreign one, and has no reason to give
+        // for one it can restore.
+        assert_eq!(
+            unrestorable_snapshot(foreign).as_deref(),
+            Some(
+                format!(
+                    "its snapshot is in format {}, and this rozi reads format {SNAPSHOT_VERSION}",
+                    SNAPSHOT_VERSION + 1
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(unrestorable_snapshot(session), None);
         assert!(
             backup.exists() && older.exists() && !root.join(session).exists(),
             "discovery never moves or removes a backup"

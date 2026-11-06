@@ -477,3 +477,69 @@ fn wait_for_meta(snapshot: &std::path::Path, expected: &str) {
         snapshot.display()
     );
 }
+
+/// A server must not start over a snapshot it cannot read: running empty, its first save would
+/// replace the snapshot, and with it the session, for the build that can read it.
+#[test]
+fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
+    let session = unique_session_name();
+    let test_root = private_temp_dir();
+    let runtime_base = test_root.join("runtime");
+    let state_base = test_root.join("state");
+    let config_base = test_root.join("config");
+    for dir in [&runtime_base, &state_base, &config_base] {
+        fs::create_dir_all(dir).expect("create isolated base");
+    }
+    let config_path = config_base.join("config.toml");
+    fs::write(&config_path, "[session]\nresurrect = true\n").expect("write test config");
+    // Left by another build's interrupted save, in a format this build does not read.
+    let sessions = state_base.join("rozi").join("sessions");
+    let backup = sessions.join(format!(".{session}.old-4242.1"));
+    fs::create_dir_all(backup.join("panes")).expect("create backup");
+    let meta = format!(r#"{{"version":99,"session":"{session}","future":true}}"#);
+    fs::write(backup.join("meta.json"), &meta).expect("write backup meta");
+    fs::write(backup.join("panes").join("1.replay"), b"kept").expect("write backup replay");
+
+    let mut child = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("poll server") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the server started over a snapshot it cannot read");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("stderr"), &mut stderr)
+        .expect("read server stderr");
+    assert!(!status.success(), "{stderr}");
+    assert!(
+        stderr.contains("its snapshot is in format 99"),
+        "the refusal says why: {stderr}"
+    );
+    let published = sessions.join(&session);
+    assert_eq!(
+        fs::read_to_string(published.join("meta.json")).expect("published meta"),
+        meta,
+        "the snapshot is published again, unchanged"
+    );
+    assert_eq!(
+        fs::read(published.join("panes").join("1.replay")).expect("published replay"),
+        b"kept"
+    );
+    assert!(
+        !subprocess_endpoint(&runtime_base, &session).path().exists(),
+        "no endpoint is left behind"
+    );
+    let _ = fs::remove_dir_all(test_root);
+}

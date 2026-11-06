@@ -72,6 +72,13 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
             Err(_) => {}
         }
         if let Some(status) = spawned.try_wait()? {
+            // The server's stderr goes nowhere, so name the one refusal a user can act on.
+            if !fresh
+                && resurrect
+                && let Some(reason) = super::unrestorable_snapshot(name)
+            {
+                return Err(super::unrestorable_snapshot_error(name, &reason));
+            }
             return Err(io::Error::other(format!(
                 "Session `{name}` server exited before it was ready ({status})"
             )));

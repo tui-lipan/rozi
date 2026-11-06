@@ -435,9 +435,13 @@ needs the option again here to stay unsaved. A session that isn't running is ref
 A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
 restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
 as [resurrection](#resurrection) restores them, while the programs in its panes end. The old server
-saves a final snapshot as it stops; if that takes longer than a few seconds, or on Windows, where
-the server is stopped at once, the restart uses the last snapshot it saved instead, so output from
-the final moments before the restart can be missing.
+saves a final snapshot as it stops; if that takes longer than about ten seconds, or on Windows,
+where the server is stopped at once, the restart uses the last snapshot it saved instead, so output
+from the final moments before the restart can be missing.
+
+If the snapshot is in a format this rozi cannot read, the session is not started and its snapshot
+is kept. Start it with the rozi version that saved it, or run `rozi sessions new <NAME> --detach`
+to start it empty and discard the snapshot.
 
 ```bash
 rozi sessions new tests --detach --no-resurrect

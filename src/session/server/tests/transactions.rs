@@ -821,3 +821,74 @@ fn a_parked_failed_spawn_is_removed_and_repairs_scrollable_focus_on_return() {
         }
     });
 }
+
+/// A snapshot write that dies after moving the published snapshot aside, and before publishing its
+/// replacement, leaves the session only in the backup. The next server for the session must bring
+/// it back from there, with its layout and screens, and clear what the write left.
+#[test]
+fn restore_recovers_a_snapshot_interrupted_between_its_renames() {
+    use super::resurrect::{STAGING_OLD, STAGING_TMP, staging_dir_name};
+    let root = std::env::temp_dir().join(format!(
+        "rozi-interrupted-snapshot-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let settings = ServerSettings {
+        resurrect: true,
+        snapshot_dir: Some(root.clone()),
+        ..Default::default()
+    };
+    let mut server = SessionServer::new_named_with_settings("survive", settings.clone());
+    let (controller, _client) = attach_client(&mut server);
+    for id in [1, 2] {
+        let message = spawn(&server, id);
+        assert!(accepted(&server.handle_message(controller, message)));
+        server
+            .panes
+            .get_mut(&id)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(format!("survivor-{id}\r\n").as_bytes());
+    }
+    server.mark_dirty();
+    server.snapshot_before_shutdown().unwrap();
+    drop(server);
+
+    // The state the writer leaves after its first rename: the published snapshot moved to the
+    // backup name, a staging directory not yet in place, and a different session's backup beside
+    // them whose name shares this one's prefix.
+    let published = root.join("survive");
+    let backup = root.join(staging_dir_name("survive", STAGING_OLD, "4242.200"));
+    let staging = root.join(staging_dir_name("survive", STAGING_TMP, "4242.200"));
+    let neighbour = root.join(staging_dir_name("survive-bar", STAGING_OLD, "4242.100"));
+    std::fs::rename(&published, &backup).unwrap();
+    std::fs::create_dir_all(staging.join("panes")).unwrap();
+    std::fs::create_dir_all(&neighbour).unwrap();
+
+    let mut restored = SessionServer::new_named_with_settings("survive", settings);
+    assert_eq!(restored.restore().unwrap(), 2);
+    assert_placed(&restored);
+    for id in [1, 2] {
+        let text = restored
+            .panes
+            .get_mut(&id)
+            .unwrap()
+            .screen_without_change()
+            .render_snapshot()
+            .text;
+        assert!(
+            text.contains(&format!("survivor-{id}")),
+            "pane {id}:\n{text}"
+        );
+    }
+    assert!(published.join("meta.json").is_file(), "backup moved back");
+    assert!(!backup.exists(), "backup consumed");
+    assert!(!staging.exists(), "partial staging swept, never promoted");
+    assert!(
+        neighbour.exists(),
+        "another session's backup is not this one's"
+    );
+    drop(restored);
+    std::fs::remove_dir_all(root).unwrap();
+}

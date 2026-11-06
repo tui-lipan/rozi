@@ -194,8 +194,8 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
             .unwrap_or_default()
             .as_nanos()
     );
-    let temp = parent.join(format!(".{session_name}.tmp-{suffix}"));
-    let backup = parent.join(format!(".{session_name}.old-{suffix}"));
+    let temp = parent.join(staging_dir_name(&session_name, STAGING_TMP, &suffix));
+    let backup = parent.join(staging_dir_name(&session_name, STAGING_OLD, &suffix));
     crate::platform::fs_security::ensure_private_dir(&temp)?;
     let panes_dir = temp.join("panes");
     crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
@@ -227,6 +227,10 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
         )?;
     }
     sync_directory(&temp)?;
+    // Between this rename and the next, the published directory is missing and only the backup
+    // holds the session. A crash inside that window is repaired by the next server for this
+    // session, in [`SessionServer::recover_interrupted_snapshot`]; discovery lists the backup
+    // meanwhile so the session stays visible.
     if final_path.exists() {
         fs::rename(&final_path, &backup)?;
     }
@@ -713,7 +717,34 @@ impl SessionServer {
         })
     }
 
+    /// Put back a snapshot a crash left half replaced, then sweep the replacement's debris.
+    ///
+    /// A writer interrupted between its two renames leaves the session only in its backup
+    /// directory. The newest valid backup is renamed into place; a staging directory is never
+    /// promoted, because it may have been abandoned partway through being written. Whatever is
+    /// left is removed, including when the published snapshot survived and only the final
+    /// cleanup was lost.
+    ///
+    /// Only the server that owns this session name may do this: it is the only writer, and it has
+    /// not started one yet. A client sees the same directories while a live server is inside that
+    /// rename window, so discovery only ever reads them.
+    pub(super) fn recover_interrupted_snapshot(&self) -> io::Result<()> {
+        let path = self.snapshot_path()?;
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+        if !path.exists()
+            && let Some(backup) = newest_valid_backup(parent, &self.session_name)
+        {
+            fs::rename(&backup, &path)?;
+            sync_directory(parent)?;
+        }
+        remove_staging_dirs(parent, &self.session_name);
+        Ok(())
+    }
+
     pub(super) fn restore(&mut self) -> io::Result<usize> {
+        self.recover_interrupted_snapshot()?;
         let path = self.snapshot_path()?;
         let meta: SnapshotMeta =
             serde_json::from_slice(&fs::read(path.join("meta.json"))?).map_err(io::Error::other)?;
@@ -1000,23 +1031,99 @@ impl SessionServer {
     }
 }
 
+/// A snapshot being written, before it is published.
+pub(super) const STAGING_TMP: &str = "tmp";
+/// The published snapshot a write is replacing, kept until the replacement is in place.
+pub(super) const STAGING_OLD: &str = "old";
+
+/// `.{session}.{kind}-{suffix}`: a staging or backup directory next to the published snapshot.
+pub(super) fn staging_dir_name(session_name: &str, kind: &str, suffix: &str) -> String {
+    format!(".{session_name}.{kind}-{suffix}")
+}
+
+/// The session and kind a staging or backup directory name belongs to, with its suffix.
+///
+/// A session name cannot contain `.`, so the first separator ends it and `foo` never claims a
+/// directory of `foo-bar`.
+fn parse_staging_dir_name(name: &str) -> Option<(&str, &str, &str)> {
+    let (session, rest) = name.strip_prefix('.')?.split_once('.')?;
+    let (kind, suffix) = rest.split_once('-')?;
+    (!session.is_empty() && matches!(kind, STAGING_TMP | STAGING_OLD))
+        .then_some((session, kind, suffix))
+}
+
+/// A backup directory left by an interrupted replacement, with the snapshot it holds.
+struct Backup {
+    path: PathBuf,
+    meta: SnapshotMeta,
+    /// When the write that moved it aside started, from its suffix; orders backups that share a
+    /// `saved_at` second.
+    written_nanos: u128,
+}
+
+/// Every backup directory in `parent` whose snapshot this build can restore, by session.
+///
+/// A backup counts only when its `meta.json` names the session its directory name does and has
+/// this build's snapshot version, the same test a published snapshot passes.
+fn valid_backups(parent: &Path) -> Vec<(String, Backup)> {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let dir_name = entry.file_name().into_string().ok()?;
+            let (session, kind, suffix) = parse_staging_dir_name(&dir_name)?;
+            if kind != STAGING_OLD {
+                return None;
+            }
+            let meta: SnapshotMeta =
+                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
+            let written_nanos = suffix
+                .split_once('.')
+                .and_then(|(_, nanos)| nanos.parse().ok())
+                .unwrap_or(0);
+            (meta.version == SNAPSHOT_VERSION && meta.session == session).then(|| {
+                (
+                    session.to_string(),
+                    Backup {
+                        path: entry.path(),
+                        meta,
+                        written_nanos,
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+fn backup_order(backup: &Backup) -> (u64, u128) {
+    (backup.meta.saved_at, backup.written_nanos)
+}
+
+/// The newest restorable backup of `session_name`, if a replacement was interrupted.
+fn newest_valid_backup(parent: &Path, session_name: &str) -> Option<PathBuf> {
+    valid_backups(parent)
+        .into_iter()
+        .filter(|(session, _)| session == session_name)
+        .map(|(_, backup)| backup)
+        .max_by_key(backup_order)
+        .map(|backup| backup.path)
+}
+
 /// Best-effort sweep of abandoned staging/backup directories for one session. A leftover that
 /// resists removal is not worth failing a delete over: it is already invisible to discovery.
 fn remove_staging_dirs(parent: &Path, session_name: &str) {
-    let prefixes = [
-        format!(".{session_name}.tmp-"),
-        format!(".{session_name}.old-"),
-    ];
     let Ok(entries) = fs::read_dir(parent) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        // A session name cannot contain `.`, so the separator keeps `foo` from matching `foo-bar`.
-        if prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+        if name
+            .to_str()
+            .and_then(parse_staging_dir_name)
+            .is_some_and(|(session, _, _)| session == session_name)
+        {
             let _ = fs::remove_dir_all(entry.path());
         }
     }
@@ -1117,10 +1224,10 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
     let Some(root) = default_snapshot_dir() else {
         return Vec::new();
     };
-    let Ok(entries) = fs::read_dir(root) else {
+    let Ok(entries) = fs::read_dir(&root) else {
         return Vec::new();
     };
-    entries
+    let mut summaries: Vec<SnapshotSummary> = entries
         .flatten()
         .filter_map(|entry| {
             // Identity is the directory the snapshot is *published* under, not the name recorded
@@ -1140,7 +1247,28 @@ fn saved_snapshot_summaries() -> Vec<SnapshotSummary> {
                 panes: meta.panes.len(),
             })
         })
-        .collect()
+        .collect();
+    // A session whose snapshot replacement was interrupted survives only in a backup directory.
+    // It is listed so it can be restored or forgotten, but only read here: a live server is inside
+    // this same window during every write, so a client renaming or deleting the backup would race
+    // the writer that owns it. The next server for the session moves it back into place.
+    let mut backups: Vec<(String, Backup)> = valid_backups(&root)
+        .into_iter()
+        .filter(|(session, _)| crate::session::discovery::valid_session_name(session))
+        .collect();
+    backups.sort_by_key(|(_, backup)| std::cmp::Reverse(backup_order(backup)));
+    for (session, backup) in backups {
+        if summaries.iter().any(|summary| summary.session == session) {
+            continue;
+        }
+        summaries.push(SnapshotSummary {
+            session,
+            saved_at: backup.meta.saved_at,
+            origin: backup.meta.effective_origin(),
+            panes: backup.meta.panes.len(),
+        });
+    }
+    summaries
 }
 
 /// Whether `name` has a snapshot discovery would list as restorable.
@@ -1285,6 +1413,153 @@ mod tests {
 
         delete_snapshot_for(published).expect("forget the published session");
         assert!(!root.join(published).exists());
+    }
+
+    fn write_meta(dir: &Path, session: &str, version: u32, saved_at: u64) {
+        fs::create_dir_all(dir).expect("create snapshot dir");
+        fs::write(
+            dir.join("meta.json"),
+            serde_json::to_vec(&SnapshotMeta {
+                version,
+                session: session.to_string(),
+                saved_at,
+                layout_rev: 0,
+                origin: Default::default(),
+                created_from_profile: None,
+                panes: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .expect("write snapshot meta");
+    }
+
+    /// A session caught between a snapshot's two renames lives only in its backup. Discovery must
+    /// still offer it, without touching the directory a live writer may be about to rename, and
+    /// forget must clear it.
+    #[test]
+    fn a_session_left_only_in_its_backup_is_listed_read_only_and_forgettable() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "backup-only";
+        let backup = root.join(staging_dir_name(session, STAGING_OLD, "4242.200"));
+        let older = root.join(staging_dir_name(session, STAGING_OLD, "4242.100"));
+        write_meta(&backup, session, SNAPSHOT_VERSION, 7);
+        write_meta(&older, session, SNAPSHOT_VERSION, 3);
+        // Neither of these makes a session restorable: a backup of another build's snapshot
+        // format, and one whose metadata names a different session than its directory.
+        let foreign = "backup-foreign";
+        write_meta(
+            &root.join(staging_dir_name(foreign, STAGING_OLD, "1.1")),
+            foreign,
+            SNAPSHOT_VERSION + 1,
+            9,
+        );
+        let mismatched = "backup-mismatch";
+        write_meta(
+            &root.join(staging_dir_name(mismatched, STAGING_OLD, "1.1")),
+            session,
+            SNAPSHOT_VERSION,
+            9,
+        );
+
+        let summaries = list_snapshot_summaries_by_recency();
+        let listed: Vec<_> = summaries
+            .iter()
+            .filter(|summary| summary.session == session)
+            .collect();
+        assert_eq!(listed.len(), 1, "one row per session\n{summaries:?}");
+        assert_eq!(listed[0].saved_at, 7, "the newest backup describes it");
+        assert!(has_snapshot(session));
+        assert!(!has_snapshot(foreign));
+        assert!(!has_snapshot(mismatched));
+        assert!(
+            backup.exists() && older.exists() && !root.join(session).exists(),
+            "discovery never moves or removes a backup"
+        );
+
+        // With the published snapshot back, it is the one listed and the backup adds nothing.
+        write_meta(&root.join(session), session, SNAPSHOT_VERSION, 11);
+        let summaries = list_snapshot_summaries_by_recency();
+        let listed: Vec<_> = summaries
+            .iter()
+            .filter(|summary| summary.session == session)
+            .collect();
+        assert_eq!(listed.len(), 1, "{summaries:?}");
+        assert_eq!(listed[0].saved_at, 11);
+
+        for name in [session, foreign, mismatched] {
+            delete_snapshot_for(name).expect("forget");
+            assert!(!has_snapshot(name));
+        }
+        let leftovers: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with(".backup-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// The writer can also die after publishing the replacement but before removing the backup.
+    /// The published snapshot is the one restored, and the backup is swept rather than kept.
+    #[test]
+    fn recovery_keeps_a_published_snapshot_and_sweeps_the_backup_left_beside_it() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-leftover-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let server = SessionServer::new_named_with_settings(
+            "leftover",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                ..ServerSettings::default()
+            },
+        );
+        write_meta(&root.join("leftover"), "leftover", SNAPSHOT_VERSION, 5);
+        let backup = root.join(staging_dir_name("leftover", STAGING_OLD, "1.2"));
+        write_meta(&backup, "leftover", SNAPSHOT_VERSION, 9);
+        let stale_version = root.join(staging_dir_name("other", STAGING_OLD, "1.2"));
+        write_meta(&stale_version, "other", SNAPSHOT_VERSION - 1, 9);
+
+        server.recover_interrupted_snapshot().unwrap();
+
+        let meta: SnapshotMeta =
+            serde_json::from_slice(&fs::read(root.join("leftover/meta.json")).unwrap()).unwrap();
+        assert_eq!(meta.saved_at, 5, "a published snapshot is never replaced");
+        assert!(!backup.exists());
+        assert!(stale_version.exists(), "only this session's debris goes");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A backup in a format this build cannot read is not moved into place, so the session is not
+    /// handed a snapshot `restore` would then refuse.
+    #[test]
+    fn recovery_ignores_a_backup_of_another_snapshot_version() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-version-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "versioned",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                ..ServerSettings::default()
+            },
+        );
+        write_meta(
+            &root.join(staging_dir_name("versioned", STAGING_OLD, "1.2")),
+            "versioned",
+            SNAPSHOT_VERSION + 1,
+            9,
+        );
+        assert!(server.restore().is_err());
+        assert!(!root.join("versioned").exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -536,7 +536,11 @@ pub(super) fn validate_service(
         return;
     }
     info.services.push(name.clone());
-    for reserved in RESERVED_EXTENSION_ENV {
+    // `ROZI_TERMINAL` is not promised to an extension, but no extension process runs in a pane.
+    for reserved in RESERVED_EXTENSION_ENV
+        .iter()
+        .chain([&crate::pane::TERMINAL_MARKER_ENV])
+    {
         if raw.env.contains_key(*reserved) {
             info.errors.push(format!(
                 "service `{name}` may not override reserved environment variable `{reserved}`"

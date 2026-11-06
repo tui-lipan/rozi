@@ -194,6 +194,13 @@ pub(crate) const PANE_IMAGE_BUDGET_BYTES: usize = 200 * 1024 * 1024;
 /// for one - which leave a relayed pane blank while the next upload is still arriving.
 pub(crate) const TERMINAL_PROGRAM: &str = "rozi";
 
+/// Set to `1` for every program whose terminal is a rozi pane, beside [`TERMINAL_PROGRAM`].
+///
+/// `ROZI` and `ROZI_PANE` do not say this: commands a client runs outside any pane get both, with
+/// `ROZI_PANE` naming the focused pane. `TERM_PROGRAM` does not either, since a pane's own
+/// environment may override it.
+pub(crate) const TERMINAL_MARKER_ENV: &str = "ROZI_TERMINAL";
+
 /// The XTVERSION identity of this build, `rozi <version>`. The session server answers with its own
 /// build's identity, since it owns the pane's terminal.
 pub(crate) fn terminal_identity() -> String {

@@ -95,6 +95,18 @@ pub(crate) fn spawn_service_child(
     control_socket: Option<&std::path::Path>,
 ) -> std::io::Result<(std::process::Child, CommandGroup, Option<Attached>)> {
     crate::config::prepare_state_dir(&config.env).map_err(std::io::Error::other)?;
+    let mut command = service_command(config, command_shell, control_socket)?;
+    // An extension's service keeps what it prints in the extension's log; any other service's
+    // output is discarded.
+    let log = service_log(config);
+    spawn_with_log(&mut command, log.as_ref(), false)
+}
+
+fn service_command(
+    config: &ServiceConfig,
+    command_shell: Option<&[String]>,
+    control_socket: Option<&std::path::Path>,
+) -> std::io::Result<std::process::Command> {
     let mut command = match &config.launch {
         ServiceLaunch::Direct(argv) => {
             let Some((program, args)) = argv.split_first() else {
@@ -132,14 +144,13 @@ pub(crate) fn spawn_service_child(
     }
     command.env("ROZI", "1");
     command.env("ROZI_SERVICE", &config.name);
+    // A client inside another rozi's pane has that pane's marker. A service is not in a pane.
+    command.env_remove(crate::pane::TERMINAL_MARKER_ENV);
     command.envs(&config.env);
     // Rozi never writes to the pipe. It stays open while rozi runs, so a service sees end of file
     // on stdin once rozi is gone, however it went: the portable way to notice an orphaning.
     command.stdin(std::process::Stdio::piped());
-    // An extension's service keeps what it prints in the extension's log; any other service's
-    // output is discarded.
-    let log = service_log(config);
-    spawn_with_log(&mut command, log.as_ref(), false)
+    Ok(command)
 }
 
 /// The log of a service that belongs to an extension.
@@ -386,6 +397,23 @@ mod tests {
         assert_eq!(lines.next(), Some("env-probe"));
         assert_eq!(lines.next(), Some("1"));
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_service_is_never_marked_as_running_in_a_pane() {
+        let config = ServiceConfig {
+            name: "terminal-probe".to_string(),
+            launch: ServiceLaunch::Direct(vec!["true".to_string()]),
+            cwd: None,
+            restart: ServiceRestart::Never,
+            env: BTreeMap::new(),
+        };
+        let command = service_command(&config, None, None).unwrap();
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none())
+        );
     }
 
     #[cfg(unix)]

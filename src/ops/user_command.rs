@@ -181,6 +181,22 @@ fn exec_direct(
     )
 }
 
+/// A command the client runs outside any pane. A client inside another rozi's pane has that pane's
+/// `ROZI_TERMINAL`, which does not describe this process.
+fn detached_command(
+    program: &str,
+    args: &[String],
+    environment: Vec<(String, String)>,
+) -> std::process::Command {
+    let mut process = std::process::Command::new(program);
+    process
+        .args(args)
+        .env_remove(crate::pane::TERMINAL_MARKER_ENV)
+        .envs(environment)
+        .stdin(std::process::Stdio::null());
+    process
+}
+
 fn exec_argv(
     ctx: &mut Context<AppRoot>,
     argv: Vec<String>,
@@ -266,11 +282,7 @@ fn exec_argv(
         let log = extension
             .as_deref()
             .and_then(|id| crate::extension_runtime::log::open(id, "commands"));
-        let mut process = std::process::Command::new(program);
-        process
-            .args(args)
-            .envs(environment)
-            .stdin(std::process::Stdio::null());
+        let mut process = detached_command(&program, &args, environment);
         crate::extension_runtime::log::Log::route(&mut process, log.as_ref());
         if let Some(cwd) = cwd {
             process.current_dir(cwd);
@@ -467,6 +479,16 @@ mod tests {
     }
 
     /// A local pane's directory is a directory here, so a client-run command starts in it.
+    #[test]
+    fn a_detached_command_is_never_marked_as_running_in_a_pane() {
+        let command = detached_command("true", &[], Vec::new());
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none())
+        );
+    }
+
     #[test]
     fn exec_from_a_local_pane_starts_in_its_directory() {
         crate::test_support::on_large_stack(|| {

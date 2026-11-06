@@ -1838,7 +1838,7 @@ mod tests {
                 "{}[[commands]]\nid = \"same\"\nexec = [\"./missing\"]\n\
                  [[commands]]\nid = \"same\"\nsend = \"x\"\n\
                  [[services]]\nname = \"watch\"\nexec = [\"./missing-service\"]\n\
-                 [services.env]\nROZI_EXTENSION = \"spoof\"\n\
+                 [services.env]\nROZI_EXTENSION = \"spoof\"\nROZI_TERMINAL = \"1\"\n\
                  [[services]]\nname = \"watch\"\nshell = \"echo ok\"\n",
                 manifest("bad-tools", "1")
             ),
@@ -1848,7 +1848,8 @@ mod tests {
         let errors = entry.errors.join("\n");
         assert!(errors.contains("duplicate command"));
         assert!(errors.contains("duplicate service"));
-        assert!(errors.contains("reserved environment"));
+        assert!(errors.contains("reserved environment variable `ROZI_EXTENSION`"));
+        assert!(errors.contains("reserved environment variable `ROZI_TERMINAL`"));
         assert!(errors.contains("unavailable"));
     }
 

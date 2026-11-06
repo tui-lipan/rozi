@@ -12,6 +12,21 @@ rozi split --title Tests --argv cargo test        # open a pane running a progra
 rozi --session dev capture-pane --target 3        # read a pane in a session nobody is viewing
 ```
 
+## Diagnostic report
+
+Run `rozi doctor` to print an aligned plain-text report for a bug report. It includes the rozi
+version, extension API and session protocol range, OS and architecture, install source, a recognized
+terminal name, configuration status and warning count, local session counts, SSH availability,
+and the installed extension count. Unknown terminal names appear as `unknown`. Inside a rozi pane,
+the terminal appears as `rozi (inside a pane)`.
+
+The report omits session names, file paths, hostnames, usernames, configuration contents, and raw
+environment values. It does not start or attach to a session or write files. Configuration warnings
+are counted in `config_warnings` without printing their text. The `config` field says `valid`,
+`valid, N warnings` for a config loaded with warnings such as ignored keys, or `rejected` when
+the config could not be loaded. Use `rozi doctor --config <PATH>` or `ROZI_CONFIG` to check
+another config file. A report with rejected configuration still exits successfully.
+
 ## Two endpoints
 
 A control command talks to one of two places, called its _endpoint_:
@@ -150,7 +165,8 @@ one that attaches later.
 On Windows, pass the discovery-entry path to the CLI. Do not read the entry or construct a pipe
 name yourself.
 
-Every pane receives `ROZI=1`, `ROZI_PANE`, `TERM_PROGRAM=rozi`, and `TERM_PROGRAM_VERSION`, and a
+Every pane receives `ROZI=1`, `ROZI_PANE`, `ROZI_TERMINAL=1`, `TERM_PROGRAM=rozi`, and
+`TERM_PROGRAM_VERSION`, and a
 local pane also receives `ROZI_SOCKET` and `ROZI_BIN` when control is available. A session pane also receives `ROZI_SESSION_INSTANCE`, an opaque id of the session
 server it runs in, so a UI holding several sessions can tell whose pane is asking. It is empty in
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
@@ -526,8 +542,8 @@ A session endpoint refuses `split` when:
 - **`--focus` is given.** There is no focus to move.
 - **The session has an invalid layout.** Restore a valid session snapshot before adding panes.
 
-A pane opened this way receives `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM`, and
-`TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or `ROZI_BIN`, since there is no UI, or anything
+A pane opened this way receives `ROZI`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `ROZI_TERMINAL`,
+`TERM_PROGRAM`, and `TERM_PROGRAM_VERSION`. It does not get `ROZI_SOCKET` or `ROZI_BIN`, since there is no UI, or anything
 `[environment] forward` adds from the short-lived CLI process. It has no SSH variables such as
 `SSH_CONNECTION`, even when an SSH connection started the session, except that a pane opened with
 `--here` gets the calling pane's `SSH_CONNECTION`. On Linux with a systemd user session,

@@ -52,6 +52,7 @@ const OWNED_ENV: &[&str] = &[
 /// Environment a process must not inherit from the supervisor itself: the supervisor may have been
 /// started from inside a pane, and those values describe that pane, not this process.
 const INHERITED_ENV_REMOVED: &[&str] = &[
+    crate::pane::TERMINAL_MARKER_ENV,
     "ROZI_PANE",
     "ROZI_SESSION_INSTANCE",
     "ROZI_EXTENSION",
@@ -1052,6 +1053,31 @@ mod tests {
                 next_backoff: Duration::from_secs(2),
                 failures: 1,
             }
+        );
+    }
+
+    /// The supervisor may run in a client inside another rozi's pane. Its processes have piped
+    /// standard streams, not that pane's terminal.
+    #[cfg(unix)]
+    #[test]
+    fn a_supervised_process_is_never_marked_as_running_in_a_pane() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BundleStore::open(temp.path().join("bundles")).unwrap();
+        let directory = stage_script(&store, "exit 0");
+        let prepared = SupervisedProcess::prepare(spec_for(
+            directory,
+            "supterminal",
+            "service.watch",
+            vec!["./bin/probe".into()],
+        ))
+        .expect("verified launch");
+        assert!(
+            prepared
+                .command
+                .get_envs()
+                .any(|(key, value)| key == crate::pane::TERMINAL_MARKER_ENV && value.is_none()),
+            "the launch removes an inherited {}",
+            crate::pane::TERMINAL_MARKER_ENV
         );
     }
 

@@ -10,6 +10,7 @@ pub(crate) mod api;
 pub(crate) mod args;
 mod context;
 pub(crate) mod control;
+pub(crate) mod doctor;
 pub(crate) mod extension;
 pub(crate) mod help;
 pub(crate) mod output;

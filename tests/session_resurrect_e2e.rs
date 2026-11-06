@@ -482,6 +482,34 @@ fn wait_for_meta(snapshot: &std::path::Path, expected: &str) {
 /// replace the snapshot, and with it the session, for the build that can read it.
 #[test]
 fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
+    // Left by another build's interrupted save, in a format this build does not read.
+    refuses_to_start_over(
+        |sessions, session| sessions.join(format!(".{session}.old-4242.1")),
+        |session| {
+            Some(format!(
+                r#"{{"version":99,"session":"{session}","future":true}}"#
+            ))
+        },
+        "its snapshot is in format 99",
+    );
+}
+
+/// A published snapshot whose metadata is gone is damaged, not absent: what is left of it may
+/// still be salvaged, so it is not started over either.
+#[test]
+fn a_server_refuses_to_start_over_a_snapshot_missing_its_metadata() {
+    refuses_to_start_over(
+        |sessions, session| sessions.join(session),
+        |_| None,
+        "its snapshot is damaged",
+    );
+}
+
+fn refuses_to_start_over(
+    snapshot_dir: impl Fn(&std::path::Path, &str) -> std::path::PathBuf,
+    meta: impl Fn(&str) -> Option<String>,
+    reason: &str,
+) {
     let session = unique_session_name();
     let test_root = private_temp_dir();
     let runtime_base = test_root.join("runtime");
@@ -492,13 +520,14 @@ fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
     }
     let config_path = config_base.join("config.toml");
     fs::write(&config_path, "[session]\nresurrect = true\n").expect("write test config");
-    // Left by another build's interrupted save, in a format this build does not read.
     let sessions = state_base.join("rozi").join("sessions");
-    let backup = sessions.join(format!(".{session}.old-4242.1"));
-    fs::create_dir_all(backup.join("panes")).expect("create backup");
-    let meta = format!(r#"{{"version":99,"session":"{session}","future":true}}"#);
-    fs::write(backup.join("meta.json"), &meta).expect("write backup meta");
-    fs::write(backup.join("panes").join("1.replay"), b"kept").expect("write backup replay");
+    let saved = snapshot_dir(&sessions, &session);
+    fs::create_dir_all(saved.join("panes")).expect("create snapshot");
+    let meta = meta(&session);
+    if let Some(meta) = &meta {
+        fs::write(saved.join("meta.json"), meta).expect("write snapshot meta");
+    }
+    fs::write(saved.join("panes").join("1.replay"), b"kept").expect("write snapshot replay");
 
     let mut child = spawn_server(
         &session,
@@ -523,15 +552,12 @@ fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
     std::io::Read::read_to_string(&mut child.stderr.take().expect("stderr"), &mut stderr)
         .expect("read server stderr");
     assert!(!status.success(), "{stderr}");
-    assert!(
-        stderr.contains("its snapshot is in format 99"),
-        "the refusal says why: {stderr}"
-    );
+    assert!(stderr.contains(reason), "the refusal says why: {stderr}");
     let published = sessions.join(&session);
     assert_eq!(
-        fs::read_to_string(published.join("meta.json")).expect("published meta"),
+        fs::read_to_string(published.join("meta.json")).ok(),
         meta,
-        "the snapshot is published again, unchanged"
+        "the snapshot is published, its metadata unchanged"
     );
     assert_eq!(
         fs::read(published.join("panes").join("1.replay")).expect("published replay"),

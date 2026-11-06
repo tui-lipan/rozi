@@ -1169,29 +1169,64 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
     deployments.and(snapshot)
 }
 
-/// The snapshot in `dir`, if this build can restore it. A missing `meta.json` is `NotFound`: there is
-/// no snapshot. Any other failure is `InvalidData` saying why the snapshot that is there cannot be
-/// read.
-fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMeta> {
-    let bytes = fs::read(dir.join("meta.json"))?;
-    let damaged = || io::Error::new(io::ErrorKind::InvalidData, "its snapshot is damaged");
-    let header: SnapshotHeader = serde_json::from_slice(&bytes).map_err(|_| damaged())?;
-    if header.version != SNAPSHOT_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "its snapshot is in format {}, and this rozi reads format {SNAPSHOT_VERSION}",
-                header.version
+/// Why this build will not restore a snapshot that is there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Unrestorable {
+    /// Saved in another snapshot format, which the rozi version that saved it can read.
+    Format(u32),
+    /// Missing or malformed metadata, which no rozi version can read.
+    Damaged,
+    /// Its metadata names another session than the one it is saved as.
+    OtherSession(String),
+}
+
+impl Unrestorable {
+    /// Whether another rozi version could restore it.
+    pub(crate) fn another_version_reads_it(&self) -> bool {
+        matches!(self, Self::Format(_))
+    }
+
+    /// The reason a refusal carries, if `err` is one.
+    fn of(err: &io::Error) -> Option<&Self> {
+        err.get_ref()?.downcast_ref()
+    }
+}
+
+impl std::fmt::Display for Unrestorable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Format(found) => write!(
+                f,
+                "its snapshot is in format {found}, and this rozi reads format {SNAPSHOT_VERSION}"
             ),
-        ));
+            Self::Damaged => f.write_str("its snapshot is damaged"),
+            Self::OtherSession(session) => {
+                write!(f, "its snapshot belongs to session `{session}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Unrestorable {}
+
+/// The snapshot in `dir`, if this build can restore it. Only a missing `dir` is `NotFound`: there is
+/// no snapshot. Any other failure, a missing `meta.json` included, is `InvalidData` carrying the
+/// [`Unrestorable`] reason, so nothing starts empty over what is left of the snapshot.
+fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMeta> {
+    let refuse = |reason| io::Error::new(io::ErrorKind::InvalidData, reason);
+    if !dir.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "no snapshot"));
+    }
+    let bytes = fs::read(dir.join("meta.json")).map_err(|_| refuse(Unrestorable::Damaged))?;
+    let header: SnapshotHeader =
+        serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))?;
+    if header.version != SNAPSHOT_VERSION {
+        return Err(refuse(Unrestorable::Format(header.version)));
     }
     if header.session != session_name {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("its snapshot belongs to session `{}`", header.session),
-        ));
+        return Err(refuse(Unrestorable::OtherSession(header.session)));
     }
-    serde_json::from_slice(&bytes).map_err(|_| damaged())
+    serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))
 }
 
 /// The part of `meta.json` every snapshot format shares.
@@ -1206,7 +1241,7 @@ struct SnapshotHeader {
 /// Why `name` has a snapshot its server would refuse to restore, if it has one. Read-only, so a
 /// client can explain a server that would not start; see [`saved_snapshot_summaries`] for why a
 /// client never moves a backup.
-pub(crate) fn unrestorable_snapshot(name: &str) -> Option<String> {
+pub(crate) fn unrestorable_snapshot(name: &str) -> Option<Unrestorable> {
     let server = SessionServer::new_named_with_settings(
         name,
         ServerSettings {
@@ -1224,22 +1259,38 @@ pub(crate) fn unrestorable_snapshot(name: &str) -> Option<String> {
         }
         newest_unreadable_backup(parent, name)?
     };
-    match read_restorable_meta(&dir, name) {
-        Err(err) if err.kind() == io::ErrorKind::InvalidData => Some(err.to_string()),
-        _ => None,
-    }
+    read_restorable_meta(&dir, name)
+        .err()
+        .and_then(|err| Unrestorable::of(&err).cloned())
 }
 
-/// What to do about a session whose snapshot this build cannot restore, after `reason` says why.
-pub(crate) fn unrestorable_snapshot_error(name: &str, reason: &str) -> io::Error {
+/// What to do about session `name`, whose snapshot this build will not restore for `reason`.
+pub(crate) fn unrestorable_snapshot_error(name: &str, reason: &Unrestorable) -> io::Error {
+    let other_version = if reason.another_version_reads_it() {
+        "start it with the rozi version that saved it, or "
+    } else {
+        ""
+    };
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!(
-            "session `{name}` was not started because {reason}; start it with the rozi version \
-             that saved it, or run `rozi sessions new {name} --detach` to start it empty and \
-             discard the snapshot"
+            "session `{name}` was not started because {reason}; {other_version}run \
+             `rozi sessions new {name} --detach` to start it empty and discard the snapshot"
         ),
     )
+}
+
+/// Why a server did not start over the snapshot its restore failed on with `err`.
+pub(super) fn restore_refusal(name: &str, err: &io::Error) -> io::Error {
+    match Unrestorable::of(err) {
+        Some(reason) => unrestorable_snapshot_error(name, reason),
+        None => io::Error::new(
+            err.kind(),
+            format!(
+                "session `{name}` was not started because its snapshot could not be read: {err}"
+            ),
+        ),
+    }
 }
 
 /// Discard `name`'s snapshot, and only that, so the server started next under the name begins with
@@ -1647,14 +1698,8 @@ mod tests {
         // A client can say why a server would refuse the foreign one, and has no reason to give
         // for one it can restore.
         assert_eq!(
-            unrestorable_snapshot(foreign).as_deref(),
-            Some(
-                format!(
-                    "its snapshot is in format {}, and this rozi reads format {SNAPSHOT_VERSION}",
-                    SNAPSHOT_VERSION + 1
-                )
-                .as_str()
-            )
+            unrestorable_snapshot(foreign),
+            Some(Unrestorable::Format(SNAPSHOT_VERSION + 1))
         );
         assert_eq!(unrestorable_snapshot(session), None);
         assert!(
@@ -1717,6 +1762,42 @@ mod tests {
         assert!(!backup.exists());
         assert!(stale_version.exists(), "only this session's debris goes");
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A published snapshot that lost its `meta.json` is damaged, not absent: it is listed as
+    /// unreadable, restore refuses it, and what is left of it stays where it is.
+    #[test]
+    fn a_snapshot_missing_its_metadata_is_unreadable_rather_than_absent() {
+        let root = default_snapshot_dir().expect("test scratch state dir");
+        let session = "meta-missing";
+        let replay = root.join(session).join("panes").join("1.replay");
+        fs::create_dir_all(replay.parent().unwrap()).unwrap();
+        fs::write(&replay, b"kept").unwrap();
+
+        let row = list_snapshot_summaries_by_recency()
+            .into_iter()
+            .find(|summary| summary.session == session)
+            .expect("listed");
+        assert!(!row.readable);
+        assert!(!has_snapshot(session));
+        assert_eq!(unrestorable_snapshot(session), Some(Unrestorable::Damaged));
+        let mut server = SessionServer::new_named_with_settings(
+            session,
+            ServerSettings {
+                resurrect: true,
+                ..ServerSettings::default()
+            },
+        );
+        let err = server.restore().expect_err("refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&replay).unwrap(), b"kept");
+
+        delete_snapshot_for(session).expect("forget");
+        assert!(unrestorable_snapshot(session).is_none());
+        assert!(
+            server.restore().expect_err("nothing left").kind() == io::ErrorKind::NotFound,
+            "with the directory gone there is no snapshot"
+        );
     }
 
     /// A backup in a format this build cannot read is published again rather than swept, so a

@@ -53,7 +53,7 @@ pub use pane_log::PaneLog;
 pub(crate) use resurrect::write_empty_snapshot_for_test;
 pub use resurrect::{SnapshotSummary, list_snapshot_summaries_by_recency};
 pub(crate) use resurrect::{
-    discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
+    Unrestorable, discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
     unrestorable_snapshot, unrestorable_snapshot_error,
 };
 mod runtime;
@@ -2480,10 +2480,7 @@ pub fn run_named_session_mode_with_nonce(
         if let Some(endpoint) = &server.endpoint {
             endpoint.remove_stale();
         }
-        return Err(resurrect::unrestorable_snapshot_error(
-            name,
-            &err.to_string(),
-        ));
+        return Err(resurrect::restore_refusal(name, &err));
     }
     let result = server.run_listener(listener);
     // A rename replaces the endpoint, so retire the current one rather than the original. Claim the

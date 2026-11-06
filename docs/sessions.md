@@ -330,9 +330,10 @@ Processes themselves are not saved. Each command starts again in a fresh termina
 history shown above the new output. A missing directory, a missing history file, or a command that
 fails to start affects only its own pane; the rest of the snapshot still loads.
 
-A snapshot in a format this rozi cannot read, such as one saved by another rozi version, is listed
-as `Unreadable`, and as `unreadable` by `rozi sessions list`. It is kept but not restored: Enter
-says why, and opening the session by name is refused rather than starting it empty.
+A snapshot this rozi cannot read, because another rozi version saved it in another format or because
+it is damaged, is listed as `Unreadable`, and as `unreadable` by `rozi sessions list`. It is kept but
+not restored: Enter says why, and opening the session by name is refused rather than starting it
+empty.
 
 To discard a snapshot, press `Ctrl+K` twice on its `Restorable` or `Unreadable` row. `rozi sessions new <name>` also
 starts fresh instead of restoring a snapshot with that name, and keeps any
@@ -443,9 +444,10 @@ saves a final snapshot as it stops; if that takes longer than about ten seconds,
 where the server is stopped at once, the restart uses the last snapshot it saved instead, so output
 from the final moments before the restart can be missing.
 
-If the snapshot is in a format this rozi cannot read, the session is not started and its snapshot
-is kept, listed as [`Unreadable`](#resurrection). Start it with the rozi version that saved it, or
-run `rozi sessions new <NAME> --detach` to start it empty and discard the snapshot.
+If this rozi cannot read the snapshot, the session is not started and its snapshot is kept, listed
+as [`Unreadable`](#resurrection). For a snapshot in another format, start the session with the rozi
+version that saved it. Otherwise, run `rozi sessions new <NAME> --detach` to start it empty and
+discard the snapshot.
 
 ```bash
 rozi sessions new tests --detach --no-resurrect

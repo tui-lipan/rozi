@@ -346,15 +346,24 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<AppRoot>, index: usize
 pub(crate) fn notify_unreadable_snapshot(
     ctx: &mut Context<AppRoot>,
     name: &str,
-    reason: Option<String>,
+    reason: Option<crate::session::server::Unrestorable>,
 ) -> Update {
-    let reason =
-        reason.unwrap_or_else(|| "its snapshot is in a format this rozi cannot read".to_string());
+    // A remote row's reason is the host's to know; this machine only knows it was listed so.
+    let (body, hint) = match reason {
+        Some(reason) if reason.another_version_reads_it() => (
+            reason.to_string(),
+            "start it with the rozi version that saved it · Ctrl+K forgets it",
+        ),
+        Some(reason) => (reason.to_string(), "Ctrl+K forgets it"),
+        None => (
+            "its snapshot cannot be restored by rozi on its host".to_string(),
+            "Ctrl+K forgets it",
+        ),
+    };
     crate::pane::pty_events::notify_error(
         ctx,
         "Restore failed",
-        crate::pane::pty_events::ToastBody::new(format!("`{name}`: {reason}"))
-            .hint("start it with the rozi version that saved it · Ctrl+K forgets it"),
+        crate::pane::pty_events::ToastBody::new(format!("`{name}`: {body}")).hint(hint),
     );
     Update::full()
 }

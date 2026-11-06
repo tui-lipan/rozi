@@ -123,7 +123,8 @@ Restarting the session ends the programs running in its panes, so finish any wor
    keeps only one previous version, so if the session was started more than one update ago and
    still refuses to attach, install the version that started it.
 2. Attach to the session and finish what is running in it.
-3. Run `rozi update` again.
+3. Update to the current version again: run `rozi update` on an install made by the install
+   scripts, or use your package manager.
 
 Then restart the session: press `Ctrl+E` twice on its row in Sessions, or run
 `rozi sessions restart dev`. It reopens from its snapshot with its layout and terminal history, as

@@ -194,12 +194,13 @@ fn shutdown_existing_named_session(
     // an endpoint that cannot report its peer) must be left completely alone.
     match probe_endpoint(endpoint, Some(server_pid))? {
         // An incompatible server is still healthy and answers the stop signal by saving a final
-        // snapshot, which the restart then restores. Give that save the time its own shutdown
-        // allows it, plus a margin to exit, before killing it.
+        // snapshot, which the restart then restores. Its shutdown first finishes a save already in
+        // flight and then the final one, each within the snapshot grace, so allow both and a
+        // margin to exit before killing it.
         EndpointProbe::Live if stopped == StoppedForRestart::Incompatible => {
             crate::platform::server_lifecycle::terminate_server_after(
                 server_pid,
-                super::resurrect::SNAPSHOT_SHUTDOWN_GRACE + Duration::from_secs(1),
+                super::resurrect::SNAPSHOT_SHUTDOWN_GRACE * 2 + Duration::from_secs(1),
             );
         }
         EndpointProbe::Live => crate::platform::server_lifecycle::terminate_server(server_pid),

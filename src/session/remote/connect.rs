@@ -485,7 +485,10 @@ pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHan
                 Err(_) => break,
             }
         }
-        String::from_utf8_lossy(&buf).into_owned()
+        // The byte cap can cut through the first retained character. Discard its suffix
+        // before decoding, while preserving lossy diagnostics for invalid bytes elsewhere.
+        let start = buf.iter().take_while(|byte| **byte & 0xc0 == 0x80).count();
+        String::from_utf8_lossy(&buf[start..]).into_owned()
     })
 }
 
@@ -500,33 +503,42 @@ mod tests {
 
     #[test]
     fn stderr_collector_keeps_the_tail_and_decodes_across_reads() {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command
-            .args([
-                "--exact",
-                "session::remote::connect::tests::stderr_writer_child",
-                "--nocapture",
-            ])
-            .env("ROZI_STDERR_WRITER", "1")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        let mut child = command.spawn().unwrap();
-        let collector = spawn_stderr_collector(child.stderr.take().unwrap());
-        assert!(child.wait().unwrap().success());
-        let tail = collector.join().unwrap();
-        assert!(tail.ends_with("é終 diagnostic tail"), "{tail:?}");
-        assert!(!tail.contains('�'));
-        assert_eq!(tail.len(), 16 * 1024);
+        for (case, expected_len) in [("ascii", 16 * 1024), ("utf8", 16 * 1024 - 1)] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "session::remote::connect::tests::stderr_writer_child",
+                    "--nocapture",
+                ])
+                .env("ROZI_STDERR_WRITER", case)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            let mut child = command.spawn().unwrap();
+            let collector = spawn_stderr_collector(child.stderr.take().unwrap());
+            assert!(child.wait().unwrap().success());
+            let tail = collector.join().unwrap();
+            assert!(tail.ends_with("é終 diagnostic tail"), "{tail:?}");
+            assert!(!tail.contains('�'));
+            assert_eq!(tail.len(), expected_len);
+            if case == "utf8" {
+                assert!(tail.starts_with("é"));
+            }
+        }
     }
 
     #[test]
     fn stderr_writer_child() {
         use std::io::Write;
-        if std::env::var_os("ROZI_STDERR_WRITER").is_none() {
+        let Ok(case) = std::env::var("ROZI_STDERR_WRITER") else {
             return;
-        }
+        };
         let mut stderr = std::io::stderr().lock();
-        stderr.write_all(&vec![b'x'; 32 * 1024 - 1]).unwrap();
+        if case == "utf8" {
+            stderr.write_all("é".repeat(16 * 1024).as_bytes()).unwrap();
+        } else {
+            stderr.write_all(&vec![b'x'; 32 * 1024 - 1]).unwrap();
+        }
         for byte in "é終 diagnostic tail".as_bytes() {
             stderr.write_all(&[*byte]).unwrap();
             stderr.flush().unwrap();

@@ -21,21 +21,41 @@ use super::{
 const INSTALL_NAME: &str = "rozi";
 const RELEASE_REPO: &str = "tui-lipan/rozi";
 
-/// Bound authentication, execution and transfers as well as SSH's TCP connection phase.
+/// Bound authentication and execution as well as SSH's TCP connection phase.
 /// A disabled SSH connect timeout still gets a finite wall-clock budget.
 pub(super) fn run_ssh_command(
     command: &mut Command,
     connect_timeout_secs: u64,
     input: Option<Box<dyn Read + Send>>,
 ) -> io::Result<crate::platform::command::CommandOutput> {
-    let timeout = std::time::Duration::from_secs(
+    run_ssh_command_with_timeout(command, input, ssh_command_timeout(connect_timeout_secs))
+}
+
+fn ssh_command_timeout(connect_timeout_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(
         (if connect_timeout_secs == 0 {
             15
         } else {
             connect_timeout_secs
         })
         .saturating_add(30),
-    );
+    )
+}
+
+/// Allow uploads at 64 KiB/s in addition to authentication and command execution, up to 30 min.
+fn ssh_transfer_timeout(connect_timeout_secs: u64, payload_bytes: u64) -> std::time::Duration {
+    ssh_command_timeout(connect_timeout_secs)
+        .saturating_add(std::time::Duration::from_secs(
+            payload_bytes.div_ceil(64 * 1024),
+        ))
+        .min(std::time::Duration::from_secs(30 * 60))
+}
+
+fn run_ssh_command_with_timeout(
+    command: &mut Command,
+    input: Option<Box<dyn Read + Send>>,
+    timeout: std::time::Duration,
+) -> io::Result<crate::platform::command::CommandOutput> {
     let output = crate::platform::command::run_bounded_command(command, input, timeout, 64 * 1024)?;
     if output.timed_out {
         return Err(io::Error::new(
@@ -923,10 +943,14 @@ printf 'installed=%s\n' "$final"
 
     let file = std::fs::File::open(local)
         .map_err(|err| format!("cannot read {}: {err}", local.display()))?;
-    let output = run_ssh_command(
+    let payload_bytes = file
+        .metadata()
+        .map_err(|err| format!("cannot stat {}: {err}", local.display()))?
+        .len();
+    let output = run_ssh_command_with_timeout(
         &mut command,
-        config.connection_timeout_secs,
         Some(Box::new(file)),
+        ssh_transfer_timeout(config.connection_timeout_secs, payload_bytes),
     )
     .map_err(|err| format!("remote install failed: {err}"))?;
     if output.status != Some(0) {
@@ -963,8 +987,15 @@ fn install_bytes_windows(
     scp.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let scp_out = run_ssh_command(&mut scp, config.connection_timeout_secs, None)
-        .map_err(|err| format!("failed to run scp to {}: {err}", resolved.host))?;
+    let payload_bytes = std::fs::metadata(local)
+        .map_err(|err| format!("cannot stat {}: {err}", local.display()))?
+        .len();
+    let scp_out = run_ssh_command_with_timeout(
+        &mut scp,
+        None,
+        ssh_transfer_timeout(config.connection_timeout_secs, payload_bytes),
+    )
+    .map_err(|err| format!("failed to run scp to {}: {err}", resolved.host))?;
     if scp_out.status != Some(0) {
         return Err(format!(
             "scp upload to {} failed: {}",
@@ -1671,6 +1702,30 @@ fn local_uname_machine() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_transfer_budget_scales_with_payload_and_stays_bounded() {
+        use std::time::Duration;
+        for (connect_secs, payload_bytes, expected_secs) in [
+            (0, 0, 45),
+            (15, 1, 46),
+            (15, 64 * 1024, 46),
+            (15, 64 * 1024 + 1, 47),
+            (15, 30 * 1024 * 1024, 525),
+            (1, 30 * 1024 * 1024, 511),
+            (15, u64::MAX, 1800),
+            (u64::MAX, u64::MAX, 1800),
+        ] {
+            assert_eq!(
+                ssh_transfer_timeout(connect_secs, payload_bytes),
+                Duration::from_secs(expected_secs),
+                "connect={connect_secs}, bytes={payload_bytes}"
+            );
+        }
+        // Finalization, probes, and session commands use the short budget regardless of payload.
+        assert_eq!(ssh_command_timeout(0), Duration::from_secs(45));
+        assert_eq!(ssh_command_timeout(1), Duration::from_secs(31));
+    }
 
     #[test]
     fn configured_binary_path_preserves_detected_remote_family() {

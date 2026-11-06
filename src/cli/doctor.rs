@@ -22,10 +22,17 @@ pub(crate) fn run() {
         ),
         (
             "terminal".into(),
-            terminal_name(
-                std::env::var("TERM_PROGRAM").ok().as_deref(),
-                std::env::var("TERM").ok().as_deref(),
-            )
+            if inside_rozi_pane(
+                std::env::var_os("ROZI").as_deref(),
+                std::env::var_os("ROZI_PANE").is_some(),
+            ) {
+                "rozi (inside a pane)"
+            } else {
+                terminal_name(
+                    std::env::var("TERM_PROGRAM").ok().as_deref(),
+                    std::env::var("TERM").ok().as_deref(),
+                )
+            }
             .into(),
         ),
         (
@@ -81,6 +88,12 @@ pub(crate) fn run() {
     print_or_stop(&report);
 }
 
+/// A pane marks itself with `ROZI=1` and `ROZI_PANE`. `TERM_PROGRAM` is no marker: a pane's own
+/// environment may override it, and extensions and services get `ROZI=1` without being in a pane.
+fn inside_rozi_pane(rozi: Option<&std::ffi::OsStr>, has_pane: bool) -> bool {
+    rozi.is_some_and(|value| value == "1") && has_pane
+}
+
 /// Recognize terminal names rather than echoing an arbitrary value supplied by the environment.
 fn terminal_name(program: Option<&str>, term: Option<&str>) -> &'static str {
     const PROGRAMS: &[(&str, &str)] = &[
@@ -91,7 +104,6 @@ fn terminal_name(program: Option<&str>, term: Option<&str>) -> &'static str {
         ("vscode", "VS Code"),
         ("kitty", "kitty"),
         ("alacritty", "alacritty"),
-        ("rozi", "rozi (inside a pane)"),
         ("tmux", "tmux"),
     ];
     const TERMS: &[(&str, &str)] = &[
@@ -129,10 +141,6 @@ mod tests {
             "wezterm"
         );
         assert_eq!(terminal_name(None, Some("xterm-kitty")), "kitty");
-        assert_eq!(
-            terminal_name(Some("rozi"), Some("xterm-256color")),
-            "rozi (inside a pane)"
-        );
         for private in [
             "/home/private/terminal",
             "user@host",
@@ -141,5 +149,13 @@ mod tests {
         ] {
             assert_eq!(terminal_name(Some(private), Some(private)), "unknown");
         }
+    }
+
+    #[test]
+    fn a_pane_is_recognized_by_its_marker() {
+        assert!(inside_rozi_pane(Some("1".as_ref()), true));
+        assert!(!inside_rozi_pane(Some("1".as_ref()), false));
+        assert!(!inside_rozi_pane(Some("0".as_ref()), true));
+        assert!(!inside_rozi_pane(None, true));
     }
 }

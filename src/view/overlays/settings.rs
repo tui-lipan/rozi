@@ -293,7 +293,7 @@ pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
                 } else {
                     item.label.to_string()
                 };
-                let status = disabled_reason.unwrap_or(&item.value.1);
+                let status = disabled_reason.as_deref().unwrap_or(&item.value.1);
                 let style = if disabled_reason.is_some() {
                     disabled_style
                 } else {

@@ -579,6 +579,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::UpgradeSession,
+        label: "Upgrade session",
+        category: "Session",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenThemePicker,
         label: "Change theme",
         category: "Settings",

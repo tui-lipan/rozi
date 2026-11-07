@@ -230,6 +230,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
                 | Action::ToggleInputLock
                 | Action::KillSession
                 | Action::RestartSession
+                | Action::UpgradeSession
                 | Action::TogglePaneSynchronization
         )
 }
@@ -249,6 +250,10 @@ fn execute_action_inner(
 ) -> Update {
     if is_blocked_by_scratchpad(&ctx.state, action) {
         return Update::none();
+    }
+    if let Some(reason) = crate::commands::action_disabled_reason(action, &ctx.state) {
+        crate::pane::pty_events::notify_info(ctx, reason);
+        return Update::full();
     }
     if closes_settings(action) {
         ctx.state.show_settings = false;
@@ -440,6 +445,7 @@ fn execute_action_inner(
         Action::RestartSession => {
             crate::ops::exit::restart_session_with_confirmation(ctx, confirmations_enabled)
         }
+        Action::UpgradeSession => crate::ops::session::upgrade_current_session(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenSettings | Action::OpenAppearance => {
             open_settings(ctx, crate::state::SettingsAction::Theme)

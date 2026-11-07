@@ -89,71 +89,92 @@ pub(super) fn format_sessions_text(
     }
     let show_host = rows.iter().any(|row| row.host.is_some());
     let headers = if show_host {
-        vec!["NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "HOST"]
+        vec![
+            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL", "HOST",
+        ]
     } else {
-        vec!["NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT"]
+        vec![
+            "NAME", "STATUS", "PANES", "CLIENTS", "LAYOUT", "VERSION", "PROTOCOL",
+        ]
     };
     let table_rows = rows
         .iter()
         .map(|session| {
-            let (status, status_tone, panes, clients, layout) = match session.status {
-                session::discovery::DiscoveredSessionStatus::Running {
-                    panes,
-                    clients,
-                    has_layout,
-                    ..
-                } => (
-                    "running",
-                    OutputTone::Success,
-                    panes.to_string(),
-                    clients.to_string(),
-                    if has_layout { "yes" } else { "no" }.to_string(),
-                ),
-                // Unreachable from the CLI, which probes live and never reads a client's host
-                // cache. Spelled out rather than folded into a catch-all so that if a cached row
-                // ever reaches this table it cannot be printed as `running`.
-                session::discovery::DiscoveredSessionStatus::LastSeen { panes } => (
-                    "last-seen",
-                    OutputTone::Warning,
-                    panes.to_string(),
-                    "—".to_string(),
-                    "—".to_string(),
-                ),
-                session::discovery::DiscoveredSessionStatus::Restorable => (
-                    "restorable",
-                    OutputTone::Accent,
-                    "—".to_string(),
-                    "0".to_string(),
-                    "—".to_string(),
-                ),
-                session::discovery::DiscoveredSessionStatus::Unreadable => (
-                    "unreadable",
-                    OutputTone::Error,
-                    "—".to_string(),
-                    "0".to_string(),
-                    "—".to_string(),
-                ),
-                session::discovery::DiscoveredSessionStatus::Busy => (
-                    "busy",
-                    OutputTone::Warning,
-                    "—".to_string(),
-                    "—".to_string(),
-                    "—".to_string(),
-                ),
-                session::discovery::DiscoveredSessionStatus::Unknown => (
-                    "unknown",
-                    OutputTone::Error,
-                    "—".to_string(),
-                    "—".to_string(),
-                    "—".to_string(),
-                ),
-            };
+            let (status, status_tone, panes, clients, layout, version, protocol) =
+                match &session.status {
+                    session::discovery::DiscoveredSessionStatus::Running {
+                        panes,
+                        clients,
+                        has_layout,
+                        effective_protocol,
+                        rozi_version,
+                    } => (
+                        "running",
+                        OutputTone::Success,
+                        panes.to_string(),
+                        clients.to_string(),
+                        if *has_layout { "yes" } else { "no" }.to_string(),
+                        rozi_version.as_deref().unwrap_or("—").to_string(),
+                        effective_protocol
+                            .map_or_else(|| "—".to_string(), |protocol| protocol.to_string()),
+                    ),
+                    // Unreachable from the CLI, which probes live and never reads a client's host
+                    // cache. Spelled out rather than folded into a catch-all so that if a cached row
+                    // ever reaches this table it cannot be printed as `running`.
+                    session::discovery::DiscoveredSessionStatus::LastSeen { panes } => (
+                        "last-seen",
+                        OutputTone::Warning,
+                        panes.to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    ),
+                    session::discovery::DiscoveredSessionStatus::Restorable => (
+                        "restorable",
+                        OutputTone::Accent,
+                        "—".to_string(),
+                        "0".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    ),
+                    session::discovery::DiscoveredSessionStatus::Unreadable => (
+                        "unreadable",
+                        OutputTone::Error,
+                        "—".to_string(),
+                        "0".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    ),
+                    session::discovery::DiscoveredSessionStatus::Busy => (
+                        "busy",
+                        OutputTone::Warning,
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    ),
+                    session::discovery::DiscoveredSessionStatus::Unknown => (
+                        "unknown",
+                        OutputTone::Error,
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                        "—".to_string(),
+                    ),
+                };
             let mut cells = vec![
                 TableCell::new(&session.name, OutputTone::Key),
                 TableCell::new(status, status_tone),
                 TableCell::plain(panes),
                 TableCell::plain(clients),
                 TableCell::plain(layout),
+                TableCell::new(version, OutputTone::Muted),
+                TableCell::new(protocol, OutputTone::Muted),
             ];
             if show_host {
                 cells.push(TableCell::new(
@@ -227,6 +248,29 @@ pub(crate) fn run_restart_session_cli(
     Ok(())
 }
 
+pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
+    let Some(remote) = remote else {
+        if let Ok(rows) = session::discovery::discover_sessions()
+            && let Some(row) = rows.iter().find(|row| row.name == name)
+            && row.rozi_version() == Some(env!("CARGO_PKG_VERSION"))
+        {
+            eprintln!(
+                "Session `{name}` is already on rozi {}; restarting from its snapshot.",
+                env!("CARGO_PKG_VERSION")
+            );
+        }
+        session::server::upgrade_named_session(name)?;
+        return Ok(());
+    };
+    let target = session::remote::parse_remote_target(remote)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let config = crate::config::load_config().config.remote;
+    let stderr = session::remote::upgrade_remote_session(&target, name, &config)
+        .map_err(std::io::Error::other)?;
+    std::io::stderr().lock().write_all(&stderr)?;
+    Ok(())
+}
+
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     if !session::discovery::valid_attach_target(name) {
         return Err(
@@ -270,6 +314,8 @@ mod tests {
                     panes: 5,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: Some(52),
+                    rozi_version: Some("0.0.43".into()),
                 },
                 ephemeral: false,
                 host: None,
@@ -287,9 +333,9 @@ mod tests {
         let plain = format_sessions_text(&rows, OutputStyles::plain());
         assert_eq!(
             plain,
-            "NAME        STATUS      PANES  CLIENTS  LAYOUT\n\
-             dev         running     5      1        yes\n\
-             saved-work  restorable  —      0        —\n"
+            "NAME        STATUS      PANES  CLIENTS  LAYOUT  VERSION  PROTOCOL\n\
+             dev         running     5      1        yes     0.0.43   52\n\
+             saved-work  restorable  —      0        —       —        —\n"
         );
         assert!(plain.lines().all(|line| !line.ends_with(' ')));
 

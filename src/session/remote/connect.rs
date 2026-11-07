@@ -435,6 +435,19 @@ pub fn restart_remote_session(
     run_remote_sessions_command(target, config, "restart", &args)
 }
 
+/// Upgrade a named session on the remote host via `rozi sessions upgrade` over ssh.
+pub fn upgrade_remote_session(
+    target: &RemoteTarget,
+    session: &str,
+    config: &RemoteConfig,
+) -> Result<Vec<u8>, String> {
+    if !crate::session::discovery::valid_session_name(session) {
+        return Err("invalid session name".to_string());
+    }
+    let args = ["sessions", "upgrade", session];
+    run_remote_sessions_command(target, config, "upgrade", &args)
+}
+
 fn run_remote_sessions_command(
     target: &RemoteTarget,
     config: &RemoteConfig,

@@ -319,6 +319,94 @@ fn sessions_restart_starts_fresh_panes_and_keeps_deployments() {
     assert!(!missing.status.success(), "a killed session is not running");
 }
 
+#[cfg(unix)]
+#[test]
+fn sessions_upgrade_restores_panes_from_snapshot_and_keeps_deployments() {
+    let root = private_temp_dir();
+    std::fs::write(root.join("config.toml"), "[session]\nresurrect = true\n").unwrap();
+    let session = unique_session_name();
+    let sessions = |args: &[&str]| {
+        rozi(&root)
+            .arg("sessions")
+            .args(args)
+            .arg(&session)
+            .output()
+            .expect("run a sessions command")
+    };
+
+    let missing = sessions(&["upgrade"]);
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("is not running"), "{stderr}");
+    assert!(stderr.contains("sessions new"), "{stderr}");
+
+    let created = rozi(&root)
+        .args(["sessions", "new", &session, "--detach"])
+        .output()
+        .expect("sessions new");
+    assert!(created.status.success(), "{created:?}");
+
+    let listed_json = rozi(&root)
+        .args(["sessions", "list", "--format", "json"])
+        .output()
+        .expect("sessions list --format json");
+    assert!(listed_json.status.success(), "{listed_json:?}");
+    let rows: serde_json::Value = serde_json::from_slice(&listed_json.stdout).unwrap();
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == session)
+        .expect("session row");
+    assert_eq!(row["rozi_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(row["effective_protocol"], PROTOCOL_VERSION);
+
+    let listed_text = rozi(&root)
+        .args(["sessions", "list"])
+        .output()
+        .expect("sessions list");
+    assert!(listed_text.status.success(), "{listed_text:?}");
+    let text = String::from_utf8_lossy(&listed_text.stdout);
+    assert!(
+        text.contains("VERSION") && text.contains("PROTOCOL"),
+        "{text}"
+    );
+    assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
+
+    install_demo(&root, "demo", "payload");
+    use std::os::unix::fs::PermissionsExt as _;
+    for directory in [root.join("data"), root.join("data/rozi")] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let deployed = deploy_with_cli(&root, &session);
+    assert!(deployed.status.success(), "{deployed:?}");
+    split_a_pane(&root, &session);
+    assert_eq!(pane_count(&root, &session), 1);
+
+    let upgraded = sessions(&["upgrade"]);
+    assert!(upgraded.status.success(), "{upgraded:?}");
+    let upgrade_stderr = String::from_utf8_lossy(&upgraded.stderr);
+    assert!(
+        upgrade_stderr.contains("is already on rozi"),
+        "{upgrade_stderr}"
+    );
+    assert_eq!(
+        pane_count(&root, &session),
+        1,
+        "upgrade restores panes from the snapshot"
+    );
+    assert_eq!(
+        local_copy_from_cli(&root, &session),
+        rozi::control::ExtensionLocalCopy::Matches,
+        "the deployment is still there"
+    );
+
+    let killed = sessions(&["kill"]);
+    assert!(killed.status.success(), "{killed:?}");
+    let missing = sessions(&["upgrade"]);
+    assert!(!missing.status.success(), "a killed session is not running");
+}
+
 fn listed_status(root: &Path, session: &str) -> Option<String> {
     let done = rozi(root)
         .args(["sessions", "list", "--format", "json"])

@@ -396,6 +396,14 @@ pub fn run() -> Result<()> {
                 apply_config_path(config_path);
                 return cli::run_restart_session_cli(&name, resurrect, remote.as_deref());
             }
+            cli::SessionsCommand::Upgrade {
+                name,
+                remote,
+                config_path,
+            } => {
+                apply_config_path(config_path);
+                return cli::run_upgrade_session_cli(&name, remote.as_deref());
+            }
             cli::SessionsCommand::Kill {
                 name,
                 remote,

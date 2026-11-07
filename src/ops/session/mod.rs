@@ -14,7 +14,7 @@ pub(crate) use attach::{
     park_current_and_install, reconnect_after_transport_loss, reconnect_current_session,
     recreate_lost_remote_session, release_background_for_exit, release_current_session,
     restart_current_session, run_pending_session_action, start_attach, start_launcher_shell,
-    swap_to_fresh_ephemeral, switch_to_parked,
+    swap_to_fresh_ephemeral, switch_to_parked, upgrade_current_session,
 };
 pub(crate) use control_lease::{
     apply_attach_policy_if_occupied, can_evict, decline_control, evict_client,

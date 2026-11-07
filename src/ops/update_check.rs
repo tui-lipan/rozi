@@ -16,11 +16,13 @@ use crate::platform::install_source::InstallSource;
 use crate::release_app::ROZI;
 use crate::session::protocol::PROTOCOL_VERSION;
 
-const COMPATIBILITY_SCHEMA_VERSION: u32 = 1;
+/// The `rozi-compatibility.json` layout this build reads. A document with another schema reads as
+/// no compatibility information: the notice then names only the version step.
+const COMPATIBILITY_SCHEMA_VERSION: u32 = 2;
 const COMPATIBILITY_FILE: &str = "rozi-compatibility.json";
 const MAX_COMPATIBILITY_BYTES: usize = 16 * 1024;
-/// The caution row for a release on another session protocol.
-const SESSION_RESTART_NOTE: &str = "restart sessions to attach · ends their programs";
+/// The row for a release that still speaks this build's session protocol generation.
+const SESSIONS_KEEP_WORKING_NOTE: &str = "running sessions keep working";
 
 /// A public release newer than the running build, and what it takes to move to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,8 +48,8 @@ impl AvailableUpdate {
         format!("rozi v{} available", self.latest)
     }
 
-    /// Terse rows rather than a paragraph: the version step, how to take it, and - only when the
-    /// release moves a contract - what that costs.
+    /// Terse rows rather than a paragraph: the version step, how to take it, and - when the
+    /// release's contracts are known - what it means for extensions and running sessions.
     ///
     /// `in_commands` says whether this client offers **Update rozi** in Commands, which is the
     /// only way to find the notice again once the toast is gone.
@@ -61,79 +63,118 @@ impl AvailableUpdate {
             (None, _) => format!("see {}/installation", env!("CARGO_PKG_HOMEPAGE")),
         };
         let mut lines = vec![format!("v{} → v{}", self.running, self.latest), how];
-        lines.extend(self.compatibility_note());
+        lines.extend(self.compatibility_notes());
         lines.join("\n")
     }
 
     /// What is left once the release is installed: this client runs the old build until it is
-    /// started again, and a protocol change also needs the session servers restarted.
+    /// started again, and sessions outside the release's protocol window need upgrading.
     pub(crate) fn installed_body(&self) -> String {
         let mut lines = vec!["quit and start rozi again to use it".to_string()];
-        lines.extend(self.compatibility_note());
+        lines.extend(self.compatibility_notes());
         lines.join("\n")
     }
 
     /// Whether the release moves a contract the user has to act on, which is what makes the notice
     /// a warning rather than news.
     pub(crate) fn needs_caution(&self) -> bool {
-        self.compatibility_note().is_some()
+        self.compatibility.as_ref().is_some_and(|compatibility| {
+            compatibility.raises_extension_api() || !compatibility.speaks_this_generation()
+        })
     }
 
-    /// The extension API is a public contract, so the note names its step. The session protocol is
-    /// an internal counter that moves with every wire change: only whether it differs matters, and
-    /// its number stays out of the notice.
-    /// A release on another session protocol cannot attach to running sessions until they restart,
-    /// and restarting one ends the programs in its panes. Both belong in the one row.
-    fn compatibility_note(&self) -> Option<String> {
-        let compatibility = self.compatibility.as_ref()?;
-        let extension_bump = (compatibility.extension_api > EXTENSION_API_VERSION)
-            .then_some(compatibility.extension_api);
-        let protocol_changes = compatibility.session_protocol != PROTOCOL_VERSION;
-        let Some(extension_api) = extension_bump else {
-            return protocol_changes.then(|| SESSION_RESTART_NOTE.to_string());
+    /// One row per contract, nothing when the release published none.
+    ///
+    /// The extension API is a public contract, so its row names the step. The session row says
+    /// whether sessions running now - all started on this build's generation or an older one - stay
+    /// reachable from the new release. When they do not, **Upgrade session** restarts each one on
+    /// the new build, which ends the programs in its panes.
+    fn compatibility_notes(&self) -> Vec<String> {
+        let Some(compatibility) = self.compatibility.as_ref() else {
+            return Vec::new();
         };
-        let action = if protocol_changes {
-            "review extensions, then restart sessions · ends their programs"
+        let mut notes = Vec::new();
+        if compatibility.raises_extension_api() {
+            notes.push(format!(
+                "extension API {EXTENSION_API_VERSION}→{} · review extensions first",
+                compatibility.extension_api
+            ));
+        }
+        notes.push(if compatibility.speaks_this_generation() {
+            SESSIONS_KEEP_WORKING_NOTE.to_string()
         } else {
-            "review extensions first"
-        };
-        Some(format!(
-            "extension API {EXTENSION_API_VERSION}→{extension_api} · {action}"
-        ))
+            format!(
+                "sessions on generation {PROTOCOL_VERSION} need Upgrade session · ends their programs"
+            )
+        });
+        notes
     }
 
     /// An update to `latest` from the running build, optionally moving the extension API and
-    /// session protocol to the given versions.
+    /// speaking only the given session protocol generation.
     #[cfg(test)]
     pub(crate) fn for_test(
         latest: &str,
         source: InstallSource,
         contracts: Option<(u32, u32)>,
     ) -> Self {
+        Self::for_test_window(
+            latest,
+            source,
+            contracts.map(|(extension_api, generation)| (extension_api, generation, generation)),
+        )
+    }
+
+    /// An update to `latest` whose release speaks session protocol generations `min..=max`.
+    #[cfg(test)]
+    pub(crate) fn for_test_window(
+        latest: &str,
+        source: InstallSource,
+        contracts: Option<(u32, u32, u32)>,
+    ) -> Self {
         let latest = Version::parse(latest).unwrap();
         Self {
             running: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
             source,
-            compatibility: contracts.map(|(extension_api, session_protocol)| {
-                ReleaseCompatibility {
-                    schema_version: COMPATIBILITY_SCHEMA_VERSION,
-                    version: latest.clone(),
-                    extension_api,
-                    session_protocol,
-                }
-            }),
+            compatibility: contracts.map(
+                |(extension_api, session_protocol_min, session_protocol_max)| {
+                    ReleaseCompatibility {
+                        schema_version: COMPATIBILITY_SCHEMA_VERSION,
+                        version: latest.clone(),
+                        extension_api,
+                        session_protocol_min,
+                        session_protocol_max,
+                    }
+                },
+            ),
             latest,
         }
     }
 }
 
+/// `rozi-compatibility.json`, published next to each release's signed manifest.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct ReleaseCompatibility {
     schema_version: u32,
     version: Version,
     extension_api: u32,
-    session_protocol: u32,
+    /// The oldest session protocol generation the release accepts from a peer.
+    session_protocol_min: u32,
+    /// The generation the release speaks.
+    session_protocol_max: u32,
+}
+
+impl ReleaseCompatibility {
+    fn raises_extension_api(&self) -> bool {
+        self.extension_api > EXTENSION_API_VERSION
+    }
+
+    /// Whether the release still accepts sessions started on this build's generation, so a client
+    /// updated to it attaches to them as they are.
+    fn speaks_this_generation(&self) -> bool {
+        (self.session_protocol_min..=self.session_protocol_max).contains(&PROTOCOL_VERSION)
+    }
 }
 
 /// The command **Update rozi** would run from this client right now, or `None` when it has nothing
@@ -323,59 +364,92 @@ mod tests {
         AvailableUpdate::for_test("9.0.0", source, None)
     }
 
-    fn compatibility(extension_api: u32, session_protocol: u32) -> AvailableUpdate {
-        AvailableUpdate::for_test(
+    /// A release with this extension API that speaks session generations `min..=max`.
+    fn compatibility(extension_api: u32, min: u32, max: u32) -> AvailableUpdate {
+        AvailableUpdate::for_test_window(
             "9.0.0",
             InstallSource::Managed,
-            Some((extension_api, session_protocol)),
+            Some((extension_api, min, max)),
         )
     }
 
-    #[test]
-    fn compatibility_note_names_the_extension_step_and_the_session_restart() {
-        let both = compatibility(EXTENSION_API_VERSION + 1, PROTOCOL_VERSION + 1);
-        assert!(both.needs_caution());
-        let body = both.toast_body(false);
-        let note = body
-            .lines()
-            .nth(2)
-            .expect("a third row carries the caution");
-        assert_eq!(
-            note,
-            format!(
-                "extension API {EXTENSION_API_VERSION}→{} · review extensions, then restart sessions · ends their programs",
-                EXTENSION_API_VERSION + 1
-            )
-        );
-
-        let extension =
-            compatibility(EXTENSION_API_VERSION + 1, PROTOCOL_VERSION).toast_body(false);
-        assert!(
-            extension.ends_with("review extensions first"),
-            "{extension}"
-        );
-
-        let protocol = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION + 1).toast_body(false);
-        assert!(
-            protocol.ends_with("\nrestart sessions to attach · ends their programs"),
-            "{protocol}"
-        );
-
-        let unchanged = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION);
-        assert!(!unchanged.needs_caution());
-        assert_eq!(unchanged.toast_body(false).lines().count(), 2);
+    fn upgrade_note() -> String {
+        format!(
+            "sessions on generation {PROTOCOL_VERSION} need Upgrade session · ends their programs"
+        )
     }
 
-    /// Peers accept only their own protocol, so a release on a lower one strands running sessions
-    /// just as a higher one does.
+    /// A release whose window still holds this build's generation reaches every session running
+    /// now, even when it speaks a newer one.
     #[test]
-    fn any_session_protocol_change_needs_a_restart() {
-        let lower = compatibility(EXTENSION_API_VERSION, PROTOCOL_VERSION - 1);
-        assert!(lower.needs_caution());
-        assert!(
-            lower
-                .installed_body()
-                .ends_with("restart sessions to attach · ends their programs")
+    fn a_release_that_keeps_this_generation_says_sessions_keep_working() {
+        for (min, max) in [
+            (PROTOCOL_VERSION, PROTOCOL_VERSION),
+            (PROTOCOL_VERSION, PROTOCOL_VERSION + 1),
+            (PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1),
+        ] {
+            let update = compatibility(EXTENSION_API_VERSION, min, max);
+            assert!(!update.needs_caution(), "{min}..={max}");
+            let running = env!("CARGO_PKG_VERSION");
+            assert_eq!(
+                update.toast_body(false),
+                format!("v{running} → v9.0.0\nrun `rozi update`\nrunning sessions keep working")
+            );
+            assert!(
+                update
+                    .installed_body()
+                    .ends_with("\nrunning sessions keep working")
+            );
+        }
+    }
+
+    /// Outside the window - newer or older - sessions running now cannot be reached until they
+    /// are upgraded, so the notice is a warning and names the step.
+    #[test]
+    fn a_release_past_this_generation_says_sessions_need_upgrade_session() {
+        for (min, max) in [
+            (PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 2),
+            (PROTOCOL_VERSION - 2, PROTOCOL_VERSION - 1),
+        ] {
+            let update = compatibility(EXTENSION_API_VERSION, min, max);
+            assert!(update.needs_caution(), "{min}..={max}");
+            let body = update.toast_body(false);
+            assert_eq!(body.lines().nth(2), Some(upgrade_note().as_str()), "{body}");
+            assert_eq!(body.lines().count(), 3, "{body}");
+            assert!(update.installed_body().ends_with(&upgrade_note()));
+        }
+    }
+
+    #[test]
+    fn an_extension_api_step_gets_its_own_row_above_the_session_row() {
+        let next = EXTENSION_API_VERSION + 1;
+        let extension_row =
+            format!("extension API {EXTENSION_API_VERSION}→{next} · review extensions first");
+
+        let kept = compatibility(next, PROTOCOL_VERSION, PROTOCOL_VERSION);
+        assert!(kept.needs_caution());
+        let body = kept.toast_body(false);
+        let rows: Vec<&str> = body.lines().skip(2).collect();
+        assert_eq!(
+            rows,
+            [extension_row.as_str(), "running sessions keep working"]
+        );
+
+        let moved = compatibility(next, PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1);
+        let body = moved.toast_body(false);
+        let rows: Vec<&str> = body.lines().skip(2).collect();
+        assert_eq!(rows, [extension_row.as_str(), upgrade_note().as_str()]);
+    }
+
+    /// Without release metadata the notice says nothing it cannot back up.
+    #[test]
+    fn unknown_compatibility_adds_no_rows() {
+        let update = update(InstallSource::Managed);
+        assert!(!update.needs_caution());
+        assert_eq!(update.toast_body(false).lines().count(), 2);
+        assert_eq!(
+            update.installed_body(),
+            "quit and start rozi again to use it"
         );
     }
 
@@ -403,28 +477,40 @@ mod tests {
         assert!(body.ends_with("/installation"), "{body}");
     }
 
+    fn fetched(document: &str, latest: &str) -> Option<ReleaseCompatibility> {
+        let repository = Url::parse("https://github.com/tui-lipan/rozi/").unwrap();
+        let downloader = FakeDownloader {
+            bytes: document.as_bytes().to_vec(),
+        };
+        fetch_compatibility(&downloader, &repository, &Version::parse(latest).unwrap())
+    }
+
     #[test]
     fn compatibility_document_must_match_the_signed_release_version() {
-        let repository = Url::parse("https://github.com/tui-lipan/rozi/").unwrap();
-        let latest = Version::parse("2.0.0").unwrap();
-        let wrong_version = FakeDownloader {
-            bytes:
-                br#"{"schema_version":1,"version":"1.0.0","extension_api":2,"session_protocol":5}"#
-                    .to_vec(),
-        };
-        assert!(fetch_compatibility(&wrong_version, &repository, &latest).is_none());
+        let document = r#"{"schema_version":2,"version":"1.0.0","extension_api":2,"session_protocol_min":51,"session_protocol_max":52}"#;
+        assert!(fetched(document, "2.0.0").is_none());
 
-        let matching = FakeDownloader {
-            bytes:
-                br#"{"schema_version":1,"version":"2.0.0","extension_api":2,"session_protocol":5}"#
-                    .to_vec(),
-        };
+        let document = r#"{"schema_version":2,"version":"2.0.0","extension_api":2,"session_protocol_min":51,"session_protocol_max":52}"#;
+        let compatibility = fetched(document, "2.0.0").unwrap();
+        assert_eq!(compatibility.version, Version::new(2, 0, 0));
         assert_eq!(
-            fetch_compatibility(&matching, &repository, &latest)
-                .unwrap()
-                .version,
-            latest
+            (
+                compatibility.session_protocol_min,
+                compatibility.session_protocol_max
+            ),
+            (51, 52)
         );
+    }
+
+    /// A document in another layout - the single-protocol schema 1, or one from a future release -
+    /// is no information rather than a guess.
+    #[test]
+    fn a_compatibility_document_in_another_schema_is_ignored() {
+        let schema_one =
+            r#"{"schema_version":1,"version":"2.0.0","extension_api":2,"session_protocol":5}"#;
+        assert!(fetched(schema_one, "2.0.0").is_none());
+        let future = r#"{"schema_version":3,"version":"2.0.0","extension_api":2,"session_protocol_min":5,"session_protocol_max":5}"#;
+        assert!(fetched(future, "2.0.0").is_none());
     }
 
     #[test]

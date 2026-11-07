@@ -15,6 +15,29 @@ fn executable(path: &Path, bytes: &[u8]) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// A remote rozi of another release that speaks this build's protocol range, answering the probe
+/// the way a real binary does: `--version` lines, and `--remote` in `--help`.
+fn fake_release(path: &Path, version: &str) {
+    let real = Command::new(env!("CARGO_BIN_EXE_rozi"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    let range: String = String::from_utf8(real.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| line.starts_with("protocol_"))
+        .map(|line| format!("{line}\\n"))
+        .collect();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    executable(
+        path,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\n--version) printf 'rozi {version}\\nextension_api=1\\n{range}' ;;\n--help) echo '  --remote <HOST>' ;;\nesac\n"
+        )
+        .as_bytes(),
+    );
+}
+
 fn run_case(case: &str) {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("remote");
@@ -56,6 +79,18 @@ exec /bin/sh -c "$*"
     if case == "staged_failure" {
         std::fs::write(&managed, b"previous managed runtime").unwrap();
         executable(&root.path().join("invalid-rozi"), b"#!/bin/sh\nexit 1\n");
+    }
+    if case == "prefer_exact" {
+        // A newer and an older release sit earlier in probe order than the exact copy.
+        fake_release(&home.join(".local/bin/rozi"), "999.0.0");
+        fake_release(&home.join(".cargo/bin/rozi"), "0.0.1");
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_rozi"), &managed).unwrap();
+    }
+    if case == "prefer_newest" {
+        fake_release(&home.join(".local/bin/rozi"), "900.0.0");
+        fake_release(&home.join(".cargo/bin/rozi"), "900.1.0");
+        fake_release(&home.join("bin/rozi"), "dev-build");
     }
     if case == "tui_always" {
         let global = home.join(".local/bin/rozi");
@@ -253,6 +288,16 @@ fn failed_staged_verification_preserves_the_previous_runtime() {
 }
 
 #[test]
+fn the_host_copy_of_this_exact_version_wins_over_newer_and_older_releases() {
+    run_case("prefer_exact");
+}
+
+#[test]
+fn without_an_exact_copy_the_newest_compatible_release_wins() {
+    run_case("prefer_newest");
+}
+
+#[test]
 fn bootstrap_child() {
     let Ok(case) = std::env::var("ROZI_BOOTSTRAP_CASE") else {
         return;
@@ -281,6 +326,22 @@ fn bootstrap_child() {
                 discover_sessions_from(&SessionSource::Remote(target), &config)
                     .unwrap()
                     .is_empty()
+            );
+        }
+        "prefer_exact" => {
+            let path = ensure_remote_binary(&target, &config, false).unwrap();
+            assert_eq!(
+                Path::new(&path),
+                std::path::Path::new(&std::env::var_os("XDG_DATA_HOME").unwrap())
+                    .join("rozi/remote")
+                    .join(env!("CARGO_PKG_VERSION"))
+                    .join("rozi")
+            );
+        }
+        "prefer_newest" => {
+            assert_eq!(
+                ensure_remote_binary(&target, &config, false).unwrap(),
+                home.join(".cargo/bin/rozi").to_str().unwrap()
             );
         }
         "discovery" => {

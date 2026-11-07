@@ -1038,6 +1038,12 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 session,
                 notifications,
             },
+            // An event kind from a newer server: nothing here can act on it or name it to a hook.
+            ServerMessage::SessionEvent { event }
+                if event.kind == crate::session::protocol::EventKind::Unknown =>
+            {
+                Msg::SessionIgnored
+            }
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
             ServerMessage::SessionActions { actions } => Msg::SessionActions { epoch, actions },
         },
@@ -1047,6 +1053,33 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a newer server sends that this client cannot read leaves the session as it is: no
+    /// error, no reconnect, no hook fired for an event nobody here can name.
+    #[test]
+    fn newer_server_messages_and_event_kinds_are_ignored() {
+        let unknown: ServerMessage =
+            serde_json::from_str(r#"{"type":"pane-teleported","pane_id":3}"#).unwrap();
+        assert!(matches!(
+            server_message_to_msg(1, Frame::Control(unknown)),
+            Msg::SessionIgnored
+        ));
+
+        let event: ServerMessage = serde_json::from_value(serde_json::json!({
+            "type": "session-event",
+            "event": {
+                "session_instance": "dev",
+                "seq": 4,
+                "kind": "pane-teleported",
+                "data": {},
+            },
+        }))
+        .unwrap();
+        assert!(matches!(
+            server_message_to_msg(1, Frame::Control(event)),
+            Msg::SessionIgnored
+        ));
+    }
 
     #[test]
     fn existing_only_attach_rejects_missing_or_autostarted_servers() {

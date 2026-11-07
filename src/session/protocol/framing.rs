@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::pane::id::PaneId;
 use crate::session::protocol::constants::{
-    FRAME_KIND_ACQUISITION_ACK, FRAME_KIND_CONTROL_JSON, FRAME_KIND_PANE_INPUT,
-    FRAME_KIND_PANE_OUTPUT, FRAME_KIND_PRESENTATION_ACK, FRAME_KIND_PRESENTATION_INTEREST,
-    MAX_FRAME_SIZE, PANE_FRAME_HEADER_LEN, PANE_OUTPUT_METADATA_LEN, PANE_OUTPUT_SEMANTICS_LEN,
+    FRAME_KIND_ACQUISITION_ACK, FRAME_KIND_CONTROL_JSON, FRAME_KIND_IGNORABLE,
+    FRAME_KIND_PANE_INPUT, FRAME_KIND_PANE_OUTPUT, FRAME_KIND_PRESENTATION_ACK,
+    FRAME_KIND_PRESENTATION_INTEREST, MAX_FRAME_SIZE, PANE_FRAME_HEADER_LEN,
+    PANE_OUTPUT_METADATA_LEN, PANE_OUTPUT_SEMANTICS_LEN,
 };
 
 /// Producer bytes may only be superseded when the authoritative parser proves independence.
@@ -260,10 +261,28 @@ pub fn read_frame<R: Read, T: for<'de> Deserialize<'de>>(reader: &mut R) -> std:
     read_frame_with_limit(reader, MAX_FRAME_SIZE)
 }
 
+/// Read the next control frame, skipping frames whose kind is marked ignorable
+/// ([`FRAME_KIND_IGNORABLE`]). Any other non-control frame is an error.
 pub fn read_frame_with_limit<R: Read, T: for<'de> Deserialize<'de>>(
     reader: &mut R,
     max_size: usize,
 ) -> std::io::Result<T> {
+    loop {
+        let body = read_frame_body(reader, max_size)?;
+        let (&kind, payload) = body.split_first().expect("non-empty frame");
+        if kind == FRAME_KIND_CONTROL_JSON {
+            return serde_json::from_slice(payload).map_err(std::io::Error::other);
+        }
+        if kind & FRAME_KIND_IGNORABLE == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("expected control frame, got kind {kind}"),
+            ));
+        }
+    }
+}
+
+fn read_frame_body<R: Read>(reader: &mut R, max_size: usize) -> std::io::Result<Vec<u8>> {
     let mut len = [0; 4];
     reader.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
@@ -281,14 +300,7 @@ pub fn read_frame_with_limit<R: Read, T: for<'de> Deserialize<'de>>(
     }
     let mut body = vec![0; len];
     reader.read_exact(&mut body)?;
-    let (kind, payload) = body.split_first().expect("non-empty frame");
-    if *kind != FRAME_KIND_CONTROL_JSON {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("expected control frame, got kind {kind}"),
-        ));
-    }
-    serde_json::from_slice(payload).map_err(std::io::Error::other)
+    Ok(body)
 }
 
 #[derive(Debug)]
@@ -343,29 +355,62 @@ impl FrameDecoder {
         }
     }
 
+    /// The next complete frame in the buffer, or `None` until one has arrived. A frame of an
+    /// unknown kind marked ignorable ([`FRAME_KIND_IGNORABLE`]) is consumed and skipped.
     pub fn next_frame<T: for<'de> Deserialize<'de>>(
         &mut self,
     ) -> std::io::Result<Option<Frame<T>>> {
-        if self.buffer.len() < 4 {
-            return Ok(None);
+        loop {
+            if self.buffer.len() < 4 {
+                return Ok(None);
+            }
+            let len =
+                u32::from_be_bytes(self.buffer[..4].try_into().expect("slice length")) as usize;
+            if len > self.max_size {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("frame length {len} exceeds maximum {}", self.max_size),
+                ));
+            }
+            if self.buffer.len() < 4 + len {
+                return Ok(None);
+            }
+            let body = self.buffer[4..4 + len].to_vec();
+            self.buffer.drain(..4 + len);
+            if let Some(frame) = decode_frame(&body)? {
+                return Ok(Some(frame));
+            }
         }
-        let len = u32::from_be_bytes(self.buffer[..4].try_into().expect("slice length")) as usize;
-        if len > self.max_size {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("frame length {len} exceeds maximum {}", self.max_size),
-            ));
-        }
-        if self.buffer.len() < 4 + len {
-            return Ok(None);
-        }
-        let body = self.buffer[4..4 + len].to_vec();
-        self.buffer.drain(..4 + len);
-        decode_frame(&body).map(Some)
     }
 }
 
-fn decode_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Frame<T>> {
+/// Decode one frame body; `None` for an unknown kind the sender marked ignorable.
+fn decode_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Option<Frame<T>>> {
+    let Some(&kind) = body.first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "empty frame",
+        ));
+    };
+    if !is_known_kind(kind) && kind & FRAME_KIND_IGNORABLE != 0 {
+        return Ok(None);
+    }
+    decode_known_frame(body).map(Some)
+}
+
+fn is_known_kind(kind: u8) -> bool {
+    matches!(
+        kind,
+        FRAME_KIND_CONTROL_JSON
+            | FRAME_KIND_PANE_INPUT
+            | FRAME_KIND_PANE_OUTPUT
+            | FRAME_KIND_PRESENTATION_ACK
+            | FRAME_KIND_ACQUISITION_ACK
+            | FRAME_KIND_PRESENTATION_INTEREST
+    )
+}
+
+fn decode_known_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Frame<T>> {
     let Some((&kind, payload)) = body.split_first() else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

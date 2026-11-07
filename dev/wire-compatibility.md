@@ -82,7 +82,10 @@ the capability that introduced it.
 
 - The server writes every message through one gate per client, which checks the negotiated
   capabilities. An unsupported broadcast or event is dropped for that client; an unsupported reply
-  becomes a typed refusal. It is never written.
+  becomes a typed refusal. It is never written. In code, `encode_control` tags each frame with the
+  message's `required_capability`, and a client's outbox (`ClientConn::admits`) refuses a frame its
+  client did not negotiate; every server write reaches the socket through that outbox. A reply
+  addressed to the sender's own request becomes `Error { code: "unsupported-message" }`.
 - The client's writer applies the same gate to requests.
 - `SessionClient::supports(Capability)` and the matching method on headless and session-control
   connections are the only feature checks UI and CLI code use. An action whose capability the
@@ -99,8 +102,14 @@ gate.
   - A server answers an unknown request with `Error { code: "unsupported-message" }`
     (`UNSUPPORTED_MESSAGE_ERROR_CODE`) and keeps the connection open.
   - A client ignores an unknown server message.
-  - An unknown vocabulary value is shown as neutral, such as agent state "unknown", never as an
-    error.
+  - An unknown vocabulary value is shown as neutral, never as an error.
+- A vocabulary that is also part of the public control API (`AgentState`, `AgentAuthority`,
+  `PublisherKind`) stays closed, so the control schema does not change. So does one only the
+  server produces and matches on widely (`DetectedAgentState`). The session wire fields that carry
+  one decode through `protocol::tolerant`: an unknown value becomes the type's neutral reading (an
+  agent state reads as a run still going, the rule a custom status follows). `EventKind` has an
+  `Unknown` variant outside `EventKind::ALL` and a hand-written schema, so the public list of event
+  names stays as it is; a client ignores an event of a kind it does not know.
 - `Unknown` is never sent. `required_capability` panics in debug builds when asked about it.
 - Binary frames: the high bit of the kind byte (`0x80`) means "a receiver may skip this frame". An
   unknown kind with the bit set is skipped; an unknown kind without it is still fatal.

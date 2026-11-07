@@ -724,6 +724,9 @@ struct EncodedOutput {
     bytes: Vec<u8>,
     media: Vec<tui_lipan::TerminalOutputMedia>,
     scope: Option<PresentationKey>,
+    /// The capability a client must have negotiated to be sent this frame: the send gate. Set from
+    /// [`ServerMessage::required_capability`] when a control message is encoded.
+    required: Option<protocol::Capability>,
 }
 impl std::ops::Deref for EncodedOutput {
     type Target = [u8];
@@ -1112,6 +1115,15 @@ impl ClientConn {
         }
     }
 
+    /// The send gate: whether this client negotiated what `frame` needs. Every frame reaches the
+    /// outbox through [`Self::try_push_class`] or [`Self::push_delta_inner`], and both ask this
+    /// first, so a message a client cannot read is never written to it.
+    fn admits(&self, frame: &EncodedOutput) -> bool {
+        frame
+            .required
+            .is_none_or(|capability| self.capabilities.supports(capability))
+    }
+
     fn try_push_class(
         &mut self,
         bytes: Arc<EncodedOutput>,
@@ -1119,7 +1131,8 @@ impl ClientConn {
         class: OutboxClass,
         pane: Option<PaneSeedKey>,
     ) -> bool {
-        if self.transport_closed {
+        // A gated frame is dropped, which for the caller is as good as queued: nothing overflowed.
+        if self.transport_closed || !self.admits(&bytes) {
             return true;
         }
         if self.outbox_bytes.saturating_add(bytes.len()) > cap {
@@ -1152,7 +1165,7 @@ impl ClientConn {
         default_cap: usize,
         replacement: Option<ReplacementKey>,
     ) -> ClientFrameResult {
-        if self.transport_closed {
+        if self.transport_closed || !self.admits(&bytes) {
             return ClientFrameResult::Ignored;
         }
         let Some(seed) = self.seed.as_ref().filter(|seed| !seed.baseline_queued) else {
@@ -2131,14 +2144,28 @@ impl Drop for SessionServer {
     }
 }
 
+/// Encode a control message, tagged with the capability a client needs to be sent it.
 fn encode_control(message: &ServerMessage) -> Option<Arc<EncodedOutput>> {
     let mut buf = Vec::new();
     protocol::write_frame(&mut buf, message).ok().map(|()| {
         Arc::new(EncodedOutput {
             bytes: buf,
+            required: message.required_capability(),
             ..Default::default()
         })
     })
+}
+
+/// What a client is told instead of a reply it did not negotiate: the request failed, the
+/// connection did not.
+fn unsupported_reply(capability: protocol::Capability) -> ServerMessage {
+    ServerMessage::Error {
+        code: protocol::UNSUPPORTED_MESSAGE_ERROR_CODE.to_string(),
+        message: format!(
+            "this client did not negotiate {}, which the reply needs",
+            capability.as_str()
+        ),
+    }
 }
 
 fn encode_pane_output(

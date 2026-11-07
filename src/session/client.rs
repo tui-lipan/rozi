@@ -495,10 +495,17 @@ impl SessionClient {
         let writer_inbound = client_inbound.clone();
         let writer_shutdown_signal = Arc::clone(&shutdown_signal);
         let writer_shutdown_flush = Arc::clone(&shutdown_flush);
+        let writer_capabilities = capabilities.clone();
         thread::spawn(move || {
             while let Some(message) = writer_outbound.pop_blocking() {
                 if writer_shutdown_signal.load(Ordering::Relaxed) {
                     break;
+                }
+                // The same gate as `send_control`, for requests queued on the transport directly.
+                if let ClientOutbound::Control(control) = &message
+                    && !admits(&writer_capabilities, control)
+                {
+                    continue;
                 }
                 let ends_the_server = matches!(
                     &message,
@@ -1001,8 +1008,15 @@ impl SessionClient {
         }
     }
 
-    fn send_control(&self, message: ClientMessage) {
+    /// Queue a request, through the send gate: a request the server did not negotiate is not
+    /// sent, and the answer is `false`. UI code asks [`Self::supports`] before offering the
+    /// feature, so this only catches a caller that forgot to.
+    fn send_control(&self, message: ClientMessage) -> bool {
+        if !admits(&self.capabilities, &message) {
+            return false;
+        }
         self.send(ClientOutbound::Control(message));
+        true
     }
 
     fn send(&self, message: ClientOutbound) {
@@ -1772,6 +1786,13 @@ fn forward_inbound_trusted<R: std::io::Read>(
     inbound.disconnected();
 }
 
+/// The client's send gate: whether the server negotiated what `message` needs.
+fn admits(capabilities: &protocol::Capabilities, message: &ClientMessage) -> bool {
+    message
+        .required_capability()
+        .is_none_or(|capability| capabilities.supports(capability))
+}
+
 fn try_enqueue_runtime_metrics_request(outbound: &ByteQueue<ClientOutbound>, pending: &AtomicBool) {
     if pending.swap(true, Ordering::AcqRel) {
         return;
@@ -1871,6 +1892,65 @@ mod tests {
         )
         .unwrap();
         server.join().unwrap();
+    }
+
+    /// The client's send gate: a request the server did not negotiate is refused locally and
+    /// never queued.
+    #[test]
+    fn a_request_the_server_did_not_negotiate_is_not_sent() {
+        let (mut client, outbound) = SessionClient::test_channel();
+        assert!(client.send_control(ClientMessage::RequestRuntimeMetrics));
+        assert_eq!(
+            outbound.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::RequestRuntimeMetrics)
+        );
+
+        client.capabilities =
+            protocol::Capabilities::current().without(protocol::Capability::RuntimeMetrics);
+        assert!(!client.send_control(ClientMessage::RequestRuntimeMetrics));
+        assert!(client.send_control(ClientMessage::Pong { seq: 1 }));
+        assert_eq!(
+            outbound.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::Pong { seq: 1 })
+        );
+        assert!(outbound.try_recv().is_err());
+    }
+
+    /// The writer applies the gate too, to requests queued on the transport without going through
+    /// `send_control`: against a server that negotiated nothing, the metrics request never reaches
+    /// the wire, and the request queued after it still does.
+    #[test]
+    #[cfg(unix)]
+    fn the_writer_never_writes_a_gated_request() {
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        server_stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let server = std::thread::spawn(move || {
+            let _: ClientMessage = protocol::read_frame(&mut server_stream).unwrap();
+            protocol::write_frame(&mut server_stream, &attached_message()).unwrap();
+            protocol::read_frame::<_, ClientMessage>(&mut server_stream).unwrap()
+        });
+        let (tx, _rx) = mpsc::channel();
+        let (client, _) = SessionClient::from_stream_attached_target(
+            IpcConnection::from_unix(client_stream),
+            "test",
+            InboundTarget::Channel(tx),
+            false,
+            true,
+            Duration::from_secs(2),
+            None,
+            None,
+        )
+        .unwrap();
+        try_enqueue_runtime_metrics_request(&client.outbound, &client.metrics_request_pending);
+        client.rename("renamed".to_string());
+        assert_eq!(
+            server.join().unwrap(),
+            ClientMessage::Rename {
+                name: "renamed".to_string()
+            }
+        );
     }
 
     #[test]

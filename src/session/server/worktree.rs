@@ -30,6 +30,7 @@ impl WorktreeJob {
                 cwd.len() + path.len()
             }
             Request::Exclude { cwd, directory } => cwd.len() + directory.len(),
+            Request::Unknown => 0,
         }
     }
 

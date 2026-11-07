@@ -549,12 +549,15 @@ impl SessionServer {
                 session,
                 protocol_version,
                 min_protocol_version,
-            } => self.handle_query(
-                session,
-                protocol_version,
-                min_protocol_version,
-                capabilities,
-            ),
+            } => {
+                self.record_capabilities(client_id, capabilities.as_ref());
+                self.handle_query(
+                    session,
+                    protocol_version,
+                    min_protocol_version,
+                    capabilities,
+                )
+            }
             ClientMessage::SessionControl {
                 capabilities,
                 session,
@@ -562,6 +565,7 @@ impl SessionServer {
                 min_protocol_version,
                 request,
             } => {
+                self.record_capabilities(client_id, capabilities.as_ref());
                 self.reload_config_for(&request.command);
                 self.handle_session_control(
                     client_id,
@@ -1064,24 +1068,13 @@ impl SessionServer {
                 .request_worktree(client_id, request_id, request)
                 .map(|message| vec![(Target::Client(client_id), message)])
                 .unwrap_or_default(),
-            ClientMessage::RequestRuntimeMetrics => {
-                let known = self.clients.iter().any(|client| {
-                    client.id == client_id
-                        && client
-                            .capabilities
-                            .supports(protocol::Capability::RuntimeMetrics)
-                });
-                if known {
-                    vec![(
-                        Target::Client(client_id),
-                        ServerMessage::RuntimeMetrics {
-                            metrics: Box::new(self.runtime_metrics()),
-                        },
-                    )]
-                } else {
-                    Vec::new()
-                }
-            }
+            // The send gate refuses the reply to a client that did not negotiate metrics.
+            ClientMessage::RequestRuntimeMetrics => vec![(
+                Target::Sender,
+                ServerMessage::RuntimeMetrics {
+                    metrics: Box::new(self.runtime_metrics()),
+                },
+            )],
             ClientMessage::Detach => Vec::new(),
             // A newer client's request that skipped its send gate. Refuse that one request and keep
             // the connection: everything else the client does still works.
@@ -1480,6 +1473,18 @@ impl SessionServer {
             ));
         }
         responses
+    }
+
+    /// Remember what a one-shot connection negotiated, so the send gate applies to its replies and
+    /// to any stream it opens (`session subscribe`) as it does to an attached client.
+    fn record_capabilities(
+        &mut self,
+        client_id: ClientId,
+        offered: Option<&protocol::Capabilities>,
+    ) {
+        if let Some(client) = self.client_mut(client_id) {
+            client.capabilities = protocol::Capabilities::negotiated(offered);
+        }
     }
 
     pub(super) fn handle_query(

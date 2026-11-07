@@ -408,6 +408,9 @@ pub enum WorktreeRequest {
         cwd: String,
         directory: String,
     },
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A session that records a checkout as its origin.
@@ -464,6 +467,9 @@ pub enum WorktreeResult {
     Failed {
         message: String,
     },
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One child entry in a [`ServerMessage::DirectoryListing`].
@@ -500,6 +506,9 @@ pub enum WireChangeState {
     Renamed,
     Untracked,
     Conflicted,
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One changed path in a [`ServerMessage::ChangeListing`].
@@ -525,6 +534,9 @@ pub enum ControllerChangeReason {
     /// The lease was granted: the first attacher, promotion of the oldest survivor, a controller's
     /// explicit grant, or an auto-grant to a requester when no controller held the lease.
     Granted,
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -851,10 +863,10 @@ impl ClientMessage {
             | ClientMessage::ListDirectory { .. }
             | ClientMessage::ListChanges { .. }
             | ClientMessage::Worktree { .. }
-            | ClientMessage::RequestRuntimeMetrics
             | ClientMessage::Detach
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => None,
+            ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -904,10 +916,10 @@ impl ServerMessage {
             | ServerMessage::DirectoryListing { .. }
             | ServerMessage::ChangeListing { .. }
             | ServerMessage::WorktreeResult { .. }
-            | ServerMessage::RuntimeMetrics { .. }
             | ServerMessage::RecordingEnded { .. }
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
+            ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None
@@ -933,6 +945,9 @@ pub enum AttachmentOperation {
     },
     Finish,
     Cancel,
+    /// A step from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// An optimistic document publication committed atomically with a shared pane spawn.

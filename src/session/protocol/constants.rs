@@ -68,3 +68,11 @@ pub const MAX_ATTACHMENT_BYTES: u64 = 16 * 1024 * 1024;
 pub const ATTACHMENT_CHUNK_BYTES: usize = 256 * 1024;
 
 pub(crate) const FRAME_KIND_ACQUISITION_ACK: u8 = 6;
+
+/// The high bit of a frame's kind byte: a receiver that does not know the kind may skip the frame.
+///
+/// A new frame kind that only carries optional work sets this bit, so an older peer that receives
+/// it anyway drops it and keeps reading. An unknown kind without the bit stays fatal: the sender
+/// declared that the stream cannot be understood without it. A kind with the bit is still
+/// negotiated with a capability before it is sent; the bit is the backstop.
+pub(crate) const FRAME_KIND_IGNORABLE: u8 = 0x80;

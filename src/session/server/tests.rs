@@ -1548,16 +1548,56 @@ fn a_resyncing_client_is_still_pinged_past_the_barrier() {
     assert!(client.seed.as_ref().unwrap().catch_up.is_empty());
 }
 
+/// The control messages queued for `client_id`, in order.
+fn queued_controls(server: &SessionServer, client_id: ClientId) -> Vec<ServerMessage> {
+    decode_outbox_frames(server.client(client_id).expect("a registered client"))
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Control(message) => Some(*message),
+            DecodedOutboxFrame::Pane { .. } => None,
+        })
+        .collect()
+}
+
+/// Attach a client offering exactly `capabilities` (`None`: an older peer that sends no set).
+fn attach_offering(
+    server: &mut SessionServer,
+    capabilities: Option<protocol::Capabilities>,
+) -> (ClientId, UnixStream) {
+    let (id, stream) = add_client(server);
+    server.handle_message(
+        id,
+        ClientMessage::Attach {
+            capabilities,
+            session: server.session_name.clone(),
+            protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
+            label: format!("client-{id}"),
+            read_only: false,
+            shares_filesystem: true,
+            expected_server_nonce: None,
+        },
+    );
+    assert!(server.client_attached(id));
+    server.flush_session_events();
+    clear_outboxes(server, &[id]);
+    (id, stream)
+}
+
+fn without_metrics() -> Option<protocol::Capabilities> {
+    Some(protocol::Capabilities::current().without(protocol::Capability::RuntimeMetrics))
+}
+
+fn is_metrics(message: &ServerMessage) -> bool {
+    matches!(message, ServerMessage::RuntimeMetrics { .. })
+}
+
 #[test]
 fn runtime_metrics_request_serves_peers_that_negotiated_it() {
     let mut server = SessionServer::new_named("dev");
     let (current, _stream) = attach_client(&mut server);
-    assert!(matches!(
-        server
-            .handle_message(current, ClientMessage::RequestRuntimeMetrics)
-            .as_slice(),
-        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == current
-    ));
+    server.process_client_control_now(current, ClientMessage::RequestRuntimeMetrics);
+    assert!(queued_controls(&server, current).iter().any(is_metrics));
 
     let (legacy, _stream) = add_client(&mut server);
     let responses = server.handle_message(
@@ -1581,6 +1621,83 @@ fn runtime_metrics_request_serves_peers_that_negotiated_it() {
         ),
         "older peers are rejected"
     );
+}
+
+/// The send gate, end to end: whatever path queues a gated message - a broadcast, a message
+/// addressed to one client, a reply - a client that did not negotiate it never has it written to
+/// its socket. A capable client on the same server still gets every one.
+#[test]
+fn a_gated_message_never_reaches_the_socket_of_a_client_without_its_capability() {
+    let mut server = SessionServer::new_named("dev");
+    let (capable, mut capable_stream) =
+        attach_offering(&mut server, Some(protocol::Capabilities::current()));
+    let (older, mut older_stream) = attach_offering(&mut server, without_metrics());
+    let (legacy, mut legacy_stream) = attach_offering(&mut server, None);
+    let metrics = || ServerMessage::RuntimeMetrics {
+        metrics: Box::new(crate::runtime_metrics::ServerRuntimeMetrics::default()),
+    };
+
+    server.broadcast_control(&metrics());
+    server.enqueue(capable, Target::Broadcast, metrics());
+    for id in [capable, older, legacy] {
+        server.enqueue(id, Target::Client(id), metrics());
+    }
+    // A sentinel every client takes, so reading up to it proves nothing gated came before it.
+    server.broadcast_control(&ServerMessage::Ping { seq: 4242 });
+    server.flush_clients();
+
+    let read_until_sentinel = |stream: &mut UnixStream| {
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut received = Vec::new();
+        loop {
+            let message: ServerMessage = protocol::read_frame(stream).expect("frame");
+            if matches!(message, ServerMessage::Ping { seq: 4242 }) {
+                return received;
+            }
+            received.push(message);
+        }
+    };
+    assert_eq!(
+        read_until_sentinel(&mut capable_stream)
+            .iter()
+            .filter(|message| is_metrics(message))
+            .count(),
+        3
+    );
+    for stream in [&mut older_stream, &mut legacy_stream] {
+        let received = read_until_sentinel(stream);
+        assert!(!received.iter().any(is_metrics), "{received:?}");
+    }
+    assert!(server.client_attached(older) && server.client_attached(legacy));
+}
+
+/// A gated reply to the client's own request is refused in words rather than dropped, so the
+/// request does not hang; the connection keeps working.
+#[test]
+fn a_gated_reply_becomes_an_unsupported_message_refusal() {
+    let mut server = SessionServer::new_named("dev");
+    let (older, _stream) = attach_offering(&mut server, without_metrics());
+    clear_outboxes(&mut server, &[older]);
+    server.process_client_control_now(older, ClientMessage::RequestRuntimeMetrics);
+    let replies = queued_controls(&server, older);
+    assert!(
+        matches!(
+            replies.as_slice(),
+            [ServerMessage::Error { code, message }]
+                if code == protocol::UNSUPPORTED_MESSAGE_ERROR_CODE
+                    && message.contains("runtime-metrics")
+        ),
+        "{replies:?}"
+    );
+    server.process_client_control_now(
+        older,
+        ClientMessage::Rename {
+            name: "renamed".into(),
+        },
+    );
+    assert!(server.client_attached(older));
 }
 
 /// A newer client may send a request this server has never heard of. That one request fails; the
@@ -1633,6 +1750,19 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
             other => panic!("expected an Attached reply, got {other:?}"),
         };
 
+    let request_metrics = |server: &mut SessionServer, client_id: ClientId| {
+        clear_outboxes(server, &[client_id]);
+        server.process_client_control_now(client_id, ClientMessage::RequestRuntimeMetrics);
+        queued_controls(server, client_id)
+    };
+    let refused = |replies: &[ServerMessage]| {
+        matches!(
+            replies,
+            [ServerMessage::Error { code, .. }]
+                if code == protocol::UNSUPPORTED_MESSAGE_ERROR_CODE
+        )
+    };
+
     // A peer that sends no set gets none of the optional work, metrics included.
     let (silent, _stream) = add_client(&mut server);
     server.handle_message(silent, attach(None));
@@ -1640,11 +1770,8 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
         agreed(&server, silent),
         Some(protocol::Capabilities::default())
     );
-    assert!(
-        server
-            .handle_message(silent, ClientMessage::RequestRuntimeMetrics)
-            .is_empty()
-    );
+    let replies = request_metrics(&mut server, silent);
+    assert!(refused(&replies), "{replies:?}");
 
     // A client that offers metrics gets them.
     let (metrics, _stream) = add_client(&mut server);
@@ -1654,12 +1781,11 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
             protocol::Capability::RuntimeMetrics,
         ]))),
     );
-    assert!(matches!(
-        server
-            .handle_message(metrics, ClientMessage::RequestRuntimeMetrics)
-            .as_slice(),
-        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == metrics
-    ));
+    let replies = request_metrics(&mut server, metrics);
+    assert!(
+        matches!(replies.as_slice(), [ServerMessage::RuntimeMetrics { .. }]),
+        "{replies:?}"
+    );
 
     // An explicit empty set is a client declining the optional work.
     let (quiet, _stream) = add_client(&mut server);
@@ -1668,10 +1794,11 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
         agreed(&server, quiet),
         Some(protocol::Capabilities::default())
     );
+    let replies = request_metrics(&mut server, quiet);
+    assert!(refused(&replies), "{replies:?}");
     assert!(
-        server
-            .handle_message(quiet, ClientMessage::RequestRuntimeMetrics)
-            .is_empty()
+        server.client_attached(quiet),
+        "a refused request keeps the client"
     );
 
     // A name this build has never heard of is ignored rather than refused: that is the whole point

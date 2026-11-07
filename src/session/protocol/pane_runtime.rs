@@ -106,11 +106,13 @@ impl PaneMeta {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum PaneCwdSource {
-    #[default]
-    Unknown,
     ShellReport,
     ProcessInspector,
     LaunchDirectory,
+    /// Also what a source from a newer peer decodes as.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 /// Mirrors [`TerminalCommandPhase`] on the wire (that framework type has no `serde` impls, since
@@ -119,14 +121,16 @@ pub enum PaneCwdSource {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum PaneCommandPhase {
-    #[default]
-    Unknown,
     Prompt,
     Input,
     Executing,
     Completed {
         exit_status: Option<i32>,
     },
+    /// Also what a phase from a newer peer decodes as.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 pub mod pane_status {
@@ -202,6 +206,8 @@ pub struct DetectedAgent {
     /// runtime poll rate and sits in the largest `Msg`/`ServerMessage` variants. Two inline
     /// `String`s here cost 48 bytes in each of them and an allocation per sweep.
     pub agent: std::sync::Arc<AgentIdentity>,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "DetectedAgentState"))]
     pub state: DetectedAgentState,
 }
 
@@ -297,7 +303,8 @@ pub struct PublishedRow {
     pub publisher: String,
     /// Server-owned copy of the kind the publisher declared when its stream opened. Whatever a
     /// publisher sends here is overwritten.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "PublisherKind"))]
     pub kind: PublisherKind,
     pub title: String,
     /// Same vocabulary and same sanitization as [`PaneStatus::value`].
@@ -561,6 +568,8 @@ pub struct PaneRuntimeState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct QuietFallback {
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "super::AgentState"))]
     pub state: super::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -576,6 +585,8 @@ pub struct AgentIntegrationReport {
     pub integration: String,
     pub identity: AgentIdentity,
     pub reference: super::AgentRef,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "super::AgentState"))]
     pub state: super::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,

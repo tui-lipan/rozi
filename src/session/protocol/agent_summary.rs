@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// One agent's state, as reported by the session server that owns it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentSummary {
     pub session: String,
     /// Which agent this is: its pane, that pane's spawn generation, the published row for a pane

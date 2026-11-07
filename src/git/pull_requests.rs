@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{command, worktrees};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkStatus {
     Open,
@@ -21,6 +22,7 @@ pub enum WorkStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PullRequestStatus {
     pub number: u64,
     pub status: WorkStatus,
@@ -28,6 +30,7 @@ pub struct PullRequestStatus {
 
 /// Keyed by the host's checkout path. An error means status is unavailable, not that no PR exists.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeStatuses {
     pub checkouts: BTreeMap<String, PullRequestStatus>,
     pub unavailable: bool,

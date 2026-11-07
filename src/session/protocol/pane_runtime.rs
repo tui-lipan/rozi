@@ -12,9 +12,14 @@ fn is_zero(value: &u64) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WirePalette {
+    // Framework colors are opaque to the schema; the golden wire corpus pins their JSON shape.
+    #[cfg_attr(feature = "schema-gen", schemars(with = "Option<serde_json::Value>"))]
     pub foreground: Option<Color>,
+    #[cfg_attr(feature = "schema-gen", schemars(with = "Option<serde_json::Value>"))]
     pub background: Option<Color>,
+    #[cfg_attr(feature = "schema-gen", schemars(with = "[serde_json::Value; 16]"))]
     pub ansi: [Color; 16],
 }
 
@@ -39,6 +44,7 @@ impl From<WirePalette> for TerminalColorPalette {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneMeta {
     /// Retained history capacity selected when the server created this pane.
     pub scrollback: usize,
@@ -97,6 +103,7 @@ impl PaneMeta {
 /// config/profile defaults, so there is no separate value a fourth tier could contribute once
 /// launch has happened.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum PaneCwdSource {
     #[default]
@@ -109,6 +116,7 @@ pub enum PaneCwdSource {
 /// Mirrors [`TerminalCommandPhase`] on the wire (that framework type has no `serde` impls, since
 /// it is UI-agnostic runtime state rather than persisted/transmitted data).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum PaneCommandPhase {
     #[default]
@@ -145,6 +153,7 @@ pub fn status_is_quiescent(value: Option<&str>) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneStatus {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,6 +186,7 @@ impl AgentIdentity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum DetectedAgentState {
     Idle,
@@ -185,6 +195,7 @@ pub enum DetectedAgentState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct DetectedAgent {
     /// Shared rather than owned: one definition's identity describes every pane running that
     /// agent, and this rides inside [`PaneRuntimeState`], which is recomputed per pane at the
@@ -429,6 +440,7 @@ impl From<TerminalCommandPhase> for PaneCommandPhase {
 /// a `cwd_host`-free path as local. Spawn requests sent to the session server may still carry the
 /// server-relative cwd.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaneRuntimeState {
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
@@ -547,6 +559,7 @@ pub struct PaneRuntimeState {
 /// What a report's `working` becomes if the screen shows the agent has stopped. See
 /// [`AgentIntegrationReport::unless_quiet`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct QuietFallback {
     pub state: super::AgentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -558,6 +571,7 @@ pub struct QuietFallback {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentIntegrationReport {
     pub integration: String,
     pub identity: AgentIdentity,

@@ -2417,6 +2417,7 @@ pub struct InvocationInfo {
 
 /// An action a client may offer in its palette: it needs no arguments.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct PaletteAction {
     pub id: String,
     pub title: String,

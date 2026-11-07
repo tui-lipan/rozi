@@ -28,6 +28,7 @@ pub const SHARED_LAYOUT_VERSION: u32 = 4;
 /// relative to the controller's canonical pane canvas (`canvas_cols` × `canvas_rows`, excluding
 /// the workbar) so followers place floats inside the same centered canvas.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SharedLayout {
     pub version: u32,
     pub canvas_cols: u16,
@@ -39,6 +40,7 @@ pub struct SharedLayout {
 /// Geometry-affecting presentation shared with followers so their terminal grids match.
 /// Colors, border glyphs, and animation recipes remain client-local.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SharedPaneGeometry {
     pub show_titles: bool,
     pub titlebar: crate::pane::chrome::PaneTitlebarMode,
@@ -63,6 +65,7 @@ impl Default for SharedPaneGeometry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SharedWorkspace {
     pub index: usize,
     pub name: Option<String>,
@@ -75,6 +78,7 @@ pub struct SharedWorkspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SharedPane {
     pub pane_id: PaneId,
     pub generation: u64,
@@ -105,6 +109,7 @@ fn default_shared_scrollable_width() -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct FracRect {
     pub x: f32,
     pub y: f32,
@@ -124,6 +129,7 @@ pub struct FracRect {
 /// Only *tiled* drags need it. A floating pane's rectangle is already part of the shared document,
 /// so dragging one replicates through the ordinary layout commit.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct RemoteDrag {
     pub pane_id: PaneId,
     /// The lifted rectangle, as fractions of the controller's canonical canvas - the same frame

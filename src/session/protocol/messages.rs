@@ -14,6 +14,7 @@ pub fn wire_cell(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ClientInfo {
     pub id: ClientId,
     pub label: String,
@@ -33,6 +34,7 @@ pub struct ClientInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMessage {
     Attach {
@@ -362,6 +364,7 @@ pub enum ClientMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeRequest {
     Branches {
@@ -409,6 +412,7 @@ pub enum WorktreeRequest {
 
 /// A session that records a checkout as its origin.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeSession {
     pub name: String,
     /// Its server is running. Otherwise it is a snapshot that can be restored.
@@ -417,6 +421,7 @@ pub struct WorktreeSession {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeResult {
     Branches {
@@ -463,6 +468,7 @@ pub enum WorktreeResult {
 
 /// One child entry in a [`ServerMessage::DirectoryListing`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WireDirEntry {
     /// Name relative to the listed directory, never a path.
     pub name: String,
@@ -485,6 +491,7 @@ pub struct WireDirEntry {
 
 /// Serde-stable mirror of the framework's git change states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum WireChangeState {
     Added,
@@ -497,6 +504,7 @@ pub enum WireChangeState {
 
 /// One changed path in a [`ServerMessage::ChangeListing`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WireChange {
     /// Path relative to the scanned root.
     pub path: String,
@@ -507,6 +515,7 @@ pub struct WireChange {
 
 /// Why the layout-control lease moved. Carried by [`ServerMessage::ControllerChanged`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum ControllerChangeReason {
     /// The controller detached or dropped cleanly.
@@ -519,6 +528,7 @@ pub enum ControllerChangeReason {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMessage {
     /// Sent before a new pane's layout or output, including to the spawning client.
@@ -679,6 +689,8 @@ pub enum ServerMessage {
         generation: u64,
         /// Initial attach baseline, applied without attention or historical notifications.
         initial: bool,
+        /// A framework type, opaque to the schema; the golden wire corpus pins its JSON shape.
+        #[cfg_attr(feature = "schema-gen", schemars(with = "serde_json::Value"))]
         snapshot: tui_lipan::ProgramStatusSnapshot,
     },
     /// A pane's [`PaneRuntimeState`] changed: broadcast after raw
@@ -906,6 +918,7 @@ impl ServerMessage {
 
 /// One acknowledged step of a bounded attachment upload.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum AttachmentOperation {
     Begin {
@@ -924,6 +937,7 @@ pub enum AttachmentOperation {
 
 /// An optimistic document publication committed atomically with a shared pane spawn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SpawnPlacementCommit {
     pub base_rev: u64,
     pub layout: crate::layout::shared::SharedLayout,

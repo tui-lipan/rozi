@@ -92,6 +92,71 @@ pub struct ControlRequest {
 }
 
 impl ControlCommand {
+    /// Optional session behavior needed before this command may be sent.
+    /// Every generation-52 command is baseline. New commands must make this choice explicitly.
+    pub fn required_session_capability(&self) -> Option<crate::session::protocol::Capability> {
+        match self {
+            Self::Context
+            | Self::ListPanes
+            | Self::ListAttachedPanes
+            | Self::LayoutGet { .. }
+            | Self::LayoutSet { .. }
+            | Self::PaneSet { .. }
+            | Self::PaneMove { .. }
+            | Self::PaneSwap { .. }
+            | Self::PaneReveal { .. }
+            | Self::PaneClose { .. }
+            | Self::AgentsList
+            | Self::AgentsOverview
+            | Self::AgentGo { .. }
+            | Self::AgentGet { .. }
+            | Self::AgentRead { .. }
+            | Self::Metrics
+            | Self::ExtensionRuntimeStatus
+            | Self::ExtensionsDeploy { .. }
+            | Self::ExtensionsUndeploy { .. }
+            | Self::ExtensionsStatus
+            | Self::Focus { .. }
+            | Self::SendText { .. }
+            | Self::SendKeys { .. }
+            | Self::NewPane { .. }
+            | Self::RunAction { .. }
+            | Self::Invoke { .. }
+            | Self::InvocationList
+            | Self::InvocationCancel { .. }
+            | Self::ActionsList
+            | Self::CapturePane { .. }
+            | Self::CaptureUi { .. }
+            | Self::SwitchWorkspace { .. }
+            | Self::MoveToWorkspace { .. }
+            | Self::Popup { .. }
+            | Self::Publish { .. }
+            | Self::SidebarPublish { .. }
+            | Self::Subscribe { .. }
+            | Self::PaneLogging { .. }
+            | Self::SetStatus { .. }
+            | Self::AgentWait { .. }
+            | Self::AgentPrompt { .. }
+            | Self::AgentReport { .. }
+            | Self::AgentRelease { .. }
+            | Self::Notify { .. }
+            | Self::CommandVisibility { .. }
+            | Self::RecordStart { .. }
+            | Self::RecordStop { .. }
+            | Self::RecordList
+            | Self::RecordMark { .. }
+            | Self::RecordUiStart { .. }
+            | Self::RecordUiStop
+            | Self::RecordUiMark { .. }
+            | Self::Pick { .. }
+            | Self::Prompt { .. } => None,
+            Self::Unknown => {
+                debug_assert!(false, "an unknown control command must never be sent");
+                None
+            }
+        }
+    }
+
     pub(crate) fn uses_ui_authority(&self) -> bool {
         matches!(
             self,
@@ -820,6 +885,10 @@ pub enum ControlCommand {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         masked: bool,
     },
+    /// A command introduced by a peer that this build cannot execute. Receive-only.
+    #[serde(other, skip_serializing)]
+    #[cfg_attr(feature = "schema-gen", schemars(skip))]
+    Unknown,
 }
 
 impl ControlCommand {
@@ -2500,7 +2569,32 @@ pub struct ControlResponse {
     pub error: Option<String>,
 }
 
+/// Why an unrecognized command cannot be served by this binary.
+pub fn unsupported_command_reason(session: bool) -> &'static str {
+    if session {
+        concat!(
+            "this session runs rozi ",
+            env!("CARGO_PKG_VERSION"),
+            ", which does not support this command"
+        )
+    } else {
+        concat!(
+            "this rozi ",
+            env!("CARGO_PKG_VERSION"),
+            " does not support this command"
+        )
+    }
+}
+
 impl ControlResponse {
+    /// Typed refusal for a command this binary does not recognize.
+    pub fn unsupported_command(session: bool) -> Self {
+        Self::error_with(
+            ControlErrorCode::Unsupported,
+            unsupported_command_reason(session),
+        )
+    }
+
     pub fn ok(data: impl Serialize) -> Self {
         Self {
             ok: true,
@@ -2777,6 +2871,61 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn unknown_commands_decode_through_flatten_and_cannot_be_sent() {
+        for wire in [
+            r#"{"cmd":"future-command"}"#,
+            r#"{"cmd":"future-command","future":{"values":[1,2]},"source_pane":7}"#,
+        ] {
+            let request: ControlRequest = serde_json::from_str(wire).unwrap();
+            assert_eq!(request.command, ControlCommand::Unknown);
+            assert!(serde_json::to_vec(&request).is_err());
+            let mut sent = Vec::new();
+            assert!(crate::session::protocol::write_frame(&mut sent, &request).is_err());
+            assert!(sent.is_empty());
+        }
+        assert!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"send-text","text":42}"#).is_err()
+        );
+        let baseline: ControlRequest = serde_json::from_str(r#"{"cmd":"list-panes"}"#).unwrap();
+        assert_eq!(baseline.command.required_session_capability(), None);
+        for cap in crate::session::protocol::Capability::ALL {
+            assert_eq!(cap.introduced_in(), "0.0.44");
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "an unknown control command must never be sent")]
+    fn unknown_control_capability_panics_in_debug() {
+        ControlCommand::Unknown.required_session_capability();
+    }
+
+    #[test]
+    fn unknown_ui_control_command_gets_typed_unsupported_response() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            let (reply, response) = mpsc::channel();
+            let request =
+                serde_json::from_str(r#"{"cmd":"future-command","future":true}"#).unwrap();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope::local(
+                    request, reply,
+                )))
+                .unwrap();
+            let response = response
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+            assert!(!response.ok);
+            assert_eq!(response.code, Some(ControlErrorCode::Unsupported));
+            assert_eq!(
+                response.error.as_deref(),
+                Some(unsupported_command_reason(false))
+            );
+        });
+    }
 
     #[cfg(unix)]
     fn temp_base(name: &str) -> PathBuf {

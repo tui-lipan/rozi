@@ -157,6 +157,7 @@ pub(super) fn encode_output(
     Some(Arc::new(EncodedOutput {
         bytes: frame,
         media: media.to_vec(),
+        required: None,
         scope: Some(PresentationKey {
             pane_id,
             generation,

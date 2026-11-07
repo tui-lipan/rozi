@@ -851,10 +851,10 @@ impl ClientMessage {
             | ClientMessage::ListDirectory { .. }
             | ClientMessage::ListChanges { .. }
             | ClientMessage::Worktree { .. }
-            | ClientMessage::RequestRuntimeMetrics
             | ClientMessage::Detach
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => None,
+            ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -904,10 +904,10 @@ impl ServerMessage {
             | ServerMessage::DirectoryListing { .. }
             | ServerMessage::ChangeListing { .. }
             | ServerMessage::WorktreeResult { .. }
-            | ServerMessage::RuntimeMetrics { .. }
             | ServerMessage::RecordingEnded { .. }
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
+            ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

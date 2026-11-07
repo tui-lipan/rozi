@@ -834,7 +834,20 @@ impl SessionServer {
         client.seed.take()
     }
 
+    /// Queue `message` for `target`. The send gate drops a broadcast or a direct message for a
+    /// client that did not negotiate what it needs; a reply to the sender's own request becomes an
+    /// `unsupported-message` refusal instead, so the request does not go unanswered.
     pub(super) fn enqueue(&mut self, sender_id: ClientId, target: Target, message: ServerMessage) {
+        let message = match (target, message.required_capability()) {
+            (Target::Sender, Some(capability))
+                if self
+                    .client_mut(sender_id)
+                    .is_some_and(|client| !client.capabilities.supports(capability)) =>
+            {
+                super::unsupported_reply(capability)
+            }
+            _ => message,
+        };
         let delta = seed_delta_for_control(&message);
         let Some(bytes) = encode_control(&message) else {
             return;

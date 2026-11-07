@@ -2812,8 +2812,9 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                 parked_epoch: None,
             });
         let before = backend.state().session_view_revision;
+        backend.take_cursor_trail_skip();
         backend
-            .dispatch(Msg::SessionAttached {
+            .update_level(Msg::SessionAttached {
                 epoch: 1,
                 session_instance: crate::session::protocol::SessionInstanceId::for_test("dev"),
                 session: "dev".into(),
@@ -2829,6 +2830,11 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                 origin: crate::session::origin::SessionOrigin::default(),
             })
             .expect("dispatch attach");
+        assert_eq!(
+            backend.take_cursor_trail_skip(),
+            !reconnect,
+            "a fresh session arrival skips the trail; reconnecting preserves it"
+        );
         backend.state().session_view_revision - before
     })
 }

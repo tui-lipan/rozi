@@ -3076,6 +3076,59 @@ mod tests {
         assert_eq!(persisted(&root), (session(), Some(true)));
     }
 
+    /// The directory a pane restores into is saved for every pane, so a change to it alone dirties
+    /// the snapshot: even with nothing printed, for a pane launched with its own command, and with
+    /// foreground commands not recorded at all.
+    #[test]
+    fn a_change_to_the_saved_directory_alone_dirties_the_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "rozi-snapshot-cwd-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let name = "saved-cwd";
+        let mut server = SessionServer::new_named_with_settings(
+            name,
+            ServerSettings {
+                resurrect: true,
+                resurrect_foreground: crate::config::ForegroundRestore::Never,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::from_secs(60 * 60),
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = test_pane();
+        pane.launch = Some(crate::pane::launch::PaneLaunch::shell("make watch"));
+        let generation = pane.generation;
+        server.panes.insert(1, pane);
+        server.sync_pane_runtime(None, 1, generation);
+        server.mark_dirty();
+        server.snapshot_before_shutdown().expect("first snapshot");
+        assert!(!server.snapshot_dirty());
+
+        let (uri_path, moved) = if cfg!(windows) {
+            ("/C:/moved/here", r"C:\moved\here")
+        } else {
+            ("/moved/here", "/moved/here")
+        };
+        // Written straight to the screen: the directory changes and the pane prints nothing.
+        server
+            .panes
+            .get_mut(&1)
+            .unwrap()
+            .screen_mut()
+            .process_bytes(format!("\x1b]7;file://localhost{uri_path}\x1b\\").as_bytes());
+        server.sync_pane_runtime(None, 1, generation);
+        assert!(server.snapshot_dirty(), "only the saved directory changed");
+
+        server.snapshot_before_shutdown().expect("second snapshot");
+        let meta: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(name).join("meta.json")).unwrap()).unwrap();
+        assert_eq!(meta["panes"][0]["cwd"], moved);
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// A publisher switching conversation dirties the snapshot even when the pane prints nothing
     /// afterwards, and so does its window leaving: the snapshot the normal scheduling path then
     /// writes names the conversation the publisher switched to, not the one persisted before.
@@ -4010,6 +4063,7 @@ mod tests {
             program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
+            foreground_launch_cwd: None,
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,

@@ -37,8 +37,9 @@ about to run.
 
 rozi finds a pane's working directory from the first of these that is available:
 
-1. While the shell runs a program, that program's directory, on Linux and macOS. A line such as
-   `cd ~/src/api && claude` shows, saves, and restores the pane in `~/src/api`.
+1. While the shell runs a program, the directory the program was started in, on Linux and macOS. A
+   line such as `cd ~/src/api && claude` shows, saves, and restores the pane in `~/src/api`, even if
+   the program later changes its own directory.
 2. A valid local directory report from the shell (OSC 7 or OSC 9;9).
 3. Process inspection of the shell, on Linux and macOS.
 4. The pane's launch directory.

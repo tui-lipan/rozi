@@ -442,6 +442,10 @@ pub struct ServerPane {
     /// The last `PATH` lookup for a foreground program name, and its answer. A miss stats every
     /// `PATH` entry, and the pane's foreground program rarely changes between polls.
     pub program_on_path: Option<(String, bool)>,
+    /// The directory the current foreground job was started in, keyed by its process group: read
+    /// once when the job first holds the terminal, and kept while it does. The job's own directory
+    /// later is where it moved to, not where its command line runs from.
+    pub foreground_launch_cwd: Option<(u32, String)>,
     /// The last foreground `argv[0]` and executable checked for a wrapper's borrowed name, and
     /// whether it was one. Resolving the name stats every `PATH` entry.
     pub borrowed_program_name: Option<(String, std::path::PathBuf, bool)>,

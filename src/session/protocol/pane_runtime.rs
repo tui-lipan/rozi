@@ -87,7 +87,8 @@ impl PaneMeta {
 /// Which precedence tier produced [`PaneRuntimeState::cwd`].
 ///
 /// Tier order, most to least authoritative: a remote [`ShellReport`](Self::ShellReport), then the
-/// directory of a program the shell is running ([`ProcessInspector`](Self::ProcessInspector)), then a
+/// directory a program the shell is running was started in
+/// ([`ProcessInspector`](Self::ProcessInspector)), then a
 /// local `OSC 7`/`OSC 9;9` [`ShellReport`](Self::ShellReport), then the shell's own directory
 /// ([`ProcessInspector`](Self::ProcessInspector), native `/proc` or `libproc` inspection) ->
 /// [`LaunchDirectory`](Self::LaunchDirectory) (the directory the pane was

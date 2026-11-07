@@ -134,14 +134,9 @@ pub mod windows;
 pub trait ProcessInspector {
     /// The PTY child's current working directory, if the platform can determine one.
     fn cwd(&self, pty: &TerminalPty) -> Option<PathBuf>;
-    /// The working directory of a foreground job that is not the PTY child itself: the program a
-    /// shell is running. `None` while the child holds the terminal, at a prompt or as the pane's
-    /// own command, and wherever the platform cannot read another process's directory.
-    ///
-    /// A shell reports its directory when it draws a prompt, so `cd dir && program` leaves that
-    /// report naming the directory the line started in for as long as the program runs. The
-    /// program's own directory is the one it would need to run again.
-    fn foreground_cwd(&self, _pty: &TerminalPty) -> Option<PathBuf> {
+    /// The current working directory of process `pid`, where the platform can read another
+    /// process's directory.
+    fn process_cwd(&self, _pid: u32) -> Option<PathBuf> {
         None
     }
     /// The normalized basename of the process currently in the PTY's foreground process group, if

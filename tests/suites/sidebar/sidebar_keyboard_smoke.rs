@@ -110,6 +110,8 @@ fn backend_with_sessions() -> TestBackend<AppRoot> {
                 panes: 2,
                 clients: 0,
                 has_layout: true,
+                effective_protocol: None,
+                rozi_version: None,
             },
             ephemeral: false,
             host: None,

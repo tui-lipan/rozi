@@ -169,6 +169,8 @@ fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
             panes: 1,
             clients: 0,
             has_layout: true,
+            effective_protocol: None,
+            rozi_version: None,
         },
     }
 }

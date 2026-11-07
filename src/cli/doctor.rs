@@ -72,6 +72,23 @@ pub(crate) fn run() {
             count.map_or_else(|| "unavailable".into(), |count| count.to_string()),
         ));
     }
+    if let Some(counts) = sessions.as_ref()
+        && !counts.running_versions.is_empty()
+    {
+        let versions = counts
+            .running_versions
+            .iter()
+            .map(|(version, protocol)| {
+                let version = version.as_deref().unwrap_or("unknown");
+                match protocol {
+                    Some(protocol) => format!("{version} (protocol {protocol})"),
+                    None => version.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        fields.push(("sessions_versions".into(), versions));
+    }
     let entries = crate::config::scan_extensions_for_cli().entries();
     fields.push(("extensions_installed".into(), entries.len().to_string()));
     let width = fields.iter().map(|(key, _)| key.len()).max().unwrap_or(0);

@@ -47,6 +47,8 @@ fn live(name: &str, target: &RemoteTarget) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
+            effective_protocol: None,
+            rozi_version: None,
         },
     }
 }

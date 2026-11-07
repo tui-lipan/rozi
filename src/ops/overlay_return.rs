@@ -397,6 +397,8 @@ mod tests {
                     panes: 1,
                     has_layout: true,
                     clients: 1,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             };
             backend.state_mut().remote.live_sessions = vec![row.clone()];

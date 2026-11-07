@@ -19,6 +19,8 @@ pub enum DiscoveredSessionStatus {
         panes: usize,
         clients: u32,
         has_layout: bool,
+        effective_protocol: Option<u32>,
+        rozi_version: Option<String>,
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
@@ -51,6 +53,24 @@ pub struct DiscoveredSession {
     /// Exact remote endpoint used for discovery. Kept separately from the short display label so
     /// user/port distinctions survive activation and retained-attachment lookup.
     pub remote_target: Option<crate::session::remote::RemoteTarget>,
+}
+
+impl DiscoveredSession {
+    pub fn effective_protocol(&self) -> Option<u32> {
+        match &self.status {
+            DiscoveredSessionStatus::Running {
+                effective_protocol, ..
+            } => *effective_protocol,
+            _ => None,
+        }
+    }
+
+    pub fn rozi_version(&self) -> Option<&str> {
+        match &self.status {
+            DiscoveredSessionStatus::Running { rozi_version, .. } => rozi_version.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// One local metadata sweep. Session rows and agent summaries must travel together so an Agents
@@ -213,11 +233,15 @@ pub(crate) struct SessionDiagnosticCounts {
     pub incompatible: usize,
     pub restorable: usize,
     pub unknown: usize,
+    pub running_versions: Vec<(Option<String>, Option<u32>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum DiagnosticSessionStatus {
-    Running,
+    Running {
+        rozi_version: Option<String>,
+        effective_protocol: Option<u32>,
+    },
     Incompatible,
     Unknown,
 }
@@ -244,11 +268,20 @@ pub(crate) fn diagnostic_counts() -> std::io::Result<SessionDiagnosticCounts> {
         };
         live_names.insert(name);
         match status {
-            DiagnosticSessionStatus::Running => counts.running += 1,
+            DiagnosticSessionStatus::Running {
+                rozi_version,
+                effective_protocol,
+            } => {
+                counts.running += 1;
+                counts
+                    .running_versions
+                    .push((rozi_version, effective_protocol));
+            }
             DiagnosticSessionStatus::Incompatible => counts.incompatible += 1,
             DiagnosticSessionStatus::Unknown => counts.unknown += 1,
         }
     }
+    counts.running_versions.sort();
     counts.restorable = crate::session::server::list_snapshot_summaries_by_recency()
         .iter()
         .filter(|snapshot| !live_names.contains(&snapshot.session))
@@ -270,9 +303,18 @@ fn diagnostic_session_status(
         Ok(answer) if answer.refusal.as_deref() == Some("protocol-mismatch") => {
             Some(DiagnosticSessionStatus::Incompatible)
         }
-        Ok(answer) if matches!(answer.status, DiscoveredSessionStatus::Running { .. }) => {
-            Some(DiagnosticSessionStatus::Running)
-        }
+        Ok(QueryAnswer {
+            status:
+                DiscoveredSessionStatus::Running {
+                    rozi_version,
+                    effective_protocol,
+                    ..
+                },
+            ..
+        }) => Some(DiagnosticSessionStatus::Running {
+            rozi_version,
+            effective_protocol,
+        }),
         Err(err) if peer_hung_up(err.kind()) => None,
         _ => Some(DiagnosticSessionStatus::Unknown),
     }
@@ -475,6 +517,8 @@ fn query_status_within(
             panes,
             clients,
             has_layout,
+            effective_protocol,
+            rozi_version,
             origin,
             agents,
             projects,
@@ -485,6 +529,9 @@ fn query_status_within(
                 panes,
                 clients,
                 has_layout,
+                effective_protocol: Some(effective_protocol),
+                rozi_version: rozi_version
+                    .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
             },
             origin,
             agents,
@@ -994,6 +1041,10 @@ pub fn parse_remote_list_json(
         #[serde(default)]
         layout: Option<bool>,
         #[serde(default)]
+        effective_protocol: Option<u32>,
+        #[serde(default)]
+        rozi_version: Option<String>,
+        #[serde(default)]
         origin: crate::session::origin::SessionOrigin,
         #[serde(default)]
         ephemeral: bool,
@@ -1007,6 +1058,10 @@ pub fn parse_remote_list_json(
                     panes: row.panes.unwrap_or(0),
                     clients: row.clients.unwrap_or(0),
                     has_layout: row.layout.unwrap_or(false),
+                    effective_protocol: row.effective_protocol,
+                    rozi_version: row
+                        .rozi_version
+                        .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
                 "unreadable" => DiscoveredSessionStatus::Unreadable,
@@ -1045,11 +1100,19 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     panes,
                     clients,
                     has_layout,
+                    effective_protocol,
+                    rozi_version,
                 } => {
                     obj["status"] = serde_json::json!("running");
                     obj["panes"] = serde_json::json!(panes);
                     obj["clients"] = serde_json::json!(clients);
                     obj["layout"] = serde_json::json!(has_layout);
+                    if let Some(protocol) = effective_protocol {
+                        obj["effective_protocol"] = serde_json::json!(protocol);
+                    }
+                    if let Some(version) = rozi_version {
+                        obj["rozi_version"] = serde_json::json!(version);
+                    }
                 }
                 // The CLI probes live and never reads the client's host cache, so this does not
                 // occur today. Serialized honestly anyway: `panes` is a remembered count, and a
@@ -1412,6 +1475,8 @@ mod tests {
                     panes: 2,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: Some(52),
+                    rozi_version: Some("0.0.41".into()),
                 },
             },
             DiscoveredSession {
@@ -1436,6 +1501,8 @@ mod tests {
         assert_eq!(parsed[0].name, "dev");
         assert_eq!(parsed[0].host.as_deref(), Some("workbox"));
         assert_eq!(parsed[0].origin, rows[0].origin);
+        assert_eq!(parsed[0].effective_protocol(), Some(52));
+        assert_eq!(parsed[0].rozi_version(), Some("0.0.41"));
         assert!(matches!(
             parsed[0].status,
             DiscoveredSessionStatus::Running { panes: 2, .. }

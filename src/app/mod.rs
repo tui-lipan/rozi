@@ -634,6 +634,8 @@ mod tests {
                             panes: 3,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]),
                     agents: Vec::new(),
@@ -754,6 +756,8 @@ mod tests {
                             panes: 1,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]
                 } else {
@@ -862,6 +866,8 @@ mod tests {
                             panes: 1,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]),
                     agents: Vec::new(),
@@ -1110,6 +1116,8 @@ mod tests {
                     panes: 2,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             );
             backend.state_mut().config.profile.default = Some("rust-dev".to_string());
@@ -2318,6 +2326,8 @@ mod tests {
                         panes: 1,
                         clients: 1,
                         has_layout: true,
+                        effective_protocol: None,
+                        rozi_version: None,
                     },
                 },
                 crate::session::discovery::DiscoveredSession {
@@ -2330,6 +2340,8 @@ mod tests {
                         panes: 2,
                         clients: 1,
                         has_layout: true,
+                        effective_protocol: None,
+                        rozi_version: None,
                     },
                 },
                 crate::session::discovery::DiscoveredSession {
@@ -2344,6 +2356,8 @@ mod tests {
                         panes: 3,
                         clients: 0,
                         has_layout: true,
+                        effective_protocol: None,
+                        rozi_version: None,
                     },
                 },
             ]));

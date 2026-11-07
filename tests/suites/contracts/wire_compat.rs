@@ -25,10 +25,20 @@ use serde_json::Value;
 const MESSAGE_ROOTS: [&str; 2] = ["ClientMessage", "ServerMessage"];
 /// Every root the wire carries. A type reached from none of these is not on the wire.
 const ROOTS: [&str; 3] = ["ClientMessage", "ServerMessage", "SharedLayout"];
-/// Properties that tag a variant of an internally tagged enum.
+/// Properties that usually tag a variant of an internally tagged enum. Any other property with a
+/// constant value tags it too, so a new tag name is still recognised.
 const TAGS: [&str; 4] = ["type", "kind", "step", "cmd"];
 /// The catch-all variant a tolerant vocabulary decodes unknown values into.
 const UNKNOWN: &str = "unknown";
+/// Vocabularies that stay closed in the schema, because the control API publishes them, but that
+/// the session wire decodes tolerantly through `session::protocol::tolerant`. Each needs an
+/// `UnknownValue` impl there; keep the two lists in step.
+const TOLERANT: [&str; 4] = [
+    "AgentAuthority",
+    "AgentState",
+    "DetectedAgentState",
+    "PublisherKind",
+];
 
 fn repo() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -153,18 +163,41 @@ fn types(schema: &Value) -> BTreeSet<String> {
 }
 
 /// The variants of a union, keyed by the value that tells them apart: the tag of an internally
-/// tagged variant, the constant of a unit variant, or the position otherwise.
-fn variants(schema: &Value) -> Option<BTreeMap<String, &Value>> {
+/// tagged variant, the constant of a unit variant, or the position otherwise. A plain `enum` of
+/// strings is the same vocabulary written another way (schemars picks one by whether the variants
+/// carry docs), so it is read as a union of constants.
+fn variants(schema: &Value) -> Option<BTreeMap<String, Value>> {
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        return Some(values.iter().map(constant_variant).collect());
+    }
     let list = schema
         .get("oneOf")
         .or_else(|| schema.get("anyOf"))?
         .as_array()?;
-    Some(
-        list.iter()
-            .enumerate()
-            .map(|(index, variant)| (variant_key(variant).unwrap_or(format!("#{index}")), variant))
-            .collect(),
-    )
+    let mut out = BTreeMap::new();
+    for (index, variant) in list.iter().enumerate() {
+        // A documented catch-all beside undocumented values comes out as `oneOf: [{enum}, {const}]`.
+        if let Some(values) = variant.get("enum").and_then(Value::as_array) {
+            out.extend(values.iter().map(constant_variant));
+        } else {
+            let key = variant_key(variant).unwrap_or(format!("#{index}"));
+            out.insert(key, variant.clone());
+        }
+    }
+    Some(out)
+}
+
+/// One value of a string vocabulary as a variant of its own.
+fn constant_variant(value: &Value) -> (String, Value) {
+    let key = value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned);
+    let kind = if value.is_string() {
+        "string"
+    } else {
+        "integer"
+    };
+    (key, serde_json::json!({ "const": value, "type": kind }))
 }
 
 fn variant_key(variant: &Value) -> Option<String> {
@@ -176,14 +209,17 @@ fn variant_key(variant: &Value) -> Option<String> {
     {
         return Some(only.clone());
     }
-    let properties = variant.get("properties")?;
-    TAGS.iter().find_map(|tag| {
+    let properties = variant.get("properties")?.as_object()?;
+    let constant = |name: &str| {
         properties
-            .get(*tag)
+            .get(name)
             .and_then(|p| p.get("const"))
             .and_then(Value::as_str)
-            .map(|value| format!("{tag}={value}"))
-    })
+            .map(|value| format!("{name}={value}"))
+    };
+    TAGS.iter()
+        .find_map(|tag| constant(tag))
+        .or_else(|| properties.keys().find_map(|name| constant(name)))
 }
 
 fn tag_value(key: &str) -> &str {
@@ -203,6 +239,8 @@ impl Walk<'_> {
     }
 
     fn compare(&mut self, base: &Value, cur: &Value, path: &str, root: Option<&&'static str>) {
+        let decoded_tolerantly =
+            definition_name(cur).is_some_and(|name| TOLERANT.contains(&name.as_str()));
         if let (Some(b), Some(c)) = (definition_name(base), definition_name(cur))
             && !self.seen.insert((b, c))
         {
@@ -231,7 +269,8 @@ impl Walk<'_> {
                 self.flag(path, "is no longer a union");
                 return;
             };
-            let tolerant = cur_variants.keys().any(|key| tag_value(key) == UNKNOWN);
+            let tolerant =
+                decoded_tolerantly || cur_variants.keys().any(|key| tag_value(key) == UNKNOWN);
             for (key, base_variant) in &base_variants {
                 match cur_variants.get(key) {
                     Some(cur_variant) => {
@@ -261,28 +300,6 @@ impl Walk<'_> {
                             tag_value(key)
                         ),
                     ),
-                }
-            }
-            return;
-        }
-
-        if let Some(base_values) = b.get("enum").and_then(Value::as_array) {
-            let Some(cur_values) = c.get("enum").and_then(Value::as_array) else {
-                self.flag(path, "is no longer an enumeration");
-                return;
-            };
-            for value in base_values.iter().filter(|v| !cur_values.contains(v)) {
-                self.flag(path, format!("value {value} removed"));
-            }
-            let tolerant = cur_values.iter().any(|v| v == UNKNOWN);
-            for value in cur_values.iter().filter(|v| !base_values.contains(v)) {
-                if !tolerant {
-                    self.flag(
-                        path,
-                        format!(
-                            "value {value} added to a vocabulary without an `unknown` fallback"
-                        ),
-                    );
                 }
             }
             return;
@@ -439,6 +456,18 @@ mod classifier {
     use super::*;
     use serde_json::json;
 
+    /// Drop `value` from a string vocabulary, whichever way the schema lists it.
+    fn remove_value(schema: &mut Value, value: &str) {
+        match schema {
+            Value::Array(items) => {
+                items.retain(|item| item != value && item.get("const").is_none_or(|c| c != value));
+                items.iter_mut().for_each(|item| remove_value(item, value));
+            }
+            Value::Object(fields) => fields.values_mut().for_each(|v| remove_value(v, value)),
+            _ => {}
+        }
+    }
+
     fn doc(defs: Value) -> Value {
         json!({ "$defs": defs, "x-rozi-capabilities": ["runtime-metrics"] })
     }
@@ -585,7 +614,7 @@ mod classifier {
         assert_eq!(
             classify(&base, &with(&["idle", "working", "sleeping"])).breaking,
             [
-                r#"ClientMessage.report.state: value "sleeping" added to a vocabulary without an `unknown` fallback"#
+                "ClientMessage.report.state: variant `sleeping` added to a vocabulary without an `unknown` fallback"
             ]
         );
         let tolerant_base = with(&["idle", "working", "unknown"]);
@@ -599,7 +628,7 @@ mod classifier {
         );
         assert_eq!(
             classify(&base, &with(&["idle"])).breaking,
-            [r#"ClientMessage.report.state: value "working" removed"#]
+            ["ClientMessage.report.state: variant `working` removed"]
         );
     }
 
@@ -619,10 +648,7 @@ mod classifier {
             .as_object_mut()
             .unwrap()
             .remove("label");
-        current["$defs"]["WireChangeState"]["enum"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!("ignored"));
+        remove_value(&mut current["$defs"]["WireChangeState"], "modified");
         let found = classify(&base, &current);
         assert!(
             found
@@ -635,7 +661,8 @@ mod classifier {
             found
                 .breaking
                 .iter()
-                .any(|problem| problem.contains("git_staged") && problem.contains("\"ignored\"")),
+                .any(|problem| problem.contains("git_staged")
+                    && problem.contains("`modified` removed")),
             "a vocabulary nested behind an Option and a reference is checked: {:?}",
             found.breaking
         );

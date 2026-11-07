@@ -394,6 +394,7 @@ impl Automation {
 /// Every session-worker command also passes the session endpoint's exhaustive command gate.
 fn session_worker_permitted(command: &ControlCommand) -> bool {
     match command {
+        ControlCommand::Unknown => false,
         ControlCommand::Invoke { .. }
         | ControlCommand::InvocationList
         | ControlCommand::InvocationCancel { .. }

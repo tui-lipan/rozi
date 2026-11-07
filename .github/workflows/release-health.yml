@@ -154,3 +154,38 @@ jobs:
                   "version with a new expiry."
               )
           PY
+
+  # Sibling of the asset check above, not a step inside it: verifying the published manifest must
+  # not wait on a full compile, and this job must not hide an expiry finding. It drives this
+  # checkout's binary against the signed 0.0.43 release (the only baseline until generation 52
+  # ships). Linux only, for the same reason the nightly job is.
+  compat:
+    name: cross-version session flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "6"
+      ROZI_COMPAT: "1"
+      ROZI_COMPAT_OLD_VERSION: "0.0.43"
+      ROZI_REQUIRE_SSH_TEST: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@f50ab1ce44b2f120b2531407517fcbfb1d610fa5 # 1.96
+        with:
+          toolchain: "1.96"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Set up key-based SSH to localhost
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+          sudo systemctl start ssh
+          install -d -m 700 "$HOME/.ssh"
+          ssh-keygen -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519"
+          cat "$HOME/.ssh/id_ed25519.pub" >> "$HOME/.ssh/authorized_keys"
+          chmod 600 "$HOME/.ssh/authorized_keys"
+          ssh-keyscan -H localhost >> "$HOME/.ssh/known_hosts"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes localhost true
+      - name: Run the compat suite
+        run: cargo test --locked --test compat_suite -- --include-ignored --test-threads=1

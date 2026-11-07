@@ -1,0 +1,2 @@
+# Replay files contain terminal control bytes, including significant CRLF sequences.
+*.replay binary

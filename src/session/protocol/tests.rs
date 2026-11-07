@@ -781,6 +781,60 @@ fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
     assert_eq!(decoder.next_frame::<ClientMessage>().unwrap(), None);
 }
 
+/// A frame of `kind` exactly as a newer peer would put it on the wire.
+fn raw_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = ((payload.len() + 1) as u32).to_be_bytes().to_vec();
+    frame.push(kind);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+/// A kind this build has never heard of, with and without the ignorable bit.
+const FUTURE_KIND: u8 = 0x3f;
+
+#[test]
+fn an_unknown_ignorable_frame_is_skipped_by_the_incremental_decoder() {
+    let mut encoded = raw_frame(FUTURE_KIND | 0x80, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+    encoded.extend(raw_frame(FUTURE_KIND | 0x80, b""));
+
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut &encoded[..]).unwrap();
+    assert_eq!(
+        decoder.next_frame::<ClientMessage>().unwrap(),
+        Some(Frame::Control(ClientMessage::Detach))
+    );
+    assert_eq!(decoder.next_frame::<ClientMessage>().unwrap(), None);
+}
+
+#[test]
+fn an_unknown_critical_frame_stays_fatal() {
+    let mut encoded = raw_frame(FUTURE_KIND, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut &encoded[..]).unwrap();
+    let error = decoder.next_frame::<ClientMessage>().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        error.to_string().contains("unknown frame kind 63"),
+        "{error}"
+    );
+
+    let error = read_frame::<_, ClientMessage>(&mut &encoded[..]).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn the_blocking_reader_skips_ignorable_frames_before_the_control_frame() {
+    let mut encoded = raw_frame(FUTURE_KIND | 0x80, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+    assert_eq!(
+        read_frame::<_, ClientMessage>(&mut &encoded[..]).unwrap(),
+        ClientMessage::Detach
+    );
+}
+
 #[test]
 fn golden_client_spawn_json_shape() {
     let palette = WirePalette {

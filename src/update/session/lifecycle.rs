@@ -240,6 +240,8 @@ pub(crate) fn attached(
     // was already on screen, so it is not a new view to reveal.
     if !reconnect {
         ctx.state.session_view_revision += 1;
+        // A delayed attach can land after the picker has closed and the Connecting scene drew.
+        ctx.skip_cursor_trail();
     }
     ctx.state.current_mut().path_family = client.path_family;
     ctx.state.current_mut().ssh_connection = client.ssh_connection.clone();

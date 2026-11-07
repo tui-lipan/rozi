@@ -442,7 +442,8 @@ With `"jump"`, a jump inside one pane is drawn once the cursor has held still fo
 cursor that lands in steps, such as a shell's newline and then its prompt, gets one smear straight
 to where it settled. A move to another pane draws at once. A pane that moves, such as one sliding
 with its workspace or a floating pane you drag, carries its cursor along without a trail. Switching
-to another workspace or session draws no trail either: the cursor arrives with the new screen.
+to another workspace or session, or creating a session, draws no trail either: the cursor arrives
+with the new screen.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |

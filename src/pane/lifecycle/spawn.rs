@@ -146,6 +146,7 @@ pub(crate) fn spawn_floating_pane_at_cursor(ctx: &mut Context<AppRoot>) -> Updat
             focus: true,
         },
         None,
+        None,
     )
     .1
 }
@@ -334,7 +335,16 @@ pub(crate) fn spawn_interactive_pane(
     source: Option<PaneId>,
     identity: PaneIdentity,
 ) -> (PaneId, Update) {
-    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None, None, None)
+    spawn_interactive_pane_with_focus(
+        ctx,
+        source_workspace,
+        source,
+        identity,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Spawn like [`spawn_interactive_pane`], but let the caller decide whether the new pane takes
@@ -347,6 +357,7 @@ pub(crate) fn spawn_interactive_pane(
 /// automation path and leaves workspace/float/fullscreen placement alone.
 ///
 /// `size` is the terminal size the pane starts at; see [`spawn_pane_in_workspace`].
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_interactive_pane_with_focus(
     ctx: &mut Context<AppRoot>,
     source_workspace: usize,
@@ -355,6 +366,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
     focus: Option<bool>,
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
+    split_ratio: Option<f32>,
 ) -> (PaneId, Update) {
     // Every shared spawn - an action, `new-pane`, the sidebar, a user command - is a discrete
     // layout change.
@@ -378,6 +390,7 @@ pub(crate) fn spawn_interactive_pane_with_focus(
         identity,
         placement,
         size,
+        split_ratio,
     )
 }
 
@@ -396,7 +409,17 @@ pub(crate) fn interactive_spawn_target(
         focus,
     );
     let workspace_index = resolved_workspace.unwrap_or(source_workspace);
-    let previous_focused = source.or(state.current().workspaces[workspace_index].focused_pane);
+    // The source pane is the one split only where it lives: a spawn sent to another workspace splits
+    // that workspace's focused pane, as opening it there by hand would.
+    let workspace = &state.current().workspaces[workspace_index];
+    let previous_focused = source
+        .filter(|id| {
+            workspace
+                .panes
+                .iter()
+                .any(|pane| pane.id == *id && !pane.closing)
+        })
+        .or(workspace.focused_pane);
     (workspace_index, previous_focused, placement)
 }
 
@@ -405,6 +428,9 @@ pub(crate) fn interactive_spawn_target(
 /// `size` replaces the fallback size a pane's terminal is built with. The PTY and this client's
 /// parser both start at it, and it holds until the pane is drawn: a tile reports its own size then,
 /// exactly as it would have for the fallback.
+///
+/// `split_ratio` is the new pane's share of the split it opens, set before the spawn's layout is
+/// committed so the pane never appears at an even split first.
 pub(crate) fn spawn_pane_in_workspace(
     ctx: &mut Context<AppRoot>,
     workspace_index: usize,
@@ -412,6 +438,7 @@ pub(crate) fn spawn_pane_in_workspace(
     identity: PaneIdentity,
     placement: SpawnPlacement,
     size: Option<crate::control::PaneSize>,
+    split_ratio: Option<f32>,
 ) -> (PaneId, Update) {
     let bounds = ctx
         .state
@@ -506,6 +533,11 @@ pub(crate) fn spawn_pane_in_workspace(
     }
     if placement.float.is_some() {
         remove_tiled_window(workspace, id);
+    } else if let Some(share) = split_ratio
+        && let Some(mut tree) = crate::layout::effective_tile_tree(&*workspace, None)
+        && crate::layout::tiling::set_leaf_share(&mut tree, id, share)
+    {
+        workspace.tile_tree = Some(tree);
     }
     apply_spawn_focus(&mut ctx.state, workspace_index, id, placement);
     ctx.state.begin_pane_event(GeometryAnimation::Spawn);

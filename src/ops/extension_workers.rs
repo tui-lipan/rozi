@@ -352,6 +352,11 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         | ControlCommand::CapturePane { target, .. }
         | ControlCommand::SetStatus { target, .. } => vec![*target],
         ControlCommand::Publish { .. } => vec![None],
+        // Only a named pane: without one the new pane follows the source pane, admitted above.
+        ControlCommand::NewPane {
+            target: Some(target),
+            ..
+        } => vec![Some(*target)],
         _ => Vec::new(),
     })
 }
@@ -911,6 +916,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             });
             let worker_ref = backend
                 .state()
@@ -930,6 +937,57 @@ mod tests {
                 Some(ControlErrorCode::OutOfScope)
             );
             assert!(backend.state().scratch.panes.is_empty());
+        });
+    }
+
+    /// A pane a placed process names to split is checked like any other pane it names.
+    #[test]
+    fn a_split_may_name_only_a_shared_pane() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = backend();
+            show_session_on(&mut backend, &pc());
+            let (worker, _) = issue(&mut backend, pc(), WorkerRuntime(1));
+            let worker_ref = backend
+                .state()
+                .extension_workers
+                .get(worker)
+                .unwrap()
+                .clone();
+            let shared = backend.state().current().workspaces[0].panes[0].id;
+            backend
+                .state_mut()
+                .scratch
+                .panes
+                .push(crate::state::Pane::new(
+                    90,
+                    100,
+                    tui_lipan::prelude::FloatRect::default(),
+                ));
+            let split = |target| {
+                request(ControlCommand::NewPane {
+                    command: None,
+                    argv: None,
+                    local_cwd: None,
+                    cwd: None,
+                    title: None,
+                    keep_open: false,
+                    focus: false,
+                    workspace: None,
+                    size: None,
+                    target: Some(target),
+                    split_ratio: None,
+                })
+            };
+            assert_eq!(
+                admit(backend.state(), &worker_ref, &split(shared)).unwrap(),
+                Admission::Proceed
+            );
+            assert_eq!(
+                admit(backend.state(), &worker_ref, &split(90))
+                    .unwrap_err()
+                    .code,
+                Some(ControlErrorCode::OutOfScope)
+            );
         });
     }
 

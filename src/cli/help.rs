@@ -244,7 +244,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
             ),
             row(
                 "split [OPTIONS] [COMMAND | --argv PROGRAM [ARG...]]",
-                "Spawn a pane, optionally in another workspace",
+                "Split the calling pane, or the --target pane",
             ),
             row(
                 "capture-pane [OPTIONS] [WAIT]",

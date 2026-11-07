@@ -930,6 +930,22 @@ fn interactive_spawn_without_command_keeps_source_and_default_placement() {
 }
 
 #[test]
+fn a_spawn_sent_to_another_workspace_splits_that_workspaces_focused_pane() {
+    let mut state = State::new(crate::config::Config::default(), Theme::default());
+    state.current_mut().workspaces[2].focused_pane = Some(7);
+
+    let (workspace, previous_focused, _) =
+        interactive_spawn_target(&state, 0, Some(1), None, None, Some(2));
+
+    assert_eq!(workspace, 2);
+    assert_eq!(
+        previous_focused,
+        Some(7),
+        "the caller's pane is in workspace 1, so it cannot be the tile split in workspace 3"
+    );
+}
+
+#[test]
 fn focus_override_beats_the_matched_rule_without_touching_placement() {
     let mut config = crate::config::Config::default();
     let mut configured = rule("btop");

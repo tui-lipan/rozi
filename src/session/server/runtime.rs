@@ -1218,6 +1218,7 @@ impl SessionServer {
             &crate::platform::command::ShellEnv::from_process(),
         );
         self.settings.scrollback = loaded.config.scrollback;
+        self.settings.split_width_multiplier = loaded.config.layout.split_width_multiplier;
         self.apply_spawn_policy(loaded.config.rules, shell, command_shell);
     }
 

@@ -217,22 +217,35 @@ pub(crate) fn handle_control_request(
             focus,
             workspace,
             size,
+            target,
+            split_ratio,
         } => {
+            let placement =
+                match crate::control::SplitPlacement::validate(target, workspace, split_ratio) {
+                    Ok(placement) => placement,
+                    Err(response) => {
+                        let _ = envelope.reply.send(response);
+                        return Update::none();
+                    }
+                };
             return new_pane(
                 ctx,
                 envelope.request.source_pane,
-                command,
-                argv,
-                if ctx.state.current().remote_host.is_some() {
-                    cwd
-                } else {
-                    local_cwd.or(cwd)
+                NewPaneRequest {
+                    command,
+                    argv,
+                    cwd: if ctx.state.current().remote_host.is_some() {
+                        cwd
+                    } else {
+                        local_cwd.or(cwd)
+                    },
+                    title,
+                    keep_open,
+                    focus,
+                    workspace,
+                    size,
+                    placement,
                 },
-                title,
-                keep_open,
-                focus,
-                workspace,
-                size,
                 envelope.reply,
             );
         }
@@ -2027,10 +2040,8 @@ fn prepare_new_pane(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn new_pane(
-    ctx: &mut Context<AppRoot>,
-    source: Option<PaneId>,
+/// One `new-pane` request's fields, past the checks that need no session.
+struct NewPaneRequest {
     command: Option<String>,
     argv: Option<Vec<String>>,
     cwd: Option<String>,
@@ -2039,8 +2050,37 @@ fn new_pane(
     focus: bool,
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
+    placement: crate::control::SplitPlacement,
+}
+
+fn new_pane(
+    ctx: &mut Context<AppRoot>,
+    source: Option<PaneId>,
+    request: NewPaneRequest,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    let NewPaneRequest {
+        command,
+        argv,
+        cwd,
+        title,
+        keep_open,
+        focus,
+        workspace,
+        size,
+        placement: split,
+    } = request;
+    // A named pane decides where the new one goes, in its own workspace; the caller's pane decides
+    // only when nothing is named.
+    let target_workspace = match split.target.map(|target| locate_layout_pane(ctx, target)) {
+        Some(Ok((index, _))) => Some(index),
+        Some(Err(response)) => {
+            let _ = reply.send(response);
+            return Update::full();
+        }
+        None => None,
+    };
+    let source = split.target.or(source);
     let PreparedNewPane {
         workspace,
         launch,
@@ -2052,6 +2092,14 @@ fn new_pane(
             return Update::full();
         }
     };
+    let workspace = workspace.or(target_workspace);
+    let into_scratch = scratch_source || (ctx.state.scratch_visible && source.is_none());
+    if let Err(response) =
+        check_spawn_ratio(ctx, split, into_scratch, source, &launch, focus, workspace)
+    {
+        let _ = reply.send(response);
+        return Update::full();
+    }
     if let Some(update) = crate::ops::session::ensure_session_for_pty(
         ctx,
         crate::state::PendingSessionAction::NewPane {
@@ -2068,7 +2116,7 @@ fn new_pane(
         ctx.state.pending_control_reply = Some(reply);
         return update;
     }
-    if scratch_source || (ctx.state.scratch_visible && source.is_none()) {
+    if into_scratch {
         let mut identity = PaneIdentity {
             launch,
             cwd,
@@ -2104,9 +2152,52 @@ fn new_pane(
         focus,
         workspace,
         size,
+        split.split_ratio,
     );
     hold_spawn_reply(ctx, id, reply);
     update
+}
+
+/// Refuse `--split-ratio` where the new pane would have no split to size, before it exists: the
+/// layout it lands in, and whether a rule floats it, are resolved exactly as the spawn resolves
+/// them.
+fn check_spawn_ratio(
+    ctx: &Context<AppRoot>,
+    split: crate::control::SplitPlacement,
+    into_scratch: bool,
+    source: Option<PaneId>,
+    launch: &Option<crate::pane::launch::PaneLaunch>,
+    focus: bool,
+    workspace: Option<usize>,
+) -> std::result::Result<(), ControlResponse> {
+    if split.split_ratio.is_none() {
+        return Ok(());
+    }
+    if into_scratch {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            "a scratch pane is client-local and has no shared layout to size",
+        ));
+    }
+    let source_workspace =
+        workspace_for_source(&ctx.state, source).map_err(ControlResponse::error)?;
+    let rule_command = launch
+        .as_ref()
+        .map(crate::pane::launch::PaneLaunch::display);
+    let (index, _, placement) = crate::pane::lifecycle::interactive_spawn_target(
+        &ctx.state,
+        source_workspace,
+        source,
+        rule_command.as_deref(),
+        Some(focus),
+        workspace,
+    );
+    let landing = &ctx.state.current().workspaces[index];
+    let shares_split = landing
+        .panes
+        .iter()
+        .any(|pane| !pane.floating && !pane.closing);
+    split.check_ratio(placement.float.is_some(), landing.layout_kind, shares_split)
 }
 
 /// How long a held `new-pane` reply waits for the PTY before answering `pty_ready:false` anyway.
@@ -2210,6 +2301,7 @@ pub(crate) fn new_pane_after_session(
         focus,
         workspace,
         size,
+        None,
     )
 }
 
@@ -2225,6 +2317,7 @@ fn spawn_new_pane(
     focus: bool,
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
+    split_ratio: Option<f32>,
 ) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
         launch,
@@ -2243,6 +2336,7 @@ fn spawn_new_pane(
         Some(focus),
         workspace,
         size,
+        split_ratio,
     )
 }
 
@@ -2745,6 +2839,8 @@ mod tests {
                         focus,
                         workspace: None,
                         size: None,
+                        target: None,
+                        split_ratio: None,
                     },
                     source_pane: None,
                     source_session: None,
@@ -2888,6 +2984,155 @@ mod tests {
                 .last()
                 .expect("the pane landed in workspace 9");
             assert_eq!((pane.terminal.cols, pane.terminal.rows), (100, 220));
+        });
+    }
+
+    fn dispatch_new_pane(
+        backend: &mut TestBackend<crate::AppRoot>,
+        edit: impl FnOnce(&mut ControlCommand),
+    ) -> mpsc::Receiver<crate::control::ControlResponse> {
+        let (mut envelope, response) = new_pane_request(false);
+        edit(&mut envelope.request.command);
+        backend
+            .dispatch(crate::Msg::ControlRequest(envelope))
+            .expect("dispatch new-pane");
+        response
+    }
+
+    fn placement_fields(
+        command: &mut ControlCommand,
+    ) -> (&mut Option<usize>, &mut Option<PaneId>, &mut Option<f64>) {
+        let ControlCommand::NewPane {
+            workspace,
+            target,
+            split_ratio,
+            ..
+        } = command
+        else {
+            unreachable!("new_pane_request builds a NewPane");
+        };
+        (workspace, target, split_ratio)
+    }
+
+    fn workspace_ids(backend: &TestBackend<crate::AppRoot>, index: usize) -> Vec<PaneId> {
+        backend.state().current().workspaces[index]
+            .panes
+            .iter()
+            .map(|pane| pane.id)
+            .collect()
+    }
+
+    #[test]
+    fn new_pane_with_a_target_splits_that_pane_at_the_requested_share() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let active = backend.state().current().active_workspace;
+            let focused = backend.state().current().focused_pane;
+            let before = workspace_ids(&backend, active);
+            for _ in 0..2 {
+                dispatch_new_pane(&mut backend, |_| {});
+            }
+            let spawned: Vec<_> = workspace_ids(&backend, active)
+                .into_iter()
+                .filter(|id| !before.contains(id))
+                .collect();
+            let [first, second] = spawned[..] else {
+                panic!("two new panes in the active workspace: {spawned:?}");
+            };
+            assert_ne!(
+                Some(first),
+                focused,
+                "the named pane is not the focused one"
+            );
+
+            dispatch_new_pane(&mut backend, |command| {
+                let (_, target, split_ratio) = placement_fields(command);
+                *target = Some(first);
+                *split_ratio = Some(0.3);
+            });
+
+            let workspace = &backend.state().current().workspaces[active];
+            let new = workspace.panes.last().expect("the new pane").id;
+            assert!(![first, second].contains(&new) && !before.contains(&new));
+            let tree = crate::layout::effective_tile_tree(workspace, None).expect("a tiling");
+            assert_eq!(
+                crate::layout::tiling::sibling_leaves(&tree, new),
+                Some(vec![first]),
+                "the named pane's tile was split, not the last one's: {tree:?}"
+            );
+            let share = crate::layout::tiling::leaf_share(&tree, new).expect("in a split");
+            assert!((share - 0.3).abs() < 1e-6, "share {share}");
+            assert_eq!(
+                backend.state().current().focused_pane,
+                focused,
+                "naming a pane moves no focus"
+            );
+        });
+    }
+
+    #[test]
+    fn new_pane_refuses_a_placement_it_cannot_honor_and_opens_nothing() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let active = backend.state().current().active_workspace;
+            dispatch_new_pane(&mut backend, |_| {});
+            let only = workspace_ids(&backend, active)[0];
+            backend.state_mut().current_mut().workspaces[2].layout_kind =
+                crate::layout::model::LayoutKind::Grid;
+
+            type Edit = Box<dyn Fn(&mut ControlCommand)>;
+            let cases: Vec<(&str, Edit, ControlErrorCode)> = vec![
+                (
+                    "a target with a workspace",
+                    Box::new(move |command| {
+                        let (workspace, target, _) = placement_fields(command);
+                        (*workspace, *target) = (Some(2), Some(only));
+                    }),
+                    ControlErrorCode::InvalidArgument,
+                ),
+                (
+                    "a missing target",
+                    Box::new(|command| *placement_fields(command).1 = Some(999)),
+                    ControlErrorCode::PaneNotFound,
+                ),
+                (
+                    "a ratio out of range",
+                    Box::new(|command| *placement_fields(command).2 = Some(0.99)),
+                    ControlErrorCode::InvalidArgument,
+                ),
+                (
+                    "a ratio where the pane would be alone",
+                    Box::new(|command| {
+                        let (workspace, _, split_ratio) = placement_fields(command);
+                        (*workspace, *split_ratio) = (Some(5), Some(0.4));
+                    }),
+                    ControlErrorCode::Unsupported,
+                ),
+                (
+                    "a ratio outside Dwindle",
+                    Box::new(|command| {
+                        let (workspace, _, split_ratio) = placement_fields(command);
+                        (*workspace, *split_ratio) = (Some(3), Some(0.4));
+                    }),
+                    ControlErrorCode::Unsupported,
+                ),
+            ];
+            for (case, edit, code) in cases {
+                let before: Vec<_> = (0..crate::layout::model::WORKSPACE_COUNT)
+                    .map(|index| workspace_ids(&backend, index))
+                    .collect();
+                let response = dispatch_new_pane(&mut backend, edit)
+                    .try_recv()
+                    .unwrap_or_else(|_| panic!("{case} was answered at once"));
+                assert!(!response.ok, "{case} was accepted");
+                assert_eq!(response.code, Some(code), "{case}: {:?}", response.error);
+                let after: Vec<_> = (0..crate::layout::model::WORKSPACE_COUNT)
+                    .map(|index| workspace_ids(&backend, index))
+                    .collect();
+                assert_eq!(before, after, "{case} opened a pane");
+            }
         });
     }
 

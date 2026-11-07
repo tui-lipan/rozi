@@ -347,6 +347,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
     "session-services",
     "sidebar-streams",
     "sidebar-tab-settings",
+    "split-placement",
     "split-size"
   ]
 }
@@ -490,9 +491,12 @@ With `--remote`, paths resolve on the remote host.
 | `--cwd DIR` | Start the pane in `DIR`. |
 | `--title TEXT` | Set the pane title. |
 | `--workspace 1-9` | Open the pane in that workspace. |
+| `--target ID` | Split pane `ID`, in its workspace. Cannot go with `--workspace`. |
+| `--split-ratio R` | Give the new pane this share of the split it opens. Dwindle only. |
 | `--focus` | Focus the new pane. |
 | `--keep-open` | Keep the pane after its process exits. |
 | `--size COLSxROWS` | Start the pane at this terminal size, 1 to 1000 cells per side. |
+| `--format text\|json` | Print the reply as text or JSON. The default is JSON when piped. |
 | `--argv PROGRAM [ARG...]` | Run a program directly, without a shell. |
 
 A positional `COMMAND` is interpreted by the configured `command_shell`. `--argv` launches a
@@ -505,6 +509,31 @@ rozi split --workspace 3 --focus --argv cargo test -- --nocapture
 
 The reply waits up to five seconds for the pane's process to be ready. `pty_ready: false` means the
 pane exists but has not reported ready yet.
+
+### Choose where a pane opens
+
+`split` divides a pane the same way splitting it by hand does. In a Dwindle workspace the pane is
+split along its longer side, so a wide pane gets a neighbour to its right and a tall one gets a
+neighbour below; see [Dwindle](layouts-and-panes.md#dwindle). Master, Grid, Columns, Rows,
+Scrollable, and Monocle workspaces add the new pane at the end of their order instead.
+
+From a UI endpoint, `split` divides the pane the command runs in, or the focused pane when it runs
+outside rozi. With `--workspace`, it divides that workspace's focused pane. `--target ID` divides
+pane `ID` instead and opens the new pane in that pane's workspace. The split direction still
+follows the pane's shape, and focus stays where it was.
+
+`--split-ratio R` gives the new pane that share of the split, from `0.2` to `0.8`, in the same
+layout change that adds it. It is the share `pane set --split-ratio` sets. It works only when the
+new pane lands in a Dwindle workspace beside another tiled pane. Otherwise `split` fails with
+`unsupported` and opens nothing.
+
+```sh
+# Open a narrow log pane beside the editor in pane 4
+rozi split --target 4 --split-ratio 0.3 --argv tail -f /var/log/app.log
+```
+
+`rozi api describe` lists `split-placement` when the binary supports `--target` and
+`--split-ratio`. An older binary ignores both.
 
 ### Choose the size of a pane
 
@@ -531,9 +560,9 @@ its workspace later, resizes it to its tile like any other pane.
 With `--session`, the server places the pane itself, so a client attaching later finds it already
 in the layout. `[[rules]]` apply exactly as they do to a pane a person opens: a rule may float the
 pane, make it fullscreen, and choose its workspace, and an explicit `--workspace` still wins over
-the rule. Without either, the pane lands in workspace 1. The workspace's tiling arrangement is left
-alone: the new pane is tiled beside the others when a client draws it, and a split ratio you set
-survives.
+the rule. Without either, the pane lands in workspace 1. With no focus to follow, the new pane is
+added at the end of the workspace's tiling, and the split ratios already set survive. `--target`
+splits the pane it names, as it does through a UI.
 
 `[[rules]]` and the configured shell are read from the server's config at the moment of the
 `split`, so an edited rule applies to the next one without restarting the session.

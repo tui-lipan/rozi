@@ -1598,6 +1598,23 @@
               ],
               "description": "The terminal size the pane starts at, instead of the size its tile will get.\n\nWhat this is for: a pane no UI draws - one in a workspace nobody is looking at, or one a\ndetached session opened - never gets a tile to measure, so it keeps its spawn size. A\nscript that captures such a pane chooses that size here, including sizes no window\ncould show. Once a UI draws the pane, the tile decides its size as it does for any other."
             },
+            "split_ratio": {
+              "description": "The new pane's share of the Dwindle split it opens, committed with the spawn: the same\nshare `pane-set` sets with `split_ratio`, and refused wherever that one is.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "target": {
+              "description": "The pane to split, as if it had focus, instead of the caller's or the focused pane. Its\nworkspace is the one the pane opens in, so it cannot go with `workspace`. The split's\ndirection still follows the tile's shape, and a layout that orders its panes rather\nthan splitting them adds the pane at the end, as it does for a person's split.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "title": {
               "type": [
                 "string",
@@ -3314,6 +3331,23 @@
                 }
               ],
               "description": "The terminal size the pane starts at, instead of the size its tile will get.\n\nWhat this is for: a pane no UI draws - one in a workspace nobody is looking at, or one a\ndetached session opened - never gets a tile to measure, so it keeps its spawn size. A\nscript that captures such a pane chooses that size here, including sizes no window\ncould show. Once a UI draws the pane, the tile decides its size as it does for any other."
+            },
+            "split_ratio": {
+              "description": "The new pane's share of the Dwindle split it opens, committed with the spawn: the same\nshare `pane-set` sets with `split_ratio`, and refused wherever that one is.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "target": {
+              "description": "The pane to split, as if it had focus, instead of the caller's or the focused pane. Its\nworkspace is the one the pane opens in, so it cannot go with `workspace`. The split's\ndirection still follows the tile's shape, and a layout that orders its panes rather\nthan splitting them adds the pane at the end, as it does for a person's split.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "title": {
               "type": [

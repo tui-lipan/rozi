@@ -108,6 +108,8 @@ fn a_headless_split_uses_the_cli_directory_instead_of_the_server_directory() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     assert_eq!(spawned["pty_ready"], true);
@@ -136,6 +138,8 @@ fn a_detached_session_can_be_grown_typed_into_and_read_without_any_client() {
             focus: false,
             workspace: Some(2),
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     assert_eq!(spawned["accepted"], serde_json::json!(true));
@@ -276,6 +280,8 @@ fn a_detached_session_captures_its_screen_as_ansi_png_and_spans() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
@@ -372,6 +378,8 @@ fn a_detached_session_reports_its_arrangement_without_any_client() {
                 focus: false,
                 workspace: Some(3),
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         spawned.push(data["id"].as_u64().expect("spawn reported a pane id"));
@@ -429,6 +437,8 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
                 focus: false,
                 workspace: Some(1),
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
@@ -500,6 +510,166 @@ fn a_detached_session_can_be_rearranged_without_any_client() {
     );
 }
 
+fn split(
+    workspace: Option<usize>,
+    target: Option<u32>,
+    split_ratio: Option<f64>,
+) -> ControlCommand {
+    ControlCommand::NewPane {
+        command: None,
+        argv: None,
+        local_cwd: None,
+        cwd: None,
+        title: None,
+        keep_open: false,
+        focus: false,
+        workspace,
+        size: None,
+        target,
+        split_ratio,
+    }
+}
+
+/// Each pane of one workspace in `layout get`, by id: its rect as `(x, y, width, height)` and the
+/// split share the report gives it.
+fn arrangement(session: &str, workspace: usize) -> Vec<(u64, [u64; 4], Option<f64>)> {
+    let report = expect_ok(
+        session,
+        ControlCommand::LayoutGet {
+            workspace: Some(workspace),
+        },
+    );
+    report["workspaces"][0]["panes"]
+        .as_array()
+        .expect("panes")
+        .iter()
+        .map(|pane| {
+            let rect = &pane["rect"];
+            let cell = |key: &str| rect[key].as_u64().expect("a cell count");
+            (
+                pane["id"].as_u64().expect("an id"),
+                [cell("x"), cell("y"), cell("width"), cell("height")],
+                pane["split_ratio"].as_f64(),
+            )
+        })
+        .collect()
+}
+
+/// `split --target` divides the named pane's tile, not the last one's, and `--split-ratio` gives
+/// the new pane its share in the same revision. What a placement cannot honor is refused before
+/// anything is spawned.
+#[test]
+fn a_detached_split_divides_the_named_pane_at_the_requested_share() {
+    let server = spawn_listener(headless_settings());
+    let session = server.session().to_string();
+    let mut panes = Vec::new();
+    for _ in 0..2 {
+        let data = expect_ok(&session, split(Some(2), None, None));
+        panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
+    }
+    let before = arrangement(&session, 2);
+    let rect_of = |arrangement: &[(u64, [u64; 4], Option<f64>)], id: u32| {
+        arrangement
+            .iter()
+            .find(|(pane, ..)| *pane == u64::from(id))
+            .map(|(_, rect, _)| *rect)
+            .expect("the pane is placed")
+    };
+    let first_before = rect_of(&before, panes[0]);
+    let revision =
+        expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(2) })["revision"]
+            .as_u64()
+            .expect("a revision");
+
+    let new = expect_ok(&session, split(None, Some(panes[0]), Some(0.25)))["id"]
+        .as_u64()
+        .expect("spawn reported a pane id") as u32;
+
+    let report = expect_ok(&session, ControlCommand::LayoutGet { workspace: Some(2) });
+    assert_eq!(
+        report["revision"].as_u64(),
+        Some(revision + 1),
+        "the spawn and its share are one layout change"
+    );
+    let after = arrangement(&session, 2);
+    assert_eq!(
+        rect_of(&after, panes[1]),
+        rect_of(&before, panes[1]),
+        "the pane nobody named keeps its tile"
+    );
+    let [x, y, w, h] = rect_of(&after, panes[0]);
+    let [nx, ny, nw, nh] = rect_of(&after, new);
+    let side_by_side = y == ny && h == nh && x + w == nx;
+    let stacked = x == nx && w == nw && y + h == ny;
+    assert!(
+        side_by_side || stacked,
+        "the new pane shares the named pane's tile: {after:?}"
+    );
+    let [bx, by, bw, bh] = first_before;
+    let (whole, part) = if side_by_side {
+        assert_eq!((x, y, w + nw, h), (bx, by, bw, bh));
+        (bw, nw)
+    } else {
+        assert_eq!((x, y, w, h + nh), (bx, by, bw, bh));
+        (bh, nh)
+    };
+    assert!(
+        part.abs_diff(whole / 4) <= 1,
+        "the new pane takes a quarter of the tile: {part} of {whole}"
+    );
+    let share = after
+        .iter()
+        .find(|(id, ..)| *id == u64::from(new))
+        .and_then(|(.., share)| *share)
+        .expect("the report gives the new pane its share");
+    assert!((share - 0.25).abs() < 1e-6, "share {share}");
+
+    expect_ok(
+        &session,
+        ControlCommand::LayoutSet {
+            workspace: 4,
+            layout: Some(rozi::control::ControlLayoutKind::Grid),
+            master_ratio: None,
+            if_revision: None,
+        },
+    );
+    expect_ok(&session, split(Some(4), None, None));
+    let count = || {
+        expect_ok(&session, ControlCommand::ListPanes)
+            .as_array()
+            .expect("panes")
+            .len()
+    };
+    let panes_before = count();
+    for (case, command, code) in [
+        (
+            "a target with a workspace",
+            split(Some(2), Some(panes[0]), None),
+            ControlErrorCode::InvalidArgument,
+        ),
+        (
+            "a missing target",
+            split(None, Some(999), None),
+            ControlErrorCode::PaneNotFound,
+        ),
+        (
+            "a ratio where the pane would be alone",
+            split(Some(6), None, Some(0.4)),
+            ControlErrorCode::Unsupported,
+        ),
+        (
+            "a ratio outside Dwindle",
+            split(Some(4), None, Some(0.4)),
+            ControlErrorCode::Unsupported,
+        ),
+    ] {
+        let response = control(&session, command);
+        assert!(!response.ok, "{case} was accepted");
+        assert_eq!(response.code, Some(code), "{case}: {:?}", response.error);
+    }
+    assert_eq!(count(), panes_before, "a refused split opened nothing");
+}
+
 /// `pane close` ends the pane's process and removes it from the layout in one step, with nobody
 /// attached to do the layout half.
 #[test]
@@ -520,6 +690,8 @@ fn a_detached_session_can_close_a_pane_without_any_client() {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         panes.push(data["id"].as_u64().expect("spawn reported a pane id") as u32);
@@ -602,6 +774,8 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     assert!(!refused.ok, "a controller is driving this session");
@@ -638,6 +812,8 @@ fn a_client_holding_layout_control_keeps_a_script_from_reshaping_the_session() {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         if response.ok || Instant::now() >= deadline {
@@ -674,6 +850,8 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     )["id"]
         .as_u64()
@@ -692,6 +870,8 @@ fn refusals_reach_a_script_with_their_reason_and_nothing_runs() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
 
@@ -803,6 +983,8 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     )["id"]
         .as_u64()
@@ -832,6 +1014,8 @@ fn a_command_with_no_target_names_the_panes_it_could_have_meant() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     )["id"]
         .as_u64()
@@ -906,6 +1090,8 @@ fn a_send_that_waits_answers_with_output_that_came_after_its_input() {
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     let pane = spawned["id"].as_u64().expect("spawn reported a pane id") as u32;
@@ -1009,6 +1195,8 @@ fn pane_identity(session: &str) -> (u32, rozi::session::protocol::SessionInstanc
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     )["id"]
         .as_u64()

@@ -77,6 +77,9 @@ pub const PANE_REVEAL_CAPABILITY: &str = "pane-reveal";
 /// `new-pane` honors `size`, starting the pane at that terminal size. An older binary ignores the
 /// field and starts the pane at its default size.
 pub const SPLIT_SIZE_CAPABILITY: &str = "split-size";
+/// `new-pane` honors `target` and `split_ratio`: it splits the named pane, and sizes the split it
+/// opens. An older binary ignores both and splits the caller's or the focused pane evenly.
+pub const SPLIT_PLACEMENT_CAPABILITY: &str = "split-placement";
 /// A UI answers `command-visibility`, which shows or hides an extension's own command in the
 /// command palette, and extension manifests accept `hidden` on `[[commands]]`.
 pub const COMMAND_VISIBILITY_CAPABILITY: &str = "command-visibility";
@@ -175,6 +178,7 @@ impl ApiDescription {
                 SESSION_SUBSCRIBE_CAPABILITY,
                 SIDEBAR_STREAMS_CAPABILITY,
                 SIDEBAR_TAB_SETTINGS_CAPABILITY,
+                SPLIT_PLACEMENT_CAPABILITY,
                 SPLIT_SIZE_CAPABILITY,
             ],
         }
@@ -629,6 +633,16 @@ pub enum ControlCommand {
         /// could show. Once a UI draws the pane, the tile decides its size as it does for any other.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         size: Option<PaneSize>,
+        /// The pane to split, as if it had focus, instead of the caller's or the focused pane. Its
+        /// workspace is the one the pane opens in, so it cannot go with `workspace`. The split's
+        /// direction still follows the tile's shape, and a layout that orders its panes rather
+        /// than splitting them adds the pane at the end, as it does for a person's split.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<PaneId>,
+        /// The new pane's share of the Dwindle split it opens, committed with the spawn: the same
+        /// share `pane-set` sets with `split_ratio`, and refused wherever that one is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        split_ratio: Option<f64>,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
     RunAction { action: String },
@@ -1567,6 +1581,58 @@ impl PaneEdit {
             ));
         }
         Ok(())
+    }
+}
+
+/// A validated `new-pane` placement: every check that does not depend on the session has passed.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub(crate) struct SplitPlacement {
+    /// The pane to split, instead of the caller's or the focused one.
+    pub target: Option<PaneId>,
+    /// The new pane's share of the split it opens.
+    pub split_ratio: Option<f32>,
+}
+
+impl SplitPlacement {
+    pub(crate) fn validate(
+        target: Option<PaneId>,
+        workspace: Option<usize>,
+        split_ratio: Option<f64>,
+    ) -> std::result::Result<Self, ControlResponse> {
+        if target.is_some() && workspace.is_some() {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "--target opens the pane in that pane's workspace; pass --target or --workspace, not both",
+            ));
+        }
+        let split_ratio = split_ratio
+            .map(|value| validate_ratio("--split-ratio", value))
+            .transpose()?;
+        Ok(Self {
+            target,
+            split_ratio,
+        })
+    }
+
+    /// Refuse a ratio the new pane would have nothing to apply to, before it exists. The rules are
+    /// `pane set --split-ratio`'s, for the pane as it would land: `floats` when a rule floats it,
+    /// and `in_split` when it would share a split with another tile.
+    pub(crate) fn check_ratio(
+        self,
+        floats: bool,
+        layout: crate::layout::model::LayoutKind,
+        in_split: bool,
+    ) -> std::result::Result<(), ControlResponse> {
+        self.ratio_edit()
+            .map_or(Ok(()), |edit| edit.check_sizes(floats, layout, in_split))
+    }
+
+    /// The `pane set` edit that sizes the new pane, applied in the same layout change as the spawn.
+    pub(crate) fn ratio_edit(self) -> Option<PaneEdit> {
+        self.split_ratio.map(|share| PaneEdit {
+            split_ratio: Some(share),
+            ..PaneEdit::default()
+        })
     }
 }
 

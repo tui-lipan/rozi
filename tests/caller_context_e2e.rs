@@ -547,6 +547,8 @@ mv "$4.tmp" "$4"
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             }),
         )
         .unwrap();
@@ -793,6 +795,8 @@ fn dump_environment_request(
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         })
     }
 }

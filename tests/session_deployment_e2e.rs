@@ -568,6 +568,8 @@ exec "$ROZI_BIN" subscribe --snapshot pane-spawned session-notification > "$ROZI
             focus: false,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         },
     );
     wait_for_text(&state.join("events"), "pane-spawned");

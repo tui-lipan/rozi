@@ -284,11 +284,21 @@ when you are done, unless the user wants to keep it.
 ```bash
 rozi split [COMMAND]
 rozi split --title Tests --argv cargo test -- --nocapture
+rozi split --target <PANE_ID> --split-ratio 0.3 --argv cargo test   # split that pane, new pane 30%
 rozi --session agent-tests split --argv cargo test -- --nocapture
 ```
 
 By default, `split` does **not** move focus. Its JSON response contains the new pane id;
 `pty_ready:true` means its shell can receive input.
+
+A split divides a pane as splitting it by hand would: from a UI, the calling pane, or the focused
+one in a `--workspace` you name. `--target <PANE_ID>` divides that pane instead, in its own
+workspace; it cannot go with `--workspace`. The direction always follows the pane's shape (a wide
+pane splits side by side, a tall one stacks) and cannot be chosen; outside Dwindle the new pane goes
+at the end of the layout's order. `--split-ratio` sets the new pane's share in the same layout
+change and is refused with `unsupported` outside Dwindle or when the pane would be a lone tile. To
+arrange panes further, use the layout writes above. `rozi api describe` lists `split-placement`
+when the binary supports both flags.
 
 If `pty_ready:false`, the pane exists and is still starting. **Do not split again.** Send input to
 its id; Rozi queues it as type-ahead.

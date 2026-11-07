@@ -704,20 +704,26 @@ impl SessionServer {
                 focus,
                 workspace,
                 size,
-            } => self.session_new_pane(
-                SessionSpawn {
-                    caller_env: self.caller_ssh_environment(request.caller_context.as_deref()),
-                    command,
-                    argv,
-                    cwd: local_cwd.or(cwd),
-                    title,
-                    keep_open,
-                    focus,
-                    workspace,
-                    size,
-                },
-                broadcasts,
-            ),
+                target,
+                split_ratio,
+            } => match crate::control::SplitPlacement::validate(target, workspace, split_ratio) {
+                Ok(placement) => self.session_new_pane(
+                    SessionSpawn {
+                        caller_env: self.caller_ssh_environment(request.caller_context.as_deref()),
+                        command,
+                        argv,
+                        cwd: local_cwd.or(cwd),
+                        title,
+                        keep_open,
+                        focus,
+                        workspace,
+                        size,
+                        placement,
+                    },
+                    broadcasts,
+                ),
+                Err(response) => response,
+            },
             ControlCommand::SetStatus {
                 target,
                 status,
@@ -1833,6 +1839,23 @@ impl SessionServer {
             Some(Err(error)) => return ControlResponse::error(error),
             None => None,
         };
+        // A named pane puts the new one in its own workspace, whatever a rule says.
+        let requested_workspace = match spawn.placement.target {
+            Some(target) => match self.layout.as_ref().and_then(|layout| {
+                layout
+                    .workspace_position_of(target)
+                    .map(|position| layout.workspaces[position].index)
+            }) {
+                Some(index) => Some(index),
+                None => {
+                    return ControlResponse::error_with(
+                        ControlErrorCode::PaneNotFound,
+                        format!("pane {target} not found"),
+                    );
+                }
+            },
+            None => requested_workspace,
+        };
         // `[[rules]]` decide float, fullscreen, and - unless the caller named one - the workspace,
         // exactly as they do for a pane a person opens. `focus` is resolved and then ignored:
         // there is no focus here, which is why `--focus` was refused above.
@@ -1871,7 +1894,7 @@ impl SessionServer {
         // Build and validate the document *before* the PTY exists. A layout this server would
         // itself reject leaves the old revision standing, and a pane committed to nothing is a
         // process no client can see and nobody asked to keep.
-        let Some(layout) = self.headless_layout_with_pane(
+        let Some(mut layout) = self.headless_layout_with_pane(
             pane_id,
             generation,
             workspace_index,
@@ -1886,6 +1909,23 @@ impl SessionServer {
                 workspace_index + 1
             ));
         };
+        if let Some(target) = spawn.placement.target
+            && placement.float.is_none()
+        {
+            layout.split_tile_for_spawn(pane_id, target, self.settings.split_width_multiplier);
+        }
+        if let Some(edit) = spawn.placement.ratio_edit() {
+            if let Err(response) = spawn.placement.check_ratio(
+                placement.float.is_some(),
+                layout.layout_kind_of(workspace_index),
+                layout.pane_in_split(pane_id),
+            ) {
+                return response;
+            }
+            if let Err(error) = layout.edit_pane(pane_id, edit) {
+                return ControlResponse::error(error.to_string());
+            }
+        }
 
         let (cols, rows) = spawn
             .size
@@ -2103,6 +2143,7 @@ struct SessionSpawn {
     focus: bool,
     workspace: Option<usize>,
     size: Option<crate::control::PaneSize>,
+    placement: crate::control::SplitPlacement,
 }
 
 #[cfg(all(test, unix))]
@@ -4082,6 +4123,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -4139,6 +4182,8 @@ mod tests {
             focus: false,
             workspace: None,
             size: Some(size),
+            target: None,
+            split_ratio: None,
         };
 
         let (response, _) = control(
@@ -4182,6 +4227,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(!response.ok);
@@ -4220,6 +4267,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(!response.ok);
@@ -4253,6 +4302,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(!response.ok);
@@ -4281,6 +4332,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(allowed.ok, "{:?}", allowed.error);
@@ -4488,6 +4541,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(response.ok, "{:?}", response.error);
@@ -4540,6 +4595,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             },
         );
         assert!(!response.ok);

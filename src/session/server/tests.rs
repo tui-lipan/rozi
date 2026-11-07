@@ -8978,6 +8978,8 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
         focus: false,
         workspace: Some(1),
         size: None,
+        target: None,
+        split_ratio: None,
     });
     assert!(res.ok, "{:?}", res.error);
     if let Some(controller_id) = had_controller {
@@ -9404,6 +9406,8 @@ fn a_ui_hears_a_session_event_after_the_state_it_describes() {
                         focus: false,
                         workspace: Some(1),
                         size: None,
+                        target: None,
+                        split_ratio: None,
                     },
                     source_pane: None,
                     source_session: None,

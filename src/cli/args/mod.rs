@@ -1229,11 +1229,44 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let mut focus = false;
                 let mut workspace = None;
                 let mut size = None;
+                let mut target = None;
+                let mut split_ratio = None;
+                let mut output_format = None;
                 let mut passthrough = false;
                 while let Some(arg) = iter.next() {
                     match arg.as_str() {
                         "--" if !passthrough => passthrough = true,
                         "--focus" if !passthrough => focus = true,
+                        "--target" if !passthrough && target.is_none() => {
+                            let value =
+                                require_value(&mut iter, "split --target requires a pane id")?;
+                            target = Some(value.parse().map_err(|_| {
+                                "split --target requires a numeric pane id".to_string()
+                            })?);
+                        }
+                        "--target" if !passthrough => {
+                            return Err("split --target specified more than once".to_string());
+                        }
+                        "--split-ratio" if !passthrough && split_ratio.is_none() => {
+                            let message = "split --split-ratio requires a ratio such as 0.6";
+                            split_ratio = Some(
+                                require_value(&mut iter, message)?
+                                    .parse::<f64>()
+                                    .ok()
+                                    .filter(|value| value.is_finite())
+                                    .ok_or_else(|| message.to_string())?,
+                            );
+                        }
+                        "--split-ratio" if !passthrough => {
+                            return Err("split --split-ratio specified more than once".to_string());
+                        }
+                        "--format" if !passthrough && output_format.is_none() => {
+                            let value = require_value(&mut iter, "--format requires text or json")?;
+                            output_format = Some(parse_list_format(&value, "split")?);
+                        }
+                        "--format" if !passthrough => {
+                            return Err("split --format specified more than once".to_string());
+                        }
                         "--size" if !passthrough && size.is_none() => {
                             let value = require_value(
                                 &mut iter,
@@ -1304,12 +1337,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     focus,
                     workspace,
                     size,
+                    target,
+                    split_ratio,
                 };
                 return Ok(ParsedCli::Control(ControlCli {
                     config_path: cli.config_path.clone(),
                     endpoint: control_endpoint(&cli, socket, &command)?,
                     request: control_request(command),
-                    output_format: None,
+                    output_format,
                     output: None,
                 }));
             }
@@ -3468,6 +3503,8 @@ mod tests {
                 focus: false,
                 workspace: Some(9),
                 size: None,
+                target: None,
+                split_ratio: None,
             }
         );
         assert!(parse_cli_args(vec!["split".into(), "--workspace".into()]).is_err());
@@ -3617,6 +3654,8 @@ mod tests {
             focus,
             workspace: None,
             size: None,
+            target: None,
+            split_ratio: None,
         };
 
         assert_eq!(
@@ -3653,6 +3692,8 @@ mod tests {
                 focus: true,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             }
         );
         assert_eq!(
@@ -3697,6 +3738,8 @@ mod tests {
                 focus: true,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             }
         );
         assert!(parse_cli_args(vec!["split".into(), "--argv".into()]).is_err());
@@ -3709,6 +3752,59 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn cli_split_takes_a_target_a_split_ratio_and_an_output_format() {
+        let ParsedCli::Control(control) = parse_cli_args(
+            [
+                "split",
+                "--target",
+                "4",
+                "--split-ratio",
+                "0.3",
+                "--format",
+                "text",
+                "--argv",
+                "tool",
+                "--target",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
+        .expect("split with a placement parses") else {
+            panic!("expected control");
+        };
+        let control::ControlCommand::NewPane {
+            target,
+            split_ratio,
+            argv,
+            ..
+        } = control.request.command
+        else {
+            panic!("expected new-pane");
+        };
+        assert_eq!((target, split_ratio), (Some(4), Some(0.3)));
+        assert_eq!(
+            argv,
+            Some(vec!["tool".to_string(), "--target".to_string()]),
+            "flags after --argv belong to the program"
+        );
+        assert_eq!(control.output_format, Some(ListFormat::Text));
+
+        for args in [
+            &["split", "--target"][..],
+            &["split", "--target", "four"],
+            &["split", "--target", "4", "--target", "5"],
+            &["split", "--split-ratio", "wide"],
+            &["split", "--split-ratio", "NaN"],
+            &["split", "--format", "yaml"],
+        ] {
+            assert!(
+                parse_cli_args(args.iter().map(|arg| arg.to_string()).collect()).is_err(),
+                "{args:?} is refused"
+            );
+        }
     }
 
     #[test]
@@ -4475,6 +4571,8 @@ mod tests {
                 focus: false,
                 workspace: None,
                 size: None,
+                target: None,
+                split_ratio: None,
             }
         );
     }

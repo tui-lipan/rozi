@@ -367,6 +367,65 @@ impl SharedLayout {
         Ok(changed)
     }
 
+    /// Split `target`'s tile to hold `pane_id`, a tiled pane just added to the same workspace, the
+    /// way a client's spawn splits the focused tile: along the tile's longer side as
+    /// `split_width_multiplier` weighs it, with the new pane second and the split even.
+    ///
+    /// Leaves the pane where [`effective_tile_tree`](crate::layout::effective_tile_tree) appends it
+    /// when there is no tile to split: outside Dwindle, where order decides placement, and when
+    /// `target` floats or sits in another workspace. Returns whether it split.
+    pub(crate) fn split_tile_for_spawn(
+        &mut self,
+        pane_id: PaneId,
+        target: PaneId,
+        split_width_multiplier: f32,
+    ) -> bool {
+        let canvas = (self.canvas_cols.max(1), self.canvas_rows.max(1));
+        let Some(position) = self.workspace_position_of(pane_id) else {
+            return false;
+        };
+        let workspace = &self.workspaces[position];
+        if crate::layout::model::LayoutKind::from(workspace.layout)
+            != crate::layout::model::LayoutKind::Dwindle
+        {
+            return false;
+        }
+        // Measured without the new pane, as the client measures the tile it is about to split.
+        let mut before = workspace.clone();
+        before.panes.retain(|pane| pane.pane_id != pane_id);
+        let Some(rect) =
+            crate::layout::placement_for(&shared_workspace_placements(&before, canvas), target)
+        else {
+            return false;
+        };
+        if before
+            .panes
+            .iter()
+            .any(|pane| pane.pane_id == target && pane.floating)
+        {
+            return false;
+        }
+        let axis = crate::layout::spawn_split_for_rect(rect, split_width_multiplier).0;
+        let Some(tree) = crate::layout::effective_tile_tree(
+            &SharedTileSource::new(workspace, canvas),
+            Some(pane_id),
+        )
+        .and_then(|tree| {
+            crate::layout::tiling::insert_leaf_around_target(
+                tree,
+                target,
+                pane_id,
+                axis,
+                false,
+                crate::layout::model::EVEN_SPLIT_RATIO,
+            )
+        }) else {
+            return false;
+        };
+        self.workspaces[position].tree = from_dwindle(&tree, &|id| Some(id));
+        true
+    }
+
     /// Whether `pane_id` shares a split in its workspace's settled tree - whether a split ratio
     /// has anything to size.
     pub(crate) fn pane_in_split(&self, pane_id: PaneId) -> bool {

@@ -41,7 +41,9 @@ fn validate_targets(
     caller: &crate::session::protocol::PaneRef,
 ) -> Result<(), ControlResponse> {
     let targets = match command {
-        ControlCommand::NewPane { .. } => vec![caller.pane_id],
+        ControlCommand::NewPane { target, .. } => {
+            std::iter::once(caller.pane_id).chain(*target).collect()
+        }
         ControlCommand::PaneSet { target, .. }
         | ControlCommand::PaneMove { target, .. }
         | ControlCommand::PaneClose { target, .. } => vec![*target],
@@ -163,6 +165,8 @@ mod tests {
                     focus: false,
                     workspace: None,
                     size: None,
+                    target: None,
+                    split_ratio: None,
                 },
             );
             assert!(

@@ -315,6 +315,9 @@ pub struct ServerSettings {
     /// `pane::spawn_policy::resolve_placement`, so a rule cannot mean one thing to a keypress and
     /// another to a script.
     pub rules: Vec<crate::config::RuleConfig>,
+    /// `[layout] split_width_multiplier`: how a split this server opens itself weighs a tile's
+    /// width against its height to choose a direction, the same weighing a client's split uses.
+    pub split_width_multiplier: f32,
     /// Agent definitions this session detects with: the built-in catalog merged with whatever
     /// `config.toml` and installed extensions declared.
     ///
@@ -351,6 +354,7 @@ impl Default for ServerSettings {
             shell_integration: crate::config::ShellIntegrationMode::default(),
             command_shell: Vec::new(),
             rules: Vec::new(),
+            split_width_multiplier: crate::config::LayoutConfig::default().split_width_multiplier,
             agents: crate::agent_detection::AgentCatalog::shared_builtin(),
             worktree_directory: None,
             recording: crate::config::RecordingConfig::default(),
@@ -2462,6 +2466,7 @@ pub fn run_named_session_mode_with_nonce(
             shell_integration: loaded.config.shell_integration.mode,
             command_shell,
             rules: loaded.config.rules,
+            split_width_multiplier: loaded.config.layout.split_width_multiplier,
             agents: agent_catalog(loaded.config.agents),
             worktree_directory: loaded
                 .config

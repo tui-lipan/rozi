@@ -559,14 +559,15 @@ pub(super) fn endpoint_help() -> String {
              {runtime_dir}\n    \
              Each entry stands for a named pipe (\\\\.\\pipe\\rozi.<sid>.control-<pid>);\n    \
              pass the entry, not the pipe name. Unless --socket is given, rozi uses\n    \
-             ROZI_SOCKET; failing that, the only live endpoint there."
+             ROZI_SOCKET; failing that, the UI showing the calling pane's session,\n    \
+             or the only live endpoint there."
         )
     } else {
         format!(
             "Control sockets live one per running rozi, named by pid, in\n        \
              {runtime_dir}\n    \
              Unless --socket is given, rozi uses ROZI_SOCKET; failing that, the\n    \
-             only live socket there."
+             UI showing the calling pane's session, or the only live socket there."
         )
     }
 }

@@ -144,11 +144,13 @@ in the caller's session. Commands without `--here` keep the usual UI selection r
 Without `--session` or `--here`, control commands choose a UI endpoint in this order:
 
 1. `--socket PATH`
-2. `ROZI_SOCKET`
-3. The only live control endpoint in the runtime directory
+2. `ROZI_SOCKET`, while that UI is running
+3. From a session pane, the only UI showing the pane's session
+4. The only live control endpoint in the runtime directory
 
-Discovery fails if the runtime directory contains no live endpoints or more than one. Pass
-`--socket` when several UIs are running. Put `--socket PATH` before the command.
+Discovery fails if the runtime directory contains no live endpoints, or more than one and none of
+them is the only UI showing the calling pane's session. Pass `--socket` when several UIs are
+running. Put `--socket PATH` before the command.
 
 `agents report` and `agents release` are the exception. Run from a pane with no `ROZI_SOCKET` — a
 remote pane, or one in a session with no window attached — and without `--target`, they go to the
@@ -171,8 +173,9 @@ local pane also receives `ROZI_SOCKET` and `ROZI_BIN` when control is available.
 server it runs in, so a UI holding several sessions can tell whose pane is asking. It is empty in
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
 neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
-there is no UI for them to name. Such a pane still reaches its own session with
-`rozi --here`, and its agent reports reach it without one.
+there is no UI for them to name. Commands from such a pane reach the UI showing its session once one
+attaches, its agent reports reach the session without one, and `rozi --here` reaches the session
+either way.
 
 ## Target selection
 

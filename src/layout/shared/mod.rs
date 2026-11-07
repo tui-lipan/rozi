@@ -20,8 +20,22 @@ use crate::pane::id::PaneId;
 /// Stable identity for an attached client, assigned by the server on attach.
 pub type ClientId = u64;
 
-/// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes.
-/// Version 4 includes the controller's pane chrome geometry.
+/// Oldest [`SharedLayout`] document generation this build accepts in [`SharedLayout::validate`].
+///
+/// Follows the session wire support window: documents in
+/// `MIN_SHARED_LAYOUT_VERSION..=SHARED_LAYOUT_VERSION` are accepted, while older or newer
+/// document generations are refused with [`SharedLayoutValidationError::UnsupportedVersion`].
+pub const MIN_SHARED_LAYOUT_VERSION: u32 = 4;
+
+/// Current document generation for [`SharedLayout`].
+///
+/// Bumped only for a breaking shape change (removing or renaming a field, changing a type, or
+/// adding a new required field). Additive optional fields use `#[serde(default)]` and do not bump
+/// this constant; layout features that a session server must preserve across re-encoding or
+/// enforce during validation are gated on server capabilities via [`SharedLayoutFeature`] and
+/// [`SharedLayout::strip_unsupported`].
+///
+/// Generation 4 includes the controller's pane chrome geometry.
 pub const SHARED_LAYOUT_VERSION: u32 = 4;
 
 /// The complete shared window-manager document for a session. Fractions in [`FracRect`] are
@@ -177,5 +191,154 @@ mod tests {
             pane.scrollable_width,
             crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
         );
+    }
+
+    #[test]
+    fn hand_built_generation_4_document_parses_and_validates() {
+        // Hand-built version 4 document exercising baseline fields, including a pre-pinned /
+        // pre-scrollable-width pane shape and a floating pinned pane.
+        let raw = serde_json::json!({
+            "version": 4,
+            "canvas_cols": 120,
+            "canvas_rows": 36,
+            "pane_geometry": {
+                "show_titles": true,
+                "titlebar": "bar",
+                "border_mode": "separate",
+                "keep_special_borders": true,
+                "padding": [0, 0, 0, 0],
+                "top_gap": 1
+            },
+            "workspaces": [
+                {
+                    "index": 0,
+                    "name": "dev",
+                    "synchronized": false,
+                    "layout": "dwindle",
+                    "start_axis": "horizontal",
+                    "split_ratios": [0.5],
+                    "tree": {
+                        "kind": "split",
+                        "axis": "horizontal",
+                        "ratio": 0.5,
+                        "first": { "kind": "leaf", "pane": 1 },
+                        "second": { "kind": "leaf", "pane": 2 }
+                    },
+                    "panes": [
+                        {
+                            "pane_id": 1,
+                            "generation": 1,
+                            "title": "editor",
+                            "profile_name": null,
+                            "cwd": "/tmp",
+                            "launch": { "kind": "shell", "command": "nvim" },
+                            "keep_open": false,
+                            "floating": false,
+                            "fullscreen": false,
+                            "rect": null
+                        },
+                        {
+                            "pane_id": 2,
+                            "generation": 3,
+                            "title": null,
+                            "profile_name": "default",
+                            "cwd": null,
+                            "launch": { "kind": "direct", "argv": ["cargo", "test"] },
+                            "replay": true,
+                            "keep_open": true,
+                            "floating": false,
+                            "pinned": false,
+                            "fullscreen": false,
+                            "rect": null,
+                            "scrollable_width": 0.75
+                        },
+                        {
+                            "pane_id": 3,
+                            "generation": 2,
+                            "title": "scratch",
+                            "profile_name": null,
+                            "cwd": null,
+                            "launch": null,
+                            "replay": false,
+                            "keep_open": false,
+                            "floating": true,
+                            "pinned": true,
+                            "fullscreen": false,
+                            "rect": { "x": 0.1, "y": 0.15, "w": 0.6, "h": 0.5 }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let layout: SharedLayout =
+            serde_json::from_value(raw).expect("generation 4 layout JSON parses");
+        assert_eq!(layout.version, 4);
+        assert_eq!(layout.validate(), Ok(()));
+        assert!(!layout.workspaces[0].panes[0].replay);
+        assert!(!layout.workspaces[0].panes[0].pinned);
+        assert_eq!(
+            layout.workspaces[0].panes[0].scrollable_width,
+            crate::layout::model::DEFAULT_SCROLLABLE_WIDTH
+        );
+        assert!(layout.workspaces[0].panes[2].pinned);
+    }
+
+    #[test]
+    fn shared_layout_ignores_unknown_extra_fields_from_newer_minor_releases() {
+        let raw = serde_json::json!({
+            "version": 4,
+            "canvas_cols": 100,
+            "canvas_rows": 30,
+            "future_document_flag": true,
+            "pane_geometry": {
+                "show_titles": true,
+                "titlebar": "integrated",
+                "border_mode": "merged",
+                "keep_special_borders": false,
+                "padding": [1, 1, 1, 1],
+                "top_gap": 0,
+                "future_geometry_hint": "rounded"
+            },
+            "workspaces": [
+                {
+                    "index": 0,
+                    "name": null,
+                    "synchronized": false,
+                    "layout": "columns",
+                    "start_axis": "vertical",
+                    "split_ratios": [],
+                    "tree": { "kind": "leaf", "pane": 1 },
+                    "future_workspace_badge": { "count": 3 },
+                    "panes": [
+                        {
+                            "pane_id": 1,
+                            "generation": 1,
+                            "title": null,
+                            "profile_name": null,
+                            "cwd": null,
+                            "launch": null,
+                            "keep_open": false,
+                            "floating": true,
+                            "fullscreen": false,
+                            "rect": {
+                                "x": 0.2,
+                                "y": 0.2,
+                                "w": 0.5,
+                                "h": 0.5,
+                                "future_anchor": "center"
+                            },
+                            "future_pane_tag": "agent"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let layout: SharedLayout =
+            serde_json::from_value(raw).expect("unknown additive JSON fields are ignored");
+        assert_eq!(layout.validate(), Ok(()));
+        assert_eq!(layout.workspaces.len(), 1);
+        assert_eq!(layout.workspaces[0].panes[0].pane_id, 1);
     }
 }

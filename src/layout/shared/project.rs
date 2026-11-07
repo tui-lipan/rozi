@@ -53,6 +53,9 @@ pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayo
             .collect(),
     };
     preserve_projected_rects(state, &mut layout);
+    if let Some(client) = state.current().session_client.as_ref() {
+        layout.strip_unsupported(client.capabilities());
+    }
     layout
 }
 

@@ -41,7 +41,14 @@ pub enum SharedLayoutValidationError {
 impl std::fmt::Display for SharedLayoutValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedVersion(v) => write!(f, "unsupported shared layout version {v}"),
+            Self::UnsupportedVersion(v) if *v > SHARED_LAYOUT_VERSION => write!(
+                f,
+                "unsupported shared layout version {v} (newer than supported generation {SHARED_LAYOUT_VERSION})"
+            ),
+            Self::UnsupportedVersion(v) => write!(
+                f,
+                "unsupported shared layout version {v} (supported generations: {MIN_SHARED_LAYOUT_VERSION}..={SHARED_LAYOUT_VERSION})"
+            ),
             Self::ZeroCanvasDimensions => write!(f, "canvas dimensions must be positive"),
             Self::InvalidPaneGeometry => write!(
                 f,
@@ -93,9 +100,71 @@ impl std::fmt::Display for SharedLayoutValidationError {
 
 impl std::error::Error for SharedLayoutValidationError {}
 
+/// Optional shared-layout features that a session server must understand to preserve across
+/// re-encoding (`CommitLayout` / `SpawnPlacementCommit` -> `LayoutCommitted` / `Attached` /
+/// snapshot `layout.json`) or enforce during validation and headless edits.
+///
+/// Every field and enum variant in the generation-52 baseline is unconditionally supported
+/// ([`Self::required_capability`] returns `None`). Any layout feature added without bumping
+/// [`SHARED_LAYOUT_VERSION`] must add a variant here, wire its capability wire name in
+/// [`Self::required_capability`], and reset its fields in [`SharedLayout::strip_unsupported`] when
+/// the connected server lacks that capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SharedLayoutFeature {
+    /// Generation-52 baseline document shape (`canvas_cols`, `canvas_rows`, `pane_geometry`,
+    /// workspaces, tiling trees, floating rects, pins, and scrollable widths).
+    Baseline,
+}
+
+impl SharedLayoutFeature {
+    /// The wire capability name the connected session server must advertise for a controller to
+    /// offer or commit this layout feature, or `None` for generation-52 baseline features.
+    pub const fn required_capability(self) -> Option<&'static str> {
+        match self {
+            Self::Baseline => None,
+        }
+    }
+
+    /// Whether `server_caps` supports this layout feature.
+    pub fn is_supported_by(self, server_caps: &crate::session::protocol::Capabilities) -> bool {
+        match self.required_capability() {
+            None => true,
+            Some(cap) => server_caps.supports(cap),
+        }
+    }
+}
+
 impl SharedLayout {
+    /// Strip optional layout fields that `server_caps` does not support back to their baseline
+    /// defaults before a controller commits the document to a session server.
+    ///
+    /// An older session server deserializes [`SharedLayout`] into its own Rust types on
+    /// `CommitLayout` and `SpawnPlacementCommit`, then re-encodes it for `LayoutCommitted`,
+    /// `Attached`, `LayoutRejected`, and snapshot `layout.json`. Any field unknown to that server
+    /// would be dropped before followers receive it while the controller's optimistic
+    /// `last_committed_layout` kept the unstripped value.
+    ///
+    /// Every struct and enum reachable from [`SharedLayout`] is destructured exhaustively without
+    /// `..` or wildcard arms so adding a field or variant fails to compile until its capability
+    /// gate (or [`SharedLayoutFeature::Baseline`] status) is declared here.
+    pub fn strip_unsupported(&mut self, server_caps: &crate::session::protocol::Capabilities) {
+        let _ = SharedLayoutFeature::Baseline.is_supported_by(server_caps);
+        let Self {
+            version: _,
+            canvas_cols: _,
+            canvas_rows: _,
+            pane_geometry,
+            workspaces,
+        } = self;
+        strip_unsupported_pane_geometry(pane_geometry, server_caps);
+        for workspace in workspaces {
+            strip_unsupported_workspace(workspace, server_caps);
+        }
+    }
+
     /// Validate that the shared layout document satisfies all structural and security invariants:
-    /// - Protocol/layout version matches [`SHARED_LAYOUT_VERSION`].
+    /// - Document generation `version` is within
+    ///   [`MIN_SHARED_LAYOUT_VERSION`]..=[`SHARED_LAYOUT_VERSION`].
     /// - Positive canvas dimensions.
     /// - Unique workspace indexes within `0..WORKSPACE_COUNT` and pane identities across all workspaces.
     /// - Tree leaves belong to their workspace's pane list and do not repeat.
@@ -104,7 +173,14 @@ impl SharedLayout {
     /// - Scrollable column widths are finite and positive.
     /// - Pane generations are non-zero.
     pub fn validate(&self) -> std::result::Result<(), SharedLayoutValidationError> {
-        if self.version != SHARED_LAYOUT_VERSION {
+        self.validate_within(MIN_SHARED_LAYOUT_VERSION..=SHARED_LAYOUT_VERSION)
+    }
+
+    pub(crate) fn validate_within(
+        &self,
+        supported_versions: std::ops::RangeInclusive<u32>,
+    ) -> std::result::Result<(), SharedLayoutValidationError> {
+        if !supported_versions.contains(&self.version) {
             return Err(SharedLayoutValidationError::UnsupportedVersion(
                 self.version,
             ));
@@ -212,6 +288,122 @@ impl SharedLayout {
 
         Ok(())
     }
+}
+
+fn strip_unsupported_pane_geometry(
+    geometry: &mut SharedPaneGeometry,
+    _server_caps: &crate::session::protocol::Capabilities,
+) {
+    use crate::pane::chrome::{PaneBorderMode, PaneTitlebarMode};
+
+    let SharedPaneGeometry {
+        show_titles: _,
+        titlebar,
+        border_mode,
+        keep_special_borders: _,
+        padding: _,
+        top_gap: _,
+    } = geometry;
+    match titlebar {
+        PaneTitlebarMode::Bar
+        | PaneTitlebarMode::Border
+        | PaneTitlebarMode::Integrated
+        | PaneTitlebarMode::Inset => {}
+    }
+    match border_mode {
+        PaneBorderMode::Separate
+        | PaneBorderMode::Merged
+        | PaneBorderMode::None
+        | PaneBorderMode::Dividers => {}
+    }
+}
+
+fn strip_unsupported_workspace(
+    workspace: &mut SharedWorkspace,
+    server_caps: &crate::session::protocol::Capabilities,
+) {
+    let SharedWorkspace {
+        index: _,
+        name: _,
+        synchronized: _,
+        layout,
+        start_axis,
+        split_ratios: _,
+        tree,
+        panes,
+    } = workspace;
+    match layout {
+        SharedLayoutKind::Dwindle
+        | SharedLayoutKind::Master
+        | SharedLayoutKind::Grid
+        | SharedLayoutKind::Columns
+        | SharedLayoutKind::Rows
+        | SharedLayoutKind::Scrollable
+        | SharedLayoutKind::Monocle => {}
+    }
+    match start_axis {
+        SharedSplitAxis::Horizontal | SharedSplitAxis::Vertical => {}
+    }
+    if let Some(tree) = tree {
+        strip_unsupported_tree(tree, server_caps);
+    }
+    for pane in panes {
+        strip_unsupported_pane(pane, server_caps);
+    }
+}
+
+fn strip_unsupported_tree(
+    tree: &mut SharedTree,
+    _server_caps: &crate::session::protocol::Capabilities,
+) {
+    match tree {
+        SerializedTree::Leaf { pane: _ } => {}
+        SerializedTree::Split {
+            axis,
+            ratio: _,
+            first,
+            second,
+        } => {
+            match axis {
+                SharedSplitAxis::Horizontal | SharedSplitAxis::Vertical => {}
+            }
+            strip_unsupported_tree(first, _server_caps);
+            strip_unsupported_tree(second, _server_caps);
+        }
+    }
+}
+
+fn strip_unsupported_pane(
+    pane: &mut SharedPane,
+    _server_caps: &crate::session::protocol::Capabilities,
+) {
+    use crate::pane::launch::PaneLaunch;
+
+    let SharedPane {
+        pane_id: _,
+        generation: _,
+        title: _,
+        profile_name: _,
+        cwd: _,
+        launch,
+        replay: _,
+        keep_open: _,
+        floating: _,
+        pinned: _,
+        fullscreen: _,
+        rect,
+        scrollable_width: _,
+    } = pane;
+    match launch {
+        Some(PaneLaunch::Shell { command: _ } | PaneLaunch::Direct { argv: _ }) | None => {}
+    }
+    if let Some(FracRect {
+        x: _,
+        y: _,
+        w: _,
+        h: _,
+    }) = rect
+    {}
 }
 
 fn validate_shared_tree(
@@ -464,5 +656,90 @@ mod tests {
             bad.validate(),
             Err(SharedLayoutValidationError::ReservedPaneId(_))
         ));
+    }
+
+    #[test]
+    fn shared_layout_validation_accepts_document_generation_window() {
+        const { assert!(MIN_SHARED_LAYOUT_VERSION <= SHARED_LAYOUT_VERSION) };
+        let valid = layout_with_panes(&[(1, 1), (2, 1)]);
+        assert_eq!(valid.validate(), Ok(()));
+
+        // Older than the current minimum is refused with a range message.
+        let mut older = valid.clone();
+        older.version = MIN_SHARED_LAYOUT_VERSION - 1;
+        let err = older.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SharedLayoutValidationError::UnsupportedVersion(MIN_SHARED_LAYOUT_VERSION - 1)
+        );
+        assert!(
+            err.to_string().contains("supported generations"),
+            "unexpected error display: {err}"
+        );
+
+        // Newer than the current generation is refused with a clear newer-generation message.
+        let mut newer = valid.clone();
+        newer.version = SHARED_LAYOUT_VERSION + 1;
+        let err = newer.validate().unwrap_err();
+        assert_eq!(
+            err,
+            SharedLayoutValidationError::UnsupportedVersion(SHARED_LAYOUT_VERSION + 1)
+        );
+        assert!(
+            err.to_string().contains(&format!(
+                "newer than supported generation {SHARED_LAYOUT_VERSION}"
+            )),
+            "unexpected error display: {err}"
+        );
+
+        // When a support window spans multiple document generations, every generation in the
+        // window validates and generations outside either bound are refused.
+        let mut prev_gen = valid.clone();
+        prev_gen.version = 3;
+        assert_eq!(prev_gen.validate_within(3..=4), Ok(()));
+        assert_eq!(valid.validate_within(3..=4), Ok(()));
+        prev_gen.version = 2;
+        assert_eq!(
+            prev_gen.validate_within(3..=4),
+            Err(SharedLayoutValidationError::UnsupportedVersion(2))
+        );
+        newer.version = 5;
+        assert_eq!(
+            newer.validate_within(3..=4),
+            Err(SharedLayoutValidationError::UnsupportedVersion(5))
+        );
+    }
+
+    #[test]
+    fn strip_unsupported_preserves_baseline_layout_across_server_capabilities() {
+        use crate::session::protocol::Capabilities;
+
+        assert_eq!(SharedLayoutFeature::Baseline.required_capability(), None);
+        assert!(SharedLayoutFeature::Baseline.is_supported_by(&Capabilities::default()));
+        assert!(SharedLayoutFeature::Baseline.is_supported_by(&Capabilities::current()));
+
+        let mut layout = layout_with_panes(&[(1, 1), (2, 1)]);
+        layout.workspaces[0].tree = Some(SerializedTree::Split {
+            axis: SharedSplitAxis::Horizontal,
+            ratio: 0.4,
+            first: Box::new(SerializedTree::Leaf { pane: 1 }),
+            second: Box::new(SerializedTree::Leaf { pane: 2 }),
+        });
+        layout.workspaces[0].panes[1].floating = true;
+        layout.workspaces[0].panes[1].pinned = true;
+        layout.workspaces[0].panes[1].rect = Some(FracRect {
+            x: 0.1,
+            y: 0.2,
+            w: 0.5,
+            h: 0.4,
+        });
+        let baseline = layout.clone();
+
+        layout.strip_unsupported(&Capabilities::default());
+        assert_eq!(layout, baseline);
+        assert_eq!(layout.validate(), Ok(()));
+
+        layout.strip_unsupported(&Capabilities::current());
+        assert_eq!(layout, baseline);
     }
 }

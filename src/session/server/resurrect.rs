@@ -1663,10 +1663,19 @@ pub(crate) fn has_snapshot(name: &str) -> bool {
 /// the crate that need one without running a server. Remove it with [`delete_snapshot_for`].
 #[cfg(test)]
 pub(crate) fn write_empty_snapshot_for_test(name: &str) {
-    let dir = default_snapshot_dir()
-        .expect("isolated state directory")
-        .join(name);
-    fs::create_dir_all(&dir).expect("create snapshot directory");
+    // Each level is created the way rozi creates it, private. Every test in the binary shares one
+    // state directory, and on Windows one made with a plain `create_dir_all` lacks the protected
+    // DACL private state requires, so whichever test created it first would break every later test
+    // that persists anything.
+    let state = crate::platform::paths::private_state_dir(
+        &crate::platform::paths::PlatformEnv::from_process(),
+    )
+    .expect("isolated state directory");
+    let sessions = default_snapshot_dir().expect("isolated state directory");
+    debug_assert!(sessions.starts_with(&state));
+    crate::platform::fs_security::ensure_private_dir(&sessions).expect("create sessions directory");
+    let dir = sessions.join(name);
+    crate::platform::fs_security::ensure_private_dir(&dir).expect("create snapshot directory");
     let meta = SnapshotMeta {
         version: SNAPSHOT_VERSION,
         session: name.to_string(),

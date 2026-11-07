@@ -418,9 +418,12 @@ impl TargetResolution {
         match &cli.session_command {
             cli::SessionCommand::Attach(_) => {
                 if !running {
-                    let hint = path
-                        .exists()
-                        .then(|| format!("\nStart it with: rozi {name}"));
+                    let hint = if saved_session_exists(name) {
+                        Some(format!("\nRestore it with: rozi {name}"))
+                    } else {
+                        path.exists()
+                            .then(|| format!("\nStart it with: rozi {name}"))
+                    };
                     startup_fatal(format!(
                         "Session `{name}` is not running.{}",
                         hint.unwrap_or_default()
@@ -443,6 +446,11 @@ impl TargetResolution {
                     self.autostart = false;
                 } else if *read_only {
                     startup_fatal(format!("Session `{name}` is not running."));
+                } else if saved_session_exists(name) {
+                    // A saved session outranks its same-name profile, as it does in Sessions: the
+                    // server started for it restores the snapshot, and refuses one it cannot read
+                    // rather than starting the session empty.
+                    self.autostart = true;
                 } else if path.exists() {
                     self.profile = Some(load_startup_profile(name, path));
                     self.autostart = true;
@@ -646,10 +654,17 @@ fn session_openable_by_name(name: &str) -> bool {
         .ok()
         .flatten()
         .is_some()
-        || crate::session::server::list_snapshot_names_by_recency()
-            .iter()
-            .any(|snapshot| snapshot == name)
+        || saved_session_exists(name)
         || config::profile_path_for_name(name).exists()
+}
+
+/// Whether Sessions lists `name` as saved: `Restorable`, or `Unreadable` by this build. Opening an
+/// unreadable one by name still goes to its server, which refuses it and says why, instead of
+/// starting a session under the name with nothing in it.
+fn saved_session_exists(name: &str) -> bool {
+    crate::session::server::list_snapshot_names_by_recency()
+        .iter()
+        .any(|snapshot| snapshot == name)
 }
 
 /// Whether `name` is a session rozi has seen on `target`, from the persisted per-host cache.
@@ -909,6 +924,29 @@ mod tests {
                 last_session: None,
             }
         );
+    }
+
+    /// `rozi <name>` for a saved session restores it, the same as Enter on its `Restorable` row,
+    /// rather than refusing the name and suggesting `sessions new`, which would discard the
+    /// snapshot. The saved session outranks a same-name profile, which is never read, so a profile
+    /// that no longer parses cannot stand in the way.
+    #[test]
+    fn a_named_launch_restores_a_saved_session_before_its_profile() {
+        crate::test_support::isolate_user_dirs();
+        const NAME: &str = "startup-restores-saved";
+        crate::session::server::write_empty_snapshot_for_test(NAME);
+        let profile = crate::config::profile_path_for_name(NAME);
+        std::fs::create_dir_all(profile.parent().expect("profiles dir")).expect("profiles dir");
+        std::fs::write(&profile, "this is [not toml").expect("write broken profile");
+
+        let plan = plan_for(&[NAME]);
+
+        let _ = std::fs::remove_file(&profile);
+        crate::session::server::delete_snapshot(NAME).expect("forget saved session");
+        let request = startup_request(&plan);
+        assert_eq!(request.name, NAME);
+        assert_eq!(request.mode, crate::state::AttachMode::JoinOrStart);
+        assert_eq!(request.intent, crate::state::AttachIntent::Plain);
     }
 
     #[test]

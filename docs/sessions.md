@@ -52,9 +52,9 @@ or request control. Set it in **Settings**, **Sessions**, **On shared attach**. 
 `--take-control` override it for one `sessions attach`; they conflict with each other and with
 `--read-only`. Taking control follows the [running session's policy](shared-sessions.md#layout-control).
 
-`rozi dev` attaches to a running session named `dev`. If there is none, it launches the profile
-named `dev`. If neither exists, it reports an error; it never creates an empty session with an
-unknown name. `rozi sessions kill <NAME>` also reports an error when no live or restorable session
+`rozi dev` attaches to a running session named `dev`. If there is none, it restores a saved
+session named `dev`, or launches the profile named `dev` when nothing is saved. If none of these
+exists, it reports an error; it never creates an empty session with an unknown name. `rozi sessions kill <NAME>` also reports an error when no live or restorable session
 has that name.
 
 `--cwd` applies only to `sessions new` and cannot be combined with `--profile`. With `--remote`, it
@@ -317,8 +317,8 @@ periodically and when the last client detaches after a change. A session started
 
 When the session server is no longer running, the picker lists a usable snapshot as `Restorable`.
 So is a session with [extensions deployed](extensions.md#deploy-to-a-session) to it, even if its
-server stopped before saving anything, so that you can find it and reopen or delete it. Restoring
-recreates:
+server stopped before saving anything, so that you can find it and reopen or delete it. Press
+`Enter` on the row, or run `rozi <NAME>`, to restore it. Restoring recreates:
 
 - workspace layouts, names, and pane placement
 - pane commands and working directories

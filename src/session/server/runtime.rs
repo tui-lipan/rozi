@@ -2851,22 +2851,43 @@ fn settle_state_flicker(
     Some(detected)
 }
 
-/// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
-/// remote shell report first, then the process-inspector fallback (always local by construction -
-/// it reads the actual child process, never a remote one), then the pane's original launch
-/// directory. An invalid report (non-UTF-8 path bytes given the JSON wire encoding, or a
-/// non-absolute path) falls through to the next tier rather than being repaired, per the plan.
+/// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid remote
+/// shell report first, then the directory of a program the shell is running, then a valid local
+/// shell report, then the process-inspector fallback (always local by construction - it reads the
+/// actual child process, never a remote one), then the pane's original launch directory. An invalid
+/// report (non-UTF-8 path bytes given the JSON wire encoding, or a non-absolute path) falls through
+/// to the next tier rather than being repaired, per the plan.
+///
+/// A shell reports its directory as it draws a prompt, so `cd dir && program` keeps the report on
+/// the directory the line started in until the program exits. The program's own directory is the
+/// truth for that whole run, and it is the one a snapshot must restore the pane into, or a resumed
+/// agent or a replayed relative path starts in the wrong place. A remote report names a directory
+/// this host cannot see, so a local `ssh` process never overrides it.
 fn resolve_cwd(
     pane: &ServerPane,
     reported: Option<&TerminalWorkingDirectory>,
     inspector: &impl ProcessInspector,
 ) -> (Option<String>, Option<String>, PaneCwdSource) {
-    if let Some(reported) = reported
-        && let Some(path) = decode_reported_path(reported)
-    {
+    let reported = reported.and_then(|reported| {
+        let path = decode_reported_path(reported)?;
         let host = (!is_local_host(reported.host.as_deref()))
             .then(|| reported.host.as_deref().unwrap_or_default().to_string());
-        return (Some(path), host, PaneCwdSource::ShellReport);
+        Some((path, host))
+    });
+    if let Some((path, Some(host))) = reported {
+        return (Some(path), Some(host), PaneCwdSource::ShellReport);
+    }
+    if let Some(pty) = &pane.pty
+        && let Some(path) = inspector.foreground_cwd(pty)
+    {
+        return (
+            Some(path.to_string_lossy().to_string()),
+            None,
+            PaneCwdSource::ProcessInspector,
+        );
+    }
+    if let Some((path, None)) = reported {
+        return (Some(path), None, PaneCwdSource::ShellReport);
     }
     if let Some(pty) = &pane.pty
         && let Some(path) = inspector.cwd(pty)

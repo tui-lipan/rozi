@@ -28,6 +28,14 @@ impl ProcessInspector for MacosProcessInspector {
         cwd_for_pid(pid)
     }
 
+    fn foreground_cwd(&self, pty: &TerminalPty) -> Option<PathBuf> {
+        let pgid = pty.foreground_process_group_id()?;
+        if u32::try_from(pgid).ok() == pty.pid() {
+            return None;
+        }
+        cwd_for_pid(u32::try_from(pgid).ok()?)
+    }
+
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String> {
         let pgid = pty.foreground_process_group_id()?;
         process_for_pid(pgid).map(|process| process.name)

@@ -527,6 +527,10 @@ layout change that adds it. It is the share `pane set --split-ratio` sets. It wo
 new pane lands in a Dwindle workspace beside another tiled pane. Otherwise `split` fails with
 `unsupported` and opens nothing.
 
+`--target` and `--split-ratio` need a session that already has panes. Before any session is
+attached, `split` opens its pane alone in a new session, so it refuses both. While the scratchpad
+is open, `split` refuses to divide a pane hidden behind it.
+
 ```sh
 # Open a narrow log pane beside the editor in pane 4
 rozi split --target 4 --split-ratio 0.3 --argv tail -f /var/log/app.log

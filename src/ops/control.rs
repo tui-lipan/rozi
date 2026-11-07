@@ -2022,10 +2022,11 @@ fn prepare_new_pane(
     let launch = crate::pane::spawn_policy::requested_launch(command, argv)
         .map_err(ControlResponse::error)?;
     let scratch_source = source.is_some_and(|id| crate::scratchpad::contains(state, id));
-    if state.scratch_visible && source.is_some() && !scratch_source {
-        return Err(ControlResponse::error(
-            "source pane is hidden behind scratchpad",
-        ));
+    // While the scratchpad shows, nothing opens in the layout hidden behind it.
+    if let Some(source) = source.filter(|_| state.scratch_visible && !scratch_source) {
+        return Err(ControlResponse::error(format!(
+            "pane {source} is hidden behind the scratchpad"
+        )));
     }
     if !scratch_source && !state.is_controller() {
         return Err(ControlResponse::error_with(
@@ -2070,6 +2071,16 @@ fn new_pane(
         size,
         placement: split,
     } = request;
+    // Without a session, the pane is deferred until one is attached, and that attach starts a new
+    // session with nothing in it: there is no pane left to split or to share a split with.
+    if (split.target.is_some() || split.split_ratio.is_some()) && ctx.state.needs_session_for_pty()
+    {
+        let _ = reply.send(ControlResponse::error_with(
+            ControlErrorCode::Unsupported,
+            "no session is attached, so the pane would open alone in a new one; --target and --split-ratio need a pane to split",
+        ));
+        return Update::full();
+    }
     // A named pane decides where the new one goes, in its own workspace; the caller's pane decides
     // only when nothing is named.
     let target_workspace = match split.target.map(|target| locate_layout_pane(ctx, target)) {
@@ -2999,6 +3010,9 @@ mod tests {
         response
     }
 
+    /// A change to a `new_pane_request` command, for tests that try several.
+    type CommandEdit = Box<dyn Fn(&mut ControlCommand)>;
+
     fn placement_fields(
         command: &mut ControlCommand,
     ) -> (&mut Option<usize>, &mut Option<PaneId>, &mut Option<f64>) {
@@ -3082,8 +3096,7 @@ mod tests {
             backend.state_mut().current_mut().workspaces[2].layout_kind =
                 crate::layout::model::LayoutKind::Grid;
 
-            type Edit = Box<dyn Fn(&mut ControlCommand)>;
-            let cases: Vec<(&str, Edit, ControlErrorCode)> = vec![
+            let cases: Vec<(&str, CommandEdit, ControlErrorCode)> = vec![
                 (
                     "a target with a workspace",
                     Box::new(move |command| {
@@ -3133,6 +3146,115 @@ mod tests {
                     .collect();
                 assert_eq!(before, after, "{case} opened a pane");
             }
+        });
+    }
+
+    /// Without a session the pane waits for one to be attached, and that new session starts empty,
+    /// so there is nothing to split; the placement is refused rather than dropped on the way. Panes
+    /// left on screen with no session and no attach under way are what make it look splittable.
+    #[test]
+    fn new_pane_without_a_session_refuses_a_placement_instead_of_deferring_it() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            backend.state_mut().current_mut().pending_session_attach = None;
+            assert!(backend.state().needs_session_for_pty());
+            let pane = workspace_ids(&backend, 0)[0];
+            let edits: [CommandEdit; 2] = [
+                Box::new(|command| *placement_fields(command).2 = Some(0.3)),
+                Box::new(move |command| *placement_fields(command).1 = Some(pane)),
+            ];
+            for edit in edits {
+                let response = dispatch_new_pane(&mut backend, edit)
+                    .try_recv()
+                    .expect("answered at once");
+                assert_eq!(
+                    response.code,
+                    Some(ControlErrorCode::Unsupported),
+                    "{:?}",
+                    response.error
+                );
+                assert!(backend.state().pending_session_action.is_none());
+                assert!(backend.state().current().pending_session_attach.is_none());
+            }
+        });
+    }
+
+    /// While the scratchpad shows, a pane behind it cannot be split, named or not.
+    #[test]
+    fn new_pane_refuses_to_split_a_pane_hidden_behind_the_scratchpad() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let hidden = workspace_ids(&backend, 0)[0];
+            backend.state_mut().scratch_visible = true;
+            let before = workspace_ids(&backend, 0);
+
+            let response = dispatch_new_pane(&mut backend, |command| {
+                *placement_fields(command).1 = Some(hidden);
+            })
+            .try_recv()
+            .expect("answered at once");
+
+            assert!(!response.ok);
+            assert_eq!(
+                response.error,
+                Some(format!("pane {hidden} is hidden behind the scratchpad"))
+            );
+            assert_eq!(workspace_ids(&backend, 0), before);
+            assert!(backend.state().scratch.panes.is_empty());
+        });
+    }
+
+    /// A `[[rules]]` workspace is a spawn sent elsewhere: it splits that workspace's focused pane,
+    /// as opening the command there by hand would, not the end of its tiling.
+    #[test]
+    fn a_rule_sending_a_pane_to_another_workspace_splits_its_focused_pane() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = settled_backend();
+            attach_test_session(&mut backend);
+            let caller = workspace_ids(&backend, 0)[0];
+            for _ in 0..3 {
+                dispatch_new_pane(&mut backend, |command| {
+                    *placement_fields(command).0 = Some(3);
+                });
+            }
+            let ids = workspace_ids(&backend, 2);
+            let focused = ids[0];
+            backend.state_mut().current_mut().workspaces[2].focused_pane = Some(focused);
+            backend
+                .state_mut()
+                .config
+                .rules
+                .push(crate::config::RuleConfig {
+                    matcher: crate::config::RuleMatcher::Substring("btop".to_string()),
+                    float: false,
+                    width: None,
+                    height: None,
+                    position: crate::config::FloatPosition::Center,
+                    workspace: Some(2),
+                    focus: false,
+                    fullscreen: false,
+                });
+
+            let (mut envelope, _response) = new_pane_request(false);
+            envelope.request.source_pane = Some(caller);
+            let ControlCommand::NewPane { command, .. } = &mut envelope.request.command else {
+                unreachable!("new_pane_request builds a NewPane");
+            };
+            *command = Some("btop".to_string());
+            backend
+                .dispatch(crate::Msg::ControlRequest(envelope))
+                .expect("dispatch new-pane");
+
+            let workspace = &backend.state().current().workspaces[2];
+            let new = workspace.panes.last().expect("the rule placed the pane").id;
+            assert!(!ids.contains(&new));
+            let tree = crate::layout::effective_tile_tree(workspace, None).expect("a tiling");
+            assert_eq!(
+                crate::layout::tiling::sibling_leaves(&tree, new),
+                Some(vec![focused]),
+                "{tree:?}"
+            );
         });
     }
 

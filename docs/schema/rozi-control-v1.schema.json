@@ -438,6 +438,13 @@
           "type": "integer"
         },
         "session_protocol": {
+          "description": "The session wire generation this binary speaks.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_protocol_min": {
+          "description": "The oldest session wire generation this binary still speaks.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -447,6 +454,7 @@
         "api",
         "schema",
         "session_protocol",
+        "session_protocol_min",
         "capabilities"
       ],
       "type": "object"

@@ -208,6 +208,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
                 effective_protocol: rozi::session::protocol::PROTOCOL_VERSION,
                 origin: Default::default(),
                 instance: None,
+                rozi_version: None,
             },
         ),
         (

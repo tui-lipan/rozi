@@ -15,12 +15,12 @@ pub const VERSION: u32 = 1;
 
 /// The capability a host's Rozi advertises when it can run placed extension processes. Also
 /// listed by `rozi api describe`.
-pub const CAPABILITY: &str = "remote-extension-runtime";
+pub const CAPABILITY: &str = crate::control::ControlCapability::RemoteExtensionRuntime.as_str();
 
 /// The capability a host's runtime advertises when it gives every process it starts a state
 /// directory on that host. A client places nothing on a runtime without it, since an extension
 /// may rely on `ROZI_EXTENSION_STATE_DIR` being there. Also listed by `rozi api describe`.
-pub const STATE_CAPABILITY: &str = "extension-state-dir";
+pub const STATE_CAPABILITY: &str = crate::control::ControlCapability::ExtensionStateDir.as_str();
 
 /// Largest frame either side accepts. Bundles travel in [`STAGE_CHUNK`]-sized pieces and bridged
 /// control traffic is line-oriented JSON, so nothing legitimate comes close.
@@ -56,7 +56,9 @@ impl Hello {
             capabilities: vec![
                 CAPABILITY.to_string(),
                 STATE_CAPABILITY.to_string(),
-                crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY.to_string(),
+                crate::control::ControlCapability::AttachedSessionScope
+                    .as_str()
+                    .to_string(),
             ],
             version: os.as_ref().map(|_| env!("CARGO_PKG_VERSION").to_string()),
             os,

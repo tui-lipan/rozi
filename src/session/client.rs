@@ -156,10 +156,13 @@ pub struct SessionClient {
     pub(crate) path_family: crate::platform::paths::PathFamily,
     /// `SSH_CONNECTION` announced by the remote proxy; `None` for local IPC.
     pub(crate) ssh_connection: Option<String>,
-    /// Wire version agreed with this server. Gates messages added after the minimum supported
-    /// version so an older server never receives a variant it cannot deserialize.
+    /// Wire generation agreed with this server.
     effective_protocol: u32,
+    /// What this connection may use beyond its generation's baseline. Every feature check goes
+    /// through [`Self::supports`].
     capabilities: protocol::Capabilities,
+    /// The server's release, when it said. See [`ServerMessage::Attached`].
+    server_version: Option<String>,
     /// This client's host cell size in pixels, sent with the canonical PTY size so the server's
     /// PTYs report pixel dimensions the child can size images against. Read once: it is a
     /// property of the terminal this process is attached to, not of any one pane.
@@ -282,6 +285,7 @@ impl SessionClient {
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
+                server_version: None,
             },
             test_rx,
         )
@@ -460,13 +464,18 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(advice_for.as_deref(), &attached)?;
-        let capabilities = match &attached {
-            ServerMessage::Attached { capabilities, .. } => {
-                protocol::Capabilities::negotiated(capabilities.as_ref())
-            }
+        let (capabilities, server_version) = match &attached {
+            ServerMessage::Attached {
+                capabilities,
+                rozi_version,
+                ..
+            } => (
+                protocol::Capabilities::negotiated(capabilities.as_ref()),
+                rozi_version.clone(),
+            ),
             _ => unreachable!("validated attach reply"),
         };
-        let metrics_enabled = capabilities.supports(protocol::RUNTIME_METRICS);
+        let metrics_enabled = capabilities.supports(protocol::Capability::RuntimeMetrics);
         let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
         let shutdown_signal = Arc::new(AtomicBool::new(false));
         // The worker threads may be blocked in platform I/O. Do not construct a transport without
@@ -589,6 +598,7 @@ impl SessionClient {
             server_pid,
             effective_protocol,
             capabilities,
+            server_version,
             cell: tui_lipan::host_cell_size(),
         };
         client.request_runtime_metrics();
@@ -608,8 +618,21 @@ impl SessionClient {
         &self.capabilities
     }
 
+    /// Whether this connection negotiated `capability`. The only feature check UI code uses.
+    pub fn supports(&self, capability: protocol::Capability) -> bool {
+        self.capabilities.supports(capability)
+    }
+
+    /// The release the server runs, when it reported one.
+    pub fn server_version(&self) -> Option<&str> {
+        self.server_version.as_deref()
+    }
+
     pub fn request_runtime_metrics(&self) {
-        if !self.capabilities.supports(protocol::RUNTIME_METRICS) {
+        if !self
+            .capabilities
+            .supports(protocol::Capability::RuntimeMetrics)
+        {
             return;
         }
         try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
@@ -1786,6 +1809,7 @@ mod tests {
             input_locked: false,
             allow_takeover: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            rozi_version: None,
         }
     }
 
@@ -2132,6 +2156,7 @@ mod tests {
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),
+            server_version: None,
             cell: tui_lipan::TerminalCellSize::default(),
         };
 

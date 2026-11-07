@@ -41,8 +41,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
         label: String,
@@ -83,8 +82,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
         request: crate::control::ControlRequest,
@@ -97,8 +95,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
     },
@@ -356,6 +353,12 @@ pub enum ClientMessage {
     /// End the session's panes and discard its snapshot, leaving its deployments for whatever
     /// starts under this name next.
     ShutdownForRestart,
+    /// Any `type` this build does not know: a request from a newer peer that skipped the send gate.
+    ///
+    /// Decoded so the connection survives, answered with
+    /// [`super::UNSUPPORTED_MESSAGE_ERROR_CODE`], and never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -540,7 +543,7 @@ pub enum ServerMessage {
         session_instance: super::SessionInstanceId,
         /// Server's maximum supported protocol version.
         protocol_version: u32,
-        /// Negotiated wire version for this connection. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this connection.
         #[serde(default)]
         effective_protocol: u32,
         session: String,
@@ -554,6 +557,9 @@ pub enum ServerMessage {
         #[serde(default)]
         allow_takeover: bool,
         origin: SessionOrigin,
+        /// The server's release (`CARGO_PKG_VERSION`), so a client can name what a session runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rozi_version: Option<String>,
     },
     /// Retained inbox delivered immediately after attach, before live notification events.
     SessionNotifications {
@@ -578,7 +584,7 @@ pub enum ServerMessage {
         panes: usize,
         clients: u32,
         has_layout: bool,
-        /// Negotiated wire version for this probe. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this probe.
         #[serde(default)]
         effective_protocol: u32,
         origin: SessionOrigin,
@@ -587,6 +593,9 @@ pub enum ServerMessage {
         /// Missing on servers that predate it, which a caller must treat as "not mine".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instance: Option<super::SessionInstanceId>,
+        /// The server's release (`CARGO_PKG_VERSION`). See [`ServerMessage::Attached`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rozi_version: Option<String>,
     },
     /// Reply to a [`ClientMessage::SessionControl`] request.
     ///
@@ -595,7 +604,7 @@ pub enum ServerMessage {
     SessionControlResult {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capabilities: Option<super::Capabilities>,
-        /// Negotiated wire version for this request. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this request.
         #[serde(default)]
         effective_protocol: u32,
         response: crate::control::ControlResponse,
@@ -779,6 +788,120 @@ pub enum ServerMessage {
     SessionSubscribeRecord {
         record: crate::session::protocol::SessionSubscribeRecord,
     },
+    /// Any `type` this build does not know: a message from a newer server that skipped the send
+    /// gate. Decoded so the connection survives, logged once, ignored, and never sent.
+    #[serde(other)]
+    Unknown,
+}
+
+impl ClientMessage {
+    /// The capability a peer must have negotiated before this message may be sent to it.
+    ///
+    /// `None` is the baseline of the wire generation: every peer in the window understands it.
+    /// The match is exhaustive on purpose. A new variant does not compile until its author decides,
+    /// and anything added within a generation needs a [`super::Capability`] (see
+    /// `dev/wire-compatibility.md`); the schema classifier rejects a new variant that answers
+    /// `None`.
+    pub fn required_capability(&self) -> Option<super::Capability> {
+        match self {
+            ClientMessage::Attach { .. }
+            | ClientMessage::SetSessionOrigin { .. }
+            | ClientMessage::SessionControl { .. }
+            | ClientMessage::Query { .. }
+            | ClientMessage::SpawnPane { .. }
+            | ClientMessage::Resize { .. }
+            | ClientMessage::Kill { .. }
+            | ClientMessage::SetPalette { .. }
+            | ClientMessage::ConfigurePane { .. }
+            | ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::SetPaneStatus { .. }
+            | ClientMessage::ReportAgent { .. }
+            | ClientMessage::AttachedControl { .. }
+            | ClientMessage::CancelAttachedControl { .. }
+            | ClientMessage::ReportPaneRows { .. }
+            | ClientMessage::ReloadAgents
+            | ClientMessage::ReloadSpawnPolicy
+            | ClientMessage::ReloadSleepPolicy
+            | ClientMessage::CommitLayout { .. }
+            | ClientMessage::DragUpdate { .. }
+            | ClientMessage::DragEnd
+            | ClientMessage::RequestControl
+            | ClientMessage::SetControlTakeover { .. }
+            | ClientMessage::SetParked { .. }
+            | ClientMessage::GrantControl { .. }
+            | ClientMessage::DeclineControl { .. }
+            | ClientMessage::EvictClient { .. }
+            | ClientMessage::SetInputLock { .. }
+            | ClientMessage::Pong { .. }
+            | ClientMessage::MarkedInput { .. }
+            | ClientMessage::Attachment { .. }
+            | ClientMessage::Rename { .. }
+            | ClientMessage::ListDirectory { .. }
+            | ClientMessage::ListChanges { .. }
+            | ClientMessage::Worktree { .. }
+            | ClientMessage::RequestRuntimeMetrics
+            | ClientMessage::Detach
+            | ClientMessage::Shutdown
+            | ClientMessage::ShutdownForRestart => None,
+            ClientMessage::Unknown => {
+                debug_assert!(false, "ClientMessage::Unknown is never sent");
+                None
+            }
+        }
+    }
+}
+
+impl ServerMessage {
+    /// The capability a peer must have negotiated before this message may be sent to it.
+    ///
+    /// `None` is the baseline of the wire generation: every peer in the window understands it.
+    /// The match is exhaustive on purpose. A new variant does not compile until its author decides,
+    /// and anything added within a generation needs a [`super::Capability`] (see
+    /// `dev/wire-compatibility.md`); the schema classifier rejects a new variant that answers
+    /// `None`.
+    pub fn required_capability(&self) -> Option<super::Capability> {
+        match self {
+            ServerMessage::PaneMetadata { .. }
+            | ServerMessage::AttachmentAck { .. }
+            | ServerMessage::Error { .. }
+            | ServerMessage::Attached { .. }
+            | ServerMessage::SessionNotifications { .. }
+            | ServerMessage::SessionActions { .. }
+            | ServerMessage::SessionInfo { .. }
+            | ServerMessage::SessionControlResult { .. }
+            | ServerMessage::AgentReportResult { .. }
+            | ServerMessage::AttachedControlResult { .. }
+            | ServerMessage::SessionOriginSet { .. }
+            | ServerMessage::Resized { .. }
+            | ServerMessage::PaneReset { .. }
+            | ServerMessage::Exited { .. }
+            | ServerMessage::SpawnResult { .. }
+            | ServerMessage::PaneLoggingChanged { .. }
+            | ServerMessage::ProgramStatusChanged { .. }
+            | ServerMessage::PaneRuntimeChanged { .. }
+            | ServerMessage::Renamed { .. }
+            | ServerMessage::LayoutCommitted { .. }
+            | ServerMessage::LayoutRejected { .. }
+            | ServerMessage::DragChanged { .. }
+            | ServerMessage::ControllerChanged { .. }
+            | ServerMessage::ControlRequested { .. }
+            | ServerMessage::ControlDeclined
+            | ServerMessage::ClientsChanged { .. }
+            | ServerMessage::Ping { .. }
+            | ServerMessage::InputMarked { .. }
+            | ServerMessage::DirectoryListing { .. }
+            | ServerMessage::ChangeListing { .. }
+            | ServerMessage::WorktreeResult { .. }
+            | ServerMessage::RuntimeMetrics { .. }
+            | ServerMessage::RecordingEnded { .. }
+            | ServerMessage::SessionEvent { .. }
+            | ServerMessage::SessionSubscribeRecord { .. } => None,
+            ServerMessage::Unknown => {
+                debug_assert!(false, "ServerMessage::Unknown is never sent");
+                None
+            }
+        }
+    }
 }
 
 /// One acknowledged step of a bounded attachment upload.

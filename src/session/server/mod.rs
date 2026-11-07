@@ -1016,7 +1016,7 @@ impl ClientConn {
             last_ping: now,
             ping_seq: 0,
             effective_protocol: 0,
-            capabilities: protocol::Capabilities::legacy(),
+            capabilities: protocol::Capabilities::default(),
             requesting_control: false,
             parked: false,
             last_request_notify: None,

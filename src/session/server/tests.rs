@@ -150,7 +150,7 @@ pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream
     server.handle_message(
         id,
         ClientMessage::Attach {
-            capabilities: None,
+            capabilities: Some(protocol::Capabilities::current()),
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
             min_protocol_version: PROTOCOL_VERSION,
@@ -1549,7 +1549,7 @@ fn a_resyncing_client_is_still_pinged_past_the_barrier() {
 }
 
 #[test]
-fn runtime_metrics_request_serves_protocol_19_peers() {
+fn runtime_metrics_request_serves_peers_that_negotiated_it() {
     let mut server = SessionServer::new_named("dev");
     let (current, _stream) = attach_client(&mut server);
     assert!(matches!(
@@ -1583,6 +1583,34 @@ fn runtime_metrics_request_serves_protocol_19_peers() {
     );
 }
 
+/// A newer client may send a request this server has never heard of. That one request fails; the
+/// client stays attached and keeps working.
+#[test]
+fn an_unknown_request_is_refused_without_dropping_the_client() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let request: ClientMessage =
+        serde_json::from_str(r#"{"type":"teleport-pane","pane_id":1}"#).expect("decodes");
+
+    let responses = server.handle_message(client_id, request);
+
+    assert!(
+        matches!(
+            responses.as_slice(),
+            [(Target::Sender, ServerMessage::Error { code, .. })]
+                if code == crate::session::protocol::UNSUPPORTED_MESSAGE_ERROR_CODE
+        ),
+        "expected one unsupported-message error, got {responses:?}"
+    );
+    assert!(server.client_attached(client_id));
+    assert!(matches!(
+        server
+            .handle_message(client_id, ClientMessage::Pong { seq: 0 })
+            .as_slice(),
+        []
+    ));
+}
+
 /// Protocol range answers "can we talk at all"; capabilities answer "which optional work may this
 /// connection ask for". They are separate questions, and the second must degrade one feature at a
 /// time rather than turning a perfectly usable peer away.
@@ -1605,23 +1633,35 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
             other => panic!("expected an Attached reply, got {other:?}"),
         };
 
-    // A peer that says nothing is a pre-capability build. Protocol 5 already carried runtime
-    // metrics, so a missing field has to keep meaning "metrics, and nothing added since".
-    let (legacy, _stream) = add_client(&mut server);
-    server.handle_message(legacy, attach(None));
+    // A peer that sends no set gets none of the optional work, metrics included.
+    let (silent, _stream) = add_client(&mut server);
+    server.handle_message(silent, attach(None));
     assert_eq!(
-        agreed(&server, legacy),
-        Some(protocol::Capabilities::legacy())
+        agreed(&server, silent),
+        Some(protocol::Capabilities::default())
+    );
+    assert!(
+        server
+            .handle_message(silent, ClientMessage::RequestRuntimeMetrics)
+            .is_empty()
+    );
+
+    // A client that offers metrics gets them.
+    let (metrics, _stream) = add_client(&mut server);
+    server.handle_message(
+        metrics,
+        attach(Some(protocol::Capabilities::from_iter([
+            protocol::Capability::RuntimeMetrics,
+        ]))),
     );
     assert!(matches!(
         server
-            .handle_message(legacy, ClientMessage::RequestRuntimeMetrics)
+            .handle_message(metrics, ClientMessage::RequestRuntimeMetrics)
             .as_slice(),
-        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == legacy
+        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == metrics
     ));
 
-    // An explicit empty set is a client declining the optional work, which the server must then
-    // not do on its behalf — including the metrics a silent peer would have got.
+    // An explicit empty set is a client declining the optional work.
     let (quiet, _stream) = add_client(&mut server);
     server.handle_message(quiet, attach(Some(protocol::Capabilities::default())));
     assert_eq!(
@@ -1642,7 +1682,9 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
     server.handle_message(future, attach(Some(offered)));
     assert_eq!(
         agreed(&server, future),
-        Some(protocol::Capabilities::legacy())
+        Some(protocol::Capabilities::from_iter([
+            protocol::Capability::RuntimeMetrics
+        ]))
     );
 }
 
@@ -2910,7 +2952,7 @@ fn query_carries_project_summaries_by_checkout() {
     };
     assert_eq!(reported(Some(protocol::Capabilities::current())).len(), 2);
     let agents_only = protocol::Capabilities(
-        [protocol::AGENT_SUMMARIES.to_string()]
+        [protocol::Capability::AgentSummaries.as_str().to_string()]
             .into_iter()
             .collect(),
     );

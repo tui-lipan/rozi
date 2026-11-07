@@ -661,21 +661,23 @@ is a 4-byte big-endian length, a 1-byte frame kind, and a JSON body. One exchang
 4. The server closes the connection.
 
 ```json
-{"type":"session-control","session":"dev","protocol_version":37,"min_protocol_version":37,
+{"type":"session-control","session":"dev","protocol_version":52,"min_protocol_version":52,
  "request":{"cmd":"capture-pane","target":3}}
 ```
 
 ```json
-{"type":"session-control-result","effective_protocol":37,
+{"type":"session-control-result","effective_protocol":52,
  "response":{"ok":true,"data":{"id":3,"title":"zsh","render":"text","text":"…"}}}
 ```
 
 - `request` is the same document the UI endpoint accepts, and `response` is the same envelope it
   returns.
 - `protocol_version` and `min_protocol_version` are the newest and oldest session protocol
-  versions the client speaks. A server accepts only its own version, which `rozi api describe`
-  reports as `session_protocol`. `effective_protocol` is the version the server used.
-- Both frames may carry a `capabilities` object; a client may omit it.
+  generations the client speaks. `rozi api describe` reports a binary's range as
+  `session_protocol_min` and `session_protocol`. The server uses the newest generation both sides
+  speak and reports it as `effective_protocol`.
+- Both frames may carry a `capabilities` list of optional features; the reply lists the ones both
+  sides support. A client may omit it.
 - A wrong session name or an incompatible version is answered with a session-protocol `error` frame
   carrying `session-mismatch` or `protocol-mismatch`, not with a control response.
 - A request with a pane wait holds the connection open until the wait resolves or times out. A

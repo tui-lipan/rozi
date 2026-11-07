@@ -359,7 +359,7 @@ fn check_attached_scope(state: &mut State, host: &HostKey) -> AttachedScopeCheck
             detail: format!(
                 "the host's Rozi cannot run a service with `session_scope = \"attached\"` ({}); \
                  update Rozi there",
-                crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY
+                crate::control::ControlCapability::AttachedSessionScope.as_str()
             ),
         }),
         _ => AttachedScopeCheck::Start,
@@ -760,10 +760,9 @@ pub(crate) fn runtime_event(
                 .hosts
                 .get_mut(&host)
                 .expect("checked above");
-            let attached_scope = hello
-                .capabilities
-                .iter()
-                .any(|item| item == crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY);
+            let attached_scope = hello.capabilities.iter().any(|item| {
+                item == crate::control::ControlCapability::AttachedSessionScope.as_str()
+            });
             runtime.status = HostRuntimeStatus::Ready {
                 os: hello.os.unwrap_or_default(),
                 version: hello.version,
@@ -1870,7 +1869,7 @@ mod tests {
                 panic!("expected a refusal, got {:?}", runtime.instances[0].status);
             };
             assert!(
-                detail.contains(crate::control::ATTACHED_SESSION_SCOPE_CAPABILITY),
+                detail.contains(crate::control::ControlCapability::AttachedSessionScope.as_str()),
                 "{detail}"
             );
 

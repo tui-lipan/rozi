@@ -1067,7 +1067,9 @@ impl SessionServer {
             ClientMessage::RequestRuntimeMetrics => {
                 let known = self.clients.iter().any(|client| {
                     client.id == client_id
-                        && client.capabilities.supports(protocol::RUNTIME_METRICS)
+                        && client
+                            .capabilities
+                            .supports(protocol::Capability::RuntimeMetrics)
                 });
                 if known {
                     vec![(
@@ -1081,6 +1083,18 @@ impl SessionServer {
                 }
             }
             ClientMessage::Detach => Vec::new(),
+            // A newer client's request that skipped its send gate. Refuse that one request and keep
+            // the connection: everything else the client does still works.
+            ClientMessage::Unknown => vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: protocol::UNSUPPORTED_MESSAGE_ERROR_CODE.to_string(),
+                    message: format!(
+                        "this session runs rozi {}, which does not support that request",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                },
+            )],
             message @ (ClientMessage::Shutdown | ClientMessage::ShutdownForRestart) => {
                 if !self.client_attached(client_id) || self.client_read_only(client_id) {
                     return Vec::new();
@@ -1424,6 +1438,7 @@ impl SessionServer {
             input_locked: self.input_locked,
             allow_takeover: self.allow_takeover,
             origin: self.origin.clone(),
+            rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         self.enqueue(client_id, Target::Sender, attached);
         if !self.notifications.is_empty() {
@@ -1509,12 +1524,12 @@ impl SessionServer {
             .filter(|pane| pane.exited.is_none())
             .count();
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
-        let agents = if capabilities.supports(protocol::AGENT_SUMMARIES) {
+        let agents = if capabilities.supports(protocol::Capability::AgentSummaries) {
             self.agent_summaries()
         } else {
             Vec::new()
         };
-        let projects = if capabilities.supports(protocol::PROJECT_SUMMARIES) {
+        let projects = if capabilities.supports(protocol::Capability::ProjectSummaries) {
             self.project_summaries()
         } else {
             Vec::new()
@@ -1532,6 +1547,7 @@ impl SessionServer {
                 effective_protocol: effective,
                 origin: self.origin.clone(),
                 instance: Some(self.instance_id.clone()),
+                rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             },
         )]
     }

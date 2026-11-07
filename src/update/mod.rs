@@ -61,6 +61,7 @@ fn post_update_kind(msg: &Msg) -> PostUpdateKind {
     } else if matches!(
         msg,
         Msg::TerminalPresented(_)
+            | Msg::SessionIgnored
             | Msg::UiRecordingFrame(_)
             | Msg::UiRecordingFlush { .. }
             | Msg::UiRecordingPoll { .. }
@@ -836,6 +837,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             crate::ops::capture_wait::input_marked(ctx, token)
         }
         Msg::CaptureWaitTick => crate::ops::capture_wait::tick(ctx),
+        Msg::SessionIgnored => Update::none(),
         Msg::SessionRuntimeMetrics { epoch } => {
             runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
         }

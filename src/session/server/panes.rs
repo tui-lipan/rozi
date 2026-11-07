@@ -957,7 +957,7 @@ impl SessionServer {
         let edits = attached.all(|client| {
             client
                 .capabilities
-                .supports(protocol::GRAPHICS_ROOT_FRAME_EDITS)
+                .supports(protocol::Capability::GraphicsRootFrameEdits)
         });
         ImageMedia {
             policy: GraphicsMediaPolicy::default(),

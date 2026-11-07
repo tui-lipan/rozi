@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use crate::pane::id::PaneId;
 use crate::platform::ipc::{EndpointRegistry, IpcListener};
 
+mod capability;
 pub mod pick;
+
+pub use capability::ControlCapability;
 
 /// Version of the public control request and response API.
 pub const CONTROL_API_VERSION: u32 = 1;
@@ -33,96 +36,6 @@ pub const API_SCHEMA_VERSION: u32 = 3;
 /// of its own API without compiling the generator into it.
 pub const API_SCHEMA_DOCUMENT: &str = include_str!("../docs/schema/rozi-control-v1.schema.json");
 
-pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
-pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
-pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
-pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
-pub const SESSION_CONTROL_CAPABILITY: &str = "session-control";
-/// `sessions new <NAME> --detach` starts a session server and returns without opening a UI.
-pub const DETACHED_SESSION_CREATE_CAPABILITY: &str = "detached-session-create";
-/// `sessions new <NAME> --detach --no-resurrect` starts a session that never writes a snapshot.
-pub const SESSION_NO_RESURRECT_CAPABILITY: &str = "session-no-resurrect";
-pub const PUBLISHED_ACTIVITY_CAPABILITY: &str = "published-activity";
-/// This binary can both forward a control command to a session on another host and serve one
-/// forwarded to it. Advertised by `api describe`, so a caller can check the far host's rozi before
-/// relying on it.
-pub const REMOTE_CONTROL_CAPABILITY: &str = "remote-control";
-/// `layout get` reports workspaces and pane geometry from the shared layout document.
-pub const LAYOUT_CONTROL_CAPABILITY: &str = "layout-control";
-/// `capture-pane` honors `render`: `ansi` and `png` as well as text. An older binary ignores the
-/// field and answers with text.
-pub const CAPTURE_RENDER_CAPABILITY: &str = "capture-render";
-/// `capture-ui` returns the whole client as it is drawn, chrome and every visible pane.
-pub const CAPTURE_UI_CAPABILITY: &str = "capture-ui";
-/// `capture-pane` and `capture-ui` honor `scale` for a PNG. An older binary ignores the field and
-/// answers at scale 1.
-pub const CAPTURE_SCALE_CAPABILITY: &str = "capture-scale";
-/// `capture-pane`, `send-text`, and `send-keys` honor `wait`, holding the reply until the pane's
-/// screen shows some text or settles. An older binary ignores the field and answers at once.
-pub const CAPTURE_WAIT_CAPABILITY: &str = "capture-wait";
-/// `capture-pane` and `capture-ui` accept `render: "spans"`, and `image_pixels` with it. An older
-/// binary refuses the render as an invalid request.
-pub const CAPTURE_SPANS_CAPABILITY: &str = "capture-spans";
-/// A session server records a pane with `record-start`, `record-stop`, `record-list`, and
-/// `record-mark`, and `list-panes` and `metrics` report recordings.
-pub const RECORD_PANE_CAPABILITY: &str = "record-pane";
-/// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
-/// forwarding them to the session server it is attached to.
-pub const ATTACHED_CONTROL_CAPABILITY: &str = "attached-control";
-/// A UI records itself as it paints, chrome included, with `record-ui-start`, `record-ui-stop`,
-/// and `record-ui-mark`, into a file on the UI's own host.
-pub const RECORD_UI_CAPABILITY: &str = "record-ui";
-/// A UI answers `pane-reveal`, scrolling a Scrollable strip to a pane without moving focus.
-pub const PANE_REVEAL_CAPABILITY: &str = "pane-reveal";
-/// `new-pane` honors `size`, starting the pane at that terminal size. An older binary ignores the
-/// field and starts the pane at its default size.
-pub const SPLIT_SIZE_CAPABILITY: &str = "split-size";
-/// `new-pane` honors `target` and `split_ratio`: it splits the named pane, and sizes the split it
-/// opens. An older binary ignores both and splits the caller's or the focused pane evenly.
-pub const SPLIT_PLACEMENT_CAPABILITY: &str = "split-placement";
-/// A UI answers `command-visibility`, which shows or hides an extension's own command in the
-/// command palette, and extension manifests accept `hidden` on `[[commands]]`.
-pub const COMMAND_VISIBILITY_CAPABILITY: &str = "command-visibility";
-/// `publish` accepts `kind` and `name`: a publisher declares whether its rows are agents, and
-/// several publishers share a pane, each owning its own rows. Without it every published row is
-/// treated as an agent and a pane holds one publisher.
-pub const PUBLISH_KIND_CAPABILITY: &str = "publish-kind";
-/// `sidebar-publish` streams rows into a sidebar stream tab, several producers to a tab, and
-/// command tabs accept `format = "json"`.
-pub const SIDEBAR_STREAMS_CAPABILITY: &str = "sidebar-streams";
-/// Extension manifests accept a `[settings]` entry's table form (`default`, `label`,
-/// `description`, `choices`, `min`, `max`) and `settings` on `[[sidebar_tabs]]`, offered in the tab
-/// settings picker. An older binary rejects both.
-pub const SIDEBAR_TAB_SETTINGS_CAPABILITY: &str = "sidebar-tab-settings";
-/// `list-panes --scope attached`, and a service manifest's `session_scope`. A placed service runs
-/// the host's `rozi`, so its host has to offer this too, not only the client that loaded it.
-pub const ATTACHED_SESSION_SCOPE_CAPABILITY: &str = "attached-session-scope";
-/// A UI answers `prompt`, a modal text prompt with no picker behind it.
-pub const PROMPT_CAPABILITY: &str = "prompt";
-/// A pick action's prompt object honors `from_query`, starting from the picker's filter text. An
-/// older binary ignores the field and starts from `value`.
-pub const PICK_PROMPT_FROM_QUERY_CAPABILITY: &str = "pick-prompt-from-query";
-/// `subscribe` and hooks accept the `agent-state-changed` and `foreground-changed` events. An older
-/// binary refuses a subscription naming either, and warns about a hook that does.
-pub const RUNTIME_EVENTS_CAPABILITY: &str = "runtime-events";
-/// `subscribe` on session endpoints streams authoritative session events, snapshots, and cursors.
-pub const SESSION_SUBSCRIBE_CAPABILITY: &str = "session-subscribe";
-/// A UI answers `agents-overview`, every agent it knows about in every session and on every
-/// connected host, and `agent-go`, which goes to one of them.
-pub const GLOBAL_AGENTS_CAPABILITY: &str = "global-agents";
-/// A session server stores, verifies, lists, and removes extension deployments of its own, so a
-/// client can hand it the files an extension will run when no UI is attached.
-pub const SESSION_DEPLOYMENTS_CAPABILITY: &str = "session-deployments";
-/// A session server runs deployed actions: `invoke`, `invocation-list`, `invocation-cancel`, and
-/// `actions-list`.
-pub const SESSION_ACTIONS_CAPABILITY: &str = "session-actions";
-/// A session server runs the `placement = "session"` services of what is deployed to it, with no UI
-/// attached, under credentials it issues itself.
-pub const SESSION_SERVICES_CAPABILITY: &str = "session-services";
-/// A session server accepts `notify`, keeps a bounded inbox, and includes it in subscription
-/// snapshots.
-pub const SESSION_NOTIFICATIONS_CAPABILITY: &str = "session-notifications";
-
 /// Features this binary exposes to control clients and extension authors.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
@@ -131,7 +44,10 @@ pub struct ApiDescription {
     /// Version of the JSON Schema this binary's API is described by, published at
     /// `docs/schema/rozi-control-v1.schema.json`.
     pub schema: u32,
+    /// The session wire generation this binary speaks.
     pub session_protocol: u32,
+    /// The oldest session wire generation this binary still speaks.
+    pub session_protocol_min: u32,
     pub capabilities: Vec<&'static str>,
 }
 
@@ -141,46 +57,11 @@ impl ApiDescription {
             api: CONTROL_API_VERSION,
             schema: API_SCHEMA_VERSION,
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
-            capabilities: vec![
-                AGENT_PROMPT_RESULTS_CAPABILITY,
-                AGENT_WAITS_CAPABILITY,
-                ATTACHED_CONTROL_CAPABILITY,
-                ATTACHED_SESSION_SCOPE_CAPABILITY,
-                CALLER_CONTEXT_CAPABILITY,
-                CAPTURE_RENDER_CAPABILITY,
-                CAPTURE_SCALE_CAPABILITY,
-                CAPTURE_SPANS_CAPABILITY,
-                CAPTURE_UI_CAPABILITY,
-                CAPTURE_WAIT_CAPABILITY,
-                COMMAND_VISIBILITY_CAPABILITY,
-                DETACHED_SESSION_CREATE_CAPABILITY,
-                "extension-link-handlers",
-                crate::extension_runtime::protocol::STATE_CAPABILITY,
-                GLOBAL_AGENTS_CAPABILITY,
-                LAYOUT_CONTROL_CAPABILITY,
-                PANE_CONTROL_CAPABILITY,
-                PANE_REVEAL_CAPABILITY,
-                PICK_PROMPT_FROM_QUERY_CAPABILITY,
-                PROMPT_CAPABILITY,
-                PUBLISH_KIND_CAPABILITY,
-                PUBLISHED_ACTIVITY_CAPABILITY,
-                RECORD_PANE_CAPABILITY,
-                RECORD_UI_CAPABILITY,
-                REMOTE_CONTROL_CAPABILITY,
-                crate::extension_runtime::protocol::CAPABILITY,
-                RUNTIME_EVENTS_CAPABILITY,
-                SESSION_ACTIONS_CAPABILITY,
-                SESSION_CONTROL_CAPABILITY,
-                SESSION_DEPLOYMENTS_CAPABILITY,
-                SESSION_NO_RESURRECT_CAPABILITY,
-                SESSION_NOTIFICATIONS_CAPABILITY,
-                SESSION_SERVICES_CAPABILITY,
-                SESSION_SUBSCRIBE_CAPABILITY,
-                SIDEBAR_STREAMS_CAPABILITY,
-                SIDEBAR_TAB_SETTINGS_CAPABILITY,
-                SPLIT_PLACEMENT_CAPABILITY,
-                SPLIT_SIZE_CAPABILITY,
-            ],
+            session_protocol_min: crate::session::protocol::MIN_SUPPORTED_PROTOCOL,
+            capabilities: ControlCapability::ALL
+                .iter()
+                .map(|cap| cap.as_str())
+                .collect(),
         }
     }
 }

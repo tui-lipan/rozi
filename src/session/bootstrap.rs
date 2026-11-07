@@ -880,6 +880,9 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             }
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
+            // A newer server's message that skipped its send gate. Ignoring it keeps the session
+            // attached; acting on it is impossible and treating it as an error would reconnect.
+            ServerMessage::Unknown => Msg::SessionIgnored,
             ServerMessage::InputMarked { token } => Msg::SessionInputMarked { epoch, token },
             ServerMessage::RuntimeMetrics { .. } => Msg::SessionRuntimeMetrics { epoch },
             ServerMessage::RecordingEnded { stopped } => {

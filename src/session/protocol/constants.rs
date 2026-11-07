@@ -1,26 +1,26 @@
-/// Maximum wire protocol version this build speaks.
+/// The wire generation this build speaks: its maximum supported session protocol.
 ///
-/// Every peer is built from this same tree, so there is one version and no skew to straddle. Bump
-/// this for any wire change, additive or not; a mismatched peer is rejected at the handshake rather
-/// than shimmed. Development builds are peers too, so commits between releases bump it as well,
-/// and it is never reset to look smaller: the number is internal, and user-facing text says only
-/// whether it changed.
+/// A generation is a shape every peer of that generation can parse. It is bumped only for a change
+/// the evolution rules in `dev/wire-compatibility.md` cannot express: removing or renaming
+/// something, changing a type, a new required field, or a framing change. A bump is a breaking
+/// change, marked `!` with a `### Breaking changes` section in the release notes, and development
+/// builds follow the same rule. Everything else is additive: an optional field a receiver can do
+/// without, or a [`super::Capability`] the sender checks before it relies on the new behavior.
 ///
-/// This is the only question about *shape*. Whether a connection may ask for a particular piece of
-/// optional work is the separate question [`super::Capabilities`] answers, and the two are
-/// deliberately not merged: a capability can go missing on a peer that declines the work while the
-/// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 51;
+/// The handshake ([`super::ClientMessage::Attach`], [`super::ClientMessage::Query`],
+/// [`super::ClientMessage::SessionControl`], [`super::ServerMessage::Attached`],
+/// [`super::ServerMessage::SessionInfo`], [`super::ServerMessage::Error`] with
+/// [`PROTOCOL_MISMATCH_ERROR_CODE`], and the remote preamble) is frozen across generations: fields
+/// may only be added, so any two builds can at least tell each other they are incompatible.
+pub const PROTOCOL_VERSION: u32 = 52;
 
-/// Oldest wire protocol version this build can still speak.
-pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
-
-/// First protocol whose session servers honor `new-pane`'s `size`.
+/// Oldest wire generation this build still speaks.
 ///
-/// An older server deserializes the request without the field and spawns at its default size, then
-/// reports success. Refusing it at the handshake is the only way a sized headless `split` can fail
-/// loudly, so [`MIN_SUPPORTED_PROTOCOL`] must never drop below this.
-pub const PANE_SIZE_PROTOCOL: u32 = 21;
+/// It trails [`PROTOCOL_VERSION`] by the support window: a build speaks the current generation and
+/// the previous one for at least six months after a bump ships. Adapters for the previous
+/// generation live in one place and are deleted when the window closes. Generation 52 is the first
+/// with the send gate and tolerant decoding, so the window starts there.
+pub const MIN_SUPPORTED_PROTOCOL: u32 = 52;
 
 /// `code` on the [`super::ServerMessage::Error`] a client receives just before the server closes it for
 /// being evicted. Distinguishes a removal from a dropped connection, which the client would
@@ -31,6 +31,10 @@ pub const EVICTED_ERROR_CODE: &str = "evicted";
 /// builds share no protocol version. Every build since protocol negotiation began uses this code,
 /// so a client can recognise an older server it cannot otherwise read.
 pub const PROTOCOL_MISMATCH_ERROR_CODE: &str = "protocol-mismatch";
+
+/// `code` on the [`super::ServerMessage::Error`] a server answers a request with when it does not
+/// know the request's `type`. The connection stays open; only that request failed.
+pub const UNSUPPORTED_MESSAGE_ERROR_CODE: &str = "unsupported-message";
 
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;

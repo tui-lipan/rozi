@@ -440,7 +440,8 @@ style = "sparks"
 
 With `"jump"`, a jump inside one pane is drawn once the cursor has held still for a moment, so a
 cursor that lands in steps, such as a shell's newline and then its prompt, gets one smear straight
-to where it settled. A move to another pane draws at once.
+to where it settled. A move to another pane draws at once. A pane that moves, such as one sliding
+with its workspace or a floating pane you drag, carries its cursor along without a trail.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |

@@ -1,0 +1,15 @@
+{
+  "agent": "example",
+  "ended": false,
+  "generation": 1,
+  "integration": "example",
+  "local": false,
+  "native_session": "example",
+  "pane_id": 1,
+  "reason": "example",
+  "request_id": 1,
+  "seq": 1,
+  "state": "working",
+  "type": "report-agent",
+  "unless_quiet": "working"
+}

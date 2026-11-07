@@ -1,0 +1,38 @@
+{
+  "cwd": "example",
+  "generation": 1,
+  "local": false,
+  "palette": {
+    "foreground": {
+      "Rgb": [
+        220,
+        220,
+        220
+      ]
+    },
+    "background": {
+      "Indexed": 234
+    },
+    "ansi": [
+      "Black",
+      "Red",
+      "Green",
+      "Yellow",
+      "Blue",
+      "Magenta",
+      "Cyan",
+      "Gray",
+      "DarkGray",
+      "LightRed",
+      "LightGreen",
+      "LightYellow",
+      "LightBlue",
+      "LightMagenta",
+      "LightCyan",
+      "White"
+    ]
+  },
+  "pane_id": 1,
+  "title": "example",
+  "type": "configure-pane"
+}

@@ -135,12 +135,17 @@ interrupted-backup recovery.
   `cargo run --features schema-gen --bin rozi-api-schema`. CI fails when it is out of date, so a
   wire change shows up as a diff in the same pull request. `tui_lipan::Color` and
   `tui_lipan::ProgramStatusSnapshot` are opaque in the schema; the golden corpus pins them.
-- **Compatibility classifier.** A test compares the generated schema with the committed baseline of
-  the oldest generation in the window and flags anything the evolution rules forbid: a removed or
-  renamed field, a type change, a new required field, or a new variant whose
-  `required_capability` is `None`. A flagged change needs a generation bump.
-- **Golden corpus.** `tests/fixtures/wire/<release>/` holds one JSON example per message variant.
-  The current build decodes every fixture in the window.
+- **Compatibility classifier.** `tests/suites/contracts/wire_compat.rs` compares the generated
+  schema with `tests/fixtures/wire/schema/gen-<N>.schema.json`, the frozen schema of the current
+  generation, and flags anything the evolution rules forbid: a removed or renamed field or
+  variant, a type or nullability change, a new required field, a closed vocabulary that grew, a
+  removed capability, or a new message variant whose `required_capability` is `None`. A flagged
+  change needs a generation bump. Every generation in the window must have a frozen schema.
+- **Golden corpus.** `tests/fixtures/wire/current/` holds one JSON example per message variant,
+  and each release copies it to `tests/fixtures/wire/<release>/`. The current build decodes every
+  fixture of every release in the window, and every message it sends without optional capabilities
+  validates against the frozen schema of every generation in the window
+  (`tests/suites/contracts/wire_corpus.rs`).
 - **Cross-version end-to-end tests** run real release binaries against the current build in the
   nightly and release-health workflows.
 
@@ -152,7 +157,7 @@ interrupted-backup recovery.
 2. Gate the sender: check `supports` before sending, and degrade or disable the feature with a
    reason when the peer lacks it.
 3. Regenerate the schema and commit it with the change.
-4. Add a golden fixture for any new variant.
+4. Add a golden fixture for any new variant in `tests/fixtures/wire/current/`.
 5. If the classifier says a generation bump is needed, read the next section first.
 
 ## Bumping the generation
@@ -160,6 +165,7 @@ interrupted-backup recovery.
 1. Raise `PROTOCOL_VERSION`. Leave `MIN_SUPPORTED_PROTOCOL` on the previous generation.
 2. Add `src/session/protocol/compat/gen_<previous>.rs` with the adapters that translate between the
    two shapes, and route the previous generation's connections through it.
-3. Commit the previous generation's schema as the classifier's new baseline.
+3. Regenerate the schema and freeze it as `tests/fixtures/wire/schema/gen-<new>.schema.json`. Keep
+   the previous generation's frozen schema until the window closes.
 4. Mark the change `!` and describe what breaks in `### Breaking changes`.
 5. When the window closes, raise `MIN_SUPPORTED_PROTOCOL` and delete the adapter module.

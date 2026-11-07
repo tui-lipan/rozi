@@ -149,16 +149,24 @@ pub(super) fn authority_ui(
         return Some(path.clone());
     }
     let directory = control::runtime_dir().ok()?;
-    let endpoints = EndpointRegistry::list_live_control_endpoints(&directory).ok()?;
-    let mut matching = endpoints.into_iter().filter(|endpoint| {
-        inherited.as_deref() != Some(endpoint.path())
-            && ui_displays(endpoint.path(), &caller.session_instance)
-    });
+    let endpoints: Vec<_> = EndpointRegistry::list_live_control_endpoints(&directory)
+        .ok()?
+        .into_iter()
+        .map(|endpoint| endpoint.path().to_path_buf())
+        .filter(|path| inherited.as_ref() != Some(path))
+        .collect();
+    sole_ui_displaying(&endpoints, &caller.session_instance)
+}
+
+/// The one UI among `endpoints` that displays `session`. `None` when none does, or when several
+/// do and nothing says which is meant.
+pub(super) fn sole_ui_displaying(
+    endpoints: &[std::path::PathBuf],
+    session: &crate::session::protocol::SessionInstanceId,
+) -> Option<std::path::PathBuf> {
+    let mut matching = endpoints.iter().filter(|path| ui_displays(path, session));
     let endpoint = matching.next()?;
-    matching
-        .next()
-        .is_none()
-        .then(|| endpoint.path().to_path_buf())
+    matching.next().is_none().then(|| endpoint.clone())
 }
 
 fn ui_displays(

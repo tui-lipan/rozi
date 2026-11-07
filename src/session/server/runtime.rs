@@ -1381,8 +1381,8 @@ impl SessionServer {
         // lives on the server rather than the pane.
         let agents = self.settings.agents.clone();
         let session_instance = self.instance_id.clone();
-        let tracks_snapshot_foreground = owner.is_none()
-            && self.settings.resurrect
+        let tracks_snapshot = owner.is_none() && self.settings.resurrect;
+        let tracks_snapshot_foreground = tracks_snapshot
             && self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
@@ -1433,15 +1433,24 @@ impl SessionServer {
         let snapshot_foreground_changed = tracks_snapshot_foreground
             && pane.launch.is_none()
             && resurrection_foreground_changed(&pane.runtime, &next);
+        // Every snapshotted pane saves the directory it restores into, whatever it runs and
+        // whether its command is recorded, and process inspection can move it with nothing
+        // printed. Compared as saved, so a change the snapshot would not write dirties nothing.
+        let saved_cwd = tracks_snapshot.then(|| pane.spawnable_cwd());
         pane.agent.observe(before, &next);
         pane.runtime = next.clone();
+        let snapshot_cwd_changed = saved_cwd.is_some_and(|saved| saved != pane.spawnable_cwd());
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, next, baseline);
         if let Some(owner) = owner {
             self.enqueue(owner, Target::Client(owner), message);
         } else {
             self.broadcast_control(&message);
         }
-        if snapshot_foreground_changed || integration_replaced || resume_ended {
+        if snapshot_foreground_changed
+            || snapshot_cwd_changed
+            || integration_replaced
+            || resume_ended
+        {
             // PTY output normally dirties a snapshot first, but the process inspector can learn
             // the command or its argv after that output has already been persisted. Keep the
             // metadata change dirty so a later detach or shutdown cannot retain the earlier,
@@ -2851,22 +2860,42 @@ fn settle_state_flicker(
     Some(detected)
 }
 
-/// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
-/// remote shell report first, then the process-inspector fallback (always local by construction -
-/// it reads the actual child process, never a remote one), then the pane's original launch
-/// directory. An invalid report (non-UTF-8 path bytes given the JSON wire encoding, or a
-/// non-absolute path) falls through to the next tier rather than being repaired, per the plan.
+/// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid remote
+/// shell report first, then the directory a program the shell runs was started in, then a valid
+/// local shell report, then the process-inspector fallback (always local by construction - it reads
+/// the actual child process, never a remote one), then the pane's original launch directory. An
+/// invalid report (non-UTF-8 path bytes given the JSON wire encoding, or a non-absolute path) falls
+/// through to the next tier rather than being repaired, per the plan.
+///
+/// A shell reports its directory as it draws a prompt, so `cd dir && program` keeps the report on
+/// the directory the line started in until the program exits. The directory the program was
+/// started in is the truth for that whole run, and it is the one a snapshot must restore the pane
+/// into, or a resumed agent or a replayed relative path starts in the wrong place. It is read once,
+/// as the job first holds the terminal: a program that later changes its own directory still runs
+/// again from where it was started. A remote report names a directory this host cannot see, so a
+/// local `ssh` process never overrides it.
 fn resolve_cwd(
-    pane: &ServerPane,
+    pane: &mut ServerPane,
     reported: Option<&TerminalWorkingDirectory>,
     inspector: &impl ProcessInspector,
 ) -> (Option<String>, Option<String>, PaneCwdSource) {
-    if let Some(reported) = reported
-        && let Some(path) = decode_reported_path(reported)
-    {
+    let reported = reported.and_then(|reported| {
+        let path = decode_reported_path(reported)?;
         let host = (!is_local_host(reported.host.as_deref()))
             .then(|| reported.host.as_deref().unwrap_or_default().to_string());
-        return (Some(path), host, PaneCwdSource::ShellReport);
+        Some((path, host))
+    });
+    if let Some((path, Some(host))) = reported {
+        return (Some(path), Some(host), PaneCwdSource::ShellReport);
+    }
+    let job = pane.pty.as_ref().and_then(|pty| inspector.shell_job(pty));
+    if let Some(path) = foreground_launch_cwd(&mut pane.foreground_launch_cwd, job, |group| {
+        inspector.process_cwd(group)
+    }) {
+        return (Some(path), None, PaneCwdSource::ProcessInspector);
+    }
+    if let Some((path, None)) = reported {
+        return (Some(path), None, PaneCwdSource::ShellReport);
     }
     if let Some(pty) = &pane.pty
         && let Some(path) = inspector.cwd(pty)
@@ -2878,6 +2907,28 @@ fn resolve_cwd(
         );
     }
     (pane.cwd.clone(), None, PaneCwdSource::LaunchDirectory)
+}
+
+/// The directory foreground `job` was started in, read the first time that job is seen and kept
+/// while it holds the terminal. `None` once no job does, which forgets the last one. A read that
+/// fails is not remembered, so the next poll tries again.
+fn foreground_launch_cwd(
+    remembered: &mut Option<(u32, String)>,
+    job: Option<u32>,
+    read: impl FnOnce(u32) -> Option<std::path::PathBuf>,
+) -> Option<String> {
+    let Some(job) = job else {
+        *remembered = None;
+        return None;
+    };
+    if let Some((group, cwd)) = remembered.as_ref()
+        && *group == job
+    {
+        return Some(cwd.clone());
+    }
+    let cwd = read(job)?.to_string_lossy().into_owned();
+    *remembered = Some((job, cwd.clone()));
+    Some(cwd)
 }
 
 /// Whether two resolved cwds name the same directory, under the platform's own comparison rules
@@ -2978,6 +3029,7 @@ mod tests {
             program_status_sync: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
+            foreground_launch_cwd: None,
             borrowed_program_name: None,
             last_git_read: None,
             initial_cursor_report_primed: false,
@@ -4168,6 +4220,88 @@ mod tests {
         );
     }
 
+    /// A job's directory is read when it first holds the terminal and kept for as long as it does,
+    /// so a program that changes its own directory later still restores where it was started.
+    #[test]
+    fn a_foreground_job_keeps_the_directory_it_was_started_in() {
+        let mut remembered = None;
+        fn start(path: &'static str) -> impl FnOnce(u32) -> Option<std::path::PathBuf> {
+            move |_| Some(std::path::PathBuf::from(path))
+        }
+        let unread = |_| -> Option<std::path::PathBuf> { panic!("a known job is not read again") };
+
+        assert_eq!(
+            foreground_launch_cwd(&mut remembered, Some(40), start("/project")).as_deref(),
+            Some("/project")
+        );
+        assert_eq!(
+            foreground_launch_cwd(&mut remembered, Some(40), unread).as_deref(),
+            Some("/project"),
+            "the job moving elsewhere does not move the pane"
+        );
+        assert_eq!(
+            foreground_launch_cwd(&mut remembered, Some(41), start("/next")).as_deref(),
+            Some("/next"),
+            "another job is read afresh"
+        );
+        assert_eq!(foreground_launch_cwd(&mut remembered, None, unread), None);
+        assert_eq!(remembered, None, "back at the prompt, the job is forgotten");
+        assert_eq!(
+            foreground_launch_cwd(&mut remembered, Some(41), |_| None),
+            None
+        );
+        assert_eq!(
+            remembered, None,
+            "a failed read is tried again on the next poll"
+        );
+    }
+
+    /// The same rule against a real process: a job started in one directory that then moves to
+    /// another keeps the pane, and so its snapshot, in the first.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_job_that_changes_directory_keeps_the_pane_where_it_started() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let started = std::fs::canonicalize(root.path()).expect("resolve root");
+        let moved = started.join("moved");
+        std::fs::create_dir(&moved).expect("create moved dir");
+        // `set -m` gives the job its own process group in the foreground, as an interactive shell
+        // does. `exec` keeps the job the same process after it changes directory.
+        let pty = TerminalPty::spawn(
+            tui_lipan::prelude::TerminalPtyConfig::new("/bin/sh")
+                .arg("-c")
+                .arg(format!(
+                    "set -m; cd '{}' && sh -c 'sleep 0.6; cd moved && exec sleep 5'",
+                    started.display()
+                )),
+            |_| {},
+        )
+        .expect("spawn foreground job");
+        let inspector = crate::platform::process::linux::LinuxProcessInspector;
+        let mut pane = make_pane();
+        pane.pty = Some(pty);
+        let job = |pane: &ServerPane| inspector.shell_job(pane.pty.as_ref().unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while job(&pane).is_none() {
+            assert!(Instant::now() < deadline, "the job never held the terminal");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let first =
+            compute_runtime_state(&mut pane, &inspector, None, &mut LazyProcessScan::default());
+        assert_eq!(first.cwd.as_deref(), started.to_str());
+
+        let group = job(&pane).expect("job still running");
+        while inspector.process_cwd(group).as_deref() != Some(moved.as_path()) {
+            assert!(Instant::now() < deadline, "the job never changed directory");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pane.runtime = first;
+        let later =
+            compute_runtime_state(&mut pane, &inspector, None, &mut LazyProcessScan::default());
+        assert_eq!(later.cwd.as_deref(), started.to_str());
+        assert_eq!(later.cwd_source, PaneCwdSource::ProcessInspector);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn live_process_inspection_replaces_a_shell_function_hint() {
@@ -4516,7 +4650,7 @@ mod tests {
         // URIs are always absolute per spec, so exercise the fallthrough via a directly
         // constructed report instead of a crafted escape sequence.
         let (cwd, host, source) = resolve_cwd(
-            &pane,
+            &mut pane,
             Some(&TerminalWorkingDirectory {
                 host: None,
                 path: std::sync::Arc::from(b"relative/path".as_slice()),

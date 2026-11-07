@@ -89,8 +89,8 @@ Create the session explicitly with `rozi sessions new <NAME>`, check the spellin
 
 A named session keeps running until it is killed or its session server stops, for example when the
 machine restarts. With `[session] resurrect = true`, the default, a stopped session appears in
-Sessions as `restorable`; press `Enter` on it to restore its layout, commands, and history. Killing a
-named session also deletes its snapshot.
+Sessions as `restorable`; press `Enter` on it, or run `rozi <NAME>`, to restore its layout, commands,
+and history. Killing a named session also deletes its snapshot.
 
 If recovery reports unreadable pane history, that pane starts with empty history; the other panes
 still restore. An unreadable layout restores the panes without their saved placement. rozi uses a

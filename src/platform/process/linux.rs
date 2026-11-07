@@ -88,6 +88,15 @@ impl ProcessInspector for LinuxProcessInspector {
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
     }
 
+    fn shell_job(&self, pty: &TerminalPty) -> Option<u32> {
+        let group = u32::try_from(pty.foreground_process_group_id()?).ok()?;
+        (Some(group) != pty.pid()).then_some(group)
+    }
+
+    fn process_cwd(&self, pid: u32) -> Option<PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String> {
         let pgid = pty.foreground_process_group_id()?;
         let comm = std::fs::read_to_string(format!("/proc/{pgid}/comm")).ok()?;

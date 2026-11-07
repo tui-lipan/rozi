@@ -342,9 +342,17 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
     // The marker lives in the file `tail` follows, never in the command line. A restored shell
     // echoes what is typed into it, and a marker inside that echo would let this test pass
     // without the command ever having run again.
-    let probe = test_root.join("probe.txt");
+    //
+    // The file sits in a directory the shell only enters on the same line that starts `tail`, and
+    // `tail` names it relatively. The shell's own directory report still names where the line
+    // started, so the restored pane finds the file only if the snapshot kept the directory `tail`
+    // was actually running in.
+    let workdir = test_root.join("work");
+    fs::create_dir_all(&workdir).expect("create work directory");
+    let workdir = fs::canonicalize(&workdir).expect("resolve work directory");
+    let probe = workdir.join("probe.txt");
     fs::write(&probe, format!("{MARKER}\n")).expect("write probe file");
-    let command = format!("tail -f {}", probe.display());
+    let command = "tail -f probe.txt";
 
     let endpoint = subprocess_endpoint(&runtime_base, &session);
     let child = spawn_server(
@@ -396,18 +404,28 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
         )
     });
 
+    // The `printf` is the report a shell with integration makes at its prompt, sent explicitly so
+    // the test does not depend on the host shell's integration being active.
     client.write_pane_input(
         PROBE_PANE,
         PANE_GENERATION,
-        format!("{command}\r").as_bytes(),
+        format!(
+            "printf '\\033]7;file://localhost%s\\033\\\\' \"$PWD\"; cd '{}' && {command}\r",
+            workdir.display()
+        )
+        .as_bytes(),
     );
     // A snapshot records what the last runtime poll saw, so detaching before the server has
-    // noticed `tail` holding the terminal would capture a bare shell and prove nothing.
+    // noticed `tail` holding the terminal would capture a bare shell and prove nothing. Its name
+    // can arrive a poll before its arguments, and a detach between the two would save `tail` alone.
+    let expected_cwd = workdir.to_string_lossy().into_owned();
     read_until(&mut client, |frame| {
         matches!(
             frame,
             Frame::Control(ServerMessage::PaneRuntimeChanged { pane_id: PROBE_PANE, state, .. })
                 if state.foreground_program.as_deref() == Some("tail")
+                    && state.foreground_arguments == ["-f", "probe.txt"]
+                    && state.cwd.as_deref() == Some(expected_cwd.as_str())
         )
     });
 
@@ -415,7 +433,7 @@ fn a_restored_shell_reruns_the_command_it_was_holding() {
     drop(client);
 
     let snapshot = state_base.join("rozi").join("sessions").join(&session);
-    wait_for_meta(&snapshot, &command);
+    wait_for_meta(&snapshot, command);
 
     server.kill_for_restart();
     let restarted = spawn_server(
@@ -473,8 +491,9 @@ fn wait_for_meta(snapshot: &std::path::Path, expected: &str) {
         std::thread::sleep(Duration::from_millis(10));
     }
     panic!(
-        "session snapshot at {} did not record {expected:?}",
-        snapshot.display()
+        "session snapshot at {} did not record {expected:?}; meta.json: {}",
+        snapshot.display(),
+        fs::read_to_string(snapshot.join("meta.json")).unwrap_or_else(|err| err.to_string())
     );
 }
 

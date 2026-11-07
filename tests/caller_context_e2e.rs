@@ -993,7 +993,14 @@ impl DiscoveryUi {
                     }})
                 } else {
                     assert!(displayed, "an unrelated UI must never receive a mutation");
-                    assert_eq!(request.caller_context.as_deref(), Some(&caller));
+                    // `--here` proves the caller; a plain command names only its session.
+                    if let Some(context) = request.caller_context.as_deref() {
+                        assert_eq!(context, &caller);
+                    }
+                    assert_eq!(
+                        request.source_session.as_ref(),
+                        Some(&caller.session_instance)
+                    );
                     assert!(matches!(request.command, ControlCommand::NewPane { .. }));
                     worker_mutations.fetch_add(1, Ordering::SeqCst);
                     serde_json::json!({"ok":true,"data":{"id":999}})
@@ -1084,6 +1091,62 @@ fn here_discovers_a_unique_displayed_session_among_multiple_uis() {
         999
     );
     assert_eq!(matching.mutations(), 4);
+    assert_eq!(duplicate.mutations(), 0);
+}
+
+/// A plain pane command, with no `--here`, goes where `ROZI_SOCKET` points, and that UI is not
+/// always there: a pane a server restored or restarted with no UI attached has no `ROZI_SOCKET`,
+/// and the UI that opened a pane may have quit while another took the session over. Either way the
+/// UI showing the pane's session is the one meant, however many other UIs are running.
+#[test]
+fn a_pane_command_reaches_the_ui_showing_its_session_when_its_own_ui_is_missing() {
+    rozi::test_support::isolate_user_dirs();
+    let _discovery = DISCOVERY_UIS.lock().unwrap();
+    let server = spawn_listener(ServerSettings::default());
+    data(
+        cli()
+            .args(["--session", server.session(), "split"])
+            .output()
+            .unwrap(),
+    );
+    let panes = run_session_control(server.session(), request(ControlCommand::ListPanes))
+        .unwrap()
+        .data
+        .unwrap();
+    let caller: rozi::session::protocol::PaneRef =
+        serde_json::from_value(panes[0]["reference"].clone()).unwrap();
+    let matching = DiscoveryUi::new(&caller, true, 1000000011);
+    let unrelated = DiscoveryUi::new(&caller, false, 1000000012);
+    let ask = || {
+        let mut command = cli();
+        command
+            .env("ROZI_PANE", caller.pane_id.to_string())
+            .env("ROZI_SESSION_INSTANCE", caller.session_instance.as_str())
+            .arg("split");
+        command
+    };
+    let dead = rozi::control::runtime_dir()
+        .unwrap()
+        .join("control-1000000019.sock");
+    for socket in [None, Some(dead.as_path())] {
+        let mut command = ask();
+        if let Some(path) = socket {
+            command.env("ROZI_SOCKET", path);
+        }
+        assert_eq!(data(command.output().unwrap())["id"], 999, "{socket:?}");
+    }
+    assert_eq!(matching.mutations(), 2);
+    assert_eq!(unrelated.mutations(), 0);
+    // Two UIs showing the session and nothing to choose between them stays an error.
+    let duplicate = DiscoveryUi::new(&caller, true, 1000000013);
+    let ambiguous = ask().output().unwrap();
+    assert!(!ambiguous.status.success());
+    assert!(
+        String::from_utf8_lossy(&ambiguous.stderr).contains("multiple live rozi sockets"),
+        "{}",
+        String::from_utf8_lossy(&ambiguous.stderr)
+    );
+    assert_eq!(matching.mutations(), 2);
     assert_eq!(duplicate.mutations(), 0);
 }
 

@@ -37,10 +37,13 @@ about to run.
 
 rozi finds a pane's working directory from the first of these that is available:
 
-1. A valid local directory report from the shell (OSC 7 or OSC 9;9).
-2. Process inspection, on Linux and macOS.
-3. The pane's launch directory.
-4. The configured `cwd`.
+1. While the shell runs a program, the directory the program was started in, on Linux and macOS. A
+   line such as `cd ~/src/api && claude` shows, saves, and restores the pane in `~/src/api`, even if
+   the program later changes its own directory.
+2. A valid local directory report from the shell (OSC 7 or OSC 9;9).
+3. Process inspection of the shell, on Linux and macOS.
+4. The pane's launch directory.
+5. The configured `cwd`.
 
 Windows has no process inspection, so live directory and foreground-program updates there need shell
 integration.

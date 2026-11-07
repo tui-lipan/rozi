@@ -286,17 +286,15 @@ fn pane_cells(pane: &serde_json::Value) -> Vec<TableCell> {
                 .unwrap_or_else(|| "—".to_string()),
             OutputTone::Key,
         ),
-        TableCell::plain(
-            value_u64(pane, "workspace")
-                .map(|workspace| {
-                    if workspace == 0 {
-                        "scratch".to_string()
-                    } else {
-                        workspace.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "—".to_string()),
-        ),
+        TableCell::plain(match value_u64(pane, "workspace") {
+            // Workspace 0 is a scratchpad pane, which belongs to no session, or a session pane
+            // with no place in the layout. Only the first is a scratch pane.
+            Some(0) if pane.get("reference").is_none_or(serde_json::Value::is_null) => {
+                "scratch".to_string()
+            }
+            Some(0) | None => "—".to_string(),
+            Some(workspace) => workspace.to_string(),
+        }),
         TableCell::plain(value_string(pane, "title").unwrap_or("—")),
         TableCell::new(state, pane_status_tone(state)),
         TableCell::plain(value_string(pane, "agent").unwrap_or("—")),
@@ -1653,7 +1651,12 @@ mod tests {
                     "status_reason": "suite",
                     "agent": "cursor",
                     "agent_state": "idle"
-                }
+                },
+                // A session pane the layout does not place, and a client's own scratchpad pane.
+                {"session": "dev", "id": 4, "title": "done", "workspace": 0, "status": "exited (1)",
+                 "reference": {"pane_id": 4, "generation": 1, "session_instance": "abc"}},
+                {"session": "dev", "id": 1, "title": "scratch", "workspace": 0,
+                 "status": "80×24", "reference": null}
             ]
         });
         assert_eq!(
@@ -1663,8 +1666,10 @@ mod tests {
                 OutputStyles::plain()
             ),
             "Session  dev\n\n\
-             ID  WORKSPACE  TITLE  STATE    AGENT   SIZE   COMMAND\n\
-             3   2          tests  working  cursor  80×24  cargo\n"
+             ID  WORKSPACE  TITLE    STATE    AGENT   SIZE        COMMAND\n\
+             3   2          tests    working  cursor  80×24       cargo\n\
+             4   —          done     —        —       exited (1)  —\n\
+             1   scratch    scratch  —        —       80×24       —\n"
         );
 
         let attached = serde_json::json!({

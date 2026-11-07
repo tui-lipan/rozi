@@ -86,9 +86,12 @@ impl PaneMeta {
 
 /// Which precedence tier produced [`PaneRuntimeState::cwd`].
 ///
-/// Tier order, most to least authoritative: [`ShellReport`](Self::ShellReport) (a local or remote
-/// `OSC 7`/`OSC 9;9` report) -> [`ProcessInspector`](Self::ProcessInspector) (native `/proc` or
-/// `libproc` inspection) -> [`LaunchDirectory`](Self::LaunchDirectory) (the directory the pane was
+/// Tier order, most to least authoritative: a remote [`ShellReport`](Self::ShellReport), then the
+/// directory a program the shell is running was started in
+/// ([`ProcessInspector`](Self::ProcessInspector)), then a
+/// local `OSC 7`/`OSC 9;9` [`ShellReport`](Self::ShellReport), then the shell's own directory
+/// ([`ProcessInspector`](Self::ProcessInspector), native `/proc` or `libproc` inspection) ->
+/// [`LaunchDirectory`](Self::LaunchDirectory) (the directory the pane was
 /// spawned with). A configured-fallback fourth tier from the plan's precedence table collapses
 /// into `LaunchDirectory` here: the launch cwd a pane starts with is already itself resolved from
 /// config/profile defaults, so there is no separate value a fourth tier could contribute once

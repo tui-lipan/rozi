@@ -17,12 +17,27 @@ use super::output::{OutputStyles, format_control_text};
 use crate::control;
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 
+/// The UI a control command goes to when none is named with `--socket`.
+///
+/// Outside a pane that is `ROZI_SOCKET`, or else the only live UI. Inside a pane, `ROZI_SOCKET`
+/// names the UI that opened it, which is not always there: a pane a session server restored or
+/// restarted with no UI attached has none, and the UI that opened a pane may since have quit while
+/// another one took the session over. When the inherited UI is missing or gone, the UI showing the
+/// pane's own session is the one meant, however many UIs are running.
 pub(super) fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, String> {
     if let Some(path) = explicit {
         return Ok(path);
     }
-    if let Some(path) = std::env::var_os("ROZI_SOCKET").map(PathBuf::from) {
-        return Ok(path);
+    let inherited = std::env::var_os("ROZI_SOCKET")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let caller_session = std::env::var(crate::session::protocol::SESSION_INSTANCE_ENV)
+        .ok()
+        .and_then(|value| crate::session::protocol::SessionInstanceId::from_env_value(&value));
+    if let Some(path) = &inherited
+        && (caller_session.is_none() || IpcEndpoint::at_path(path).is_live())
+    {
+        return Ok(path.clone());
     }
     let dir =
         control::runtime_dir().map_err(|err| format!("could not inspect runtime dir: {err}"))?;
@@ -31,6 +46,17 @@ pub(super) fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<
         .into_iter()
         .map(|endpoint| endpoint.path().to_path_buf())
         .collect();
+    if let Some(session) = &caller_session
+        && (inherited.is_some() || live.len() > 1)
+        && let Some(path) = super::context::sole_ui_displaying(&live, session)
+    {
+        return Ok(path);
+    }
+    // The UI that opened this pane is gone and none shows its session: connecting reports which
+    // UI it was, rather than sending the command to a UI showing some other session.
+    if let Some(path) = inherited {
+        return Ok(path);
+    }
     match live.as_slice() {
         [path] => Ok(path.clone()),
         [] => {

@@ -12,7 +12,8 @@ live terminal preview while this agent has a verified Rozi pane context.
 ## Choose the endpoint
 
 - A **UI endpoint** controls the session shown by a running Rozi, including focus and overlays.
-  Commands use `--socket PATH`, then `ROZI_SOCKET`, then the only live local UI endpoint.
+  Commands use `--socket PATH`, then a running `ROZI_SOCKET`, then the only UI showing the calling
+  pane's session, then the only live local UI endpoint.
 - A **session endpoint** controls an existing local named session without opening or attaching a UI.
   Select it with `--session <NAME>`.
 

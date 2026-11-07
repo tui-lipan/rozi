@@ -332,8 +332,9 @@ only its own pane. If a pane's saved history cannot be read, that pane starts wi
 and a recovery notification identifies it. If the saved layout cannot be read, the panes restore
 without their saved placement.
 
-If the latest snapshot is damaged and a complete backup is available, rozi restores that backup.
-rozi keeps damaged snapshots separately until you delete the session or discard its snapshot.
+If the latest snapshot's metadata or pane history is damaged and a complete backup is available,
+rozi restores that backup. rozi keeps damaged snapshots separately until you delete the session or
+discard its snapshot.
 Recovery warnings appear in session notifications and on stderr when restoring from the command line.
 
 A snapshot whose metadata rozi cannot read, because another rozi version saved it in another format

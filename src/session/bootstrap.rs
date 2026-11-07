@@ -486,7 +486,7 @@ fn replace_incompatible_remote_server(
         Err(message) if remote_rozi_cannot_restart(&message) => {
             super::remote::kill_remote_session(target, name, remote_config)
         }
-        result => result,
+        result => result.map(|_| ()),
     }
 }
 

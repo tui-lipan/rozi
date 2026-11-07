@@ -94,8 +94,8 @@ named session also deletes its snapshot.
 
 If recovery reports unreadable pane history, that pane starts with empty history; the other panes
 still restore. An unreadable layout restores the panes without their saved placement. rozi uses a
-complete backup when the latest snapshot is damaged and a backup is available. It keeps the damaged
-snapshot until you delete the session or discard its snapshot. See [Resurrection](sessions.md#resurrection).
+complete backup when the latest snapshot's metadata or pane history is damaged and a backup is
+available. It keeps the damaged snapshot until you delete the session or discard its snapshot. See [Resurrection](sessions.md#resurrection).
 
 A snapshot saved in a newer format stays untouched when this rozi refuses to restore it. Start the
 session with the rozi version that saved it. To discard it instead, run

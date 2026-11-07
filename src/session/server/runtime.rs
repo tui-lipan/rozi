@@ -2888,12 +2888,7 @@ fn resolve_cwd(
     if let Some((path, Some(host))) = reported {
         return (Some(path), Some(host), PaneCwdSource::ShellReport);
     }
-    let job = pane.pty.as_ref().and_then(|pty| {
-        let group = u32::try_from(pty.foreground_process_group_id()?).ok()?;
-        // The pane's own process holding the terminal is a shell at its prompt, or the program
-        // the pane was launched with: neither is a job the shell started.
-        (Some(group) != pty.pid()).then_some(group)
-    });
+    let job = pane.pty.as_ref().and_then(|pty| inspector.shell_job(pty));
     if let Some(path) = foreground_launch_cwd(&mut pane.foreground_launch_cwd, job, |group| {
         inspector.process_cwd(group)
     }) {
@@ -4285,12 +4280,7 @@ mod tests {
         let inspector = crate::platform::process::linux::LinuxProcessInspector;
         let mut pane = make_pane();
         pane.pty = Some(pty);
-        let job = |pane: &ServerPane| {
-            let pty = pane.pty.as_ref().unwrap();
-            u32::try_from(pty.foreground_process_group_id()?)
-                .ok()
-                .filter(|group| Some(*group) != pty.pid())
-        };
+        let job = |pane: &ServerPane| inspector.shell_job(pane.pty.as_ref().unwrap());
         let deadline = Instant::now() + Duration::from_secs(5);
         while job(&pane).is_none() {
             assert!(Instant::now() < deadline, "the job never held the terminal");

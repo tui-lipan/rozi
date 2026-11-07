@@ -134,6 +134,12 @@ pub mod windows;
 pub trait ProcessInspector {
     /// The PTY child's current working directory, if the platform can determine one.
     fn cwd(&self, pty: &TerminalPty) -> Option<PathBuf>;
+    /// The process group of a job the PTY child started that now holds the terminal, such as a
+    /// program run from a shell. `None` while the child itself holds it, at a prompt or as the
+    /// pane's own command, and wherever the platform has no process groups.
+    fn shell_job(&self, _pty: &TerminalPty) -> Option<u32> {
+        None
+    }
     /// The current working directory of process `pid`, where the platform can read another
     /// process's directory.
     fn process_cwd(&self, _pid: u32) -> Option<PathBuf> {

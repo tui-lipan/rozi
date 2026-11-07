@@ -91,7 +91,8 @@ exclude = [
 # hands the host one native frame instead of compositing the whole stack.
 # 0.40.1: the cursor trail measures jumps within the focused pane, so a pane that slides or is
 # dragged carries its cursor without a trail; wrapped text starts continuation rows with a word.
-tui-lipan = { version = "0.40.1", features = [
+# 0.40.2: `Context::skip_cursor_trail`, so a workspace or session switch draws no trail.
+tui-lipan = { version = "0.40.2", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",

@@ -365,9 +365,16 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
 }
 
 /// Choose the best compatible candidate. Requires an advertised protocol range that overlaps ours.
+///
+/// Among compatible candidates, the one running this client's exact version wins, then the newest
+/// release, then any other (one whose version line does not parse). Ties keep probe order, so a
+/// configured `ROZI_PROBE_BIN` and `PATH` come before the fixed install locations. The server a
+/// proxy autostarts runs the proxy's own binary, so the exact version, when the host has it, is
+/// also what new sessions run.
 pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
     let mut saw_remote = false;
     let mut saw_without_range = false;
+    let mut best: Option<(CandidateRank, &ProbeCandidate, u32, u32)> = None;
     for candidate in &report.candidates {
         if !candidate.speaks_remote {
             continue;
@@ -385,14 +392,21 @@ pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
             protocol_max,
             protocol_min,
         )
-        .is_ok()
+        .is_err()
         {
-            return ProbeResult::Found {
-                path: candidate.path.clone(),
-                protocol_max,
-                protocol_min,
-            };
+            continue;
         }
+        let rank = CandidateRank::of(candidate);
+        if best.as_ref().is_none_or(|(held, ..)| rank > *held) {
+            best = Some((rank, candidate, protocol_max, protocol_min));
+        }
+    }
+    if let Some((_, candidate, protocol_max, protocol_min)) = best {
+        return ProbeResult::Found {
+            path: candidate.path.clone(),
+            protocol_max,
+            protocol_min,
+        };
     }
     ProbeResult::Missing {
         detail: if report.candidates.is_empty() {
@@ -409,6 +423,41 @@ pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
                 .to_string()
         },
     }
+}
+
+/// How strongly [`select_compatible`] prefers a compatible candidate; a greater rank wins.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum CandidateRank {
+    /// The version line does not name a release rozi can read.
+    Unversioned,
+    /// Another release, ordered by version.
+    Release(semver::Version),
+    /// This client's exact version.
+    Exact,
+}
+
+impl CandidateRank {
+    fn of(candidate: &ProbeCandidate) -> Self {
+        match candidate_version(&candidate.version_line) {
+            Some(version)
+                if semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()
+                    == Some(version.clone()) =>
+            {
+                Self::Exact
+            }
+            Some(version) => Self::Release(version),
+            None => Self::Unversioned,
+        }
+    }
+}
+
+/// The release a probed binary reports: the word after `rozi` that opens its `--version` output.
+fn candidate_version(version_line: &str) -> Option<semver::Version> {
+    let mut words = version_line.split_whitespace();
+    (words.next()? == "rozi")
+        .then(|| words.next())
+        .flatten()
+        .and_then(|word| semver::Version::parse(word).ok())
 }
 
 /// Apply install policy. `interactive` is false for non-TTY / CI — then we never mutate the host.
@@ -2040,6 +2089,100 @@ protocol_max={PROTOCOL_VERSION}
             ProbeResult::Found { path, .. } => assert_eq!(path, "/new"),
             other => panic!("expected found, got {other:?}"),
         }
+    }
+
+    /// One candidate block as the POSIX probe prints it: the flattened `--version` output, its
+    /// protocol keys, then whether `--help` mentions `--remote`.
+    fn probed(path: &str, version: &str, range: (u32, u32)) -> String {
+        let (min, max) = range;
+        format!(
+            "candidate={path}\n\
+             version_line=rozi {version} extension_api=1 protocol_min={min} protocol_max={max} \n\
+             protocol_min={min}\n\
+             protocol_max={max}\n\
+             speaks_remote=1\n"
+        )
+    }
+
+    fn selected(blocks: &[String]) -> String {
+        let stdout = format!(
+            "platform=Linux\nmachine=x86_64\n{}home=/home/u\nmanaged_root=/home/u/.local/share/rozi/remote\nprobe_done=1\n",
+            blocks.concat()
+        );
+        match select_compatible(&parse_probe_output(&stdout)) {
+            ProbeResult::Found { path, .. } => path,
+            other => panic!("expected a compatible candidate, got {other:?}"),
+        }
+    }
+
+    const OURS: (u32, u32) = (MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION);
+    const BEYOND: (u32, u32) = (PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1);
+
+    #[test]
+    fn select_prefers_this_exact_version_over_newer_and_earlier_candidates() {
+        let exact = env!("CARGO_PKG_VERSION");
+        let path = selected(&[
+            probed("/usr/local/bin/rozi", "999.0.0", OURS),
+            probed("/home/u/.cargo/bin/rozi", "0.0.1", OURS),
+            probed("/home/u/bin/rozi", "local-build", OURS),
+            probed(
+                &format!("/home/u/.local/share/rozi/remote/{exact}/rozi"),
+                exact,
+                OURS,
+            ),
+        ]);
+        assert_eq!(
+            path,
+            format!("/home/u/.local/share/rozi/remote/{exact}/rozi")
+        );
+    }
+
+    #[test]
+    fn select_falls_back_to_the_newest_compatible_release() {
+        let path = selected(&[
+            probed("/usr/bin/rozi", "0.0.1", OURS),
+            probed("/home/u/bin/rozi", "local-build", OURS),
+            probed("/home/u/.cargo/bin/rozi", "999.2.0", BEYOND),
+            probed("/home/u/.local/bin/rozi", "999.1.0", OURS),
+            probed("/opt/homebrew/bin/rozi", "999.0.0", OURS),
+        ]);
+        assert_eq!(
+            path, "/home/u/.local/bin/rozi",
+            "skips the incompatible 999.2.0"
+        );
+    }
+
+    #[test]
+    fn select_takes_any_compatible_candidate_when_none_names_a_release() {
+        let path = selected(&[
+            probed("/usr/bin/rozi", "999.0.0", BEYOND),
+            probed("/home/u/bin/rozi", "local-build", OURS),
+            probed("/home/u/.cargo/bin/rozi", "", OURS),
+        ]);
+        assert_eq!(path, "/home/u/bin/rozi");
+    }
+
+    /// The same release on `PATH` and in a fixed location is one install found twice; the probe's
+    /// first answer is the one the user's shell would run.
+    #[test]
+    fn select_keeps_probe_order_between_equal_candidates() {
+        let path = selected(&[
+            probed("/usr/local/bin/rozi", "999.0.0", OURS),
+            probed("/home/u/.local/bin/rozi", "999.0.0", OURS),
+        ]);
+        assert_eq!(path, "/usr/local/bin/rozi");
+    }
+
+    #[test]
+    fn candidate_version_reads_the_release_from_the_version_line() {
+        assert_eq!(
+            candidate_version("rozi 0.0.43 nightly_commit=abc extension_api=1 protocol_min=51"),
+            Some(semver::Version::new(0, 0, 43))
+        );
+        assert_eq!(candidate_version("rozi"), None);
+        assert_eq!(candidate_version("rozi dev"), None);
+        assert_eq!(candidate_version("other 1.0.0"), None);
+        assert_eq!(candidate_version(""), None);
     }
 
     #[test]

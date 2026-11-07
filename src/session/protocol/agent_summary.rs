@@ -28,6 +28,8 @@ pub struct AgentSummary {
     /// The agent's display name (`Claude Code`). Several agents of one pane share it; [`Self::task`]
     /// is what tells them apart.
     pub label: String,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "super::AgentState"))]
     pub state: super::AgentState,
     /// Why the agent is in its state, as it said (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

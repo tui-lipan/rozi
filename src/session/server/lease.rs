@@ -306,6 +306,7 @@ impl SessionServer {
             ControllerChangeReason::Released => "released",
             ControllerChangeReason::Expired => "expired",
             ControllerChangeReason::Granted => "granted",
+            ControllerChangeReason::Unknown => "unknown",
         };
         self.record_session_event(
             events::EventKind::ControllerChanged,

@@ -1358,3 +1358,119 @@ fn generation_baseline_messages_need_no_capability() {
 fn asking_what_unknown_needs_is_a_bug() {
     let _ = ServerMessage::Unknown.required_capability();
 }
+
+/// Re-encode `value` with the JSON at `field` replaced by a value from a newer peer, and decode it.
+fn decode_with<T>(value: &T, field: &str, newer: serde_json::Value) -> T
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let mut json = serde_json::to_value(value).unwrap();
+    json[field] = newer;
+    serde_json::from_value(json).expect("a newer value still decodes")
+}
+
+/// A value a newer peer added to a closed vocabulary decodes instead of failing the whole message,
+/// which would drop the connection.
+#[test]
+fn a_vocabulary_value_from_a_newer_peer_decodes_as_unknown() {
+    let newer = || serde_json::json!("teleporting");
+    assert_eq!(
+        serde_json::from_value::<WireChangeState>(newer()).unwrap(),
+        WireChangeState::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<ControllerChangeReason>(newer()).unwrap(),
+        ControllerChangeReason::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<PaneCwdSource>(newer()).unwrap(),
+        PaneCwdSource::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<EventKind>(newer()).unwrap(),
+        EventKind::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<PaneCommandPhase>(r#"{"phase":"suspended","since":3}"#).unwrap(),
+        PaneCommandPhase::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<WorktreeRequest>(r#"{"kind":"rebase","cwd":"/src"}"#).unwrap(),
+        WorktreeRequest::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<WorktreeResult>(r#"{"kind":"rebased","path":"/src"}"#).unwrap(),
+        WorktreeResult::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<AttachmentOperation>(r#"{"step":"resume","offset":9}"#).unwrap(),
+        AttachmentOperation::Unknown
+    );
+
+    // Inside a whole message, which is what actually crosses the wire.
+    let changed = ServerMessage::ControllerChanged {
+        controller: Some(2),
+        reason: ControllerChangeReason::Granted,
+    };
+    assert_eq!(
+        decode_with(&changed, "reason", newer()),
+        ServerMessage::ControllerChanged {
+            controller: Some(2),
+            reason: ControllerChangeReason::Unknown,
+        }
+    );
+}
+
+/// Vocabularies that are also part of the public control API, or that the server only ever
+/// produces itself, stay closed; the session wire fields carrying them decode a newer value as
+/// the type's neutral reading instead.
+#[test]
+fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
+    let identity = AgentIdentity::new("claude", "Claude Code");
+    let runtime = AgentRuntime {
+        reference: AgentRef::for_test(1, 0, None),
+        identity: identity.clone(),
+        label: "Claude Code".into(),
+        state: AgentState::Idle,
+        reason: None,
+        task: None,
+        completions: 0,
+        source: AgentAuthority::Reported,
+    };
+    let newer = decode_with(&runtime, "state", serde_json::json!("compacting"));
+    // A state Rozi has no word for is a run still going, as a custom status is.
+    assert_eq!(newer.state, AgentState::Working);
+    let newer = decode_with(&runtime, "source", serde_json::json!("inferred"));
+    assert_eq!(newer.source, AgentAuthority::Detected);
+    // A value it knows still decodes as itself.
+    assert_eq!(
+        decode_with(&runtime, "state", serde_json::json!("blocked")).state,
+        AgentState::Blocked
+    );
+
+    let detected = DetectedAgent {
+        agent: std::sync::Arc::new(identity),
+        state: DetectedAgentState::Idle,
+    };
+    assert_eq!(
+        decode_with(&detected, "state", serde_json::json!("compacting")).state,
+        DetectedAgentState::Working
+    );
+
+    let row: PublishedRow = serde_json::from_value(serde_json::json!({
+        "id": "build",
+        "kind": "daemon",
+        "title": "Build",
+        "status": "working",
+    }))
+    .unwrap();
+    assert_eq!(row.kind, PublisherKind::Activity);
+}
+
+/// The values a peer can receive but never sends stay out of everything this build offers or
+/// lists, so it cannot pick one by accident.
+#[test]
+fn unknown_vocabulary_values_are_never_offered() {
+    assert!(!EventKind::ALL.contains(&EventKind::Unknown));
+    assert_eq!(EventKind::parse("unknown"), None);
+}

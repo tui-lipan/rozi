@@ -247,7 +247,8 @@ fn wire_state_to_change(state: crate::session::protocol::WireChangeState) -> Git
     use crate::session::protocol::WireChangeState as Wire;
     match state {
         Wire::Added => GitChangeState::Added,
-        Wire::Modified => GitChangeState::Modified,
+        // A state from a newer server reads as plainly changed.
+        Wire::Modified | Wire::Unknown => GitChangeState::Modified,
         Wire::Deleted => GitChangeState::Deleted,
         Wire::Renamed => GitChangeState::Renamed,
         Wire::Untracked => GitChangeState::Untracked,
@@ -259,7 +260,7 @@ fn wire_state_to_status(state: crate::session::protocol::WireChangeState) -> Fil
     use crate::session::protocol::WireChangeState as Wire;
     match state {
         Wire::Added => FileTreeChangeStatus::Added,
-        Wire::Modified => FileTreeChangeStatus::Modified,
+        Wire::Modified | Wire::Unknown => FileTreeChangeStatus::Modified,
         Wire::Deleted => FileTreeChangeStatus::Deleted,
         Wire::Renamed => FileTreeChangeStatus::Renamed,
         Wire::Untracked => FileTreeChangeStatus::Untracked,

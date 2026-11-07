@@ -200,7 +200,9 @@ mod tests {
                     steps.push("chunk");
                 }
                 AttachmentOperation::Finish => steps.push("finish"),
-                AttachmentOperation::Cancel => panic!("unexpected cancel"),
+                AttachmentOperation::Cancel | AttachmentOperation::Unknown => {
+                    panic!("unexpected {operation:?}")
+                }
             }
             replies.acknowledge(transfer_id, None);
             if finish {

@@ -90,6 +90,7 @@ fn validate_prompt_capture(
 /// message has to say that rather than suggest the session is broken.
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
+        ControlCommand::Unknown => Some(control::unsupported_command_reason(true)),
         ControlCommand::Invoke { .. }
         | ControlCommand::InvocationList
         | ControlCommand::InvocationCancel { .. }
@@ -193,6 +194,10 @@ pub fn attached_control_refusal(
     read_only: bool,
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
+        ControlCommand::Unknown => Some((
+            ControlErrorCode::Unsupported,
+            control::unsupported_command_reason(true),
+        )),
         ControlCommand::InvocationList | ControlCommand::ActionsList => None,
         ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } => read_only
             .then_some((
@@ -4670,3 +4675,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod compat_tests;

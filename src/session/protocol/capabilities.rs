@@ -59,6 +59,16 @@ impl Capability {
         }
     }
 
+    /// First release that offers this optional session behavior.
+    pub const fn introduced_in(self) -> &'static str {
+        match self {
+            Self::RuntimeMetrics
+            | Self::AgentSummaries
+            | Self::ProjectSummaries
+            | Self::GraphicsRootFrameEdits => "0.0.44",
+        }
+    }
+
     /// The capability a wire name stands for, or `None` for a name this build does not know.
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|cap| cap.as_str() == name)

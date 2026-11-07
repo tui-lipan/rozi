@@ -441,11 +441,12 @@ style = "sparks"
 With `"jump"`, a jump inside one pane is drawn once the cursor has held still for a moment, so a
 cursor that lands in steps, such as a shell's newline and then its prompt, gets one smear straight
 to where it settled. A move to another pane draws at once. A pane that moves, such as one sliding
-with its workspace or a floating pane you drag, carries its cursor along without a trail.
+with its workspace or a floating pane you drag, carries its cursor along without a trail. Switching
+to another workspace or session draws no trail either: the cursor arrives with the new screen.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
+| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt on the same screen; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
 | `style` | string | `"smear"` | `"smear"` draws a solid smear in the trail color, with smooth edges drawn in the characters `glyphs` allows, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"sparks"` is the smear throwing sparks. `"tint"` is a fainter smear that never covers text or the cursor: it colors the background behind text and draws smooth edges only where there is none. In Settings: General › Cursor › Trail style. |
 | `motion` | string | `"spring"` | `"spring"` pulls the front of the smear after the cursor, and its tail after the front along the way it went, with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it along the turn in a smooth arc. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
 | `color` | string | `"cursor"` | `"cursor"` uses the color Rozi draws the cursor in: the theme's [`caret`](themes.md#top-level-fields) color, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |

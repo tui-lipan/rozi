@@ -735,6 +735,13 @@ pub(crate) fn workspace_offsets(ctx: &Context<AppRoot>, resized: bool) -> Vec<(u
         .workspace_slide
         .set(Some((epoch, active, outgoing)));
     let same_attachment = previous.is_some_and(|(old_epoch, _, _)| old_epoch == epoch);
+    // Another workspace or another session replaces the whole screen, and the slide or portal
+    // already shows where the user went. A smear from the old screen's cursor to the new one's
+    // would join two unrelated places, so the cursor arrives without a trail.
+    if previous.is_some_and(|(old_epoch, old_active, _)| old_epoch != epoch || old_active != active)
+    {
+        ctx.skip_cursor_trail();
+    }
     let enabled = workspace_motion_enabled(ctx.state.config.animations, resized, same_attachment);
     let mut visible = Vec::with_capacity(2);
     for index in 0..ctx.state.current().workspaces.len() {
@@ -1505,6 +1512,76 @@ mod tests {
             );
             let (settled, fading) = switch(false, anim::SessionAnimationStyle::Fade);
             assert_ne!(fading, settled, "the session is still resolving in");
+        });
+    }
+
+    /// Switching workspace or session replaces the whole screen, so the cursor arrives without a
+    /// trail; a focus move inside a workspace keeps its trail.
+    #[test]
+    fn only_a_screen_switch_skips_the_cursor_trail() {
+        use crate::Msg;
+        use crate::input::Action;
+        use crate::layout::model::Direction;
+        use crate::layout::tiling::append_tiled_window;
+        use crate::state::Pane;
+        use tui_lipan::prelude::FloatRect;
+
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                for (workspace, id) in [(0, 2), (1, 3)] {
+                    let mut pane = Pane::new(id, 100, FloatRect::default());
+                    pane.opening = false;
+                    let workspace = &mut state.current_mut().workspaces[workspace];
+                    workspace.panes.push(pane);
+                    append_tiled_window(workspace, id);
+                }
+            }
+            backend.render();
+            backend.take_cursor_trail_skip();
+
+            let before = backend.state().current().focused_pane;
+            backend
+                .dispatch(Msg::RunAction(Action::Focus(Direction::Right)))
+                .expect("focus");
+            backend.render();
+            assert_ne!(
+                backend.state().current().focused_pane,
+                before,
+                "focus moved"
+            );
+            assert!(
+                !backend.take_cursor_trail_skip(),
+                "a focus move inside the workspace keeps its trail"
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::SwitchWorkspace(1)))
+                .expect("switch workspace");
+            backend.render();
+            assert!(
+                backend.take_cursor_trail_skip(),
+                "a workspace switch skips the trail"
+            );
+            backend.render();
+            assert!(
+                !backend.take_cursor_trail_skip(),
+                "the frames after the switch ask for nothing"
+            );
+
+            backend.state_mut().runtime_epoch += 1;
+            backend.render();
+            assert!(
+                backend.take_cursor_trail_skip(),
+                "a session switch skips the trail"
+            );
         });
     }
 }

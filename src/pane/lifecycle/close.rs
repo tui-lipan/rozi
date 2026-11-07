@@ -68,7 +68,10 @@ pub(crate) fn remove_pane_after_exit(
     local: bool,
 ) -> Update {
     let scratch = local && crate::scratchpad::contains(&ctx.state, id);
-    match close_pane_inner_with_focus(ctx, id, false, true, Some(local)) {
+    // Release the server pane too. Its program is gone, so nothing is killed, but a pane left on
+    // the server stays in `list-panes` with no place in the layout and nothing that can close it,
+    // keeping its scrollback for as long as the session runs.
+    match close_pane_inner_with_focus(ctx, id, true, true, Some(local)) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
             id,

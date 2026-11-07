@@ -3210,6 +3210,54 @@ fn colliding_pane_ids_route_session_events_by_namespace() {
     });
 }
 
+/// A pane that closes because its program exited is gone from the session, the same as one the
+/// user closed. Kept on the server, it would stay in `list-panes` with no layout place and no way to
+/// close it, holding its scrollback for as long as the session runs. A held pane stays put.
+#[test]
+fn a_pane_closed_by_its_exit_is_released_on_the_server_unless_held() {
+    use crate::session::client::ClientOutbound;
+    use crate::session::protocol::ClientMessage;
+    crate::test_support::on_large_stack(|| {
+        for hold_on_exit in [false, true] {
+            let mut backend = colliding_namespace_backend();
+            let epoch = backend.state().runtime_epoch;
+            let (client, outbound) = SessionClient::test_channel();
+            backend.state_mut().current_mut().session_client = Some(client);
+            backend.state_mut().config.pane.hold_on_exit = hold_on_exit;
+
+            backend
+                .dispatch(Msg::SessionExited {
+                    epoch,
+                    pane_id: 7,
+                    local: false,
+                    generation: 1,
+                    code: 1,
+                })
+                .expect("shared exit");
+
+            let kills: Vec<_> = outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(ClientMessage::Kill {
+                        pane_id,
+                        local,
+                        generation,
+                    }) => Some((pane_id, local, generation)),
+                    _ => None,
+                })
+                .collect();
+            if hold_on_exit {
+                assert!(
+                    kills.is_empty(),
+                    "a held pane stays on the server: {kills:?}"
+                );
+            } else {
+                assert_eq!(kills, [(7, false, 1)]);
+            }
+        }
+    });
+}
+
 #[test]
 fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
     crate::test_support::on_large_stack(|| {

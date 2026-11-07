@@ -327,12 +327,19 @@ recreates:
 - saved terminal history, including its colors and text styling
 
 Processes themselves are not saved. Each command starts again in a fresh terminal, with the saved
-history shown above the new output. A missing directory, a missing history file, or a command that
-fails to start affects only its own pane; the rest of the snapshot still loads.
+history shown above the new output. A missing directory or a command that fails to start affects
+only its own pane. If a pane's saved history cannot be read, that pane starts with empty history
+and a recovery notification identifies it. If the saved layout cannot be read, the panes restore
+without their saved placement.
 
-A snapshot this rozi cannot read, because another rozi version saved it in another format or because
-it is damaged, is listed as `Unreadable`, and as `unreadable` by `rozi sessions list`. It is kept but
-not restored: Enter says why, and opening the session by name is refused rather than starting it
+If the latest snapshot's metadata or pane history is damaged and a complete backup is available,
+rozi restores that backup. rozi keeps damaged snapshots separately until you delete the session or
+discard its snapshot.
+Recovery warnings appear in session notifications and on stderr when restoring from the command line.
+
+A snapshot whose metadata rozi cannot read, because another rozi version saved it in another format
+or because it is damaged and has no usable backup, is listed as `Unreadable`, and as `unreadable`
+by `rozi sessions list`. It is kept but not restored: Enter says why, and opening the session by name is refused rather than starting it
 empty.
 
 To discard a snapshot, press `Ctrl+K` twice on its `Restorable` or `Unreadable` row. `rozi sessions new <name>` also

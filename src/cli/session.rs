@@ -1,6 +1,8 @@
 //! Session subcommands: listing and killing sessions, and the two hidden server entry points a
 //! client spawns rather than a person typing.
 
+use std::io::Write;
+
 use tui_lipan::Result;
 
 use super::args::ListFormat;
@@ -219,8 +221,9 @@ pub(crate) fn run_restart_session_cli(
     let target = session::remote::parse_remote_target(remote)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     let config = crate::config::load_config().config.remote;
-    session::remote::restart_remote_session(&target, name, resurrect, &config)
+    let stderr = session::remote::restart_remote_session(&target, name, resurrect, &config)
         .map_err(std::io::Error::other)?;
+    std::io::stderr().lock().write_all(&stderr)?;
     Ok(())
 }
 

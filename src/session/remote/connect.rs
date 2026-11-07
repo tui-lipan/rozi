@@ -396,7 +396,7 @@ pub fn kill_remote_session(
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
     }
-    run_remote_sessions_command(target, config, "kill", &["sessions", "kill", session])
+    run_remote_sessions_command(target, config, "kill", &["sessions", "kill", session]).map(|_| ())
 }
 
 /// Start a named session on the remote host, with no UI, via `rozi sessions new --detach` over ssh.
@@ -413,16 +413,18 @@ pub fn create_remote_detached_session(
     if !resurrect {
         args.push("--no-resurrect");
     }
-    run_remote_sessions_command(target, config, "new", &args)
+    run_remote_sessions_command(target, config, "new", &args).map(|_| ())
 }
 
 /// Restart a named session on the remote host via `rozi sessions restart` over ssh.
+/// Returns successful stderr for the caller to present. UI callers rely on the retained session
+/// notifications delivered by their subsequent attach instead of printing SSH output.
 pub fn restart_remote_session(
     target: &RemoteTarget,
     session: &str,
     resurrect: bool,
     config: &RemoteConfig,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     if !crate::session::discovery::valid_session_name(session) {
         return Err("invalid session name".to_string());
     }
@@ -438,7 +440,7 @@ fn run_remote_sessions_command(
     config: &RemoteConfig,
     verb: &str,
     args: &[&str],
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = super::binary::resolve(target, config).map_err(|error| error.message)?;
@@ -460,7 +462,7 @@ fn run_remote_sessions_command(
             &String::from_utf8_lossy(&output.stderr),
         ));
     }
-    Ok(())
+    Ok(output.stderr)
 }
 
 pub(super) fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String> {

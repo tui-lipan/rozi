@@ -60,8 +60,10 @@ fn start_detached_session(name: &str, resurrect: bool, fresh: bool) -> io::Resul
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         match prove_ownership(&endpoint, name, &nonce) {
-            Ok(Ownership::Ours) => {
+            Ok(Ownership::Ours(notifications)) => {
                 spawned.keep();
+                // The session is ready even if the caller's stderr has been closed.
+                let _ = write_startup_notifications(&mut io::stderr().lock(), &notifications);
                 return Ok(());
             }
             Ok(Ownership::Another) => return Err(already_running(name)),
@@ -136,7 +138,7 @@ fn already_running(name: &str) -> io::Error {
 
 enum Ownership {
     /// The server on the endpoint holds this nonce and has finished starting.
-    Ours,
+    Ours(Vec<crate::control::SessionNotification>),
     /// A different server owns the name.
     Another,
     /// The server answered but refused the handshake for another reason.
@@ -161,9 +163,10 @@ fn prove_ownership(endpoint: &IpcEndpoint, name: &str, nonce: &str) -> io::Resul
     )?;
     match protocol::read_frame::<_, ServerMessage>(&mut stream)? {
         ServerMessage::Attached { .. } => {
+            let notifications = read_startup_notifications(&mut stream)?;
             protocol::write_frame(&mut stream, &ClientMessage::Detach)?;
             let _ = stream.flush();
-            Ok(Ownership::Ours)
+            Ok(Ownership::Ours(notifications))
         }
         ServerMessage::Error { code, .. } if code == "server-identity-mismatch" => {
             Ok(Ownership::Another)
@@ -172,6 +175,37 @@ fn prove_ownership(endpoint: &IpcEndpoint, name: &str, nonce: &str) -> io::Resul
         other => Ok(Ownership::Refused(format!(
             "unexpected handshake reply: {other:?}"
         ))),
+    }
+}
+
+fn write_startup_notifications(
+    stderr: &mut impl Write,
+    notifications: &[crate::control::SessionNotification],
+) -> io::Result<()> {
+    for notice in notifications {
+        writeln!(stderr, "rozi: {}", notice.message)?;
+    }
+    Ok(())
+}
+
+/// Attach queues retained notifications before SessionActions, even when either list is empty.
+/// Consume that existing boundary before detaching so CLI startup can report recovery warnings
+/// from the detached server without inheriting its stdio or changing the wire protocol.
+fn read_startup_notifications(
+    stream: &mut impl std::io::Read,
+) -> io::Result<Vec<crate::control::SessionNotification>> {
+    let mut notifications = Vec::new();
+    loop {
+        match protocol::read_frame::<_, ServerMessage>(stream)? {
+            ServerMessage::SessionNotifications {
+                notifications: retained,
+                ..
+            } => {
+                notifications.extend(retained);
+            }
+            ServerMessage::SessionActions { .. } => return Ok(notifications),
+            _ => {}
+        }
     }
 }
 
@@ -198,5 +232,55 @@ impl Drop for SpawnedServer {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::session::server::{
+        ServerSettings, SessionServer, bind_session_socket, shutdown_named_session,
+    };
+
+    #[test]
+    fn startup_handshake_returns_recovery_warnings_to_the_invoking_process() {
+        let name = format!("notice-{}", std::process::id());
+        let (listener, endpoint) = bind_session_socket(&name).unwrap();
+        let thread_name = name.clone();
+        let thread_endpoint = endpoint.clone();
+        let worker = std::thread::spawn(move || {
+            crate::test_support::isolate_user_dirs();
+            let mut server = SessionServer::new_named_with_settings(
+                &thread_name,
+                ServerSettings {
+                    resurrect: true,
+                    startup_nonce: Some("notice-test".into()),
+                    ..Default::default()
+                },
+            );
+            super::super::resurrect::write_empty_snapshot_for_test(&thread_name);
+            std::fs::write(
+                server.snapshot_path().unwrap().join("layout.json"),
+                b"broken",
+            )
+            .unwrap();
+            assert_eq!(server.restore().unwrap(), 0);
+            server.endpoint = Some(thread_endpoint);
+            server.run_listener(listener)
+        });
+        let ownership = prove_ownership(&endpoint, &name, "notice-test");
+        shutdown_named_session(&name).unwrap();
+        worker.join().unwrap().unwrap();
+        let Ownership::Ours(notifications) = ownership.unwrap() else {
+            panic!("startup was not acknowledged")
+        };
+        assert_eq!(notifications.len(), 1);
+        let mut stderr = Vec::new();
+        write_startup_notifications(&mut stderr, &notifications).unwrap();
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(
+            stderr.contains("rozi: Saved layout could not be read"),
+            "{stderr}"
+        );
     }
 }

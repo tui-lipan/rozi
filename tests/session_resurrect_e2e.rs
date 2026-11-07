@@ -491,6 +491,7 @@ fn a_server_refuses_to_start_over_a_snapshot_it_cannot_read() {
             ))
         },
         "its snapshot is in format 99",
+        true,
     );
 }
 
@@ -502,6 +503,7 @@ fn a_server_refuses_to_start_over_a_snapshot_missing_its_metadata() {
         |sessions, session| sessions.join(session),
         |_| None,
         "its snapshot is damaged",
+        false,
     );
 }
 
@@ -512,6 +514,7 @@ fn a_server_refuses_to_start_over_a_backup_missing_its_metadata() {
         |sessions, session| sessions.join(format!(".{session}.old-4242.1")),
         |_| None,
         "its snapshot is damaged",
+        false,
     );
 }
 
@@ -519,6 +522,7 @@ fn refuses_to_start_over(
     snapshot_dir: impl Fn(&std::path::Path, &str) -> std::path::PathBuf,
     meta: impl Fn(&str) -> Option<String>,
     reason: &str,
+    preserve_in_place: bool,
 ) {
     let session = unique_session_name();
     let test_root = private_temp_dir();
@@ -564,13 +568,19 @@ fn refuses_to_start_over(
     assert!(!status.success(), "{stderr}");
     assert!(stderr.contains(reason), "the refusal says why: {stderr}");
     let published = sessions.join(&session);
+    let preserved = if preserve_in_place {
+        assert!(!published.exists(), "a newer backup must not be promoted");
+        saved
+    } else {
+        published
+    };
     assert_eq!(
-        fs::read_to_string(published.join("meta.json")).ok(),
+        fs::read_to_string(preserved.join("meta.json")).ok(),
         meta,
-        "the snapshot is published, its metadata unchanged"
+        "the snapshot metadata is unchanged"
     );
     assert_eq!(
-        fs::read(published.join("panes").join("1.replay")).expect("published replay"),
+        fs::read(preserved.join("panes").join("1.replay")).expect("preserved replay"),
         b"kept"
     );
     assert!(

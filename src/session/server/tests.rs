@@ -3100,7 +3100,7 @@ fn malformed_layout_commit_is_rejected() {
     assert!(layout.is_none());
 }
 
-fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
+pub(super) fn shared_layout_for_panes(panes: &[(PaneId, u64)]) -> SharedLayout {
     SharedLayout {
         version: SHARED_LAYOUT_VERSION,
         pane_geometry: Default::default(),

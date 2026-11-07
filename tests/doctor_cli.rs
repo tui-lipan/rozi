@@ -5,7 +5,9 @@ use std::path::Path;
 use std::process::Command;
 
 use rozi::platform::paths::{self, PlatformEnv};
-use rozi::session::protocol::{ClientMessage, ServerMessage, read_frame, write_frame};
+use rozi::session::protocol::{
+    ClientMessage, Frame, FrameDecoder, FrameReadStatus, ServerMessage, write_frame,
+};
 
 fn environment(home: &Path) -> PlatformEnv {
     PlatformEnv {
@@ -190,6 +192,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
     let runtime = paths::runtime_dir(&env).unwrap();
     let stale = runtime.join("session-secret-session-stale.sock");
     std::fs::write(&stale, b"stale").unwrap();
+    let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut workers = Vec::new();
     for (name, reply) in [
         (
@@ -218,24 +221,38 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
         let endpoint = rozi::platform::ipc::EndpointRegistry::session_endpoint(&runtime, name);
         let listener = endpoint.bind().unwrap().into_listener();
         listener.set_nonblocking(true).unwrap();
+        let finished = finished.clone();
         workers.push(std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + common::io_timeout();
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok(stream) => break stream,
+            while !finished.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut stream = match listener.accept() {
+                    Ok(stream) => stream,
                     Err(err) if rozi::platform::ipc::is_busy_error(&err) => {
-                        assert!(std::time::Instant::now() < deadline, "doctor did not query");
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
                     }
                     Err(err) => panic!("{err}"),
+                };
+                // The doctor's short probe can expire before this worker is scheduled. Avoid
+                // socket timeout options on a peer that may already have closed, and keep the
+                // production decoder's partial frame state while polling.
+                stream.set_nonblocking(true).unwrap();
+                if !read_doctor_query(&mut stream) {
+                    continue;
                 }
-            };
-            stream.set_read_timeout(Some(common::io_timeout())).unwrap();
-            assert!(matches!(
-                read_frame::<_, ClientMessage>(&mut stream).unwrap(),
-                ClientMessage::Query { .. }
-            ));
-            write_frame(&mut stream, &reply).unwrap();
+                stream.set_nonblocking(false).unwrap();
+                if let Err(err) = write_frame(&mut stream, &reply) {
+                    assert!(
+                        matches!(
+                            err.kind(),
+                            std::io::ErrorKind::BrokenPipe
+                                | std::io::ErrorKind::ConnectionReset
+                                | std::io::ErrorKind::ConnectionAborted
+                                | std::io::ErrorKind::NotConnected
+                        ),
+                        "could not answer doctor: {err}"
+                    );
+                }
+            }
         }));
     }
     for name in [
@@ -254,7 +271,21 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
         )
         .unwrap();
     }
-    let fields = report(rozi(home).arg("doctor"), home);
+    // A single 60 ms production probe can legitimately time out under CI load. Keep serving
+    // queries until a complete report arrives, bounded by the harness deadline.
+    let deadline = std::time::Instant::now() + common::io_timeout();
+    let fields = loop {
+        let fields = report(rozi(home).arg("doctor"), home);
+        if (fields["sessions_running"] == "1"
+            && fields["sessions_incompatible"] == "1"
+            && fields["sessions_restorable"] == "1")
+            || std::time::Instant::now() >= deadline
+        {
+            break fields;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    finished.store(true, std::sync::atomic::Ordering::Relaxed);
     for worker in workers {
         worker.join().unwrap();
     }
@@ -263,6 +294,31 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
     assert_eq!(fields["sessions_restorable"], "1");
     assert_eq!(std::fs::read(&stale).unwrap(), b"stale");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Read the actual typed query without assuming the client stays connected long enough to set
+/// socket options. EOF is an expired probe; malformed or unexpected frames still fail the test.
+fn read_doctor_query(stream: &mut rozi::platform::ipc::IpcConnection) -> bool {
+    let mut decoder = FrameDecoder::default();
+    let deadline = std::time::Instant::now() + common::io_timeout();
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "doctor did not send its query"
+        );
+        if let Some(frame) = decoder.next_frame::<ClientMessage>().unwrap() {
+            assert!(
+                matches!(frame, Frame::Control(ClientMessage::Query { .. })),
+                "{frame:?}"
+            );
+            return true;
+        }
+        match decoder.read_from_status(stream).unwrap() {
+            FrameReadStatus::Eof => return false,
+            FrameReadStatus::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(1)),
+            FrameReadStatus::Read(_) => {}
+        }
+    }
 }
 
 #[test]

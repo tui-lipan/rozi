@@ -20,6 +20,11 @@ fn hung_remote_session_list_is_killed_and_reaped() {
     run_case("list_hang");
 }
 
+#[test]
+fn successful_remote_restart_relays_recovery_warnings_to_the_cli() {
+    run_case("restart_warning");
+}
+
 fn run_case(case: &str) {
     let root = tempfile::tempdir().unwrap();
     let ssh = root.path().join("ssh");
@@ -30,6 +35,9 @@ while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 shift
 shift
 case "$ROZI_SSH_CASE:$*" in
+  "restart_warning:"*"'sessions' 'restart'"*)
+    printf 'rozi: History for pane 2 (editor) could not be read; restoring it with empty history.\n' >&2
+    exit 0 ;;
   "hang:"*"'sessions' 'kill'"* | "list_hang:"*"'sessions' 'list'"*)
     echo $$ > "$ROZI_SSH_PID"
     exec sleep 120 ;;
@@ -68,6 +76,12 @@ exec /bin/sh -c "$*"
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    if case == "restart_warning" {
+        assert!(
+            output.stderr.is_empty(),
+            "the transport must leave presentation to its caller: {output:?}"
+        );
+    }
 }
 
 #[test]
@@ -91,6 +105,35 @@ fn remote_subprocess_child() {
     };
     let target = parse_remote_target("fixture").unwrap();
     let session = std::env::var("ROZI_TEST_SESSION").unwrap();
+    if case == "restart_warning" {
+        let expected = b"rozi: History for pane 2 (editor) could not be read; restoring it with empty history.\n";
+        let stderr =
+            rozi::session::remote::restart_remote_session(&target, &session, true, &config)
+                .unwrap();
+        assert_eq!(stderr, expected, "the transport retains successful stderr");
+        let path =
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join("remote-config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[remote.hosts.fixture]\nbinary_path = {:?}\n",
+                env!("CARGO_BIN_EXE_rozi")
+            ),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_rozi"))
+            .args(["sessions", "restart", &session, "--remote", "fixture"])
+            .env("ROZI_CONFIG", path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert_eq!(
+            output.stderr, expected,
+            "the invoking CLI prints the remote warning"
+        );
+        return;
+    }
     if case == "hang" || case == "list_hang" {
         let started = Instant::now();
         let error = if case == "hang" {

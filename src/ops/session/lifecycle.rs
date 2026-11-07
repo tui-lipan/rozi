@@ -1131,6 +1131,7 @@ fn stop_discovered_session_for_restart(
             true,
             remote_config,
         )
+        .map(|_| ())
         .map_err(std::io::Error::other);
     }
     // The row may be out of date. With no server to replace there is nothing to restart, and

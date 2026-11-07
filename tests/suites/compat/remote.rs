@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use super::flows;
-use super::harness::{self, Mode, Session, Transport, assert_clean_protocol_mismatch, pair};
+use super::harness::{self, Mode, Session, Transport, pair};
 
 #[test]
 #[ignore = "set ROZI_COMPAT=1; downloads a signed release; needs ssh to localhost"]
@@ -25,11 +25,10 @@ fn localhost_ssh_runs_the_cross_version_flows() {
             flows::exercise(&pair.old_bin, &pair.new_bin, Transport::Ssh);
             flows::exercise(&pair.new_bin, &pair.old_bin, Transport::Ssh);
         }
-        Mode::Mismatch => {
-            remote_refuses(&pair.old_bin, &pair.new_bin, "new client, old server");
-            remote_refuses(&pair.new_bin, &pair.old_bin, "old client, new server");
-        }
-        Mode::Same => {
+        // A control command over `--remote` is answered by the host's own rozi, which speaks the
+        // session wire with its local server and only the control API with this client. Neither
+        // side ever sees the other's generation, so a forwarded command works across it.
+        Mode::Mismatch | Mode::Same => {
             remote_lists(&pair.old_bin, &pair.new_bin);
             remote_lists(&pair.new_bin, &pair.old_bin);
         }
@@ -43,18 +42,6 @@ fn remote_lists(server: &Path, client: &Path) {
         harness::pane_ids(&listed).is_empty(),
         "ssh list-panes failed:\n{}",
         listed.combined()
-    );
-}
-
-fn remote_refuses(server: &Path, client: &Path, label: &str) {
-    let session = prepared(server);
-    let refused = session.call(client, Transport::Ssh, &["list-panes", "--format", "json"]);
-    assert_clean_protocol_mismatch(&refused);
-    let still = session.list_panes(server);
-    assert!(
-        still.success(),
-        "{label}: the server stopped answering after the ssh client was refused:\n{}",
-        still.combined()
     );
 }
 

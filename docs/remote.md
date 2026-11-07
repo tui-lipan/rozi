@@ -275,8 +275,10 @@ Use `binary_path` for an installation anywhere else.
 
 ### Where rozi installs
 
-Automatic installation never replaces a rozi you installed yourself. It installs a copy matching the
-client's exact version, so several client versions can coexist:
+When the host has more than one compatible rozi, a new session uses the one matching the client's
+exact version, then the newest release. Automatic installation never replaces a rozi you installed
+yourself. It installs a copy matching the client's exact version, so several client versions can
+coexist:
 
 | Host | Install path |
 | --- | --- |
@@ -303,10 +305,21 @@ For development or CI:
 
 ### Version compatibility
 
-Your rozi and the rozi on the host must speak the same session protocol. When a release changes it,
-its release notes say so: update both ends, then restart the named sessions running on the host
-with `rozi sessions restart <NAME> --remote <HOST>`. Releases that keep the protocol work with each other, and updating the client alone does not
-restart remote sessions.
+Your rozi and the rozi on the host do not have to be the same release. Releases that share a
+session protocol generation work with each other in both directions: an updated client attaches to
+a session the host started on an older release, and a host updated first still serves an older
+client. A feature the other end does not have yet is shown but disabled, with the release it
+needs, and everything else keeps working. Updating the client alone never restarts remote
+sessions.
+
+A release that starts a new generation says so in its release notes, and its update notice tells
+you which running sessions it affects. A session on an older generation keeps running on the old
+release but refuses an attach from the new one. Restart it on the host's current rozi with
+`rozi sessions upgrade <NAME> --remote <HOST>`, which reopens it from its snapshot.
+
+To move a session from an older release to the host's current one at any time, run
+`rozi sessions upgrade <NAME> --remote <HOST>`. The programs running in its panes end; its layout
+and terminal history come back as [resurrection](sessions.md#resurrection) restores them.
 
 ## Understand the client and server boundary
 
@@ -477,7 +490,7 @@ finishes.
 | `No rozi on host` | Allow installation or set `binary_path`. |
 | `Install cancelled` | You declined the install prompt. Connect again and choose `Install`, or set `binary_path`. |
 | `Rozi update needed` | The host's rozi does not speak this client's session protocol. Install the matching version on the host. |
-| Incompatible version | Update both ends and restart the named session. |
+| Incompatible version | The session runs on an older protocol generation. Run `rozi sessions upgrade <NAME> --remote <HOST>`. |
 | `Connection failed` | Any other SSH failure. Run `rozi --remote <host>` from a shell to see the error. |
 | Git markers missing | Install `git` on the remote host and check its `PATH`. |
 

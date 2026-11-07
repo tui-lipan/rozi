@@ -139,6 +139,11 @@ An error normally has no `data`. A failed [pane wait](#pane-waits) is the except
 no placed process may send, the second for one that acts on a session outside the host or session
 the process was placed for.
 
+A `cmd` the answering rozi does not know is refused with `unsupported`, and an error naming that
+rozi's release, such as `this session runs rozi 0.0.44, which does not support this command`. The
+connection stays usable. Check `rozi api describe` for a capability before relying on a newer
+command.
+
 `request-failed` is the fallback for a failure with no narrower category. Older servers may omit
 `code`, so a client that supports version skew must also handle an error without it.
 

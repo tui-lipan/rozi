@@ -32,7 +32,7 @@ pub const MIN_SHARED_LAYOUT_VERSION: u32 = 4;
 /// Bumped only for a breaking shape change (removing or renaming a field, changing a type, or
 /// adding a new required field). Additive optional fields use `#[serde(default)]` and do not bump
 /// this constant; layout features that a session server must preserve across re-encoding or
-/// enforce during validation are gated on server capabilities via [`SharedLayoutFeature`] and
+/// enforce during validation are gated on server capabilities in
 /// [`SharedLayout::strip_unsupported`].
 ///
 /// Generation 4 includes the controller's pane chrome geometry.

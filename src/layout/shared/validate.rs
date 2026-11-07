@@ -100,55 +100,20 @@ impl std::fmt::Display for SharedLayoutValidationError {
 
 impl std::error::Error for SharedLayoutValidationError {}
 
-/// Optional shared-layout features that a session server must understand to preserve across
-/// re-encoding (`CommitLayout` / `SpawnPlacementCommit` -> `LayoutCommitted` / `Attached` /
-/// snapshot `layout.json`) or enforce during validation and headless edits.
-///
-/// Every field and enum variant in the generation-52 baseline is unconditionally supported
-/// ([`Self::required_capability`] returns `None`). Any layout feature added without bumping
-/// [`SHARED_LAYOUT_VERSION`] must add a variant here, wire its capability wire name in
-/// [`Self::required_capability`], and reset its fields in [`SharedLayout::strip_unsupported`] when
-/// the connected server lacks that capability.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SharedLayoutFeature {
-    /// Generation-52 baseline document shape (`canvas_cols`, `canvas_rows`, `pane_geometry`,
-    /// workspaces, tiling trees, floating rects, pins, and scrollable widths).
-    Baseline,
-}
-
-impl SharedLayoutFeature {
-    /// The wire capability name the connected session server must advertise for a controller to
-    /// offer or commit this layout feature, or `None` for generation-52 baseline features.
-    pub const fn required_capability(self) -> Option<&'static str> {
-        match self {
-            Self::Baseline => None,
-        }
-    }
-
-    /// Whether `server_caps` supports this layout feature.
-    pub fn is_supported_by(self, server_caps: &crate::session::protocol::Capabilities) -> bool {
-        match self.required_capability() {
-            None => true,
-            Some(cap) => server_caps.supports(cap),
-        }
-    }
-}
-
 impl SharedLayout {
-    /// Strip optional layout fields that `server_caps` does not support back to their baseline
-    /// defaults before a controller commits the document to a session server.
+    /// Reset layout fields that the connected server would not keep to their baseline values,
+    /// before a controller commits the document.
     ///
-    /// An older session server deserializes [`SharedLayout`] into its own Rust types on
-    /// `CommitLayout` and `SpawnPlacementCommit`, then re-encodes it for `LayoutCommitted`,
-    /// `Attached`, `LayoutRejected`, and snapshot `layout.json`. Any field unknown to that server
-    /// would be dropped before followers receive it while the controller's optimistic
-    /// `last_committed_layout` kept the unstripped value.
+    /// An older session server decodes [`SharedLayout`] into its own types on `CommitLayout` and
+    /// `SpawnPlacementCommit`, then re-encodes it for `LayoutCommitted`, `Attached`,
+    /// `LayoutRejected`, and its snapshot. A field it does not know is dropped before followers see
+    /// it, and a vocabulary value it does not know fails to decode. A layout feature added within a
+    /// generation is therefore gated on a [`crate::session::protocol::Capability`] here.
     ///
-    /// Every struct and enum reachable from [`SharedLayout`] is destructured exhaustively without
-    /// `..` or wildcard arms so adding a field or variant fails to compile until its capability
-    /// gate (or [`SharedLayoutFeature::Baseline`] status) is declared here.
+    /// Every struct and enum reachable from [`SharedLayout`] is destructured without `..` or
+    /// wildcard arms, so a new field or value does not compile until its author decides. Everything
+    /// in the current document generation is baseline, so nothing is reset yet.
     pub fn strip_unsupported(&mut self, server_caps: &crate::session::protocol::Capabilities) {
-        let _ = SharedLayoutFeature::Baseline.is_supported_by(server_caps);
         let Self {
             version: _,
             canvas_cols: _,
@@ -713,10 +678,6 @@ mod tests {
     #[test]
     fn strip_unsupported_preserves_baseline_layout_across_server_capabilities() {
         use crate::session::protocol::Capabilities;
-
-        assert_eq!(SharedLayoutFeature::Baseline.required_capability(), None);
-        assert!(SharedLayoutFeature::Baseline.is_supported_by(&Capabilities::default()));
-        assert!(SharedLayoutFeature::Baseline.is_supported_by(&Capabilities::current()));
 
         let mut layout = layout_with_panes(&[(1, 1), (2, 1)]);
         layout.workspaces[0].tree = Some(SerializedTree::Split {

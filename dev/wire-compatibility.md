@@ -120,6 +120,15 @@ rules: an additive change does not bump the version.
   a newer format is refused. This is what makes Upgrade session (restart from snapshot) safe across
   a format change.
 
+To change the snapshot format, raise `SNAPSHOT_VERSION` in `src/session/server/resurrect.rs` and
+append a `vN_to_vN+1` migration to the `STEPS` table in `resurrect/migrate.rs`. A compile-time
+assertion requires one migration per format step from `OLDEST_READABLE_SNAPSHOT_VERSION`. Raise
+that constant, and delete the oldest migration, only when the format leaves the window. Migrations
+run on the decoded metadata in memory; the files on disk are left as they are until the next write.
+Add a fixture under `tests/fixtures/snapshots/v<N>/` produced by the production writer (see the
+README there) and keep the older fixtures, which the tests read through discovery, restore, and
+interrupted-backup recovery.
+
 ## Verification
 
 - **Schema baseline.** `schemas/session-wire.schema.json` is generated from the wire types by

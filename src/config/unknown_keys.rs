@@ -364,6 +364,8 @@ const CURSOR_TRAIL_KEYS: &[&str] = &[
     "trailing_exponent",
     "damping",
     "glide_ms",
+    "settle_ms",
+    "settle_max_ms",
     "max_length",
     "opacity",
     "taper",

@@ -1390,9 +1390,7 @@ fn coalesce_inbound_segment(
 impl ClientOutbound {
     fn wire_bytes(&self) -> usize {
         match self {
-            Self::Control(message) => serde_json::to_vec(message)
-                .map(|bytes| bytes.len().saturating_add(5))
-                .unwrap_or(5),
+            Self::Control(message) => protocol::control_frame_wire_bytes(message),
             Self::PresentationAcks(acks) => 5 + acks.len() * 21,
             Self::AcquisitionAcks(acks) => 5 + acks.len() * 21,
             Self::PresentationInterest(interest) => 5 + interest.len() * 15,

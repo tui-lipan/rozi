@@ -368,11 +368,27 @@ pub(crate) fn rows_reported(
     let Some(key) = live_stream(&ctx.state, stream_id, pane_id) else {
         return Update::none();
     };
+    let generation = target(&ctx.state, &key.origin, pane_id)
+        .map(|(generation, _, _)| generation)
+        .unwrap_or(u64::MAX);
     let Some(stream) = ctx.state.publish_streams.get_mut(&key) else {
         return Update::none();
     };
-    let retained = retain_responses(stream, pane_id, &rows, &responses);
-    if retained {
+    // An update whose own `ReportPaneRows` frame exceeds `MAX_FRAME_SIZE` cannot travel on the
+    // session wire at all: neither replace `last_rows` / `last_responses` with it nor push it into
+    // the outbound transport where it would disconnect the client.
+    if report_wire_bytes(
+        pane_id,
+        generation,
+        &stream.identity,
+        stream.id,
+        &rows,
+        responses.clone(),
+    ) > crate::session::protocol::MAX_FRAME_SIZE
+    {
+        return Update::none();
+    }
+    if retain_responses(stream, pane_id, generation, &rows, &responses) {
         stream.last_rows = rows;
         send_latest(&mut ctx.state, &key, false, None);
     } else {
@@ -381,68 +397,55 @@ pub(crate) fn rows_reported(
     Update::none()
 }
 
-/// Encoded byte length of a `ReportPaneRows` control message carrying `rows` and `responses`.
-fn encoded_report_len(
+/// On-wire byte length of a `ReportPaneRows` control frame carrying `rows` and `responses`,
+/// using the exact accounting of [`crate::session::protocol::control_frame_wire_bytes`].
+fn report_wire_bytes(
     pane_id: PaneId,
+    generation: u64,
     publisher: &PublisherIdentity,
     epoch: u64,
     rows: &[PublishedRow],
     responses: Vec<crate::control::PublishedAgentResponse>,
 ) -> usize {
-    serde_json::to_vec(&crate::session::protocol::ClientMessage::ReportPaneRows {
-        epoch,
-        responses,
-        pane_id,
-        local: false,
-        generation: u64::MAX,
-        publisher: publisher.id.clone(),
-        kind: publisher.kind,
-        rows: rows.to_vec(),
-    })
-    .map_or(usize::MAX, |bytes| bytes.len())
+    crate::session::protocol::control_frame_wire_bytes(
+        &crate::session::protocol::ClientMessage::ReportPaneRows {
+            epoch,
+            responses,
+            pane_id,
+            local: false,
+            generation,
+            publisher: publisher.id.clone(),
+            kind: publisher.kind,
+            rows: rows.to_vec(),
+        },
+    )
 }
 
 /// Retain `responses` for replay, if the whole update passes the session server's validation.
 ///
+/// Caller has already verified that `(rows, responses)` fits [`crate::session::protocol::MAX_FRAME_SIZE`].
 /// An update is one report, accepted or rejected whole, and so is its replay: nothing of an
 /// invalid update (nor its rows) is kept, or a later rows-only update could combine with it or a
 /// reconnect could present part of it as valid. A retained response is dropped once its row is
-/// gone from the canonical set or has changed status: that row is on a newer turn, and the old
-/// answer must not be replayed for it. A response replaces the retained one for its id only with
-/// a greater `seq`, as the session server orders them.
+/// gone from the canonical set or has changed status or `native_session`. A response replaces the
+/// retained one for its id only with a greater `seq`, as the session server orders them.
 ///
-/// The cache holds at most one update's budget and keeps the complete encoded `ReportPaneRows`
-/// message (latest rows, retained responses, and envelope) within
-/// [`crate::session::protocol::MAX_REPORT_PANE_ROWS_FRAME_BYTES`], evicting the oldest responses
-/// first, so a reconnect is always a single valid frame.
-///
-/// Returns whether the update is valid and was retained.
+/// The cache holds at most one update's budget and keeps the complete `ReportPaneRows` frame
+/// within [`crate::session::protocol::MAX_FRAME_SIZE`], evicting older cached responses first, so
+/// every valid update that fits the transport is retained and a reconnect is always a single valid
+/// frame.
 fn retain_responses(
     stream: &mut crate::state::PublishStreamState,
     pane_id: PaneId,
+    generation: u64,
     rows: &[PublishedRow],
     responses: &[crate::control::PublishedAgentResponse],
 ) -> bool {
     use crate::session::protocol::{
-        MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_REPORT_PANE_ROWS_FRAME_BYTES,
-        MAX_RESPONSES_PER_UPDATE, canonical_published_row_ids, canonical_row_response_scope,
-        validate_published_responses,
+        MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_FRAME_SIZE, MAX_RESPONSES_PER_UPDATE,
+        canonical_published_row_ids, canonical_row_response_scope, validate_published_responses,
     };
     if validate_published_responses(stream.identity.kind, rows, responses).is_err() {
-        return false;
-    }
-    // If this update carries responses and cannot fit inside one session frame on its own, do not
-    // retain or partially evict it: forward it whole so the transport handles it atomically rather
-    // than turning it into a partial update with missing responses.
-    if !responses.is_empty()
-        && encoded_report_len(
-            pane_id,
-            &stream.identity,
-            stream.id,
-            rows,
-            responses.to_vec(),
-        ) > MAX_REPORT_PANE_ROWS_FRAME_BYTES
-    {
         return false;
     }
     let canonical = canonical_published_row_ids(rows);
@@ -488,8 +491,9 @@ fn retain_responses(
                 .map(|kept| kept.response.wire_len())
                 .sum::<usize>()
                 > MAX_AGENT_RESPONSES_UPDATE_BYTES
-            || encoded_report_len(
+            || report_wire_bytes(
                 pane_id,
+                generation,
                 &stream.identity,
                 stream.id,
                 rows,
@@ -498,10 +502,10 @@ fn retain_responses(
                     .iter()
                     .map(|kept| kept.response.clone())
                     .collect(),
-            ) > MAX_REPORT_PANE_ROWS_FRAME_BYTES)
+            ) > MAX_FRAME_SIZE)
     {
-        // Never evict a response belonging to the current update; all of `responses` fit the frame
-        // budget on their own (checked above), so evicting older cached responses is always enough.
+        // Never evict a response belonging to the current update; `(rows, responses)` already fits
+        // `MAX_FRAME_SIZE` on its own, so evicting older cached responses is always enough.
         let Some(index) = stream
             .last_responses
             .iter()
@@ -1650,7 +1654,7 @@ mod tests {
                     ClientOutbound::Control(
                         ref message @ ClientMessage::ReportPaneRows { ref responses, .. },
                     ) => Some((
-                        serde_json::to_vec(message).unwrap().len(),
+                        crate::session::protocol::control_frame_wire_bytes(message),
                         responses.iter().map(|r| r.id.clone()).collect(),
                     )),
                     _ => None,
@@ -1658,8 +1662,8 @@ mod tests {
                 .collect();
             assert_eq!(frames.len(), 1);
             assert!(
-                frames[0].0 <= crate::session::protocol::MAX_REPORT_PANE_ROWS_FRAME_BYTES,
-                "frame len {} exceeded budget",
+                frames[0].0 <= crate::session::protocol::MAX_FRAME_SIZE,
+                "frame len {} exceeded MAX_FRAME_SIZE",
                 frames[0].0
             );
             assert_eq!(
@@ -1668,22 +1672,68 @@ mod tests {
                 "oldest responses evicted so large rows + responses fit one frame"
             );
 
-            // An update whose own rows + fresh responses exceed the frame budget is never trimmed
-            // into a partial valid update: all of its responses are forwarded together, and nothing
-            // from it is retained for replay.
-            let mut huge_rows = vec![row("r0", "done"), row("r1", "done")];
-            huge_rows[0].cwd = Some("x".repeat(6 * 1024 * 1024));
-            report_responses(backend, huge_rows, &[("r0", 2, big), ("r1", 2, big)]);
+            // An update near the 8 MiB ceiling that still fits `MAX_FRAME_SIZE` is retained whole
+            // without any 64 KiB dead zone, evicting older cached responses instead of its own.
+            let mut near_ceiling_rows =
+                vec![row("r0", "done"), row("r1", "done"), row("r9", "done")];
+            near_ceiling_rows[0].cwd = Some("x".repeat(6 * 1024 * 1024 - 8 * 1024));
+            report_responses(
+                backend,
+                near_ceiling_rows,
+                &[("r0", 2, big), ("r1", 2, big)],
+            );
             assert_eq!(
                 response_reports(&outbound),
                 vec![vec![("r0".to_string(), 2), ("r1".to_string(), 2)]],
-                "current update responses must not be partially evicted"
+                "current update responses fit MAX_FRAME_SIZE and are sent together"
             );
             super::resend_rows(backend.state_mut());
             assert_eq!(
                 response_reports(&outbound),
-                vec![vec![("r8".to_string(), 1), ("r9".to_string(), 1)]],
-                "oversized update was not retained"
+                vec![vec![("r0".to_string(), 2), ("r1".to_string(), 2)]],
+                "update fitting MAX_FRAME_SIZE was retained and evicted older r9"
+            );
+
+            // An update whose own `ReportPaneRows` exceeds `MAX_FRAME_SIZE` (whether with
+            // responses or rows-only) is neither sent into the session transport nor allowed to
+            // poison `last_rows` / `last_responses`.
+            let mut over_with_responses = vec![row("r0", "done"), row("r1", "done")];
+            over_with_responses[0].cwd = Some("x".repeat(6 * 1024 * 1024 + 64 * 1024));
+            report_responses(
+                backend,
+                over_with_responses,
+                &[("r0", 3, big), ("r1", 3, big)],
+            );
+            assert!(
+                response_reports(&outbound).is_empty(),
+                "oversized update with responses must not be pushed to session transport"
+            );
+            let mut over_rows_only = vec![row("r0", "done"), row("r1", "done")];
+            over_rows_only[0].cwd = Some("x".repeat(crate::session::protocol::MAX_FRAME_SIZE));
+            report(backend, 1, over_rows_only);
+            assert!(
+                response_reports(&outbound).is_empty(),
+                "oversized rows-only update must not be pushed to session transport"
+            );
+            super::resend_rows(backend.state_mut());
+            let replayed: Vec<(usize, Vec<(String, u64)>)> = outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(
+                        ref message @ ClientMessage::ReportPaneRows { ref responses, .. },
+                    ) => Some((
+                        crate::session::protocol::control_frame_wire_bytes(message),
+                        responses.iter().map(|r| (r.id.clone(), r.seq)).collect(),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(replayed.len(), 1);
+            assert!(replayed[0].0 <= crate::session::protocol::MAX_FRAME_SIZE);
+            assert_eq!(
+                replayed[0].1,
+                vec![("r0".to_string(), 2), ("r1".to_string(), 2)],
+                "oversized updates did not poison last_rows or last_responses"
             );
         });
     }

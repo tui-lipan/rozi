@@ -130,15 +130,30 @@ pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
         return Ok(false);
     }
     let (release, checked_server) = crate::session::discovery::session_release_and_server(name);
-    if let Some(newer) = release.newer_than_this_build() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "Session `{name}` runs rozi {newer}, newer than this rozi {}. Upgrade it with \
-                 rozi {newer} or newer instead.",
-                env!("CARGO_PKG_VERSION")
-            ),
-        ));
+    // A name with no server behind it has nothing to stop. Its stale endpoint is replaced when the
+    // session starts again, and that start fails if a server has taken the name in the meantime,
+    // so no server is stopped that was not checked.
+    if release == crate::session::discovery::SessionRelease::NotRunning {
+        return Ok(true);
+    }
+    match release.upgrade_disposition() {
+        crate::session::discovery::UpgradeDisposition::Replace => {}
+        crate::session::discovery::UpgradeDisposition::RefuseNewer(newer) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Session `{name}` runs rozi {newer}, newer than this rozi {}. Upgrade it with \
+                     rozi {newer} or newer instead.",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ));
+        }
+        crate::session::discovery::UpgradeDisposition::RefuseUnverified => {
+            return Err(io::Error::other(format!(
+                "Session `{name}` did not say which rozi it runs, so it was not stopped. Try again \
+                 once it answers."
+            )));
+        }
     }
     // Stop only the server that was just checked. Another one may have taken the name since.
     shutdown_existing_named_session(&endpoint, name, Ending::Upgrade, checked_server).map(|_| true)

@@ -271,7 +271,9 @@ pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Resul
                 "Upgrading session `{name}` from rozi {} to {current}.",
                 peer.rozi_version
             ),
-            SessionRelease::Running(None) | SessionRelease::Unknown => {}
+            SessionRelease::Running(None)
+            | SessionRelease::Unknown
+            | SessionRelease::NotRunning => {}
         }
         // Not running, or too old to say: the upgrade itself reports what it finds.
         session::server::upgrade_named_session(name)?;

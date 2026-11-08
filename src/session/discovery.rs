@@ -360,8 +360,22 @@ pub(crate) enum SessionRelease {
     /// It refused this build's generation. `None` from a server before generation 52, which never
     /// said who it was and is therefore older than any build that asks.
     Incompatible(Option<crate::session::protocol::PeerRelease>),
-    /// Not running, or no answer.
+    /// Nothing accepted the connection: no server runs under the name.
+    NotRunning,
+    /// A server accepted the connection but gave no answer this build could read: it timed out,
+    /// sent something malformed, or refused for another reason.
     Unknown,
+}
+
+/// Whether an upgrade may stop a session's server and replace it with this build.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UpgradeDisposition {
+    /// The server is known to be older than this build, or this build exactly, or not running.
+    Replace,
+    /// The server runs this newer release or generation; replacing it would downgrade it.
+    RefuseNewer(String),
+    /// Nothing proves the server is safe to replace.
+    RefuseUnverified,
 }
 
 pub(crate) fn session_release(name: &str) -> SessionRelease {
@@ -375,7 +389,7 @@ pub(crate) fn session_release_and_server(name: &str) -> (SessionRelease, Option<
         .ok()
         .and_then(|endpoint| endpoint.connect().ok())
     else {
-        return (SessionRelease::Unknown, None);
+        return (SessionRelease::NotRunning, None);
     };
     let server = stream.peer_pid();
     let release = match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT) {
@@ -395,20 +409,33 @@ pub(crate) fn session_release_and_server(name: &str) -> (SessionRelease, Option<
 }
 
 impl SessionRelease {
-    /// Whether moving this session onto this build would replace it with an older release: either
-    /// it reports a newer release, or it speaks a newer generation than this build does.
-    pub(crate) fn newer_than_this_build(&self) -> Option<String> {
+    /// Whether an upgrade may replace this server. It fails closed: only positive evidence that the
+    /// server is no newer than this build allows it.
+    pub(crate) fn upgrade_disposition(&self) -> UpgradeDisposition {
+        use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
         match self {
-            Self::Running(Some(version)) if release_order(version) == Some(ReleaseOrder::Newer) => {
-                Some(version.clone())
+            Self::NotRunning => UpgradeDisposition::Replace,
+            Self::Running(Some(version)) => match release_order(version) {
+                Some(ReleaseOrder::Older | ReleaseOrder::Same) => UpgradeDisposition::Replace,
+                Some(ReleaseOrder::Newer) => UpgradeDisposition::RefuseNewer(version.clone()),
+                None => UpgradeDisposition::RefuseUnverified,
+            },
+            // Only a server before generation 52 refuses without saying who it is.
+            Self::Incompatible(None) => UpgradeDisposition::Replace,
+            Self::Incompatible(Some(peer)) => {
+                let order = release_order(&peer.rozi_version);
+                if order == Some(ReleaseOrder::Newer) || peer.protocol_min > PROTOCOL_VERSION {
+                    UpgradeDisposition::RefuseNewer(peer.rozi_version.clone())
+                } else if order == Some(ReleaseOrder::Older)
+                    && peer.protocol_min <= peer.protocol_max
+                    && peer.protocol_max < MIN_SUPPORTED_PROTOCOL
+                {
+                    UpgradeDisposition::Replace
+                } else {
+                    UpgradeDisposition::RefuseUnverified
+                }
             }
-            Self::Incompatible(Some(peer))
-                if peer.protocol_min > crate::session::protocol::PROTOCOL_VERSION
-                    || release_order(&peer.rozi_version) == Some(ReleaseOrder::Newer) =>
-            {
-                Some(peer.rozi_version.clone())
-            }
-            _ => None,
+            Self::Running(None) | Self::Unknown => UpgradeDisposition::RefuseUnverified,
         }
     }
 }
@@ -1240,50 +1267,66 @@ mod tests {
 
     use super::*;
 
-    /// An upgrade may replace an older session, never a newer one: not one that answers with a
-    /// newer release, and not one that refuses this build because it speaks a newer generation.
+    /// An upgrade replaces a server only on positive evidence that it is no newer than this build.
+    /// A newer release or generation is refused by name, and an answer that proves nothing - a
+    /// timeout, a malformed or missing version - is refused too.
     #[test]
-    fn only_an_older_session_counts_as_safe_to_replace() {
-        use crate::session::protocol::{PROTOCOL_VERSION, PeerRelease};
+    fn an_upgrade_replaces_only_a_server_proven_no_newer() {
+        use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, PeerRelease};
+        use UpgradeDisposition::{RefuseNewer, RefuseUnverified, Replace};
         let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
         let newer = semver::Version::new(this.major, this.minor, this.patch + 1).to_string();
-
-        assert_eq!(
-            SessionRelease::Running(Some("0.0.1".into())).newer_than_this_build(),
-            None
-        );
-        assert_eq!(
-            SessionRelease::Running(Some(env!("CARGO_PKG_VERSION").into())).newer_than_this_build(),
-            None
-        );
-        assert_eq!(
-            SessionRelease::Running(Some(newer.clone())).newer_than_this_build(),
-            Some(newer.clone())
-        );
-        // A refusal that names no release comes from a server before generation 52.
-        assert_eq!(
-            SessionRelease::Incompatible(None).newer_than_this_build(),
-            None
-        );
-        let future = PeerRelease {
-            rozi_version: newer.clone(),
-            protocol_min: PROTOCOL_VERSION + 1,
-            protocol_max: PROTOCOL_VERSION + 1,
+        let peer = |version: &str, min: u32, max: u32| {
+            SessionRelease::Incompatible(Some(PeerRelease {
+                rozi_version: version.to_string(),
+                protocol_min: min,
+                protocol_max: max,
+            }))
         };
-        assert_eq!(
-            SessionRelease::Incompatible(Some(future)).newer_than_this_build(),
-            Some(newer)
-        );
-        let older = PeerRelease {
-            rozi_version: "0.0.1".into(),
-            protocol_min: PROTOCOL_VERSION - 1,
-            protocol_max: PROTOCOL_VERSION - 1,
-        };
-        assert_eq!(
-            SessionRelease::Incompatible(Some(older)).newer_than_this_build(),
-            None
-        );
-        assert_eq!(SessionRelease::Unknown.newer_than_this_build(), None);
+        let cases = [
+            (SessionRelease::Running(Some("0.0.1".into())), Replace),
+            (SessionRelease::Running(Some(this.to_string())), Replace),
+            (
+                SessionRelease::Running(Some(newer.clone())),
+                RefuseNewer(newer.clone()),
+            ),
+            (
+                SessionRelease::Running(Some("not a version".into())),
+                RefuseUnverified,
+            ),
+            (SessionRelease::Running(None), RefuseUnverified),
+            // A refusal that names no release comes from a server before generation 52.
+            (SessionRelease::Incompatible(None), Replace),
+            (
+                peer(
+                    "0.0.1",
+                    MIN_SUPPORTED_PROTOCOL - 1,
+                    MIN_SUPPORTED_PROTOCOL - 1,
+                ),
+                Replace,
+            ),
+            (
+                peer(&newer, PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1),
+                RefuseNewer(newer.clone()),
+            ),
+            // An older release that claims a newer generation is still a newer generation.
+            (
+                peer("0.0.1", PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1),
+                RefuseNewer("0.0.1".into()),
+            ),
+            // Older by release but its range overlaps ours, or is nonsense: not proven older.
+            (
+                peer("0.0.1", PROTOCOL_VERSION, PROTOCOL_VERSION),
+                RefuseUnverified,
+            ),
+            (peer("0.0.1", 9, 3), RefuseUnverified),
+            (peer("garbage", 1, 1), RefuseUnverified),
+            (SessionRelease::Unknown, RefuseUnverified),
+            (SessionRelease::NotRunning, Replace),
+        ];
+        for (release, expected) in cases {
+            assert_eq!(release.upgrade_disposition(), expected, "{release:?}");
+        }
     }
 
     /// A remote row's server runs the host's install, so its hint must not offer this machine's

@@ -441,6 +441,19 @@
             "step"
           ],
           "type": "object"
+        },
+        {
+          "description": "A step from a newer peer this build does not know. Never sent.",
+          "properties": {
+            "step": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "step"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3780,6 +3793,11 @@
           "const": "granted",
           "description": "The lease was granted: the first attacher, promotion of the oldest survivor, a controller's\nexplicit grant, or an auto-grant to a requester when no controller held the lease.",
           "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value from a newer peer this build does not know. Never sent.",
+          "type": "string"
         }
       ]
     },
@@ -4148,18 +4166,6 @@
         {
           "properties": {
             "phase": {
-              "const": "unknown",
-              "type": "string"
-            }
-          },
-          "required": [
-            "phase"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "phase": {
               "const": "prompt",
               "type": "string"
             }
@@ -4211,18 +4217,39 @@
             "phase"
           ],
           "type": "object"
+        },
+        {
+          "description": "Also what a phase from a newer peer decodes as.",
+          "properties": {
+            "phase": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "phase"
+          ],
+          "type": "object"
         }
       ]
     },
     "PaneCwdSource": {
       "description": "Which precedence tier produced [`PaneRuntimeState::cwd`].\n\nTier order, most to least authoritative: a remote [`ShellReport`](Self::ShellReport), then the\ndirectory a program the shell is running was started in\n([`ProcessInspector`](Self::ProcessInspector)), then a\nlocal `OSC 7`/`OSC 9;9` [`ShellReport`](Self::ShellReport), then the shell's own directory\n([`ProcessInspector`](Self::ProcessInspector), native `/proc` or `libproc` inspection) ->\n[`LaunchDirectory`](Self::LaunchDirectory) (the directory the pane was\nspawned with). A configured-fallback fourth tier from the plan's precedence table collapses\ninto `LaunchDirectory` here: the launch cwd a pane starts with is already itself resolved from\nconfig/profile defaults, so there is no separate value a fourth tier could contribute once\nlaunch has happened.",
-      "enum": [
-        "unknown",
-        "shell-report",
-        "process-inspector",
-        "launch-directory"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "shell-report",
+            "process-inspector",
+            "launch-directory"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Also what a source from a newer peer decodes as.",
+          "type": "string"
+        }
+      ]
     },
     "PaneInfo": {
       "description": "One pane as `list-panes` reports it.\n\nBoth control surfaces fill this same type. A UI endpoint reads it out of the client's `State`\nand a session server reads it out of its own authoritative runtime, but the document a script\nparses is the contract, not either implementation - so there is one type describing it rather\nthan two that have to be kept in step by hand.",
@@ -7488,15 +7515,24 @@
     },
     "WireChangeState": {
       "description": "Serde-stable mirror of the framework's git change states.",
-      "enum": [
-        "added",
-        "modified",
-        "deleted",
-        "renamed",
-        "untracked",
-        "conflicted"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed",
+            "untracked",
+            "conflicted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A value from a newer peer this build does not know. Never sent.",
+          "type": "string"
+        }
+      ]
     },
     "WireDirEntry": {
       "description": "One child entry in a [`ServerMessage::DirectoryListing`].",
@@ -7896,6 +7932,19 @@
             "directory"
           ],
           "type": "object"
+        },
+        {
+          "description": "A value from a newer peer this build does not know. Never sent.",
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -8079,6 +8128,19 @@
           "required": [
             "kind",
             "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A value from a newer peer this build does not know. Never sent.",
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         }

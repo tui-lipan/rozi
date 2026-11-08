@@ -2475,15 +2475,29 @@ fn sanitize_rows(
         .collect()
 }
 
-/// The ids [`sanitize_rows`] will install for `rows`: those that survive cleaning, as cleaned, and
-/// no more than the row cap.
+/// The ids that may own a response: rows [`sanitize_rows`] will install with their id untouched,
+/// within the row cap, and whose cleaned id no other installed row shares. An id that cleaning
+/// would change, or that collides after cleaning, is ambiguous and cannot own a response.
 pub(super) fn canonical_row_ids(rows: &[protocol::PublishedRow]) -> HashSet<String> {
-    rows.iter()
+    let installed: Vec<(&str, String)> = rows
+        .iter()
         .filter_map(|row| {
             clean_text(&row.status, PANE_STATUS_MAX_LEN)?;
-            clean_text(&row.id, PANE_STATUS_MAX_LEN)
+            Some((row.id.as_str(), clean_text(&row.id, PANE_STATUS_MAX_LEN)?))
         })
         .take(MAX_PANE_ROWS)
+        .collect();
+    installed
+        .iter()
+        .filter(|(raw, cleaned)| {
+            raw == cleaned
+                && installed
+                    .iter()
+                    .filter(|(_, other)| other == cleaned)
+                    .count()
+                    == 1
+        })
+        .map(|(_, cleaned)| cleaned.clone())
         .collect()
 }
 

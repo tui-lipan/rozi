@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::control::{AgentResponse, AgentResponsePayload};
 use crate::session::protocol::AgentRef;
 
-pub(super) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_RESPONSE_BYTES: usize = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
 const MAX_AGENT_BYTES: usize = 2 * MAX_RESPONSE_BYTES;
 const MAX_AGENT_RESPONSES: usize = 4;
 const MAX_STORE_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
@@ -418,12 +418,8 @@ mod tests {
 
     #[test]
     fn a_response_must_name_a_row_that_survives_sanitizing() {
-        use super::super::{SessionServer, protocol, runtime, tests};
+        use super::super::{protocol, runtime};
         use crate::control::PublishedAgentResponse;
-        let mut server = SessionServer::new_named("dev");
-        server.panes.insert(7, tests::test_pane(1));
-        let (client, _stream) = tests::attach_client(&mut server);
-        let long = "x".repeat(100);
         let row = |id: &str| -> protocol::PublishedRow {
             serde_json::from_value(serde_json::json!({
                 "id": id, "title": "t", "status": "done", "native_session": "native"
@@ -440,23 +436,18 @@ mod tests {
                 response: payload("answer"),
             }],
         };
-        let truncated =
-            server.report_pane_rows(client, 7, 1, false, publisher(&long), vec![row(&long)]);
-        assert!(
-            truncated.is_err(),
-            "an id that sanitizing would change cannot own a response"
-        );
+        let long = "x".repeat(100);
+        let cut = "x".repeat(64);
+        // The id cleaning would change cannot own a response, whichever spelling names it.
+        assert!(validate_published(&publisher(&long), &[row(&long)]).is_err());
+        assert!(validate_published(&publisher(&cut), &[row(&long)]).is_err());
+        assert!(validate_published(&publisher(" a "), &[row(" a ")]).is_err());
+        // Two rows that clean to the same id make ownership ambiguous.
+        assert!(validate_published(&publisher("a"), &[row("a"), row(" a")]).is_err());
         let mut rows: Vec<_> = (0..70).map(|n| row(&format!("row-{n}"))).collect();
-        let past_cap =
-            server.report_pane_rows(client, 7, 1, false, publisher("row-69"), rows.clone());
-        assert!(
-            past_cap.is_err(),
-            "a row past the cap cannot own a response"
-        );
+        assert!(validate_published(&publisher("row-69"), &rows).is_err());
         rows.truncate(3);
-        server
-            .report_pane_rows(client, 7, 1, false, publisher("row-2"), rows)
-            .unwrap();
+        assert!(validate_published(&publisher("row-2"), &rows).is_ok());
     }
 
     #[test]

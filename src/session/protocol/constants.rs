@@ -33,6 +33,8 @@ pub const EVICTED_ERROR_CODE: &str = "evicted";
 pub const PROTOCOL_MISMATCH_ERROR_CODE: &str = "protocol-mismatch";
 
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
+/// Longest semantic agent response text, in bytes. A longer one is refused.
+pub const MAX_AGENT_RESPONSE_BYTES: usize = 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
 /// How many publishers one client may have in one pane at once. The UI refuses a stream beyond it

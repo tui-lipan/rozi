@@ -311,7 +311,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
 {
   "api": 1,
   "schema": 4,
-  "session_protocol": 46,
+  "session_protocol": 52,
   "capabilities": [
     "agent-prompt-results",
     "agent-responses",

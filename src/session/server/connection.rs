@@ -732,6 +732,8 @@ impl SessionServer {
                 Vec::new()
             }
             ClientMessage::ReportPaneRows {
+                epoch,
+                responses,
                 pane_id,
                 local,
                 generation,
@@ -744,6 +746,8 @@ impl SessionServer {
                 generation,
                 local,
                 runtime::PanePublisher {
+                    epoch,
+                    responses,
                     id: publisher,
                     kind,
                 },

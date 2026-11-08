@@ -222,6 +222,10 @@ pub enum ClientMessage {
     /// list withdraws them; once no agent publisher has rows, the pane falls back to screen
     /// detection.
     ReportPaneRows {
+        #[serde(default)]
+        epoch: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        responses: Vec<crate::control::PublishedAgentResponse>,
         pane_id: PaneId,
         local: bool,
         generation: u64,

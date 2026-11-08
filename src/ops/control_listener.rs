@@ -150,6 +150,7 @@ fn run_publish_stream(
                 stream_id,
                 pane_id,
                 rows: report.rows,
+                responses: report.responses,
             });
         }
     }
@@ -354,6 +355,8 @@ fn run_pick_stream(
 /// One line written by a `publish` publisher.
 #[derive(Debug, serde::Deserialize)]
 struct PublishReport {
+    #[serde(default)]
+    responses: Vec<crate::control::PublishedAgentResponse>,
     #[serde(default)]
     rows: Vec<crate::session::protocol::PublishedRow>,
 }

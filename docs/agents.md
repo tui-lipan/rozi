@@ -512,6 +512,18 @@ For an agent rozi cannot follow on screen, use one of the agent paths:
   API. While an agent publisher has rows, rozi shows them instead of screen detection. Selecting a
   row can also bring that run into view inside the program.
 
+An agent publisher can include a `responses` array beside `rows` in an update:
+
+```json
+{"rows":[{"id":"review","title":"Review","status":"done","native_session":"session-1"}],"responses":[{"id":"review","seq":1,"response":{"text":"No issues found.","source":"native-api","fidelity":"semantic","complete":true,"turn_id":"turn-1"}}]}
+```
+
+Each response names a row in that same update. Increase `seq` for each response to that row
+within the stream. Replayed sequences are ignored. Publish completion and its response together,
+so `agents prompt --result` can read the answer as soon as its wait resolves. Activity publishers
+cannot publish agent responses. The response limit is 1 MiB per text; send large responses in
+separate updates. See [writing extensions](writing-extensions.md) for stream ownership.
+
 `rozi status` and a plain `rozi publish` report activities, not agents. Their rows appear in
 Activity, but not in the Agents view or `rozi agents`, and they do not keep the host awake. A
 `rozi status` in a pane where rozi detects an agent still sets that agent's state. See

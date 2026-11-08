@@ -3040,6 +3040,8 @@ mod tests {
                     generation,
                     false,
                     super::super::runtime::PanePublisher {
+                        epoch: 0,
+                        responses: Vec::new(),
                         id: "sessions".into(),
                         kind: protocol::PublisherKind::Agent,
                     },
@@ -3167,6 +3169,8 @@ mod tests {
                     generation,
                     false,
                     super::super::runtime::PanePublisher {
+                        epoch: 0,
+                        responses: Vec::new(),
                         id: "sessions".into(),
                         kind: protocol::PublisherKind::Agent,
                     },

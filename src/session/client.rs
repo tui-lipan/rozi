@@ -854,6 +854,7 @@ impl SessionClient {
     }
 
     /// Replace one publisher's rows in a pane; an empty list withdraws them.
+    #[allow(clippy::too_many_arguments)]
     pub fn report_pane_rows(
         &self,
         pane_id: PaneId,
@@ -861,8 +862,12 @@ impl SessionClient {
         local: bool,
         publisher: &crate::state::PublisherIdentity,
         rows: Vec<crate::session::protocol::PublishedRow>,
+        epoch: u64,
+        responses: Vec<crate::control::PublishedAgentResponse>,
     ) {
         self.send_control(ClientMessage::ReportPaneRows {
+            epoch,
+            responses,
             pane_id,
             local,
             generation,

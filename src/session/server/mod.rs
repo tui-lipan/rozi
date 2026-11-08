@@ -482,6 +482,7 @@ pub struct AgentScratch {
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
+    response_sequences: HashMap<protocol::AgentRef, (u64, u64)>,
     next_incarnation: u64,
     /// Launch whose screen-detected reference was last synchronized.
     reference_launch: u64,

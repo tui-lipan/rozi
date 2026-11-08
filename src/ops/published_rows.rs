@@ -362,6 +362,7 @@ pub(crate) fn rows_reported(
     stream_id: u64,
     pane_id: PaneId,
     rows: Vec<PublishedRow>,
+    responses: Vec<crate::control::PublishedAgentResponse>,
 ) -> Update {
     let Some(key) = live_stream(&ctx.state, stream_id, pane_id) else {
         return Update::none();
@@ -370,12 +371,16 @@ pub(crate) fn rows_reported(
         return Update::none();
     };
     stream.last_rows = rows;
-    send_latest(&ctx.state, &key);
+    send_latest(&ctx.state, &key, responses);
     Update::none()
 }
 
 /// Send a stream's latest snapshot to the session it is bound to, if it may reach it now.
-fn send_latest(state: &crate::state::State, key: &PublishStreamKey) {
+fn send_latest(
+    state: &crate::state::State,
+    key: &PublishStreamKey,
+    responses: Vec<crate::control::PublishedAgentResponse>,
+) {
     let Some(stream) = state.publish_streams.get(key) else {
         return;
     };
@@ -384,7 +389,14 @@ fn send_latest(state: &crate::state::State, key: &PublishStreamKey) {
     }) {
         return;
     }
-    report_rows(state, key, &stream.identity, stream.last_rows.clone());
+    report_rows(
+        state,
+        key,
+        &stream.identity,
+        stream.last_rows.clone(),
+        stream.id,
+        responses,
+    );
 }
 
 /// Report every live stream's latest snapshot again, after this client attached to a session.
@@ -394,7 +406,7 @@ fn send_latest(state: &crate::state::State, key: &PublishStreamKey) {
 /// whose rows are unchanged on a server that still has them costs the server one comparison.
 pub(crate) fn resend_rows(state: &crate::state::State) {
     for key in state.publish_streams.keys() {
-        send_latest(state, key);
+        send_latest(state, key, Vec::new());
     }
 }
 
@@ -405,16 +417,27 @@ fn report_rows(
     key: &PublishStreamKey,
     publisher: &PublisherIdentity,
     rows: Vec<PublishedRow>,
+    epoch: u64,
+    responses: Vec<crate::control::PublishedAgentResponse>,
 ) {
     if let Some((generation, Some(client), local)) = target(state, &key.origin, key.pane) {
-        client.report_pane_rows(key.pane, generation, local, publisher, rows);
+        client.report_pane_rows(
+            key.pane, generation, local, publisher, rows, epoch, responses,
+        );
     }
 }
 
 /// Drop one stream and withdraw its rows, leaving the pane's other publishers alone.
 fn drop_stream(state: &mut crate::state::State, key: &PublishStreamKey) {
     if let Some(stream) = state.publish_streams.remove(key) {
-        report_rows(state, key, &stream.identity, Vec::new());
+        report_rows(
+            state,
+            key,
+            &stream.identity,
+            Vec::new(),
+            stream.id,
+            Vec::new(),
+        );
     }
 }
 
@@ -629,6 +652,7 @@ mod tests {
     fn report(backend: &mut TestBackend<crate::AppRoot>, stream_id: u64, rows: Vec<PublishedRow>) {
         backend
             .dispatch(crate::Msg::PublishedRowsReported {
+                responses: Vec::new(),
                 stream_id,
                 pane_id: 1,
                 rows,
@@ -668,6 +692,8 @@ mod tests {
             assert!(outbound.try_iter().any(|message| matches!(
                 message,
                 ClientOutbound::Control(ClientMessage::ReportPaneRows {
+            epoch: _,
+            responses: _,
                     pane_id: 1,
                     local: false,
                     generation: 4,

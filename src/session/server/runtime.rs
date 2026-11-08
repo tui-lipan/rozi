@@ -873,9 +873,12 @@ impl SessionServer {
                     .to_string(),
             ));
         }
+        super::responses::validate_published(&publisher, &rows)?;
         // The identity is the client's own; qualified by the client, it never meets another
         // client's publisher of the same name. See [`protocol::qualified_publisher`].
         let publisher = PanePublisher {
+            epoch: publisher.epoch,
+            responses: publisher.responses,
             id: protocol::qualified_publisher(client_id, &publisher.id),
             kind: publisher.kind,
         };
@@ -962,6 +965,8 @@ impl SessionServer {
         }
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
         if next == pane.runtime.rows {
+            self.store_published_responses(owner, pane_id, &publisher);
+            self.resolve_agent_waits();
             return Ok(None);
         }
         let baseline = owner
@@ -979,6 +984,7 @@ impl SessionServer {
         if resume_changed {
             self.mark_dirty();
         }
+        self.store_published_responses(owner, pane_id, &publisher);
         self.resolve_agent_waits();
         Ok(Some(message))
     }
@@ -1099,13 +1105,11 @@ impl SessionServer {
             seq,
         } = update;
         if let Some(response) = response.as_ref() {
-            if state.is_none()
-                || response.text.len() > super::responses::MAX_RESPONSE_BYTES
-                || response.turn_id.as_ref().is_some_and(|id| id.len() > 1024)
-            {
+            super::responses::validate_payload(response)?;
+            if state.is_none() {
                 return Err((
                     "invalid-argument",
-                    "agent response exceeds the 1 MiB text or 1024 byte turn id limit".into(),
+                    "a released report cannot include a response".into(),
                 ));
             }
         }
@@ -2259,6 +2263,8 @@ const MAX_PANE_ROWS: usize = 64;
 /// Who is replacing rows in [`SessionServer::report_pane_rows`], as the UI client identified the
 /// stream: its stable id within the pane and the kind it declared.
 pub(super) struct PanePublisher {
+    pub epoch: u64,
+    pub responses: Vec<crate::control::PublishedAgentResponse>,
     pub id: String,
     pub kind: protocol::PublisherKind,
 }
@@ -2279,6 +2285,12 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
     pane.runtime.rows = next;
+    pane.agent.response_sequences.retain(|reference, _| {
+        reference
+            .slot
+            .as_ref()
+            .is_some_and(|slot| pane.runtime.rows.iter().any(|row| row.has_key(slot)))
+    });
     // An agent publisher that enumerates its own sessions is better informed than the scraper,
     // which can only see the one it draws. Drop anything the scraper was holding for this pane.
     // An activity publisher says nothing about the pane's agent, so detection carries on.
@@ -2339,6 +2351,8 @@ fn promote_standby_rows(
     };
     let rows = pane.agent.standby_rows.remove(&id).unwrap_or_default();
     let publisher = PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id,
         kind: protocol::PublisherKind::Agent,
     };
@@ -3020,6 +3034,8 @@ mod tests {
 
     fn test_publisher() -> PanePublisher {
         PanePublisher {
+            epoch: 0,
+            responses: Vec::new(),
             id: "sessions".into(),
             kind: protocol::PublisherKind::Agent,
         }

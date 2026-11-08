@@ -6960,6 +6960,8 @@ fn a_row_reporter_whose_conversation_is_withdrawn_is_retired() {
             1,
             false,
             super::runtime::PanePublisher {
+                epoch: 0,
+                responses: Vec::new(),
                 id: "sessions".into(),
                 kind: protocol::PublisherKind::Agent,
             },
@@ -7010,6 +7012,8 @@ fn one_windows_copy_of_an_agent_publisher_speaks_for_the_pane() {
     server.panes.get_mut(&7).unwrap().runtime.rows.clear();
     let agent = protocol::PublisherKind::Agent;
     let publisher = || super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "sessions".into(),
         kind: agent,
     };
@@ -7071,6 +7075,8 @@ fn rows_withdrawn_while_their_agent_runs_keep_their_clock_when_they_return() {
     let generation = server.panes[&7].generation;
     server.panes.get_mut(&7).unwrap().runtime.rows.clear();
     let publisher = || super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "sessions".into(),
         kind: protocol::PublisherKind::Agent,
     };
@@ -7189,6 +7195,8 @@ fn a_hook_report_never_reaches_an_activity_row() {
 
     // Whatever a publisher sends, an activity row keeps no conversation.
     let publisher = super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "watch".into(),
         kind: protocol::PublisherKind::Activity,
     };

@@ -1523,6 +1523,16 @@ pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputSty
     format!("{}\n{rest}", styles.paint(first, tone))
 }
 
+fn format_agent_response_text(data: Option<&serde_json::Value>) -> String {
+    match data
+        .and_then(|data| data.get("text"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(text) => format!("{text}\n"),
+        None => "agent response unavailable; use --capture text to read the terminal\n".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1862,15 +1872,5 @@ mod tests {
         assert_ne!(dark_key, light_key);
         assert_eq!(dark_status, Some(dark.status.success));
         assert_eq!(light_status, Some(light.status.success));
-    }
-}
-
-fn format_agent_response_text(data: Option<&serde_json::Value>) -> String {
-    match data
-        .and_then(|data| data.get("text"))
-        .and_then(serde_json::Value::as_str)
-    {
-        Some(text) => format!("{text}\n"),
-        None => "agent response unavailable; use --capture text to read the terminal\n".into(),
     }
 }

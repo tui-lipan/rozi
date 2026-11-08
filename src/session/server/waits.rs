@@ -364,6 +364,7 @@ impl SessionServer {
             .any(|&(client, _)| client == client_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn register_post_prompt_wait(
         &mut self,
         client_id: ClientId,

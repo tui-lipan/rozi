@@ -50,6 +50,11 @@ through attached clients.
 Text is limited to 1 MiB and turn ids to 1024 bytes. Responses are temporary and are only returned
 when explicitly requested. The `agent-responses` API capability advertises this contract.
 
+Agent `publish` updates accept `responses: [{id, seq, response}]` beside `rows`. Each id must
+name a row in that update owned by this agent publisher. A positive `seq` increases per row within
+the stream; duplicate or older sequences cannot replace content. Responses and completed row
+states are accepted together. Activity publishers cannot supply responses.
+
 ## Transport
 
 Each running UI creates one private control endpoint.

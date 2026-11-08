@@ -49,6 +49,15 @@ The V2 integration targets the public CLI plugin contract tested with OpenCode `
 Restart the rozi session server after upgrading from a version that does not stamp
 `ROZI_SESSION_INSTANCE` into panes.
 
+## Read responses
+
+`rozi agents prompt --ref <JSON> "Review this diff" --wait turn --timeout 10m --result` returns
+completed assistant text through OpenCode's message API, including background tabs. Use a
+reference from `rozi agents list` to address a particular session. Markdown and Unicode do not
+depend on the pane dimensions. JSON reports `source: "native-api"` and `fidelity: "semantic"`.
+A failed message fetch or interrupted turn may have no response. Text over 1 MiB has
+`truncated: true` and `complete: false`.
+
 ## Install for OpenCode V1
 
 Copy `rozi-agent-state.js` into your project's `.opencode/plugins/` directory or the global

@@ -2459,6 +2459,15 @@ pub enum AgentPromptResult {
     Terminal { capture: PaneCapture },
 }
 
+/// One response for a row owned by an open agent publisher. Sent beside, never inside, rows.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PublishedAgentResponse {
+    pub id: String,
+    pub seq: u64,
+    pub response: AgentResponsePayload,
+}
+
 /// Content supplied by an integration, separate from lifecycle metadata.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

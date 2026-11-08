@@ -237,7 +237,8 @@ attached.
 | `agents get TARGET [--format text\|json]` | Read one semantic agent record. | yes |
 | `agents read TARGET [--scrollback N\|full] [--format text\|json]` | Capture an agent's terminal. | yes |
 | `agents wait TARGET --until STATE --timeout DURATION [--format text\|json]` | Wait atomically for semantic state. | yes |
-| `agents prompt TARGET [--wait STATE --timeout DURATION] [--capture text\|ansi] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
+| `agents prompt TARGET [--wait STATE --timeout DURATION] [--capture text\|ansi] [--result] [--allow-working] [--format text\|json] TEXT` | Validate, submit, and optionally wait atomically. | yes |
+| `agents response TARGET [--format text\|json]` | Read the latest retained agent response, including its source and fidelity. | yes |
 | `agents report --agent ID --integration TOKEN --state STATE --seq N [--reason TEXT] [--native-session ID] [--unless-quiet STATE [--ended]] [--target ID]` | Publish incarnation- and sequence-fenced native agent state. | yes |
 | `agents release --integration TOKEN --seq N [--target ID]` | Release integration authority. | yes |
 | `metrics [--format text\|json]` | Read bounded client and cached server resource counters. | yes |

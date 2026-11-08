@@ -233,7 +233,7 @@ fn claim(version: &Version) -> bool {
         .is_some_and(|state_dir| record(&state_dir.join(NOTES_DIR).join(SHOWN_DIR), version))
 }
 
-/// Open the notes at startup (including over the startup session or remote-host picker) or once an
+/// Open the notes at startup (before the startup session or remote-host picker) or once an
 /// interrupting dialog closes.
 ///
 /// Checked at startup and after every update, so it costs one flag test until it fires, and fires
@@ -261,6 +261,8 @@ pub(crate) fn show_if_due(ctx: &mut Context<AppRoot>) -> bool {
         return false;
     }
     let _ = open(ctx);
+    ctx.state.defer_startup_picker =
+        ctx.state.show_session_picker || ctx.state.remote_picker.is_some();
     true
 }
 
@@ -295,6 +297,7 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     }
     ctx.state.show_release_notes = false;
+    ctx.state.defer_startup_picker = false;
     ctx.state.commands_dirty = true;
     if ctx.state.follow_prompt.is_some() {
         ctx.request_focus(crate::view::follow_prompt_key());
@@ -789,7 +792,7 @@ mod app_tests {
     }
 
     #[test]
-    fn due_notes_show_at_startup_and_over_startup_picker_then_claim_once() {
+    fn due_notes_precede_startup_picker_then_claim_once() {
         crate::test_support::on_large_stack(|| {
             let mut backend = backend_with("9.9.2");
             backend.state_mut().release_notes_due = true;
@@ -801,8 +804,7 @@ mod app_tests {
             );
             assert!(backend.state().release_notes_due);
 
-            // Over the startup session picker, due notes show immediately on top and return focus
-            // to the picker when dismissed.
+            // The picker waits until the notes are dismissed.
             backend.state_mut().show_palette = false;
             backend.state_mut().session_picker =
                 Some(crate::state::SessionPickerState::new(Vec::new()));
@@ -810,9 +812,10 @@ mod app_tests {
             backend.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(backend.state().show_release_notes);
             assert!(!backend.state().release_notes_due);
-            assert!(backend.state().release_notes_is_stacked());
+            assert!(!backend.state().release_notes_is_stacked());
             assert_eq!(backend.state().modal_overlay(), Some("release-notes"));
-            backend.render();
+            let shown = frame(&mut backend);
+            assert!(!shown.contains("Sessions"), "{shown}");
             assert_eq!(
                 backend.focused_key().map(|key| key.as_ref()),
                 Some(crate::view::release_notes_key())
@@ -825,6 +828,19 @@ mod app_tests {
                 backend.focused_key().map(|key| key.as_ref()),
                 Some(crate::view::session_picker_key())
             );
+            let shown = frame(&mut backend);
+            assert!(shown.contains("Sessions"), "{shown}");
+            press(&mut backend, KeyCode::Char('x'));
+            assert_eq!(
+                backend
+                    .state()
+                    .session_picker
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                "x"
+            );
 
             // A second client starting on the same version finds the notes already claimed.
             let mut other = backend_with("9.9.2");
@@ -832,6 +848,26 @@ mod app_tests {
             other.dispatch(Msg::RefreshPaintLayers).unwrap();
             assert!(!other.state().show_release_notes);
             assert!(!other.state().release_notes_due);
+        });
+    }
+
+    #[test]
+    fn due_notes_precede_startup_remote_picker() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = backend_with("9.9.6");
+            backend.state_mut().release_notes_due = true;
+            backend.state_mut().remote_picker = Some(crate::state::RemotePickerState::new(None));
+            backend.dispatch(Msg::RefreshPaintLayers).unwrap();
+            assert!(!backend.state().release_notes_is_stacked());
+            let shown = frame(&mut backend);
+            assert!(!shown.contains("Remote hosts"), "{shown}");
+            press(&mut backend, KeyCode::Enter);
+            assert_eq!(backend.state().modal_overlay(), Some("remote-picker"));
+            assert!(backend.state().remote_picker.is_some());
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::remote_picker_key())
+            );
         });
     }
 

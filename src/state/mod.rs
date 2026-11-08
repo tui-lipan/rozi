@@ -441,6 +441,8 @@ pub struct State {
     /// screen. Cleared when it fires.
     pub(crate) release_notes_due: bool,
     pub(crate) show_release_notes: bool,
+    /// Keep startup pickers out of the overlay stack until automatic release notes close.
+    pub(crate) defer_startup_picker: bool,
     /// The startup decision to welcome a first install once a session is on screen. Cleared when
     /// it fires.
     pub(crate) welcome_due: bool,
@@ -784,6 +786,7 @@ impl State {
             release_notes_tab: 0,
             release_notes_due: false,
             show_release_notes: false,
+            defer_startup_picker: false,
             welcome_due: false,
             show_welcome: false,
             event_hub: crate::events::EventHub::default(),
@@ -1311,8 +1314,14 @@ impl State {
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),
             (self.agent_picker.is_some(), "agent-picker"),
-            (self.remote_picker.is_some(), "remote-picker"),
-            (self.show_session_picker, "session-picker"),
+            (
+                self.remote_picker.is_some() && !self.defer_startup_picker,
+                "remote-picker",
+            ),
+            (
+                self.show_session_picker && !self.defer_startup_picker,
+                "session-picker",
+            ),
             (self.worktree_picker.is_some(), "worktree-picker"),
             (self.show_profile_picker, "profile-picker"),
             (self.recording_mark.is_some(), "recording-mark"),

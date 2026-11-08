@@ -1,0 +1,541 @@
+//! Session-owned, temporary input leases for rendered agent results.
+//!
+//! All PTYs belong to the server and client input passes through `accept_pane_input`. A lease
+//! queues that input and geometry changes through restoration; headless automation gets busy.
+use tui_lipan::core::event::{MouseEvent, MouseKind};
+
+use super::connection::PaneResizeRequest;
+use super::headless::ReplyTo;
+use super::responses::{AgentResponseFence, MAX_RESPONSE_BYTES};
+use super::*;
+use crate::control::{AgentResponsePayload, AgentResponseSource, AgentWaitResult, ControlResponse};
+
+const MAX_QUEUED_INPUT: usize = 1024 * 1024;
+
+pub(super) struct HistoryWait {
+    pub key: waits::WaitKey,
+    pub reply: ReplyTo,
+    pub deadline: Option<Instant>,
+    pub fence: AgentResponseFence,
+    pub result: AgentWaitResult,
+}
+
+pub(super) struct PendingHistoryRead {
+    wait: HistoryWait,
+    reader: AltScreenHistoryReader,
+    mouse: MouseModeState,
+    mutations: Vec<DeferredMutation>,
+    input_bytes: usize,
+    cancelled: bool,
+    error: Option<ControlResponse>,
+    action_at: Option<Instant>,
+}
+
+enum DeferredMutation {
+    Input(DeferredInput),
+    Control(ClientId, ClientMessage),
+    Resize(ClientId, PaneResizeRequest),
+}
+
+struct DeferredInput {
+    client: ClientId,
+    generation: u64,
+    bytes: Vec<u8>,
+    latency_sensitive: bool,
+}
+
+impl PendingHistoryRead {
+    fn reference(&self) -> &protocol::AgentRef {
+        self.wait
+            .result
+            .reference
+            .as_ref()
+            .expect("history has an agent")
+    }
+
+    fn cancel(&mut self) {
+        if !self.cancelled {
+            self.cancelled = true;
+            self.reader.interrupt(Instant::now());
+        }
+    }
+}
+
+fn bounded_terminal_text(screen: &TerminalScreen) -> String {
+    use std::ops::ControlFlow;
+    let mut text = String::new();
+    let _ = screen.try_for_each_text_line(0, screen.total_text_lines(), |row, line| {
+        if row > 0 {
+            text.push('\n');
+        }
+        text.push_str(line);
+        if text.len() > MAX_RESPONSE_BYTES {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    text
+}
+
+fn rendered_payload(
+    mut text: String,
+    source: AgentResponseSource,
+    complete: bool,
+) -> AgentResponsePayload {
+    let truncated = text.len() > MAX_RESPONSE_BYTES;
+    if truncated {
+        let mut end = MAX_RESPONSE_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    AgentResponsePayload {
+        text,
+        turn_id: None,
+        source,
+        fidelity: crate::control::AgentResponseFidelity::Rendered,
+        complete: complete && !truncated,
+        truncated,
+    }
+}
+
+impl SessionServer {
+    /// Return an immediate result, or retain the reply while a leased traversal restores.
+    pub(super) fn fallback_agent_result(
+        &mut self,
+        mut wait: HistoryWait,
+    ) -> Option<ControlResponse> {
+        let Some(reference) = history_subject(&wait.result) else {
+            return Some(ControlResponse::ok(wait.result));
+        };
+        let Some(pane) = self.panes.get_mut(&reference.pane.pane_id) else {
+            return Some(ControlResponse::ok(wait.result));
+        };
+        let screen = pane.screen_without_change();
+        if !screen.is_alternate_screen() {
+            let text = bounded_terminal_text(screen);
+            if !text.trim().is_empty() {
+                let content = rendered_payload(text, AgentResponseSource::Terminal, false);
+                self.store_rendered(&reference, &wait.fence, &mut wait.result, content);
+            }
+            return Some(ControlResponse::ok(wait.result));
+        }
+        if !self.may_read_history(&wait, &reference) {
+            return Some(ControlResponse::ok(wait.result));
+        }
+        let pane = self
+            .panes
+            .get_mut(&reference.pane.pane_id)
+            .expect("validated pane");
+        let screen = pane.screen_without_change();
+        let mouse = screen.render_snapshot().mouse_mode;
+        let Ok(reader) = AltScreenHistoryReader::new(screen.history_read_frame(), Instant::now())
+        else {
+            return Some(ControlResponse::ok(wait.result));
+        };
+        self.agent_history.insert(
+            reference.pane.pane_id,
+            PendingHistoryRead {
+                wait,
+                reader,
+                mouse,
+                mutations: Vec::new(),
+                input_bytes: 0,
+                cancelled: false,
+                error: None,
+                action_at: None,
+            },
+        );
+        None
+    }
+
+    fn may_read_history(&mut self, wait: &HistoryWait, reference: &protocol::AgentRef) -> bool {
+        if self.agent_history.contains_key(&reference.pane.pane_id)
+            || !self.history_authorized(wait)
+        {
+            return false;
+        }
+        let Some(pane) = self.panes.get_mut(&reference.pane.pane_id) else {
+            return false;
+        };
+        if pane.pty.is_none()
+            || pane.exited.is_some()
+            || pane.generation != reference.pane.generation
+        {
+            return false;
+        }
+        let screen = pane.screen_without_change();
+        let snapshot = screen.render_snapshot();
+        screen.scrollback_offset() == 0
+            && snapshot.mouse_mode.mode != MouseMode::None
+            && snapshot.images.is_empty()
+    }
+
+    fn history_authorized(&self, wait: &HistoryWait) -> bool {
+        match wait.reply {
+            ReplyTo::Attached { .. } => self.client_may_input(wait.key.0),
+            _ => !self.input_locked,
+        }
+    }
+
+    fn store_rendered(
+        &mut self,
+        reference: &protocol::AgentRef,
+        fence: &AgentResponseFence,
+        result: &mut AgentWaitResult,
+        content: AgentResponsePayload,
+    ) {
+        // A semantic reply arriving during traversal always takes precedence.
+        if self.agent_responses.after(reference, fence).is_none() {
+            let native = self.response_native_session(reference);
+            self.agent_responses
+                .insert(reference.clone(), native, content);
+        }
+        result.response = self.agent_responses.after(reference, fence).cloned();
+    }
+
+    /// Poll from the normal server loop. Never block the pump waiting for a TUI redraw.
+    pub(super) fn pump_agent_history(&mut self) {
+        let panes = self.agent_history.keys().copied().collect::<Vec<_>>();
+        for id in panes {
+            let mut read = self.agent_history.remove(&id).expect("listed read");
+            self.check_history_wait(&mut read);
+            let step = self.observe_history(&mut read);
+            match step {
+                HistoryReadStep::Finished(result) => self.finish_history(read, result),
+                HistoryReadStep::Wait => {
+                    self.agent_history.insert(id, read);
+                }
+                action => {
+                    if !self.write_history_action(&read, action) {
+                        self.finish_history(read, Err(HistoryReadError::RestoreUnproven));
+                    } else {
+                        read.action_at = Some(Instant::now());
+                        self.agent_history.insert(id, read);
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_history_wait(&self, read: &mut PendingHistoryRead) {
+        if let Some(error) = self.history_wait_error(read) {
+            read.error = Some(error);
+            read.cancel();
+        }
+        if !self.history_subject_idle(read.reference())
+            || !self.history_authorized(&read.wait)
+            || self
+                .agent_responses
+                .after(read.reference(), &read.wait.fence)
+                .is_some()
+        {
+            read.cancel();
+        }
+    }
+
+    fn history_wait_error(&self, read: &PendingHistoryRead) -> Option<ControlResponse> {
+        let reference = read.reference();
+        if let Err(error) =
+            self.resolve_agent_wait_target(crate::control::AgentTarget::Ref(reference.clone()))
+        {
+            return Some(error);
+        }
+        if read.wait.fence.native_session.is_some()
+            && self.response_native_session(reference) != read.wait.fence.native_session
+        {
+            return Some(ControlResponse::error_with(
+                crate::control::ControlErrorCode::AgentReplaced,
+                "agent changed its native session during history traversal",
+            ));
+        }
+        read.wait
+            .deadline
+            .filter(|deadline| Instant::now() >= *deadline)
+            .map(|_| {
+                ControlResponse::error_with(
+                    crate::control::ControlErrorCode::Timeout,
+                    "timed out reading agent history; viewport restoration attempted",
+                )
+            })
+    }
+
+    fn history_subject_idle(&self, reference: &protocol::AgentRef) -> bool {
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return false;
+        };
+        self.agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|agent| agent.reference == *reference)
+            .is_some_and(|agent| {
+                matches!(
+                    agent.state,
+                    protocol::AgentState::Idle | protocol::AgentState::Done
+                )
+            })
+    }
+
+    fn observe_history(&mut self, read: &mut PendingHistoryRead) -> HistoryReadStep {
+        let reference = read.reference();
+        let Some(pane) = self
+            .panes
+            .get_mut(&reference.pane.pane_id)
+            .filter(|pane| pane.generation == reference.pane.generation && pane.exited.is_none())
+        else {
+            return HistoryReadStep::Finished(Err(HistoryReadError::RestoreUnproven));
+        };
+        let screen = pane.screen_without_change();
+        let snapshot = screen.render_snapshot();
+        if !screen.is_alternate_screen()
+            || snapshot.mouse_mode != read.mouse
+            || !snapshot.images.is_empty()
+        {
+            return HistoryReadStep::Finished(Err(HistoryReadError::RestoreUnproven));
+        }
+        read.reader
+            .observe(screen.history_read_frame(), Instant::now())
+    }
+
+    fn write_history_action(&self, read: &PendingHistoryRead, action: HistoryReadStep) -> bool {
+        let reference = read.reference();
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return false;
+        };
+        let kind = match action {
+            HistoryReadStep::ScrollUp => MouseKind::ScrollUp,
+            HistoryReadStep::ScrollDown => MouseKind::ScrollDown,
+            _ => return false,
+        };
+        // Pixel mouse reports share SGR framing, with coordinates measured in pixels.
+        let (x, y, encoding) = if read.mouse.encoding == MouseEncoding::SgrPixels {
+            (
+                (pane.cols / 2).saturating_mul(pane.cell.width),
+                (pane.rows / 2).saturating_mul(pane.cell.height),
+                MouseEncoding::Sgr,
+            )
+        } else {
+            (pane.cols / 2, pane.rows / 2, read.mouse.encoding)
+        };
+        let event = MouseEvent {
+            x,
+            y,
+            kind,
+            mods: KeyMods::default(),
+        };
+        let Some(bytes) = mouse_event_to_bytes(event, encoding, Default::default()) else {
+            return false;
+        };
+        pane.pty
+            .as_ref()
+            .is_some_and(|pty| pty.write(&bytes).is_ok())
+    }
+
+    fn finish_history(
+        &mut self,
+        mut read: PendingHistoryRead,
+        text: std::result::Result<String, HistoryReadError>,
+    ) {
+        let reference = read.reference().clone();
+        if let Ok(text) = text {
+            let content = rendered_payload(text, AgentResponseSource::AlternateScreenHistory, true);
+            self.store_rendered(&reference, &read.wait.fence, &mut read.wait.result, content);
+        } else {
+            read.wait.result.response = self
+                .agent_responses
+                .after(&reference, &read.wait.fence)
+                .cloned();
+        }
+        let response = read
+            .error
+            .unwrap_or_else(|| ControlResponse::ok(read.wait.result));
+        self.answer_held(read.wait.key.0, &read.wait.reply, response);
+        // Release before replay, and recheck each client's current authority and incarnation.
+        for mutation in read.mutations {
+            self.replay_history_mutation(reference.pane.pane_id, mutation);
+        }
+    }
+
+    fn replay_history_mutation(&mut self, pane_id: PaneId, mutation: DeferredMutation) {
+        match mutation {
+            DeferredMutation::Input(input) => self.accept_pane_input(
+                input.client,
+                pane_id,
+                false,
+                input.generation,
+                &input.bytes,
+                input.latency_sensitive,
+            ),
+            DeferredMutation::Control(client, message) => {
+                self.process_client_control_now(client, message);
+            }
+            DeferredMutation::Resize(client, resize) => {
+                let replies = self.handle_resize_with(client, resize, |pane| {
+                    pane.pty.as_ref().map_or(Ok(()), |pty| {
+                        pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell)
+                    })
+                });
+                for (target, message) in replies {
+                    self.enqueue(client, target, message);
+                }
+            }
+        }
+    }
+
+    /// Client input is deferred through restoration, never interleaved with wheel ticks.
+    pub(super) fn defer_history_input(
+        &mut self,
+        client: ClientId,
+        pane: PaneId,
+        local: bool,
+        generation: u64,
+        bytes: &[u8],
+        latency_sensitive: bool,
+    ) -> bool {
+        if local {
+            return false;
+        }
+        let Some(read) = self.agent_history.get_mut(&pane) else {
+            return false;
+        };
+        if read.reference().pane.generation != generation {
+            return false;
+        }
+        if bytes.is_empty() {
+            return true;
+        }
+        read.cancel();
+        self.queue_history_mutation(
+            pane,
+            client,
+            bytes.len(),
+            DeferredMutation::Input(DeferredInput {
+                client,
+                generation,
+                bytes: bytes.to_vec(),
+                latency_sensitive,
+            }),
+        );
+        true
+    }
+
+    fn queue_history_mutation(
+        &mut self,
+        pane: PaneId,
+        client: ClientId,
+        bytes: usize,
+        mutation: DeferredMutation,
+    ) {
+        let read = self.agent_history.get_mut(&pane).expect("active lease");
+        if read.input_bytes.saturating_add(bytes) > MAX_QUEUED_INPUT || read.mutations.len() >= 4096
+        {
+            self.enqueue(client, Target::Sender, ServerMessage::Error {
+                code: "conflict".into(),
+                message: "pane is restoring agent history; input queue is full, retry after restoration".into(),
+            });
+            return;
+        }
+        read.input_bytes += bytes;
+        read.mutations.push(mutation);
+    }
+
+    pub(super) fn defer_history_marked_input(
+        &mut self,
+        client: ClientId,
+        message: &ClientMessage,
+    ) -> bool {
+        let ClientMessage::MarkedInput {
+            pane_id,
+            local: false,
+            generation,
+            bytes,
+            ..
+        } = message
+        else {
+            return false;
+        };
+        if !self.client_may_input(client) {
+            return false;
+        }
+        let Some(read) = self.agent_history.get_mut(pane_id) else {
+            return false;
+        };
+        if read.reference().pane.generation != *generation {
+            return false;
+        }
+        read.cancel();
+        self.queue_history_mutation(
+            *pane_id,
+            client,
+            bytes.len(),
+            DeferredMutation::Control(client, message.clone()),
+        );
+        true
+    }
+
+    pub(super) fn defer_history_resize(
+        &mut self,
+        client: ClientId,
+        request: PaneResizeRequest,
+    ) -> bool {
+        if request.local {
+            return false;
+        }
+        let Some(read) = self.agent_history.get_mut(&request.pane_id) else {
+            return false;
+        };
+        if read.reference().pane.generation != request.generation {
+            return false;
+        }
+        read.cancel();
+        self.queue_history_mutation(
+            request.pane_id,
+            client,
+            0,
+            DeferredMutation::Resize(client, request),
+        );
+        true
+    }
+
+    pub(super) fn note_history_output(&mut self, pane: PaneId, generation: u64) {
+        if let Some(read) = self.agent_history.get_mut(&pane)
+            && read.reference().pane.generation == generation
+            // Only redraws within the reader's wheel-response window are expected.
+            && read.action_at.is_none_or(|action| action.elapsed() >= Duration::from_millis(600))
+        {
+            read.cancel();
+        }
+    }
+
+    pub(super) fn cancel_client_history(&mut self, client: ClientId) {
+        for read in self
+            .agent_history
+            .values_mut()
+            .filter(|read| read.wait.key.0 == client)
+        {
+            read.cancel();
+        }
+    }
+
+    pub(super) fn holds_agent_history(&self, client: ClientId) -> bool {
+        self.agent_history
+            .values()
+            .any(|read| read.wait.key.0 == client)
+    }
+}
+
+fn history_subject(result: &AgentWaitResult) -> Option<protocol::AgentRef> {
+    let reference = result.reference.as_ref()?;
+    let agent = result.agent.as_ref()?;
+    (result.response.is_none()
+        && reference.slot.is_none()
+        && matches!(
+            agent.state,
+            protocol::AgentState::Idle | protocol::AgentState::Done
+        ))
+    .then(|| reference.clone())
+}
+
+#[cfg(all(test, unix))]
+mod tests;

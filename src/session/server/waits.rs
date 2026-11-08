@@ -76,11 +76,12 @@ impl SessionServer {
         reference: &protocol::AgentRef,
         result: bool,
     ) -> bool {
-        self.agent_waits.values().any(|wait| {
-            wait.require_transition
-                && matches!(&wait.subject, WaitSubject::Agent(current) if current == reference)
-                && (result || wait.response_fence.is_some())
-        })
+        self.agent_history.contains_key(&reference.pane.pane_id)
+            || self.agent_waits.values().any(|wait| {
+                wait.require_transition
+                    && matches!(&wait.subject, WaitSubject::Agent(current) if current == reference)
+                    && (result || wait.response_fence.is_some())
+            })
     }
 
     pub(super) fn register_agent_wait(
@@ -329,16 +330,37 @@ impl SessionServer {
                 continue;
             };
             let response = match evaluation {
-                WaitEvaluation::Ready(agent) => self.agent_wait_response(
-                    wait.until,
-                    agent,
-                    wait.capture,
-                    wait.response_fence,
-                    match wait.subject {
-                        WaitSubject::Agent(reference) => Some(reference),
-                        WaitSubject::Pane { .. } => None,
-                    },
-                ),
+                WaitEvaluation::Ready(agent) => {
+                    let reference = wait.subject.agent_reference().cloned();
+                    let result = match self.agent_wait_result(
+                        wait.until,
+                        agent,
+                        wait.capture,
+                        wait.response_fence.as_ref(),
+                        reference,
+                    ) {
+                        Ok(result) => result,
+                        Err(response) => {
+                            self.answer_held(key.0, &wait.reply, response);
+                            continue;
+                        }
+                    };
+                    if let Some(fence) = wait.response_fence {
+                        let pending = super::agent_history::HistoryWait {
+                            key,
+                            reply: wait.reply.clone(),
+                            deadline: wait.deadline,
+                            fence,
+                            result,
+                        };
+                        let Some(response) = self.fallback_agent_result(pending) else {
+                            continue;
+                        };
+                        response
+                    } else {
+                        ControlResponse::ok(result)
+                    }
+                }
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
             };
@@ -346,14 +368,14 @@ impl SessionServer {
         }
     }
 
-    fn agent_wait_response(
+    fn agent_wait_result(
         &mut self,
         condition: AgentWaitCondition,
         agent: Option<Box<protocol::AgentRuntime>>,
         render: Option<crate::control::CaptureRender>,
-        response_fence: Option<super::responses::AgentResponseFence>,
+        response_fence: Option<&super::responses::AgentResponseFence>,
         reference: Option<protocol::AgentRef>,
-    ) -> ControlResponse {
+    ) -> std::result::Result<AgentWaitResult, ControlResponse> {
         let result = if let (Some(render), Some(agent)) = (render, agent.as_ref()) {
             let id = agent.reference.pane.pane_id;
             let pane = self
@@ -368,7 +390,7 @@ impl SessionServer {
                 false,
             ) {
                 Ok(content) => content,
-                Err(response) => return response,
+                Err(response) => return Err(response),
             };
             Some(crate::control::AgentPromptResult::Terminal {
                 capture: crate::control::PaneCapture {
@@ -382,10 +404,10 @@ impl SessionServer {
         };
         let response = reference.as_ref().and_then(|reference| {
             self.agent_responses
-                .after(reference, response_fence.as_ref()?)
+                .after(reference, response_fence?)
                 .cloned()
         });
-        ControlResponse::ok(AgentWaitResult {
+        Ok(AgentWaitResult {
             response,
             reference,
             condition,
@@ -398,13 +420,16 @@ impl SessionServer {
     pub(super) fn remove_agent_waits(&mut self, client_id: ClientId) {
         self.agent_waits
             .retain(|&(client, _), _| client != client_id);
+        self.cancel_client_history(client_id);
     }
 
     /// Whether `client_id` still holds a wait, which keeps a headless connection open.
     pub(super) fn holds_agent_wait(&self, client_id: ClientId) -> bool {
-        self.agent_waits
-            .keys()
-            .any(|&(client, _)| client == client_id)
+        self.holds_agent_history(client_id)
+            || self
+                .agent_waits
+                .keys()
+                .any(|&(client, _)| client == client_id)
     }
 
     #[allow(clippy::too_many_arguments)]

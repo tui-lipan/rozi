@@ -23,6 +23,7 @@ use crate::session::protocol::{
 use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
 
 mod acquisition;
+mod agent_history;
 mod agent_summary;
 mod attachments;
 mod automation;
@@ -194,6 +195,7 @@ pub struct SessionServer {
     clients: Vec<ClientConn>,
     agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
     agent_responses: responses::AgentResponseStore,
+    agent_history: HashMap<PaneId, agent_history::PendingHistoryRead>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
@@ -1772,6 +1774,7 @@ impl SessionServer {
             clients: Vec::new(),
             agent_waits: HashMap::new(),
             agent_responses: Default::default(),
+            agent_history: HashMap::new(),
             capture_waits: HashMap::new(),
             attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),
@@ -1931,6 +1934,7 @@ impl SessionServer {
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.resolve_capture_waits();
+        self.pump_agent_history();
         self.pump_recordings();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);

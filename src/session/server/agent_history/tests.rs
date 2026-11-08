@@ -1,0 +1,492 @@
+use super::super::tests::{attach_client, decode_outbox_controls, test_pane};
+use super::*;
+use crate::control::{AgentResponseFidelity, AgentTarget, AgentWaitCondition, CaptureRender};
+use std::os::unix::net::UnixStream;
+
+// An external TUI boundary: real stdin, PTY mouse reports and redraws. All traversal, lease,
+// lifecycle and reply behavior under test belongs to the production SessionServer.
+#[test]
+#[ignore = "child process fixture, launched by the history tests"]
+fn tui_process() {
+    use std::process::{Command, Stdio};
+    assert!(std::env::var_os("ROZI_HISTORY_FIXTURE").is_some());
+    assert!(
+        Command::new("stty")
+            .args(["raw", "-echo"])
+            .stdin(Stdio::inherit())
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mode = std::env::var("ROZI_HISTORY_FIXTURE").unwrap();
+    let mut top = if mode == "scrolled" { 4 } else { 6 };
+    let draw = |top: usize| {
+        let body = (top..top + 6)
+            .map(|line| format!("line {line:02} 日本語"))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        print!(
+            "\x1b[?2026h\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[Hheader\x1b[K\r\n{body}\r\nfooter\x1b[K\x1b[?2026l"
+        );
+        std::io::stdout().flush().unwrap();
+    };
+    draw(top);
+    let mut sequence = Vec::new();
+    let mut input = std::io::stdin();
+    let mut byte = [0];
+    while input.read_exact(&mut byte).is_ok() {
+        if byte[0] == 0x1b || !sequence.is_empty() {
+            sequence.push(byte[0]);
+            if byte[0] != b'M' {
+                continue;
+            }
+            let up = sequence.starts_with(b"\x1b[<64;");
+            sequence.clear();
+            if up {
+                top = top.saturating_sub(1);
+            } else if mode != "restore-failure" {
+                top = (top + 1).min(6);
+            }
+            draw(top);
+        } else {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(std::env::var_os("ROZI_HISTORY_INPUT").unwrap())
+                .unwrap()
+                .write_all(&byte)
+                .unwrap();
+        }
+    }
+}
+
+struct Rig {
+    server: SessionServer,
+    events: mpsc::Receiver<TerminalPtyEvent>,
+    client: ClientId,
+    _stream: UnixStream,
+    reference: protocol::AgentRef,
+    scratch: tempfile::TempDir,
+}
+
+impl Rig {
+    fn new(mode: &str) -> Self {
+        let scratch = tempfile::tempdir().unwrap();
+        let (tx, events) = mpsc::channel();
+        let pty = TerminalPty::spawn(
+            TerminalPtyConfig::new(
+                std::env::current_exe()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+            )
+            .arg("--exact")
+            .arg("session::server::agent_history::tests::tui_process")
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env("ROZI_HISTORY_FIXTURE", mode)
+            .env(
+                "ROZI_HISTORY_INPUT",
+                scratch.path().join("input").to_string_lossy().to_string(),
+            )
+            .size(30, 8),
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .unwrap();
+        let mut server = SessionServer::new_named("history-test");
+        let mut pane = test_pane(7);
+        pane.pty = Some(pty);
+        pane.cols = 30;
+        pane.rows = 8;
+        pane.terminal.resize(8, 30);
+        pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+            state: protocol::DetectedAgentState::Idle,
+        });
+        pane.agent.sync_references(&pane.runtime);
+        server.panes.insert(3, pane);
+        let reference = server
+            .resolve_agent_wait_target(AgentTarget::Pane(3))
+            .unwrap();
+        let (client, stream) = attach_client(&mut server);
+        let mut rig = Self {
+            server,
+            events,
+            client,
+            _stream: stream,
+            reference,
+            scratch,
+        };
+        rig.until(|rig| rig.screen().contains("footer"));
+        rig
+    }
+
+    fn screen(&mut self) -> String {
+        let screen = self
+            .server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_without_change();
+        screen.export_text(0, screen.total_text_lines())
+    }
+
+    fn tick(&mut self) {
+        while let Ok(event) = self.events.try_recv() {
+            if let Some(outbound) = self
+                .server
+                .handle_event(ServerEvent::Pty(None, 3, 7, event))
+            {
+                self.server.send_outbound(None, &outbound);
+            }
+        }
+        self.server.pump_agent_history();
+    }
+
+    fn until(&mut self, predicate: impl Fn(&mut Self) -> bool) {
+        let end = Instant::now() + Duration::from_secs(15);
+        while !predicate(self) {
+            assert!(Instant::now() < end, "timed out; screen: {}", self.screen());
+            self.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn begin(&mut self, attached: bool) {
+        self.server
+            .register_post_prompt_wait(
+                self.client,
+                self.reference.clone(),
+                AgentWaitCondition::Turn,
+                Some(12_000),
+                Some(CaptureRender::Text),
+                true,
+                if attached {
+                    ReplyTo::Attached { request_id: 42 }
+                } else {
+                    ReplyTo::Headless {
+                        capabilities: protocol::Capabilities::default(),
+                        effective_protocol: PROTOCOL_VERSION,
+                    }
+                },
+            )
+            .unwrap();
+        self.state(protocol::DetectedAgentState::Working);
+        self.state(protocol::DetectedAgentState::Idle);
+        assert!(self.server.agent_waits.is_empty());
+    }
+
+    fn state(&mut self, state: protocol::DetectedAgentState) {
+        self.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .runtime
+            .detected_agent
+            .as_mut()
+            .unwrap()
+            .state = state;
+        self.server.resolve_agent_waits();
+    }
+
+    fn result(&self) -> serde_json::Value {
+        decode_outbox_controls(self.server.client(self.client).unwrap())
+            .into_iter()
+            .find_map(|message| match message {
+                ServerMessage::AttachedControlResult {
+                    request_id: 42,
+                    response,
+                }
+                | ServerMessage::SessionControlResult { response, .. } => {
+                    Some(serde_json::to_value(response).unwrap())
+                }
+                _ => None,
+            })
+            .expect("completed wait reply")
+    }
+
+    fn finish(&mut self) -> serde_json::Value {
+        self.until(|rig| rig.server.agent_history.is_empty());
+        self.result()
+    }
+}
+
+#[test]
+fn history_returns_full_rendered_text_and_restores_for_both_transports() {
+    for attached in [false, true] {
+        let mut rig = Rig::new("bottom");
+        let original = rig.screen();
+        rig.begin(attached);
+        assert!(rig.server.holds_agent_history(rig.client));
+        assert!(rig.server.holds_agent_wait(rig.client));
+        let result = rig.finish();
+        assert_eq!(rig.screen(), original);
+        let response = &result["data"]["response"];
+        assert_eq!(response["source"], "alternate-screen-history", "{result}");
+        assert_eq!(response["fidelity"], "rendered");
+        assert_eq!(response["complete"], true);
+        let text = response["text"].as_str().unwrap();
+        for line in 0..12 {
+            assert!(text.contains(&format!("line {line:02} 日本語")), "{text}");
+        }
+        let capture = result["data"]["result"]["capture"].to_string();
+        assert!(
+            !capture.contains("line 00"),
+            "capture must precede traversal: {capture}"
+        );
+        assert!(capture.contains("line 11"), "{result}");
+    }
+}
+
+#[test]
+fn scrolled_tui_and_failed_restoration_return_no_reconstruction() {
+    for mode in ["scrolled", "restore-failure"] {
+        let mut rig = Rig::new(mode);
+        let original = rig.screen();
+        rig.begin(true);
+        let result = rig.finish();
+        assert!(result["data"]["response"].is_null(), "{result}");
+        if mode == "scrolled" {
+            assert_eq!(rig.screen(), original);
+        }
+    }
+}
+
+#[test]
+fn marked_input_and_resize_wait_for_restoration_in_order() {
+    let mut rig = Rig::new("bottom");
+    let (other, _stream) = attach_client(&mut rig.server);
+    rig.begin(true);
+    rig.until(|rig| rig.screen().contains("line 04"));
+    let original_size = (rig.server.panes[&3].cols, rig.server.panes[&3].rows);
+    rig.server.process_client_control_now(
+        other,
+        ClientMessage::MarkedInput {
+            pane_id: 3,
+            local: false,
+            generation: 7,
+            bytes: b"x".to_vec(),
+            token: 90,
+        },
+    );
+    assert!(
+        !decode_outbox_controls(rig.server.client(other).unwrap())
+            .iter()
+            .any(|message| matches!(message, ServerMessage::InputMarked { token: 90 }))
+    );
+    assert!(!rig.scratch.path().join("input").exists());
+    let replies = rig.server.handle_resize_with(
+        rig.client,
+        PaneResizeRequest {
+            pane_id: 3,
+            local: false,
+            generation: 7,
+            cols: 40,
+            rows: 10,
+            cell_width: 10,
+            cell_height: 20,
+        },
+        |_| panic!("resize during restoration"),
+    );
+    assert!(replies.is_empty());
+    assert_eq!(
+        (rig.server.panes[&3].cols, rig.server.panes[&3].rows),
+        original_size
+    );
+    let result = rig.finish();
+    assert!(
+        result["data"]["response"].is_null(),
+        "cancelled read: {result}"
+    );
+    assert_eq!(
+        (rig.server.panes[&3].cols, rig.server.panes[&3].rows),
+        (40, 10)
+    );
+    rig.until(|rig| {
+        std::fs::read(rig.scratch.path().join("input")).is_ok_and(|bytes| bytes == b"x")
+    });
+    assert!(
+        decode_outbox_controls(rig.server.client(other).unwrap())
+            .iter()
+            .any(|message| matches!(message, ServerMessage::InputMarked { token: 90 }))
+    );
+}
+
+#[test]
+fn semantic_response_arriving_during_traversal_wins() {
+    let mut rig = Rig::new("bottom");
+    let original = rig.screen();
+    rig.begin(true);
+    rig.until(|rig| rig.screen().contains("line 04"));
+    rig.server.agent_responses.insert(
+        rig.reference.clone(),
+        None,
+        AgentResponsePayload {
+            text: "exact reply".into(),
+            turn_id: Some("turn".into()),
+            source: AgentResponseSource::NativeApi,
+            fidelity: AgentResponseFidelity::Semantic,
+            complete: true,
+            truncated: false,
+        },
+    );
+    let result = rig.finish();
+    assert_eq!(rig.screen(), original);
+    assert_eq!(result["data"]["response"]["text"], "exact reply");
+    assert_eq!(result["data"]["response"]["fidelity"], "semantic");
+}
+
+#[test]
+fn normal_history_is_rendered_bounded_and_never_claimed_complete() {
+    let mut rig = Rig::new("bottom");
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"\x1b[?1049l\x1b[2J\x1b[Hprevious\r\nanswer");
+    rig.begin(true);
+    let result = rig.finish();
+    assert_eq!(result["data"]["response"]["source"], "terminal");
+    assert_eq!(result["data"]["response"]["complete"], false);
+    assert!(
+        result["data"]["response"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("previous")
+    );
+    let payload = rendered_payload(
+        "🌷".repeat(MAX_RESPONSE_BYTES),
+        AgentResponseSource::Terminal,
+        true,
+    );
+    assert!(payload.text.len() <= MAX_RESPONSE_BYTES);
+    assert!(payload.truncated);
+    assert!(!payload.complete);
+}
+
+#[test]
+fn eligibility_refuses_mouse_disabled_and_missing_pty() {
+    for mouse_disabled in [false, true] {
+        let mut rig = Rig::new("bottom");
+        let pane = rig.server.panes.get_mut(&3).unwrap();
+        if mouse_disabled {
+            pane.screen_mut().process_bytes(b"\x1b[?1000l");
+        } else {
+            pane.pty = None;
+        }
+        rig.begin(true);
+        assert!(rig.server.agent_history.is_empty());
+        assert!(rig.result()["data"]["response"].is_null());
+    }
+}
+
+#[test]
+fn timeout_and_agent_resuming_restore_without_publishing() {
+    for timeout in [false, true] {
+        let mut rig = Rig::new("bottom");
+        let original = rig.screen();
+        rig.begin(true);
+        rig.until(|rig| rig.screen().contains("line 04"));
+        if timeout {
+            rig.server.agent_history.get_mut(&3).unwrap().wait.deadline = Some(Instant::now());
+        } else {
+            rig.state(protocol::DetectedAgentState::Working);
+        }
+        let result = rig.finish();
+        assert_eq!(rig.screen(), original);
+        assert!(result["data"]["response"].is_null(), "{result}");
+        if timeout {
+            assert_eq!(result["code"], "timeout", "{result}");
+        }
+    }
+}
+
+#[test]
+fn unexpected_output_before_probe_never_scrolls_or_publishes() {
+    let mut rig = Rig::new("bottom");
+    rig.begin(true);
+    rig.server.handle_event(ServerEvent::Pty(
+        None,
+        3,
+        7,
+        TerminalPtyEvent::Output(b"\x1b[Hchanged".to_vec().into()),
+    ));
+    assert!(rig.server.agent_history[&3].cancelled);
+    let result = rig.finish();
+    assert!(result["data"]["response"].is_null());
+}
+
+#[test]
+fn replacement_and_disconnected_requester_release_the_lease_without_content() {
+    for replaced in [false, true] {
+        let mut rig = Rig::new("bottom");
+        let original = rig.screen();
+        rig.begin(true);
+        rig.until(|rig| rig.screen().contains("line 04"));
+        if replaced {
+            rig.server.panes.get_mut(&3).unwrap().generation = 8;
+        } else {
+            rig.server.remove_agent_waits(rig.client);
+        }
+        let result = rig.finish();
+        assert!(result["data"]["response"].is_null());
+        if replaced {
+            assert_eq!(result["ok"], false);
+        } else {
+            assert_eq!(rig.screen(), original);
+        }
+        assert!(!rig.server.holds_agent_wait(rig.client));
+    }
+}
+
+#[test]
+fn lease_rejects_headless_input_and_ignores_unchanged_geometry() {
+    let mut rig = Rig::new("bottom");
+    rig.begin(true);
+    let replies = rig.server.handle_resize_with(
+        rig.client,
+        PaneResizeRequest {
+            pane_id: 3,
+            local: false,
+            generation: 7,
+            cols: 30,
+            rows: 8,
+            cell_width: 10,
+            cell_height: 20,
+        },
+        |_| Ok(()),
+    );
+    assert!(replies.is_empty());
+    assert!(!rig.server.agent_history[&3].cancelled);
+    assert!(rig.server.has_conflicting_prompt(&rig.reference, false));
+    let messages = rig.server.handle_session_control(
+        999,
+        "history-test".into(),
+        PROTOCOL_VERSION,
+        PROTOCOL_VERSION,
+        None,
+        crate::control::ControlRequest {
+            command: crate::control::ControlCommand::SendText {
+                target: Some(3),
+                text: "bad".into(),
+                wait: None,
+                capture: None,
+                scale: None,
+            },
+            source_pane: None,
+            source_session: None,
+            caller_context: None,
+            extension: None,
+            credential: None,
+        },
+    );
+    assert!(messages.iter().any(|(_, message)| matches!(message,
+        ServerMessage::SessionControlResult { response, .. }
+            if response.code == Some(crate::control::ControlErrorCode::Conflict))));
+    assert!(!rig.scratch.path().join("input").exists());
+    rig.server.cancel_client_history(rig.client);
+    rig.finish();
+}

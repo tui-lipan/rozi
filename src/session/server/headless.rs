@@ -1630,6 +1630,12 @@ impl SessionServer {
         id: PaneId,
         bytes: Vec<u8>,
     ) -> std::result::Result<(), ControlResponse> {
+        if self.agent_history.contains_key(&id) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                "pane is reading agent history; retry after viewport restoration",
+            ));
+        }
         let Some(pane) = self.panes.get(&id) else {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::PaneNotFound,

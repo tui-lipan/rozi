@@ -118,6 +118,7 @@ pub(crate) fn run(bin: &Path, env: &Isolated, args: &[&str]) -> Ran {
     run_with_home(bin, env, args, false)
 }
 
+#[cfg(unix)]
 /// Like [`run`], but leave `HOME` as this process found it so `ssh` can read `~/.ssh`.
 pub(crate) fn run_keeping_home(bin: &Path, env: &Isolated, args: &[&str]) -> Ran {
     run_with_home(bin, env, args, true)

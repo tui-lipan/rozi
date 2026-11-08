@@ -346,19 +346,30 @@ fn sessions_upgrade_restores_panes_from_snapshot_and_keeps_deployments() {
         .expect("sessions new");
     assert!(created.status.success(), "{created:?}");
 
-    let listed_json = rozi(&root)
-        .args(["sessions", "list", "--format", "json"])
-        .output()
-        .expect("sessions list --format json");
-    assert!(listed_json.status.success(), "{listed_json:?}");
-    let rows: serde_json::Value = serde_json::from_slice(&listed_json.stdout).unwrap();
-    let row = rows
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|row| row["name"] == session)
-        .expect("session row");
-    assert_eq!(row["rozi_version"], env!("CARGO_PKG_VERSION"));
+    // A server that has just started can answer a probe as busy for a moment; only a running row
+    // carries its release.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let row = loop {
+        let listed_json = rozi(&root)
+            .args(["sessions", "list", "--format", "json"])
+            .output()
+            .expect("sessions list --format json");
+        assert!(listed_json.status.success(), "{listed_json:?}");
+        let rows: serde_json::Value = serde_json::from_slice(&listed_json.stdout).unwrap();
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == session)
+            .cloned()
+            .expect("session row");
+        if row["status"] == "running" || std::time::Instant::now() >= deadline {
+            break row;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(row["status"], "running", "{row}");
+    assert_eq!(row["rozi_version"], env!("CARGO_PKG_VERSION"), "{row}");
     assert_eq!(row["effective_protocol"], PROTOCOL_VERSION);
 
     let listed_text = rozi(&root)

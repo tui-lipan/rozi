@@ -120,6 +120,24 @@ impl Capabilities {
     }
 }
 
+/// A value added to a closed wire vocabulary within the current generation.
+///
+/// An older peer decodes it as its vocabulary's `unknown`, but a sender still checks `capability`
+/// before sending it, so a peer that negotiated it shows the real value. The wire classifier
+/// requires every value added since the generation's frozen schema to be listed in
+/// [`GATED_VOCABULARY`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GatedValue {
+    /// The schema definition the value belongs to, such as `AgentState`.
+    pub vocabulary: &'static str,
+    /// The value as it travels on the wire.
+    pub value: &'static str,
+    pub capability: Capability,
+}
+
+/// Every vocabulary value added within this generation. Empty at the start of a generation.
+pub const GATED_VOCABULARY: &[GatedValue] = &[];
+
 impl FromIterator<Capability> for Capabilities {
     fn from_iter<I: IntoIterator<Item = Capability>>(iter: I) -> Self {
         Self(

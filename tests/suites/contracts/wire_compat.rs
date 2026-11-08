@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rozi::session::protocol::{
-    Capability, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
+    Capability, ClientMessage, GATED_VOCABULARY, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION,
+    ServerMessage,
 };
 use serde_json::Value;
 
@@ -66,9 +67,20 @@ struct Classification {
 }
 
 fn classify(baseline: &Value, current: &Value) -> Classification {
+    let gated: Vec<(&str, &str)> = GATED_VOCABULARY
+        .iter()
+        .map(|gated| (gated.vocabulary, gated.value))
+        .collect();
+    classify_with(baseline, current, &gated)
+}
+
+/// [`classify`], with the vocabulary values that are gated on a capability given as
+/// `(definition, value)` pairs.
+fn classify_with(baseline: &Value, current: &Value, gated: &[(&str, &str)]) -> Classification {
     let mut walk = Walk {
         baseline,
         current,
+        gated,
         seen: BTreeSet::new(),
         out: Classification::default(),
     };
@@ -105,6 +117,8 @@ fn classify(baseline: &Value, current: &Value) -> Classification {
 struct Walk<'a> {
     baseline: &'a Value,
     current: &'a Value,
+    /// Vocabulary values added within this generation behind a capability.
+    gated: &'a [(&'a str, &'a str)],
     /// Pairs of definitions already compared, so recursive types terminate.
     seen: BTreeSet<(String, String)>,
     out: Classification,
@@ -239,8 +253,10 @@ impl Walk<'_> {
     }
 
     fn compare(&mut self, base: &Value, cur: &Value, path: &str, root: Option<&&'static str>) {
-        let decoded_tolerantly =
-            definition_name(cur).is_some_and(|name| TOLERANT.contains(&name.as_str()));
+        let vocabulary = definition_name(cur);
+        let decoded_tolerantly = vocabulary
+            .as_deref()
+            .is_some_and(|name| TOLERANT.contains(&name));
         if let (Some(b), Some(c)) = (definition_name(base), definition_name(cur))
             && !self.seen.insert((b, c))
         {
@@ -292,7 +308,23 @@ impl Walk<'_> {
                             .or_default()
                             .insert(tag_value(key).to_owned());
                     }
-                    None if tolerant => {}
+                    // The catch-all itself is what lets a vocabulary grow.
+                    None if tag_value(key) == UNKNOWN => {}
+                    None if tolerant => {
+                        let value = tag_value(key);
+                        let gated = self.gated.iter().any(|(gated_in, gated_value)| {
+                            Some(*gated_in) == vocabulary.as_deref() && *gated_value == value
+                        });
+                        if !gated {
+                            self.flag(
+                                path,
+                                format!(
+                                    "variant `{value}` added without a capability; list it in \
+                                     GATED_VOCABULARY with the capability its sender checks"
+                                ),
+                            );
+                        }
+                    }
                     None => self.flag(
                         path,
                         format!(
@@ -618,14 +650,20 @@ mod classifier {
             ]
         );
         let tolerant_base = with(&["idle", "working", "unknown"]);
-        assert!(
-            classify(
-                &tolerant_base,
-                &with(&["idle", "working", "unknown", "sleeping"])
-            )
-            .breaking
-            .is_empty()
+        let grown = with(&["idle", "working", "unknown", "sleeping"]);
+        // Behind the fallback, a new value still needs the capability its sender checks.
+        assert_eq!(
+            classify_with(&tolerant_base, &grown, &[]).breaking.len(),
+            1,
+            "an unregistered value is flagged"
         );
+        assert!(
+            classify_with(&tolerant_base, &grown, &[("State", "sleeping")])
+                .breaking
+                .is_empty()
+        );
+        // Gaining the catch-all is how a closed vocabulary becomes tolerant.
+        assert!(classify(&base, &tolerant_base).breaking.is_empty());
         assert_eq!(
             classify(&base, &with(&["idle"])).breaking,
             ["ClientMessage.report.state: variant `working` removed"]

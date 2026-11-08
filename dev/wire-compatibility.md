@@ -148,7 +148,8 @@ interrupted-backup recovery.
   schema with `tests/fixtures/wire/schema/gen-<N>.schema.json`, the frozen schema of the current
   generation, and flags anything the evolution rules forbid: a removed or renamed field or
   variant, a type or nullability change, a new required field, a closed vocabulary that grew, a
-  removed capability, or a new message variant whose `required_capability` is `None`. A flagged
+  value added to a tolerant vocabulary that `GATED_VOCABULARY` does not list with its capability,
+  a removed capability, or a new message variant whose `required_capability` is `None`. A flagged
   change needs a generation bump. Every generation in the window must have a frozen schema.
 - **Golden corpus.** `tests/fixtures/wire/current/` holds one JSON example per message variant,
   and each release copies it to `tests/fixtures/wire/<release>/`. The current build decodes every
@@ -162,7 +163,7 @@ interrupted-backup recovery.
 
 1. Find the row in the evolution rules. If it needs a capability, add a `Capability` variant (and
    to `Capability::ALL`), offer it in `Capabilities::current`, and return it from
-   `required_capability` for the new variant.
+   `required_capability` for a new variant, or list a new vocabulary value in `GATED_VOCABULARY`.
 2. Gate the sender: check `supports` before sending, and degrade or disable the feature with a
    reason when the peer lacks it.
 3. Regenerate the schema and commit it with the change.

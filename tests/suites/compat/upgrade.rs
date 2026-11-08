@@ -1,29 +1,23 @@
-//! `rozi sessions upgrade <NAME>`, which WS4 adds.
+//! `rozi sessions upgrade <NAME>`: start a session on the released binary, upgrade it onto the
+//! built one, and read the restored panes back.
 //!
-//! Until that command parses, this test skips with that reason and does not download a release.
-//! Once it exists, the flow runs only when both binaries are generation 52 or newer: start on the
-//! released binary, upgrade onto the built one, and read the restored panes back.
+//! It runs whether or not the two binaries share a generation. Inside the window the upgrade moves
+//! a session the new client could already attach to; across a generation bump it is the only way
+//! back into a session the new client is refused by, so both have to work.
 
 use super::harness::{self, Mode, pair};
 
 #[test]
-#[ignore = "set ROZI_COMPAT=1; downloads a signed release once sessions upgrade exists"]
+#[ignore = "set ROZI_COMPAT=1; downloads a signed release"]
 fn sessions_upgrade_restarts_onto_the_new_binary() {
     if !harness::skip_unless_enabled() {
         return;
     }
-    let new_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_rozi"));
-    if !upgrade_command_exists(&new_bin) {
-        eprintln!("skipping: WS4 has not added `rozi sessions upgrade` yet");
-        return;
-    }
     let pair = pair();
-    if pair.mode() != Mode::Window {
+    if pair.mode() == Mode::Same {
         eprintln!(
-            "skipping: upgrade flow waits until both binaries are generation >= {} (released {}, built {})",
-            harness::SUPPORT_WINDOW_GENERATION,
-            pair.old_protocol,
-            pair.new_protocol
+            "skipping: released and built binaries are the same pre-window generation {}",
+            pair.old_protocol
         );
         return;
     }
@@ -57,10 +51,4 @@ fn sessions_upgrade_restarts_onto_the_new_binary() {
         "upgrade came back with no panes:\n{}",
         restored.combined()
     );
-}
-
-fn upgrade_command_exists(bin: &std::path::Path) -> bool {
-    let env = harness::Isolated::new();
-    let probe = harness::run(bin, &env, &["sessions", "upgrade"]);
-    !probe.combined().contains("unknown sessions command")
 }

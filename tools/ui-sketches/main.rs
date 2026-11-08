@@ -2096,8 +2096,7 @@ fn session_compatibility() {
     use rozi::platform::ipc::{IpcConnection, PipedConnection};
     use rozi::session::client::SessionClient;
     use rozi::session::protocol::{
-        self, Capabilities, Capability, ClientMessage, PROTOCOL_VERSION, ServerMessage,
-        SessionInstanceId,
+        self, Capabilities, ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInstanceId,
     };
     use rozi::state::SessionPickerState;
 
@@ -2196,36 +2195,21 @@ fn session_compatibility() {
     backend.render();
     write_png(&mut backend, "session-picker-version-badge");
 
-    Action::with_required_capability(Action::SpawnFloat, Capability::RuntimeMetrics, || {
-        backend.state_mut().show_session_picker = false;
+    backend.state_mut().show_session_picker = false;
+    backend
+        .dispatch(Msg::RunAction(Action::TogglePalette))
+        .unwrap();
+    for ch in "session".chars() {
         backend
-            .dispatch(Msg::RunAction(Action::TogglePalette))
+            .send_key(tui_lipan::prelude::KeyEvent {
+                code: tui_lipan::prelude::KeyCode::Char(ch),
+                mods: KeyMods::NONE,
+            })
             .unwrap();
-        backend.render();
-        write_png(&mut backend, "command-palette-capability-disabled");
-
-        for ch in "session".chars() {
-            backend
-                .send_key(tui_lipan::prelude::KeyEvent {
-                    code: tui_lipan::prelude::KeyCode::Char(ch),
-                    mods: KeyMods::NONE,
-                })
-                .unwrap();
-        }
-        backend.render();
-        write_png(&mut backend, "command-palette-upgrade-session");
-        backend.dispatch(Msg::ClosePalette).unwrap();
-    });
-
-    Action::with_required_capability(Action::ToggleNerdIcons, Capability::RuntimeMetrics, || {
-        backend
-            .dispatch(Msg::RunAction(Action::OpenSettings))
-            .unwrap();
-        backend.state_mut().settings_selected = Some(rozi::state::SettingsAction::ToggleNerdIcons);
-        backend.render();
-        write_png(&mut backend, "settings-capability-disabled");
-        backend.dispatch(Msg::CloseSettings).unwrap();
-    });
+    }
+    backend.render();
+    write_png(&mut backend, "command-palette-upgrade-session");
+    backend.dispatch(Msg::ClosePalette).unwrap();
 
     backend.state_mut().current_mut().session_client = None;
     server.join().expect("server thread");

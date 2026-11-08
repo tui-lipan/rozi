@@ -25,16 +25,22 @@ enum Ending {
     /// but the protocol leaves a snapshot for that start to discard, or to restore when the server
     /// was [incompatible](StoppedForRestart::Incompatible).
     Restart,
-    /// Stop the server by signal so it saves a final snapshot for the replacement server to
-    /// restore, keeping its snapshot and deployments.
+    /// Restart the session on this build from its own final snapshot, keeping its deployments.
+    ///
+    /// No protocol message asks a server of any release to stop and keep a fresh snapshot:
+    /// `ShutdownForRestart` discards it. The stop signal does, on every release, so an upgrade
+    /// always stops the server by its process, exactly as a restart stops an incompatible one.
     Upgrade,
 }
 
 impl Ending {
-    fn message(self) -> ClientMessage {
+    /// The message that asks the server to stop, or `None` when this ending stops it by its
+    /// process instead.
+    fn message(self) -> Option<ClientMessage> {
         match self {
-            Self::Delete => ClientMessage::Shutdown,
-            Self::Restart | Self::Upgrade => ClientMessage::ShutdownForRestart,
+            Self::Delete => Some(ClientMessage::Shutdown),
+            Self::Restart => Some(ClientMessage::ShutdownForRestart),
+            Self::Upgrade => None,
         }
     }
 
@@ -153,17 +159,19 @@ fn shutdown_existing_named_session(
     };
 
     let server_pid = stream.peer_pid();
-    let graceful = (|| -> Result<(), GracefulFailure> {
-        if ending == Ending::Upgrade {
-            return Err(GracefulFailure {
-                error: io::Error::other("upgrade stops by signal to preserve snapshot"),
-                incompatible: true,
-            });
-        }
-        stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
-        stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
-        graceful_shutdown(&mut stream, name, ending)
-    })();
+    let graceful = match ending.message() {
+        // Take the same path as a server this build cannot talk to: stop it by its process, which
+        // saves a final snapshot the replacement restores.
+        None => Err(GracefulFailure {
+            error: io::Error::other("stopped by its process so it saves a final snapshot"),
+            incompatible: true,
+        }),
+        Some(message) => (|| -> Result<(), GracefulFailure> {
+            stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
+            stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
+            graceful_shutdown(&mut stream, name, &message)
+        })(),
+    };
 
     let graceful_error = match graceful {
         Ok(()) => {
@@ -355,7 +363,7 @@ fn retirement_timeout_error(name: &str) -> io::Error {
 fn graceful_shutdown(
     stream: &mut IpcConnection,
     name: &str,
-    ending: Ending,
+    message: &ClientMessage,
 ) -> Result<(), GracefulFailure> {
     protocol::write_frame(
         stream,
@@ -368,7 +376,7 @@ fn graceful_shutdown(
     )?;
     match protocol::read_frame::<_, ServerMessage>(stream)? {
         ServerMessage::Attached { .. } => {
-            protocol::write_frame(stream, &ending.message())?;
+            protocol::write_frame(stream, message)?;
             Ok(stream.flush()?)
         }
         other => Err(GracefulFailure {
@@ -403,7 +411,7 @@ mod tests {
             client_writer,
             client_reader,
         ));
-        let result = graceful_shutdown(&mut client, "skew", Ending::Restart);
+        let result = graceful_shutdown(&mut client, "skew", &ClientMessage::ShutdownForRestart);
         server.join().expect("scripted server");
         result
     }

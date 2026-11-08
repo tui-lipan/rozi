@@ -557,55 +557,30 @@ impl Action {
         }
     }
 
-    /// The capability this action needs, consulting [`Self::required_capability`] first and any
-    /// scoped [`Self::with_required_capability`] guard while all variants return `None`.
-    pub fn effective_required_capability(self) -> Option<crate::session::protocol::Capability> {
-        self.required_capability().or_else(|| {
-            SCOPED_REQUIRED_CAPABILITY.with(|slot| {
-                slot.get()
-                    .and_then(|(gated, capability)| (gated == self).then_some(capability))
-            })
-        })
-    }
-
     /// Why this action is disabled when the connected session negotiated `capabilities`, or `None`
     /// when it is supported (or no session is attached).
     pub fn disabled_reason_for_capabilities(
         self,
         capabilities: Option<&crate::session::protocol::Capabilities>,
     ) -> Option<String> {
-        let capability = self.effective_required_capability()?;
-        let capabilities = capabilities?;
-        (!capabilities.supports(capability)).then(|| {
-            format!(
-                "needs this session on rozi ≥ {}",
-                capability.introduced_in()
-            )
-        })
-    }
-
-    /// Run `f` with `self` requiring `capability` in the production enablement check.
-    pub fn with_required_capability<R>(
-        self,
-        capability: crate::session::protocol::Capability,
-        f: impl FnOnce() -> R,
-    ) -> R {
-        struct ResetGuard(Option<(Action, crate::session::protocol::Capability)>);
-        impl Drop for ResetGuard {
-            fn drop(&mut self) {
-                SCOPED_REQUIRED_CAPABILITY.with(|slot| slot.set(self.0));
-            }
-        }
-        let previous =
-            SCOPED_REQUIRED_CAPABILITY.with(|slot| slot.replace(Some((self, capability))));
-        let _guard = ResetGuard(previous);
-        f()
+        capability_disabled_reason(self.required_capability(), capabilities)
     }
 }
 
-thread_local! {
-    static SCOPED_REQUIRED_CAPABILITY: std::cell::Cell<Option<(Action, crate::session::protocol::Capability)>> =
-        const { std::cell::Cell::new(None) };
+/// Why something that needs `required` cannot run against a session that negotiated
+/// `capabilities`. `None` when nothing is required, the session supports it, or no session is
+/// attached.
+pub fn capability_disabled_reason(
+    required: Option<crate::session::protocol::Capability>,
+    capabilities: Option<&crate::session::protocol::Capabilities>,
+) -> Option<String> {
+    let capability = required?;
+    (!capabilities?.supports(capability)).then(|| {
+        format!(
+            "needs this session on rozi ≥ {}",
+            capability.introduced_in()
+        )
+    })
 }
 
 #[cfg(test)]

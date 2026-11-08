@@ -205,7 +205,7 @@
       "type": "object"
     },
     "AgentPromptResult": {
-      "description": "The requested representation of a prompted turn. Integration messages may be added as\nanother explicit kind without treating a terminal screen as an assistant message.",
+      "description": "The requested terminal representation of a prompted turn. Semantic content is returned\nseparately in [`AgentWaitResult::response`].",
       "oneOf": [
         {
           "properties": {
@@ -253,6 +253,109 @@
         "incarnation"
       ],
       "type": "object"
+    },
+    "AgentResponse": {
+      "description": "Content supplied by an integration, separate from lifecycle metadata.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentResponseFidelity"
+        },
+        "response_id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentResponseSource"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "response_id",
+        "text",
+        "source",
+        "fidelity",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "AgentResponseFidelity": {
+      "enum": [
+        "semantic",
+        "rendered"
+      ],
+      "type": "string"
+    },
+    "AgentResponseLookup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentResponse"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The latest retained response, or null when this agent has not published one."
+    },
+    "AgentResponsePayload": {
+      "description": "Content supplied by an integration, separate from lifecycle metadata.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentResponseFidelity"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentResponseSource"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "source",
+        "fidelity",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "AgentResponseSource": {
+      "enum": [
+        "native-hook",
+        "native-api",
+        "transcript",
+        "acp",
+        "terminal",
+        "alternate-screen-history"
+      ],
+      "type": "string"
     },
     "AgentRuntime": {
       "description": "One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,\npaired with the reference that names it.",
@@ -373,6 +476,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentResponse"
             },
             {
               "type": "null"
@@ -2101,6 +2214,10 @@
             "prompt": {
               "type": "string"
             },
+            "result": {
+              "default": false,
+              "type": "boolean"
+            },
             "target": {
               "$ref": "#/$defs/AgentTarget"
             },
@@ -2131,6 +2248,23 @@
           "type": "object"
         },
         {
+          "description": "Read the latest response for one exact agent incarnation.",
+          "properties": {
+            "cmd": {
+              "const": "agent-response",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -2157,6 +2291,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "seq": {
@@ -3835,6 +3979,10 @@
             "prompt": {
               "type": "string"
             },
+            "result": {
+              "default": false,
+              "type": "boolean"
+            },
             "target": {
               "$ref": "#/$defs/AgentTarget"
             },
@@ -3865,6 +4013,23 @@
           "type": "object"
         },
         {
+          "description": "Read the latest response for one exact agent incarnation.",
+          "properties": {
+            "cmd": {
+              "const": "agent-response",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -3891,6 +4056,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "seq": {
@@ -5965,6 +6140,28 @@
         "generation",
         "bundle",
         "state"
+      ],
+      "type": "object"
+    },
+    "PublishedAgentResponse": {
+      "description": "One response for a row owned by an open agent publisher. Sent beside, never inside, rows.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "response": {
+          "$ref": "#/$defs/AgentResponsePayload"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "response"
       ],
       "type": "object"
     },
@@ -8617,5 +8814,5 @@
   "description": "Request, response, payload, activity, and event shapes of the `rozi` control API. Objects do not forbid unknown properties: new fields are added over time and a consumer is expected to ignore the ones it does not know. Enumerations are closed, because those are the vocabularies worth validating against.",
   "title": "Rozi control API",
   "x-rozi-api-version": 1,
-  "x-rozi-schema-version": 3
+  "x-rozi-schema-version": 4
 }

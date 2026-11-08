@@ -56,6 +56,7 @@ pub(crate) use resurrect::{
     Unrestorable, discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
     unrestorable_snapshot, unrestorable_snapshot_error,
 };
+mod responses;
 mod runtime;
 mod shutdown;
 mod subscriptions;
@@ -192,6 +193,7 @@ pub struct SessionServer {
     allow_takeover: bool,
     clients: Vec<ClientConn>,
     agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
+    agent_responses: responses::AgentResponseStore,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
@@ -480,6 +482,7 @@ pub struct AgentScratch {
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
+    response_sequences: HashMap<protocol::AgentRef, (u64, u64)>,
     next_incarnation: u64,
     /// Launch whose screen-detected reference was last synchronized.
     reference_launch: u64,
@@ -492,7 +495,7 @@ pub struct AgentScratch {
     row_reports: HashMap<String, runtime::RowReport>,
     /// The latest rows of each agent publisher waiting for another client's copy of it to stop
     /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
-    standby_rows: HashMap<String, Vec<protocol::PublishedRow>>,
+    standby_rows: HashMap<String, runtime::StandbyPublisher>,
     /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
     /// A service closes its stream when its window moves to another session, and the agent runs on:
     /// reporting the same rows on return continues their runs rather than starting new ones.
@@ -1768,6 +1771,7 @@ impl SessionServer {
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
             agent_waits: HashMap::new(),
+            agent_responses: Default::default(),
             capture_waits: HashMap::new(),
             attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),

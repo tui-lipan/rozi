@@ -797,6 +797,7 @@ impl SessionClient {
         agent: Option<String>,
         integration: String,
         state: Option<protocol::AgentState>,
+        response: Option<crate::control::AgentResponsePayload>,
         reason: Option<String>,
         native_session: Option<String>,
         unless_quiet: Option<protocol::AgentState>,
@@ -804,6 +805,7 @@ impl SessionClient {
         seq: u64,
     ) {
         self.send_control(ClientMessage::ReportAgent {
+            response,
             request_id,
             pane_id,
             local,
@@ -852,6 +854,7 @@ impl SessionClient {
     }
 
     /// Replace one publisher's rows in a pane; an empty list withdraws them.
+    #[allow(clippy::too_many_arguments)]
     pub fn report_pane_rows(
         &self,
         pane_id: PaneId,
@@ -859,8 +862,12 @@ impl SessionClient {
         local: bool,
         publisher: &crate::state::PublisherIdentity,
         rows: Vec<crate::session::protocol::PublishedRow>,
+        epoch: u64,
+        responses: Vec<crate::control::PublishedAgentResponse>,
     ) {
         self.send_control(ClientMessage::ReportPaneRows {
+            epoch,
+            responses,
             pane_id,
             local,
             generation,
@@ -1383,9 +1390,7 @@ fn coalesce_inbound_segment(
 impl ClientOutbound {
     fn wire_bytes(&self) -> usize {
         match self {
-            Self::Control(message) => serde_json::to_vec(message)
-                .map(|bytes| bytes.len().saturating_add(5))
-                .unwrap_or(5),
+            Self::Control(message) => protocol::control_frame_wire_bytes(message),
             Self::PresentationAcks(acks) => 5 + acks.len() * 21,
             Self::AcquisitionAcks(acks) => 5 + acks.len() * 21,
             Self::PresentationInterest(interest) => 5 + interest.len() * 15,

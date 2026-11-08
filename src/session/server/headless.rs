@@ -56,6 +56,7 @@ use crate::control::{
 };
 
 struct SessionAgentPrompt<'a> {
+    result: bool,
     target: AgentTarget,
     prompt: &'a str,
     wait: Option<crate::control::AgentWaitCondition>,
@@ -104,6 +105,7 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::PaneClose { .. }
         | ControlCommand::AgentsList
         | ControlCommand::AgentGet { .. }
+        | ControlCommand::AgentResponse { .. }
         | ControlCommand::AgentRead { .. }
         | ControlCommand::Metrics
         | ControlCommand::SendText { .. }
@@ -493,6 +495,7 @@ impl SessionServer {
                     reply.clone(),
                 )),
                 ControlCommand::AgentPrompt {
+                    result,
                     target,
                     prompt,
                     wait,
@@ -502,6 +505,7 @@ impl SessionServer {
                 } => Some(self.register_agent_prompt(
                     client_id,
                     SessionAgentPrompt {
+                        result: *result,
                         target: target.clone(),
                         prompt,
                         wait: *wait,
@@ -652,6 +656,16 @@ impl SessionServer {
                 ControlResponse::ok(AgentListPayload(self.session_agent_report()))
             }
             ControlCommand::AgentGet { target } => self.session_agent_get(target),
+            ControlCommand::AgentResponse { target } => {
+                match self.resolve_agent_wait_target(target) {
+                    Ok(reference) => ControlResponse::ok(crate::control::AgentResponseLookup(
+                        self.agent_responses
+                            .latest(&reference, &self.response_native_session(&reference))
+                            .cloned(),
+                    )),
+                    Err(response) => response,
+                }
+            }
             ControlCommand::AgentRead { target, scrollback } => {
                 match self.resolve_agent_wait_target(target) {
                     Ok(reference) => match self.validate_agent_input_reference(&reference) {
@@ -743,6 +757,7 @@ impl SessionServer {
                 unreachable!("agent prompts are submitted above")
             }
             ControlCommand::AgentReport {
+                response,
                 target,
                 agent,
                 integration,
@@ -755,6 +770,7 @@ impl SessionServer {
             } => self.session_agent_report_update(
                 target,
                 runtime::AgentIntegrationUpdate {
+                    response,
                     agent: Some(agent),
                     integration,
                     state: Some(state),
@@ -773,6 +789,7 @@ impl SessionServer {
             } => self.session_agent_report_update(
                 target,
                 runtime::AgentIntegrationUpdate {
+                    response: None,
                     agent: None,
                     integration,
                     state: None,
@@ -1304,6 +1321,15 @@ impl SessionServer {
         attached: bool,
     ) -> std::result::Result<protocol::AgentRef, ControlResponse> {
         validate_prompt_capture(request.capture, request.wait)?;
+        if request.result
+            && (request.wait.is_none()
+                || request.wait == Some(crate::control::AgentWaitCondition::Gone))
+        {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::InvalidArgument,
+                "agent prompt result requires a wait with an outcome other than gone",
+            ));
+        }
         if request.prompt.is_empty() {
             return Err(ControlResponse::error_with(
                 ControlErrorCode::InvalidArgument,
@@ -1313,6 +1339,12 @@ impl SessionServer {
         self.validate_prompt_authority(client_id, attached)?;
         let reference = self.resolve_agent_wait_target(request.target.clone())?;
         self.validate_agent_input_reference(&reference)?;
+        if self.has_conflicting_prompt(&reference, request.result) {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::Conflict,
+                "agent already has a pending prompt wait; wait for it before requesting another result",
+            ));
+        }
         let pane = self.panes.get(&reference.pane.pane_id).ok_or_else(|| {
             ControlResponse::error_with(ControlErrorCode::AgentGone, "agent pane is gone")
         })?;
@@ -1326,6 +1358,7 @@ impl SessionServer {
                     "agent incarnation was replaced",
                 )
             })?;
+        validate_agent_result_state(runtime.state, request.result)?;
         validate_agent_prompt_state(runtime.state, request.allow_working)?;
         Ok(reference)
     }
@@ -1399,6 +1432,7 @@ impl SessionServer {
                 until,
                 request.timeout_ms,
                 request.capture,
+                request.result,
                 reply,
             )?;
         }
@@ -2112,6 +2146,19 @@ impl SessionServer {
         layout.validate().ok()?;
         Some(layout)
     }
+}
+
+fn validate_agent_result_state(
+    state: protocol::AgentState,
+    result: bool,
+) -> std::result::Result<(), ControlResponse> {
+    if result && state == protocol::AgentState::Working {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            "agent is working; a response result requires a new turn from a ready agent",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_agent_prompt_state(
@@ -3049,6 +3096,7 @@ mod tests {
         let report = |source: protocol::SessionInstanceId| ControlRequest {
             source_session: Some(source),
             ..request(ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-a".into(),
@@ -3335,6 +3383,7 @@ mod tests {
             .register_agent_prompt(
                 1,
                 SessionAgentPrompt {
+                    result: false,
                     target: AgentTarget::Pane(7),
                     prompt: "hello",
                     wait: None,
@@ -3439,32 +3488,49 @@ mod tests {
     }
 
     #[test]
-    fn atomic_prompt_refuses_a_blocked_agent_before_writing() {
-        let mut server = SessionServer::new_named("dev");
-        pane_with_agent(&mut server, 7);
-        server.panes.get_mut(&7).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
-            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
-            state: protocol::DetectedAgentState::Blocked,
-        });
-        let response = server
-            .register_agent_prompt(
-                1,
-                SessionAgentPrompt {
-                    target: AgentTarget::Pane(7),
-                    prompt: "approve this",
-                    wait: None,
-                    timeout_ms: None,
-                    capture: None,
-                    allow_working: false,
-                },
-                ReplyTo::Headless {
-                    capabilities: protocol::Capabilities::default(),
-                    effective_protocol: PROTOCOL_VERSION,
-                },
-            )
-            .unwrap();
-        assert_eq!(response.code, Some(ControlErrorCode::AgentBlocked));
-        assert!(server.agent_waits.is_empty());
+    fn atomic_prompt_refuses_blocked_agents_and_working_result_requests() {
+        for (state, result, allow_working, expected) in [
+            (
+                protocol::DetectedAgentState::Blocked,
+                false,
+                false,
+                ControlErrorCode::AgentBlocked,
+            ),
+            (
+                protocol::DetectedAgentState::Working,
+                true,
+                true,
+                ControlErrorCode::Conflict,
+            ),
+        ] {
+            let mut server = SessionServer::new_named("dev");
+            pane_with_agent(&mut server, 7);
+            server.panes.get_mut(&7).unwrap().runtime.detected_agent =
+                Some(protocol::DetectedAgent {
+                    agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                    state,
+                });
+            let response = server
+                .register_agent_prompt(
+                    1,
+                    SessionAgentPrompt {
+                        result,
+                        target: AgentTarget::Pane(7),
+                        prompt: "approve this",
+                        wait: result.then_some(crate::control::AgentWaitCondition::Turn),
+                        timeout_ms: Some(1000),
+                        capture: None,
+                        allow_working,
+                    },
+                    ReplyTo::Headless {
+                        capabilities: protocol::Capabilities::default(),
+                        effective_protocol: PROTOCOL_VERSION,
+                    },
+                )
+                .unwrap();
+            assert_eq!(response.code, Some(expected));
+            assert!(server.agent_waits.is_empty());
+        }
     }
 
     #[test]
@@ -3493,6 +3559,7 @@ mod tests {
         let (accepted, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-a".into(),
@@ -3521,6 +3588,7 @@ mod tests {
         let (stale, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-a".into(),
@@ -3555,6 +3623,7 @@ mod tests {
         let (next, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-b".into(),
@@ -3575,6 +3644,7 @@ mod tests {
         let (heartbeat, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-b".into(),
@@ -3594,6 +3664,7 @@ mod tests {
         let (blocked, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-b".into(),
@@ -3625,6 +3696,7 @@ mod tests {
         let (delayed, _) = control(
             &mut server,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "hook-a".into(),
@@ -3697,6 +3769,7 @@ mod tests {
             control(
                 server,
                 ControlCommand::AgentReport {
+                    response: None,
                     target: Some(7),
                     agent: "claude".into(),
                     integration: token.into(),
@@ -3851,6 +3924,7 @@ mod tests {
             control(
                 server,
                 ControlCommand::AgentReport {
+                    response: None,
                     target: Some(7),
                     agent: "claude".into(),
                     integration: token.into(),

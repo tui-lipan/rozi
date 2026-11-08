@@ -375,7 +375,7 @@ pub(crate) fn attached(
     crate::ops::focus::request_current_pane_focus(ctx);
     // A reconnect is a new client to the server, which withdrew the rows this client's publish
     // streams had reported under its old identity.
-    crate::ops::published_rows::resend_rows(&ctx.state);
+    crate::ops::published_rows::resend_rows(&mut ctx.state);
 
     let named = !crate::session::naming::is_ephemeral_session_name(&session);
     if !populated {

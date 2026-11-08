@@ -10,7 +10,7 @@
 /// optional work is the separate question [`super::Capabilities`] answers, and the two are
 /// deliberately not merged: a capability can go missing on a peer that declines the work while the
 /// connection stays fully usable, which a version bump cannot express.
-pub const PROTOCOL_VERSION: u32 = 51;
+pub const PROTOCOL_VERSION: u32 = 52;
 
 /// Oldest wire protocol version this build can still speak.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = PROTOCOL_VERSION;
@@ -33,6 +33,19 @@ pub const EVICTED_ERROR_CODE: &str = "evicted";
 pub const PROTOCOL_MISMATCH_ERROR_CODE: &str = "protocol-mismatch";
 
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
+/// Longest semantic agent response text, in bytes. A longer one is refused.
+pub const MAX_AGENT_RESPONSE_BYTES: usize = 1024 * 1024;
+/// Most responses one publisher update may carry.
+pub const MAX_RESPONSES_PER_UPDATE: usize = 64;
+/// Most serialized response bytes one publisher update may carry. An update is one session report
+/// and is accepted or rejected whole, so this is chosen to leave a valid one comfortably inside
+/// [`MAX_FRAME_SIZE`] and the client's outbound queue, rows and framing included.
+pub const MAX_AGENT_RESPONSES_UPDATE_BYTES: usize = 4 * 1024 * 1024;
+/// Most rows one publisher may publish into a pane. A tab bar is a human-sized list; a publisher
+/// sending thousands is malfunctioning, and every row costs a sidebar row.
+pub const MAX_PANE_ROWS: usize = 64;
+/// On-wire framing overhead of a JSON control frame: 4-byte length prefix and 1-byte frame kind.
+pub const CONTROL_FRAME_OVERHEAD: usize = 5;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
 /// How many publishers one client may have in one pane at once. The UI refuses a stream beyond it

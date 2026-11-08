@@ -13,7 +13,7 @@ rozi serves the same request and response documents on two transports:
   length-prefixed session-protocol frame. See [Session transport](#session-transport).
 
 The complete request vocabulary, including `context` and the agent requests (`agents-list`, `agent-get`,
-`agent-read`, `agent-wait`, `agent-prompt`, `agent-report`, and `agent-release`) that this page
+`agent-read`, `agent-response`, `agent-wait`, `agent-prompt`, `agent-report`, and `agent-release`) that this page
 does not spell out, is described by the [JSON Schema](control.md#json-schema).
 
 ## Caller identity and prompt results
@@ -37,6 +37,24 @@ initial state. `agent-wait` does not accept `turn`. Capture requires a wait othe
 `gone`. The `AgentWaitResult` names the exact prompted agent in `ref`, with its runtime in `agent`.
 When requested, `result` is `{"kind":"terminal","capture":<PaneCapture>}`, taken when the wait
 resolves. It describes the visible terminal, not a conversational message.
+
+`agent-prompt` also accepts `result: true` with a wait other than `gone`. Its reply adds an
+optional `response` independently of the terminal `result`. A response contains `response_id`,
+optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`. Only content published
+for the prompted incarnation after submission qualifies. `agent-response` takes an agent `target`
+and returns its latest retained response or `null`. Both commands run on session endpoints and
+through attached clients.
+
+`agent-report` accepts an optional `response` object with those content fields except
+`response_id`, which rozi assigns. State and content share the same sequence validation.
+Text is limited to 1 MiB and turn ids to 1024 bytes. Responses are temporary and are only returned
+when explicitly requested. The `agent-responses` API capability advertises this contract.
+
+Agent `publish` updates accept `responses: [{id, seq, response}]` beside `rows`. Each id must
+name a row in that update owned by this agent publisher. A positive `seq` increases per row within
+the stream; duplicate or older sequences cannot replace content. Responses and completed row
+states are accepted together, or the whole update is rejected. An update carries at most 64
+responses and 4 MiB of them in total. Activity publishers cannot supply responses.
 
 ## Transport
 
@@ -72,7 +90,7 @@ after the initial response; see the stream sections below.
 
 Limits:
 
-- Each incoming line — a request or a stream update — is at most 1 MiB, including the trailing
+- Each incoming line — a request or a stream update — is at most 8 MiB, including the trailing
   newline. A larger line is a protocol error, and rozi closes the connection.
 - Replies from rozi have no size cap. `capture-pane --scrollback full` can exceed 1 MiB.
 - The request line must arrive within three seconds.
@@ -693,7 +711,7 @@ gains no authority an attached client would not have.
 ### Supported requests
 
 A session server answers `list-panes`, `layout-get`, `layout-set`, `pane-set`, `pane-move`,
-`pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-wait`,
+`pane-swap`, `pane-close`, `context`, `agents-list`, `agent-get`, `agent-read`, `agent-response`, `agent-wait`,
 `agent-prompt`, `agent-report`, `agent-release`, `metrics`, `capture-pane`, `send-text`,
 `send-keys`, `new-pane`, `set-status`, `pane-logging`, `record-start`, `record-stop`, `record-list`,
 `record-mark`, `extensions-deploy`, `extensions-undeploy`, and `extensions-status`. It refuses

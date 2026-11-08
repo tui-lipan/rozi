@@ -259,6 +259,10 @@ it should do only when each row is an agent's run or conversation. Each extensio
 publisher identity in a pane, so its rows never replace another publisher's; give a second stream
 in the same pane a `--name`. See
 [Several publishers in one pane](control-protocol.md#several-publishers-in-one-pane).
+Agent publishers can send final responses alongside completed rows in the same update, using the
+[`responses` array](agents.md#publish-state-instead-of-reading-the-screen). Those responses are available through
+`agents prompt --result` and `agents response`. An older `rozi` ignores `responses`, so an extension
+that depends on them sets `min_rozi` to the first release with the `agent-responses` capability, `0.0.44`.
 
 A service's stdin stays open while its client runs and reaches end of file once the client is gone,
 even if it was killed or crashed. Watch stdin and exit at end of file, so the service does not

@@ -641,6 +641,7 @@ impl SessionServer {
                 }
             }
             ClientMessage::ReportAgent {
+                response,
                 request_id,
                 pane_id,
                 local,
@@ -672,6 +673,7 @@ impl SessionServer {
                     pane_id,
                     generation,
                     runtime::AgentIntegrationUpdate {
+                        response,
                         agent,
                         integration,
                         state,
@@ -730,6 +732,8 @@ impl SessionServer {
                 Vec::new()
             }
             ClientMessage::ReportPaneRows {
+                epoch,
+                responses,
                 pane_id,
                 local,
                 generation,
@@ -742,6 +746,8 @@ impl SessionServer {
                 generation,
                 local,
                 runtime::PanePublisher {
+                    epoch,
+                    responses,
                     id: publisher,
                     kind,
                 },

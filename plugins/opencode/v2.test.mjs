@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events"
 import { PassThrough, Writable } from "node:stream"
 import test from "node:test"
 import { activate, SessionRows } from "./v2/rows.js"
+import { finalResponse } from "./v2/responses.js"
 import { startPublisher } from "./v2/publisher.js"
 import serverPlugin from "./index.js"
 import tuiPlugin from "./tui.js"
@@ -236,4 +237,68 @@ test("publisher is inert outside a fully identified rozi pane", () => {
     startPublisher(fixture().context, { env: incomplete, launch: b.launch })()
     assert.equal(b.launches.length, 0)
   }
+})
+
+
+test("semantic message extraction preserves text and excludes reasoning, tools and earlier turns", () => {
+  const message = { id: "answer", type: "assistant", time: { created: 2, completed: 3 },
+    content: [{ type: "reasoning", text: "private" }, { type: "text", text: "## Findings\n" },
+      { type: "tool", text: "tool result" }, { type: "text", text: "🌷 日本語" }] }
+  assert.equal(finalResponse([message]).text, "## Findings\n🌷 日本語")
+  assert.equal(finalResponse([message, { type: "user", time: { created: 4 } }]), undefined)
+  assert.equal(finalResponse([{ ...message, error: {} }]), undefined)
+  assert.equal(finalResponse([{ ...message, finish: "tool-calls" }]), undefined)
+  assert.equal(finalResponse([{ ...message, finish: "length" }]).complete, false)
+  assert.equal(finalResponse([{ ...message, finish: "length" }]).truncated, true)
+  const large = finalResponse([{ ...message, content: [{ type: "text", text: "🌷".repeat(300000) }] }])
+  assert.equal(large.truncated, true)
+  assert.equal(large.complete, false)
+  assert.equal(Buffer.byteLength(large.text), 1024 * 1024)
+  assert.equal(large.text.includes("�"), false)
+})
+
+test("background completion sends its semantic response before exposing the completed state", async (t) => {
+  const f = fixture()
+  let finish
+  const text = "## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n".repeat(3000)
+  f.context.data.session.message = {
+    sync: () => new Promise((resolve) => { finish = resolve }),
+    list: () => [{ id: "msg-b", type: "assistant", time: { created: 1, completed: 2 }, content: [{ type: "text", text }] }],
+  }
+  const b = bridge()
+  const stop = startPublisher(f.context, { env, launch: b.launch, interval: 10000 })
+  t.after(stop)
+  await tick()
+  f.statuses.set("b", "running")
+  f.event("session.execution.started", { sessionID: "b" })
+  f.statuses.set("b", "idle")
+  f.event("session.execution.succeeded", { sessionID: "b" })
+  await tick()
+  assert.equal(b.writes.at(-1).rows[1].status, "working")
+  finish()
+  await tick()
+  assert.equal(b.writes.at(-1).rows[1].status, "done")
+  assert.equal(b.writes.at(-1).responses[0].response.text, text)
+  assert.equal(b.writes.at(-1).responses[0].id, "b")
+  assert.equal(b.writes.at(-1).responses[0].response.source, "native-api")
+})
+
+test("starting another turn discards an in-flight response fetch", async (t) => {
+  const f = fixture()
+  let finish
+  f.context.data.session.message = {
+    sync: () => new Promise((resolve) => { finish = resolve }),
+    list: () => [{ id: "old", type: "assistant", time: { completed: 1 }, content: [{ type: "text", text: "old answer" }] }],
+  }
+  const b = bridge()
+  const stop = startPublisher(f.context, { env, launch: b.launch, interval: 10000 })
+  t.after(stop)
+  f.event("session.execution.succeeded", { sessionID: "b" })
+  await tick()
+  f.statuses.set("b", "running")
+  f.event("session.execution.started", { sessionID: "b" })
+  finish()
+  await tick()
+  assert.equal(b.writes.some((line) => line.responses?.length), false)
+  assert.equal(b.writes.at(-1).rows[1].status, "working")
 })

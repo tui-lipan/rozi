@@ -1151,10 +1151,15 @@ pub(super) fn format_control_text(
         control::ControlCommand::AgentsOverview => format_global_agents_text(data, styles),
         control::ControlCommand::AgentGo { .. } => String::new(),
         control::ControlCommand::AgentRead { .. } => format_capture_text(data),
+        control::ControlCommand::AgentResponse { .. } => format_agent_response_text(data),
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
-        control::ControlCommand::AgentPrompt { .. } => {
+        control::ControlCommand::AgentPrompt { result, .. } => {
             if data.is_some_and(|data| data.get("condition").is_some()) {
-                let mut text = format_agent_wait_text(data, styles);
+                let mut text = if *result {
+                    format_agent_response_text(data.and_then(|data| data.get("response")))
+                } else {
+                    format_agent_wait_text(data, styles)
+                };
                 if let Some(capture) = data
                     .and_then(|data| data.get("result"))
                     .and_then(|result| result.get("capture"))
@@ -1516,6 +1521,16 @@ pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputSty
         return styles.paint(&text, tone);
     };
     format!("{}\n{rest}", styles.paint(first, tone))
+}
+
+fn format_agent_response_text(data: Option<&serde_json::Value>) -> String {
+    match data
+        .and_then(|data| data.get("text"))
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(text) => format!("{text}\n"),
+        None => "agent response unavailable; use --capture text to read the terminal\n".into(),
+    }
 }
 
 #[cfg(test)]

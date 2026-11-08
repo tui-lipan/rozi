@@ -151,3 +151,10 @@ For a live check, launch Codex with the plugin inside a Rozi pane. From another 
 The hook and plugin formats follow the Codex [hooks reference](https://developers.openai.com/codex/hooks)
 and [plugin guide](https://developers.openai.com/codex/plugins/build). This plugin uses Rozi's public
 CLI rather than a socket protocol.
+
+## Read responses
+
+Add `--result` to `rozi agents prompt --wait turn --timeout 10m` to read the final response,
+including Markdown and Unicode, independently of the pane dimensions. `rozi agents response
+--target <PANE>` reads the latest retained response. A failed or interrupted turn may have no
+response. Text over 1 MiB is returned with `truncated: true` and `complete: false` in JSON output.

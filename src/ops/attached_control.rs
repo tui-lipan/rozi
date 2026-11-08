@@ -159,6 +159,7 @@ fn agent_epoch(
     command: &ControlCommand,
 ) -> std::result::Result<u64, ControlResponse> {
     let (target, unbounded) = match command {
+        ControlCommand::AgentResponse { target } => (target, false),
         ControlCommand::AgentWait {
             target, timeout_ms, ..
         } => (target, timeout_ms.is_none()),
@@ -732,6 +733,7 @@ mod tests {
             let response = ask(
                 &mut backend,
                 ControlCommand::AgentPrompt {
+                    result: false,
                     target: crate::control::AgentTarget::Ref(reference),
                     prompt: "hi".into(),
                     wait: None,
@@ -767,6 +769,7 @@ mod tests {
             }
             let commands = [
                 ControlCommand::AgentReport {
+                    response: None,
                     target: None,
                     agent: "claude".into(),
                     integration: "hook-token".into(),

@@ -310,10 +310,11 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```json
 {
   "api": 1,
-  "schema": 3,
-  "session_protocol": 46,
+  "schema": 4,
+  "session_protocol": 52,
   "capabilities": [
     "agent-prompt-results",
+    "agent-responses",
     "agent-waits",
     "attached-control",
     "attached-session-scope",

@@ -57,6 +57,44 @@ class ActivityTests(unittest.TestCase):
         args = self.calls[call][0]
         return args[args.index(flag) + 1]
 
+    def test_hook_input_and_delivery_use_utf8_independently_of_locale(self):
+        event = {"hook_event_name": "Stop", "session_id": "native-id", "last_assistant_message": "日本語 🌷"}
+        source = io.TextIOWrapper(io.BytesIO(json.dumps(event, ensure_ascii=False).encode("utf-8")), encoding="cp1252")
+        with patch.object(activity.sys, "stdin", source), patch.object(activity, "handle") as handle:
+            activity.main()
+        self.assertEqual(handle.call_args.args[0], event)
+
+
+    def test_stop_reports_exact_text_via_stdin_and_clears_pending_content(self):
+        self.hook("SessionStart")
+        message = "TransientResponseSecret\n## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n" * 3000
+        self.hook("Stop", last_assistant_message=message)
+        args, options = self.calls[-1]
+        self.assertIn("--response-stdin", args)
+        self.assertNotIn(message, args)
+        self.assertEqual(options["encoding"], "utf-8")
+        payload = json.loads(options["input"])
+        self.assertEqual(payload["text"], message)
+        self.assertEqual(payload["source"], "native-hook")
+        self.assertTrue(payload["complete"])
+        db = activity.open_state(activity.state_path(self.env, 123))
+        try:
+            self.assertEqual(db.execute("SELECT count(*) FROM response").fetchone()[0], 0)
+        finally:
+            db.close()
+        self.assertNotIn(b"TransientResponseSecret", activity.state_path(self.env, 123).read_bytes())
+        self.hook("StopFailure")
+        self.assertNotIn("--response-stdin", self.calls[-1][0])
+
+    def test_oversized_unicode_response_reports_explicit_truncation(self):
+        self.hook("SessionStart")
+        self.hook("Stop", last_assistant_message="🌷" * 300000, background_tasks=[{}])
+        payload = json.loads(self.calls[-1][1]["input"])
+        self.assertEqual(self.field("--state"), "working")
+        self.assertTrue(payload["truncated"])
+        self.assertFalse(payload["complete"])
+        self.assertLessEqual(len(payload["text"].encode()), 1024 * 1024)
+
     def test_a_prompt_holds_only_while_the_screen_shows_the_turn(self):
         # Another hook can reject it, and then no later hook runs.
         self.hook("SessionStart", source="startup")
@@ -506,14 +544,14 @@ class ActivityTests(unittest.TestCase):
 
     def test_main_is_silent_and_successful_on_bad_input_and_cli_failure(self):
         for raw in ("bad json", "[]", '{"hook_event_name": [], "session_id": "id"}'):
-            with patch.object(activity.sys, "stdin", io.StringIO(raw)), \
+            with patch.object(activity.sys, "stdin", io.TextIOWrapper(io.BytesIO(raw.encode("utf-8")))), \
                  patch.object(activity.sys, "stdout", io.StringIO()) as out, \
                  patch.object(activity.sys, "stderr", io.StringIO()) as err, \
                  patch.dict(activity.os.environ, self.env, clear=True):
                 activity.main()
                 self.assertEqual(out.getvalue() + err.getvalue(), "")
         event = {"hook_event_name": "SessionStart", "session_id": "id"}
-        with patch.object(activity.sys, "stdin", io.StringIO(json.dumps(event))), \
+        with patch.object(activity.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode("utf-8")))), \
              patch.dict(activity.os.environ, self.env, clear=True), \
              patch.object(activity.subprocess, "run", side_effect=FileNotFoundError):
             activity.main()

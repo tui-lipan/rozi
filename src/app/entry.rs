@@ -37,6 +37,7 @@ pub(crate) fn cursor_trail(config: &Config, theme: &Theme) -> Option<CursorTrail
         })
         .opacity(settings.opacity)
         .taper(settings.taper)
+        .settle(settings.settle)
         .max_length(settings.max_length)
         .glyphs(settings.glyphs)
         .particles((settings.style == CursorTrailStyle::Sparks).then_some(settings.particle));

@@ -557,16 +557,20 @@ fn a_to_b_to_a_resizes_replay_in_order_and_end_at_a() {
 }
 
 #[test]
-fn same_size_resize_retry_cannot_bypass_the_lease() {
+fn pending_pty_resize_prevents_history_and_its_retry_runs_normally() {
     let mut rig = Rig::new("bottom");
     rig.server.panes.get_mut(&3).unwrap().pty_resize_pending = true;
     rig.begin(true);
+    assert!(rig.server.agent_history.is_empty());
+    assert!(rig.result()["data"]["response"].is_null());
+    let retried = std::cell::Cell::new(false);
     rig.server
         .handle_resize_with(rig.client, resize(30, 8), |_| {
-            panic!("pending resize retried during restoration")
+            retried.set(true);
+            Ok(())
         });
-    assert!(rig.server.panes[&3].pty_resize_pending);
-    assert!(rig.server.agent_history[&3].mutations.is_empty());
+    assert!(retried.get());
+    assert!(!rig.server.panes[&3].pty_resize_pending);
 }
 
 #[test]

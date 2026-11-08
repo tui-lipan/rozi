@@ -163,6 +163,8 @@ impl SessionServer {
         if pane.pty.is_none()
             || pane.exited.is_some()
             || pane.generation != reference.pane.generation
+            // Reconstruction assumes the viewport size is the child's real size.
+            || pane.pty_resize_pending
         {
             return false;
         }

@@ -134,12 +134,12 @@ fn disk_step(
 }
 
 impl Attachments {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn is_busy(&self, key: Key) -> bool {
         self.pending.get(&key).is_some_and(|pending| pending.busy)
     }

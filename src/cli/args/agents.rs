@@ -123,7 +123,7 @@ pub(super) fn parse_agents_args(
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
     let subcommand = iter.next().ok_or_else(|| {
-        "agents requires a subcommand (list, go, get, read, wait, prompt, report, or release)"
+        "agents requires a subcommand (list, go, get, read, response, wait, prompt, report, or release)"
             .to_string()
     })?;
     let args = iter.collect::<Vec<_>>();
@@ -176,7 +176,7 @@ pub(super) fn parse_agents_args(
         "report" => parse_report(args),
         "release" => parse_release(args),
         other => Err(format!(
-            "unknown agents subcommand `{other}`; expected list, go, get, read, wait, prompt, report, or release"
+            "unknown agents subcommand `{other}`; expected list, go, get, read, response, wait, prompt, report, or release"
         )),
     }
 }
@@ -628,6 +628,58 @@ fn positional_target(command: &str, pane: &str) -> String {
 mod tests {
     use super::super::{ParsedCli, parse_cli_args};
     use super::*;
+
+    #[test]
+    fn response_commands_keep_capture_and_semantic_output_independent() {
+        let parse = |values: &[&str]| {
+            parse_agents_args(values.iter().map(|value| (*value).into()).collect())
+        };
+        let (command, _) = parse(&[
+            "prompt",
+            "--target",
+            "3",
+            "review",
+            "--wait",
+            "turn",
+            "--timeout",
+            "2m",
+            "--result",
+            "--capture",
+            "text",
+        ])
+        .unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentPrompt {
+                result: true,
+                capture: Some(CaptureRender::Text),
+                wait: Some(AgentWaitCondition::Turn),
+                ..
+            }
+        ));
+        let (command, _) = parse(&["response", "--target", "3"]).unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentResponse {
+                target: AgentTarget::Pane(3)
+            }
+        ));
+        assert!(parse(&["prompt", "--target", "3", "review", "--result"]).is_err());
+        assert!(
+            parse(&[
+                "prompt",
+                "--target",
+                "3",
+                "review",
+                "--wait",
+                "gone",
+                "--timeout",
+                "2m",
+                "--result"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn option_values_never_consume_the_next_flag() {

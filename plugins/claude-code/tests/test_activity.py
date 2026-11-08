@@ -59,7 +59,7 @@ class ActivityTests(unittest.TestCase):
 
     def test_stop_reports_exact_text_via_stdin_and_clears_pending_content(self):
         self.hook("SessionStart")
-        message = "## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n" * 3000
+        message = "TransientResponseSecret\n## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n" * 3000
         self.hook("Stop", last_assistant_message=message)
         args, options = self.calls[-1]
         self.assertIn("--response-stdin", args)
@@ -73,6 +73,7 @@ class ActivityTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM response").fetchone()[0], 0)
         finally:
             db.close()
+        self.assertNotIn(b"TransientResponseSecret", activity.state_path(self.env, 123).read_bytes())
         self.hook("StopFailure")
         self.assertNotIn("--response-stdin", self.calls[-1][0])
 

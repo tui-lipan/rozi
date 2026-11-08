@@ -205,7 +205,7 @@
       "type": "object"
     },
     "AgentPromptResult": {
-      "description": "The requested representation of a prompted turn. Integration messages may be added as\nanother explicit kind without treating a terminal screen as an assistant message.",
+      "description": "The requested terminal representation of a prompted turn. Semantic content is returned\nseparately in [`AgentWaitResult::response`].",
       "oneOf": [
         {
           "properties": {

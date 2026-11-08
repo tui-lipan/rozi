@@ -1230,7 +1230,9 @@ impl SessionServer {
                     })
                     .map(|runtime| runtime.reference);
                 if let Some(reference) = reference {
-                    self.agent_responses.insert(reference, response);
+                    let native_session = self.response_native_session(&reference);
+                    self.agent_responses
+                        .insert(reference, native_session, response);
                 }
             }
         }

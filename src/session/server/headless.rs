@@ -658,7 +658,10 @@ impl SessionServer {
             ControlCommand::AgentGet { target } => self.session_agent_get(target),
             ControlCommand::AgentResponse { target } => {
                 match self.resolve_agent_wait_target(target) {
-                    Ok(reference) => ControlResponse::ok(self.agent_responses.latest(&reference)),
+                    Ok(reference) => ControlResponse::ok(
+                        self.agent_responses
+                            .latest(&reference, &self.response_native_session(&reference)),
+                    ),
                     Err(response) => response,
                 }
             }
@@ -1354,6 +1357,7 @@ impl SessionServer {
                     "agent incarnation was replaced",
                 )
             })?;
+        validate_agent_result_state(runtime.state, request.result)?;
         validate_agent_prompt_state(runtime.state, request.allow_working)?;
         Ok(reference)
     }
@@ -2141,6 +2145,19 @@ impl SessionServer {
         layout.validate().ok()?;
         Some(layout)
     }
+}
+
+fn validate_agent_result_state(
+    state: protocol::AgentState,
+    result: bool,
+) -> std::result::Result<(), ControlResponse> {
+    if result && state == protocol::AgentState::Working {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::Conflict,
+            "agent is working; a response result requires a new turn from a ready agent",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_agent_prompt_state(
@@ -3470,33 +3487,49 @@ mod tests {
     }
 
     #[test]
-    fn atomic_prompt_refuses_a_blocked_agent_before_writing() {
-        let mut server = SessionServer::new_named("dev");
-        pane_with_agent(&mut server, 7);
-        server.panes.get_mut(&7).unwrap().runtime.detected_agent = Some(protocol::DetectedAgent {
-            agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
-            state: protocol::DetectedAgentState::Blocked,
-        });
-        let response = server
-            .register_agent_prompt(
-                1,
-                SessionAgentPrompt {
-                    result: false,
-                    target: AgentTarget::Pane(7),
-                    prompt: "approve this",
-                    wait: None,
-                    timeout_ms: None,
-                    capture: None,
-                    allow_working: false,
-                },
-                ReplyTo::Headless {
-                    capabilities: protocol::Capabilities::default(),
-                    effective_protocol: PROTOCOL_VERSION,
-                },
-            )
-            .unwrap();
-        assert_eq!(response.code, Some(ControlErrorCode::AgentBlocked));
-        assert!(server.agent_waits.is_empty());
+    fn atomic_prompt_refuses_blocked_agents_and_working_result_requests() {
+        for (state, result, allow_working, expected) in [
+            (
+                protocol::DetectedAgentState::Blocked,
+                false,
+                false,
+                ControlErrorCode::AgentBlocked,
+            ),
+            (
+                protocol::DetectedAgentState::Working,
+                true,
+                true,
+                ControlErrorCode::Conflict,
+            ),
+        ] {
+            let mut server = SessionServer::new_named("dev");
+            pane_with_agent(&mut server, 7);
+            server.panes.get_mut(&7).unwrap().runtime.detected_agent =
+                Some(protocol::DetectedAgent {
+                    agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+                    state,
+                });
+            let response = server
+                .register_agent_prompt(
+                    1,
+                    SessionAgentPrompt {
+                        result,
+                        target: AgentTarget::Pane(7),
+                        prompt: "approve this",
+                        wait: result.then_some(crate::control::AgentWaitCondition::Turn),
+                        timeout_ms: Some(1000),
+                        capture: None,
+                        allow_working,
+                    },
+                    ReplyTo::Headless {
+                        capabilities: protocol::Capabilities::default(),
+                        effective_protocol: PROTOCOL_VERSION,
+                    },
+                )
+                .unwrap();
+            assert_eq!(response.code, Some(expected));
+            assert!(server.agent_waits.is_empty());
+        }
     }
 
     #[test]

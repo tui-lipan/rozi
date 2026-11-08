@@ -4,13 +4,14 @@ export function finalResponse(messages) {
   const ordered = [...messages].sort((a, b) => (a.time?.created ?? 0) - (b.time?.created ?? 0))
   const last = ordered.findLast((message) => message.type === "assistant" || message.type === "user")
   if (last?.type !== "assistant" || !last.time?.completed || last.error) return
+  if (["tool-calls", "tool_calls"].includes(last.finish)) return
   const text = (last.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("")
   if (!text) return
   const bytes = Buffer.from(text)
   // Decode only complete code points. A truncation is explicit in the public response.
   let end = Math.min(bytes.length, MAX_BYTES)
   while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--
-  const truncated = bytes.length > end
+  const truncated = bytes.length > end || ["length", "max_tokens", "content-filter"].includes(last.finish)
   return { text: bytes.subarray(0, end).toString("utf8"), turn_id: last.id,
     source: "native-api", fidelity: "semantic", complete: !truncated, truncated }
 }
@@ -70,7 +71,7 @@ export class SessionResponses {
     this.#sessions.set(id, current)
     // A failed sync must not leave the lifecycle stuck forever or reject the plugin event loop.
     let timer
-    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("message sync timeout")), 5000) })
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("message sync timeout")), 5000); timer.unref() })
     void Promise.race([Promise.resolve().then(() => messages.sync(id)), timeout])
       .then(() => {
         if (!this.#stopped && this.#sessions.get(id) === current) current.response = finalResponse(messages.list(id) ?? [])

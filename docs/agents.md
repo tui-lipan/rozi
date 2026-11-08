@@ -439,7 +439,9 @@ optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`.
 response as complete. `--capture` and `--result` can be combined.
 
 A prompt only returns a response published after that prompt was submitted for the same agent
-incarnation. A blocked or failed turn may have no response. In that case JSON omits `response`
+incarnation and native conversation. Switching conversations while waiting fails the request.
+Result requests refuse a working agent even with `--allow-working`, and overlapping prompt waits
+with a result request are refused. A blocked or failed turn may have no response. In that case JSON omits `response`
 and text output says it is unavailable. `agents response` returns the latest retained response,
 or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
 Each response accepts at most 1 MiB of text. Oversized reports fail explicitly.

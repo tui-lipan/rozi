@@ -145,7 +145,10 @@ def connect_private(path: Path, timeout: float) -> sqlite3.Connection:
         os.close(fd)
     except FileExistsError:
         pass
-    return sqlite3.connect(path, timeout=timeout, isolation_level=None)
+    db = sqlite3.connect(path, timeout=timeout, isolation_level=None)
+    # Pending content is erased from database pages when acknowledged or superseded.
+    db.execute("PRAGMA secure_delete = ON")
+    return db
 
 
 def initialize_state(db: sqlite3.Connection) -> None:

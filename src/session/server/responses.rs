@@ -12,55 +12,103 @@ const MAX_STORE_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
 #[derive(Default)]
 pub(super) struct AgentResponseStore {
     generation: u64,
-    entries: HashMap<AgentRef, VecDeque<AgentResponse>>,
+    entries: HashMap<AgentRef, VecDeque<StoredResponse>>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct AgentResponseFence(u64);
+struct StoredResponse {
+    response: AgentResponse,
+    native_session: Option<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct AgentResponseFence {
+    generation: u64,
+    pub(super) native_session: Option<String>,
+}
 
 impl AgentResponseStore {
-    pub fn fence(&self) -> AgentResponseFence {
-        AgentResponseFence(self.generation)
+    pub fn fence(&self, native_session: Option<String>) -> AgentResponseFence {
+        AgentResponseFence {
+            generation: self.generation,
+            native_session,
+        }
     }
 
-    pub fn latest(&self, reference: &AgentRef) -> Option<&AgentResponse> {
-        self.entries.get(reference)?.back()
-    }
-
-    pub fn after(&self, reference: &AgentRef, fence: AgentResponseFence) -> Option<AgentResponse> {
+    pub fn latest(
+        &self,
+        reference: &AgentRef,
+        native_session: &Option<String>,
+    ) -> Option<&AgentResponse> {
         self.entries
             .get(reference)?
             .iter()
-            .find(|response| response.response_id > fence.0)
-            .cloned()
+            .rev()
+            .find(|entry| &entry.native_session == native_session)
+            .map(|entry| &entry.response)
     }
 
-    pub fn insert(&mut self, reference: AgentRef, content: AgentResponsePayload) {
-        if content.turn_id.is_some()
-            && self.entries.get(&reference).is_some_and(|entries| {
-                entries.iter().any(|entry| {
-                    entry.content.turn_id == content.turn_id
-                        && entry.content.source == content.source
-                })
+    pub fn after(
+        &self,
+        reference: &AgentRef,
+        fence: &AgentResponseFence,
+    ) -> Option<&AgentResponse> {
+        self.entries
+            .get(reference)?
+            .iter()
+            .find(|entry| {
+                entry.response.response_id > fence.generation
+                    && (fence.native_session.is_none()
+                        || entry.native_session == fence.native_session)
             })
-        {
+            .map(|entry| &entry.response)
+    }
+
+    pub fn insert(
+        &mut self,
+        reference: AgentRef,
+        native_session: Option<String>,
+        content: AgentResponsePayload,
+    ) {
+        if self.contains_turn(&reference, &native_session, &content) {
             return;
         }
         self.generation += 1;
         let entries = self.entries.entry(reference).or_default();
-        entries.push_back(AgentResponse {
-            response_id: self.generation,
-            content,
+        entries.push_back(StoredResponse {
+            response: AgentResponse {
+                response_id: self.generation,
+                content,
+            },
+            native_session,
         });
         while entries.len() > MAX_AGENT_RESPONSES || response_bytes(entries) > MAX_AGENT_BYTES {
             entries.pop_front();
         }
+        self.evict_oldest();
+    }
+    fn contains_turn(
+        &self,
+        reference: &AgentRef,
+        native_session: &Option<String>,
+        content: &AgentResponsePayload,
+    ) -> bool {
+        content.turn_id.is_some()
+            && self.entries.get(reference).is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    &entry.native_session == native_session
+                        && entry.response.content.turn_id == content.turn_id
+                        && entry.response.content.source == content.source
+                })
+            })
+    }
+
+    fn evict_oldest(&mut self) {
         // Bound the whole server as well: dead incarnations must not accumulate indefinitely.
         while self.entries.values().map(response_bytes).sum::<usize>() > MAX_STORE_BYTES {
             let oldest = self
                 .entries
                 .iter()
-                .min_by_key(|(_, entries)| entries.front().map(|r| r.response_id))
+                .min_by_key(|(_, entries)| entries.front().map(|r| r.response.response_id))
                 .map(|(reference, _)| reference.clone());
             let Some(reference) = oldest else { break };
             let entries = self.entries.get_mut(&reference).expect("selected above");
@@ -72,12 +120,18 @@ impl AgentResponseStore {
     }
 }
 
-fn response_bytes(entries: &VecDeque<AgentResponse>) -> usize {
+fn response_bytes(entries: &VecDeque<StoredResponse>) -> usize {
     entries
         .iter()
         .map(|response| {
-            response.content.text.len()
-                + response.content.turn_id.as_ref().map_or(0, String::len)
+            response.response.content.text.len()
+                + response.native_session.as_ref().map_or(0, String::len)
+                + response
+                    .response
+                    .content
+                    .turn_id
+                    .as_ref()
+                    .map_or(0, String::len)
                 + 256
         })
         .sum()
@@ -124,6 +178,15 @@ pub(super) fn validate_published(
 }
 
 impl super::SessionServer {
+    pub(super) fn response_native_session(&self, reference: &AgentRef) -> Option<String> {
+        let pane = self.panes.get(&reference.pane.pane_id)?;
+        super::protocol::occupant_native_session(
+            &pane.runtime.rows,
+            pane.runtime.integration.as_deref(),
+            reference.slot.as_ref(),
+        )
+    }
+
     pub(super) fn store_published_responses(
         &mut self,
         owner: Option<super::ClientId>,
@@ -154,7 +217,17 @@ impl super::SessionServer {
                 {
                     return None;
                 }
-                Some((runtime.reference.clone(), slot, next, item.response.clone()))
+                Some((
+                    runtime.reference.clone(),
+                    slot,
+                    next,
+                    super::protocol::occupant_native_session(
+                        &pane.runtime.rows,
+                        pane.runtime.integration.as_deref(),
+                        runtime.reference.slot.as_ref(),
+                    ),
+                    item.response.clone(),
+                ))
             })
             .collect::<Vec<_>>();
         self.pane_mut(owner, pane_id)
@@ -166,13 +239,14 @@ impl super::SessionServer {
                     .iter()
                     .any(|runtime| runtime.reference == *reference)
             });
-        for (reference, slot, next, response) in accepted {
+        for (reference, slot, next, native_session, response) in accepted {
             self.pane_mut(owner, pane_id)
                 .expect("pane read above")
                 .agent
                 .response_sequences
                 .insert(slot, next);
-            self.agent_responses.insert(reference, response);
+            self.agent_responses
+                .insert(reference, native_session, response);
         }
     }
 }
@@ -197,15 +271,41 @@ mod tests {
     fn fences_and_incarnations_cannot_read_an_old_response() {
         let mut store = AgentResponseStore::default();
         let first = AgentRef::for_test(7, 1, None);
-        store.insert(first.clone(), payload("old"));
-        let fence = store.fence();
-        assert!(store.after(&first, fence).is_none());
-        store.insert(first.clone(), payload("new"));
-        assert_eq!(store.after(&first, fence).unwrap().content.text, "new");
+        store.insert(first.clone(), None, payload("old"));
+        let fence = store.fence(None);
+        assert!(store.after(&first, &fence).is_none());
+        store.insert(first.clone(), None, payload("new"));
+        assert_eq!(store.after(&first, &fence).unwrap().content.text, "new");
         let mut replacement = first;
         replacement.incarnation += 1;
-        assert!(store.latest(&replacement).is_none());
-        assert!(store.after(&replacement, fence).is_none());
+        assert!(store.latest(&replacement, &None).is_none());
+        assert!(store.after(&replacement, &fence).is_none());
+    }
+
+    #[test]
+    fn native_session_fences_separate_conversations_in_one_process() {
+        let mut store = AgentResponseStore::default();
+        let reference = AgentRef::for_test(7, 1, None);
+        let fence = store.fence(Some("first-session".into()));
+        store.insert(
+            reference.clone(),
+            Some("second-session".into()),
+            payload("other conversation"),
+        );
+        assert!(store.after(&reference, &fence).is_none());
+        assert!(
+            store
+                .latest(&reference, &Some("first-session".into()))
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .latest(&reference, &Some("second-session".into()))
+                .unwrap()
+                .content
+                .text,
+            "other conversation"
+        );
     }
 
     #[test]
@@ -214,10 +314,10 @@ mod tests {
         let reference = AgentRef::for_test(7, 1, None);
         let mut content = payload("reply");
         content.turn_id = Some("native-turn".into());
-        store.insert(reference.clone(), content.clone());
-        let fence = store.fence();
-        store.insert(reference.clone(), content);
-        assert!(store.after(&reference, fence).is_none());
+        store.insert(reference.clone(), None, content.clone());
+        let fence = store.fence(None);
+        store.insert(reference.clone(), None, content);
+        assert!(store.after(&reference, &fence).is_none());
     }
 
     #[cfg(unix)]
@@ -289,11 +389,11 @@ mod tests {
         };
         let result: AgentWaitResult = serde_json::from_value(response.data.unwrap()).unwrap();
         assert_eq!(result.response.unwrap().content.text, "exact answer");
-        let fence = server.agent_responses.fence();
+        let fence = server.agent_responses.fence(Some("native".into()));
         server
             .report_pane_rows(client, 7, 1, false, publisher(1, true), vec![row("done")])
             .unwrap();
-        assert!(server.agent_responses.after(&reference, fence).is_none());
+        assert!(server.agent_responses.after(&reference, &fence).is_none());
         let mut forged = publisher(2, true);
         forged.responses[0].id = "another-publisher".into();
         assert!(
@@ -317,21 +417,21 @@ mod tests {
         let mut store = AgentResponseStore::default();
         let reference = AgentRef::for_test(7, 1, None);
         for _ in 0..10 {
-            store.insert(reference.clone(), payload("small"));
+            store.insert(reference.clone(), None, payload("small"));
         }
         assert_eq!(store.entries[&reference].len(), MAX_AGENT_RESPONSES);
         let text = "🌷".repeat(MAX_RESPONSE_BYTES / 4 - 256);
         for _ in 0..4 {
-            store.insert(reference.clone(), payload(&text));
+            store.insert(reference.clone(), None, payload(&text));
         }
         assert_eq!(store.entries[&reference].len(), 2);
-        assert_eq!(store.latest(&reference).unwrap().content.text, text);
+        assert_eq!(store.latest(&reference, &None).unwrap().content.text, text);
         for incarnation in 2..40 {
             let mut next = reference.clone();
             next.incarnation = incarnation;
-            store.insert(next, payload(&text));
+            store.insert(next, None, payload(&text));
         }
         assert!(store.entries.values().map(response_bytes).sum::<usize>() <= MAX_STORE_BYTES);
-        assert!(store.latest(&reference).is_none());
+        assert!(store.latest(&reference, &None).is_none());
     }
 }

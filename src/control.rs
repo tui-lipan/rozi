@@ -2450,8 +2450,8 @@ pub struct AgentWaitResult {
     pub agent: Option<crate::session::protocol::AgentRuntime>,
 }
 
-/// The requested representation of a prompted turn. Integration messages may be added as
-/// another explicit kind without treating a terminal screen as an assistant message.
+/// The requested terminal representation of a prompted turn. Semantic content is returned
+/// separately in [`AgentWaitResult::response`].
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

@@ -2474,6 +2474,13 @@ pub struct PublishedAgentResponse {
     pub response: AgentResponsePayload,
 }
 
+impl PublishedAgentResponse {
+    /// Bytes this response takes on the wire, which the per-update budget counts.
+    pub fn wire_len(&self) -> usize {
+        serde_json::to_vec(self).map_or(usize::MAX, |bytes| bytes.len())
+    }
+}
+
 /// Content supplied by an integration, separate from lifecycle metadata.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]

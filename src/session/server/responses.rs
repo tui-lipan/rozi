@@ -158,7 +158,9 @@ pub(super) fn validate_published(
     if publisher.responses.is_empty() {
         return Ok(());
     }
-    if publisher.kind != super::protocol::PublisherKind::Agent || publisher.responses.len() > 64 {
+    if publisher.kind != super::protocol::PublisherKind::Agent
+        || publisher.responses.len() > super::protocol::MAX_RESPONSES_PER_UPDATE
+    {
         return Err((
             "invalid-argument",
             "only agent publishers may publish responses, at most 64 per update".into(),
@@ -167,6 +169,18 @@ pub(super) fn validate_published(
     // Ownership is checked against the rows that will actually be installed: sanitizing cleans
     // and truncates ids and drops rows past the cap, and a response naming anything else would
     // pass here and then find no row to belong to.
+    if publisher
+        .responses
+        .iter()
+        .map(crate::control::PublishedAgentResponse::wire_len)
+        .sum::<usize>()
+        > super::protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
+    {
+        return Err((
+            "invalid-argument",
+            "an update's responses exceed the 4 MiB total limit".into(),
+        ));
+    }
     let canonical = super::runtime::canonical_row_ids(rows);
     let mut ids = std::collections::HashSet::new();
     for item in &publisher.responses {
@@ -448,6 +462,22 @@ mod tests {
         assert!(validate_published(&publisher("row-69"), &rows).is_err());
         rows.truncate(3);
         assert!(validate_published(&publisher("row-2"), &rows).is_ok());
+        // One update is one report, so its responses share a budget.
+        let mut heavy = publisher("row-0");
+        heavy.responses = (0..5)
+            .map(|n| PublishedAgentResponse {
+                id: format!("row-{}", n % 3),
+                seq: 1,
+                response: payload(&"x".repeat(crate::session::protocol::MAX_AGENT_RESPONSE_BYTES)),
+            })
+            .collect();
+        for (n, item) in heavy.responses.iter_mut().enumerate() {
+            item.id = format!("row-{n}");
+        }
+        let rows: Vec<_> = (0..5).map(|n| row(&format!("row-{n}"))).collect();
+        assert!(validate_published(&heavy, &rows).is_err());
+        heavy.responses.truncate(3);
+        assert!(validate_published(&heavy, &rows).is_ok());
     }
 
     #[test]

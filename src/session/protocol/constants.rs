@@ -35,6 +35,12 @@ pub const PROTOCOL_MISMATCH_ERROR_CODE: &str = "protocol-mismatch";
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 /// Longest semantic agent response text, in bytes. A longer one is refused.
 pub const MAX_AGENT_RESPONSE_BYTES: usize = 1024 * 1024;
+/// Most responses one publisher update may carry.
+pub const MAX_RESPONSES_PER_UPDATE: usize = 64;
+/// Most serialized response bytes one publisher update may carry. An update is one session report
+/// and is accepted or rejected whole, so this is chosen to leave a valid one comfortably inside
+/// [`MAX_FRAME_SIZE`] and the client's outbound queue, rows and framing included.
+pub const MAX_AGENT_RESPONSES_UPDATE_BYTES: usize = 4 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
 /// How many publishers one client may have in one pane at once. The UI refuses a stream beyond it

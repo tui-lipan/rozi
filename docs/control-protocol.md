@@ -53,7 +53,8 @@ when explicitly requested. The `agent-responses` API capability advertises this 
 Agent `publish` updates accept `responses: [{id, seq, response}]` beside `rows`. Each id must
 name a row in that update owned by this agent publisher. A positive `seq` increases per row within
 the stream; duplicate or older sequences cannot replace content. Responses and completed row
-states are accepted together. Activity publishers cannot supply responses.
+states are accepted together, or the whole update is rejected. An update carries at most 64
+responses and 4 MiB of them in total. Activity publishers cannot supply responses.
 
 ## Transport
 

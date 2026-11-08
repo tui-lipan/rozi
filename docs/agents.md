@@ -523,8 +523,9 @@ An agent publisher can include a `responses` array beside `rows` in an update:
 Each response names a row in that same update. Increase `seq` for each response to that row
 within the stream. Replayed sequences are ignored. Publish completion and its response together,
 so `agents prompt --result` can read the answer as soon as its wait resolves. Activity publishers
-cannot publish agent responses. The response limit is 1 MiB per text; send large responses in
-separate updates. Rows whose ids are changed by cleaning, or that fall past the 64-row limit,
+cannot publish agent responses. An update carries at most 64 responses, each text at most 1 MiB, and
+4 MiB of responses in total. The server accepts the rows and every response together or rejects
+the whole update, so send large responses in separate updates. Rows whose ids are changed by cleaning, or that fall past the 64-row limit,
 cannot own a response, and the update is rejected. A response that could not reach the session
 is sent again with the publisher's next update and after a reconnect, for as long as its row keeps
 the status it had. See [writing extensions](writing-extensions.md) for stream ownership.

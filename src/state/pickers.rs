@@ -1001,6 +1001,7 @@ pub enum PendingDestructive {
     KillWorkspace(usize),
     KillSession,
     RestartSession,
+    UpgradeSession,
     NewTemporarySession,
 }
 

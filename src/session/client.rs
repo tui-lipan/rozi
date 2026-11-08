@@ -635,6 +635,12 @@ impl SessionClient {
         self.server_version.as_deref()
     }
 
+    /// Stand in for a server that reported `version` on attach.
+    #[cfg(test)]
+    pub(crate) fn set_server_version(&mut self, version: &str) {
+        self.server_version = Some(version.to_string());
+    }
+
     pub fn request_runtime_metrics(&self) {
         if !self
             .capabilities

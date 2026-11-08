@@ -421,6 +421,57 @@ pub(crate) fn restart_session_with_confirmation(
     crate::ops::session::restart_current_session(ctx)
 }
 
+/// Upgrade the attached session onto this build after the same second press a restart asks for:
+/// it stops the server and ends every program in the session's panes.
+pub(crate) fn upgrade_session_with_confirmation(
+    ctx: &mut Context<AppRoot>,
+    confirmations_enabled: bool,
+) -> Update {
+    if !ctx.state.current().session_attached {
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
+        return Update::full();
+    }
+    if !ctx.state.is_controller() {
+        crate::ops::session::nudge_if_follower(ctx);
+        return Update::full();
+    }
+
+    if !crate::commands::can_upgrade_attached_session(&ctx.state) {
+        crate::pane::pty_events::notify_info(
+            ctx,
+            "This session already runs this rozi release or a newer one",
+        );
+        return Update::full();
+    }
+
+    let session_name = ctx
+        .state
+        .current()
+        .session_name
+        .clone()
+        .unwrap_or_else(|| "session".to_string());
+
+    if confirmations_enabled
+        && ctx.state.config.confirm.kill_session
+        && !confirm_second_press(
+            ctx,
+            PendingDestructive::UpgradeSession,
+            confirm_toast(
+                &ctx.state.theme,
+                ctx.state.config.pane.toast_opacity,
+                format!(
+                    "Press again to upgrade session `{session_name}` · its programs end and its snapshot is restored"
+                ),
+            ),
+        )
+    {
+        return Update::full();
+    }
+
+    clear_pending(ctx);
+    crate::ops::session::upgrade_current_session(ctx)
+}
+
 pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<AppRoot>) -> bool {
     let pending = PendingDestructive::NewTemporarySession;
     let toast = confirm_toast(
@@ -891,6 +942,36 @@ mod tests {
                     .any(|pane| pane.id == 90 && !pane.closing)
             );
             assert_eq!(inactive.tiled_ids(), [90]);
+        });
+    }
+
+    /// Upgrading ends every program in the session, so one press from a palette or a binding
+    /// only arms the confirmation, as a restart does.
+    #[test]
+    fn one_upgrade_press_only_asks_for_confirmation() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = confirming_backend();
+            let state = backend.state_mut();
+            state.current_mut().session_name = Some("named".to_string());
+            state.config.confirm.kill_session = true;
+            state
+                .current_mut()
+                .session_client
+                .as_mut()
+                .expect("attached client")
+                .set_server_version("0.0.1");
+            backend
+                .dispatch(Msg::RunAction(Action::UpgradeSession))
+                .expect("dispatch upgrade session");
+            assert_eq!(
+                backend
+                    .state()
+                    .pending_destructive
+                    .as_ref()
+                    .map(|pending| pending.action),
+                Some(PendingDestructive::UpgradeSession)
+            );
+            assert!(backend.state().current().session_attached);
         });
     }
 

@@ -445,7 +445,9 @@ fn execute_action_inner(
         Action::RestartSession => {
             crate::ops::exit::restart_session_with_confirmation(ctx, confirmations_enabled)
         }
-        Action::UpgradeSession => crate::ops::session::upgrade_current_session(ctx),
+        Action::UpgradeSession => {
+            crate::ops::exit::upgrade_session_with_confirmation(ctx, confirmations_enabled)
+        }
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenSettings | Action::OpenAppearance => {
             open_settings(ctx, crate::state::SettingsAction::Theme)

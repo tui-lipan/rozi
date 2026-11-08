@@ -415,7 +415,8 @@ pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
             .session_client
             .as_ref()
             .and_then(|client| client.server_version())
-            .is_some_and(|version| version != env!("CARGO_PKG_VERSION"))
+            .and_then(crate::session::discovery::release_order)
+            == Some(crate::session::discovery::ReleaseOrder::Older)
 }
 
 /// Why `action` is disabled on the currently attached session, or `None` when the session supports
@@ -1900,6 +1901,20 @@ mod tests {
 
         state.current_mut().session_client = None;
         older_server.join().expect("server thread");
+
+        // An older client attached to a newer server must not offer to move the session onto
+        // itself: that is a downgrade, and the newer release's snapshot may be unreadable here.
+        let newer = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .map(|v| semver::Version::new(v.major, v.minor, v.patch + 1).to_string())
+            .unwrap();
+        let (newer_client, newer_server) =
+            attach_scripted_session(Some(Capabilities::current()), Some(&newer));
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_client = Some(newer_client);
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+        state.current_mut().session_client = None;
+        newer_server.join().expect("server thread");
     }
 
     #[test]

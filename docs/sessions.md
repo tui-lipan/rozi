@@ -479,7 +479,10 @@ feature the session's release does not have is shown but disabled with the relea
 To move a session to your current release, run **Upgrade session** from the command palette, or
 `rozi sessions upgrade <NAME>` (add `--remote <HOST>` for a session on another machine). The
 session restarts from its snapshot on the current build: its layout and terminal history come back,
-while the programs in its panes end. rozi never upgrades a session on its own.
+while the programs in its panes end. Like restarting, the command asks for a second press first.
+The palette offers it only for a session on an older release, and `rozi sessions upgrade` refuses a
+session on a newer one; upgrade that session from the newer rozi instead. rozi never upgrades a
+session on its own.
 
 ## Worktrees
 

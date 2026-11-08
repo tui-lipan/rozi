@@ -328,6 +328,28 @@ pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>
     Ok(query_session_endpoint(name, &endpoint))
 }
 
+/// How a session's release compares with this build's, by semantic version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleaseOrder {
+    /// The session runs an older release: upgrading moves it onto this build.
+    Older,
+    Same,
+    /// The session runs a newer release. Restarting it on this build would downgrade it, and
+    /// this build may not read the snapshot that release wrote.
+    Newer,
+}
+
+/// Compare a session's reported release with this build. `None` when either is not a version.
+pub(crate) fn release_order(session_version: &str) -> Option<ReleaseOrder> {
+    let session = semver::Version::parse(session_version).ok()?;
+    let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
+    Some(match session.cmp(&this) {
+        std::cmp::Ordering::Less => ReleaseOrder::Older,
+        std::cmp::Ordering::Equal => ReleaseOrder::Same,
+        std::cmp::Ordering::Greater => ReleaseOrder::Newer,
+    })
+}
+
 /// The release a running named session reports, asked once with time to answer. A discovery sweep
 /// gives up on a slow server quickly and lists it busy; a command about this one session can wait.
 pub(crate) fn session_rozi_version(name: &str) -> Option<String> {

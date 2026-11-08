@@ -66,6 +66,7 @@ fn a_server_outside_this_builds_range_cannot_negotiate() {
             &ServerMessage::Error {
                 code: "protocol".into(),
                 message: "incompatible protocol".into(),
+                peer: None,
             },
         )
         .expect("send Error");

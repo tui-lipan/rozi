@@ -5766,11 +5766,25 @@
           "type": "object"
         },
         {
+          "description": "A peer's release and the session wire generations it speaks.",
           "properties": {
             "code": {
               "type": "string"
             },
             "message": {
+              "type": "string"
+            },
+            "protocol_max": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "protocol_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rozi_version": {
               "type": "string"
             },
             "type": {

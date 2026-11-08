@@ -1414,6 +1414,7 @@ fn a_server_on_another_version_is_reported_and_never_chosen() {
                         &ServerMessage::Error {
                             code: "protocol-mismatch".to_string(),
                             message: "speaks another version".to_string(),
+                            peer: None,
                         },
                     );
                 }

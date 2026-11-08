@@ -1451,7 +1451,7 @@ fn validate_attached(local_session: Option<&str>, attached: &ServerMessage) -> i
         Some(name) => crate::session::discovery::incompatible_session_advice(name),
         None => "update rozi on both ends, or restart the session on its host".to_string(),
     };
-    if let ServerMessage::Error { code, message } = attached {
+    if let ServerMessage::Error { code, message, .. } = attached {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
         let detail = if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE {
@@ -2023,6 +2023,7 @@ mod tests {
             &ServerMessage::Error {
                 code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                 message: "server uses protocol 2".to_string(),
+                peer: None,
             },
         )
         .expect_err("attach must fail");
@@ -2039,6 +2040,7 @@ mod tests {
         let refusal = || ServerMessage::Error {
             code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
             message: "server uses protocol 2".to_string(),
+            peer: None,
         };
         let local = validate_attached(Some("dev"), &refusal())
             .expect_err("attach must fail")

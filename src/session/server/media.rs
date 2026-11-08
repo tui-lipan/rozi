@@ -508,6 +508,7 @@ impl SessionServer {
                     code: "media-busy".into(),
                     message: "terminal input is full; retry the change after image preparation"
                         .into(),
+                    peer: None,
                 },
             )]
         };

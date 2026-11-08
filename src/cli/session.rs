@@ -250,27 +250,28 @@ pub(crate) fn run_restart_session_cli(
 
 pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     let Some(remote) = remote else {
-        use session::discovery::ReleaseOrder;
+        use session::discovery::{ReleaseOrder, SessionRelease};
         let current = env!("CARGO_PKG_VERSION");
-        if let Some(version) = session::discovery::session_rozi_version(name) {
-            match session::discovery::release_order(&version) {
-                Some(ReleaseOrder::Newer) => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!(
-                            "Session `{name}` runs rozi {version}, newer than this rozi {current}. \
-                             Run `rozi sessions upgrade` with rozi {version} or newer instead."
-                        ),
-                    )
-                    .into());
-                }
-                Some(ReleaseOrder::Same) => eprintln!(
+        // A newer session is refused by the upgrade itself; this only says what is happening.
+        match session::discovery::session_release(name) {
+            SessionRelease::Running(Some(version))
+                if session::discovery::release_order(&version) == Some(ReleaseOrder::Same) =>
+            {
+                eprintln!(
                     "Session `{name}` is already on rozi {current}; restarting from its snapshot."
-                ),
-                Some(ReleaseOrder::Older) | None => {
-                    eprintln!("Upgrading session `{name}` from rozi {version} to {current}.")
-                }
+                )
             }
+            SessionRelease::Running(Some(version)) => {
+                eprintln!("Upgrading session `{name}` from rozi {version} to {current}.")
+            }
+            SessionRelease::Incompatible(None) => {
+                eprintln!("Upgrading session `{name}` from an older rozi to {current}.")
+            }
+            SessionRelease::Incompatible(Some(peer)) => eprintln!(
+                "Upgrading session `{name}` from rozi {} to {current}.",
+                peer.rozi_version
+            ),
+            SessionRelease::Running(None) | SessionRelease::Unknown => {}
         }
         // Not running, or too old to say: the upgrade itself reports what it finds.
         session::server::upgrade_named_session(name)?;

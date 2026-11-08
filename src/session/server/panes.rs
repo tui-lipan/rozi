@@ -24,6 +24,7 @@ impl SessionServer {
             return ServerMessage::Error {
                 code: "invalid-name".to_string(),
                 message: format!("invalid session name {name:?}"),
+                peer: None,
             };
         }
         if name == self.session_name {
@@ -38,6 +39,7 @@ impl SessionServer {
             return ServerMessage::Error {
                 code: "rename-failed".into(),
                 message: "a deployment request is in progress; retry the rename".into(),
+                peer: None,
             };
         }
         let new_endpoint = match session_endpoint(&name) {
@@ -46,6 +48,7 @@ impl SessionServer {
                 return ServerMessage::Error {
                     code: "rename-failed".to_string(),
                     message: err.to_string(),
+                    peer: None,
                 };
             }
         };
@@ -53,6 +56,7 @@ impl SessionServer {
             return ServerMessage::Error {
                 code: "name-in-use".to_string(),
                 message: format!("session `{name}` already exists"),
+                peer: None,
             };
         }
         let bound = match new_endpoint.bind() {
@@ -61,6 +65,7 @@ impl SessionServer {
                 return ServerMessage::Error {
                     code: "rename-failed".to_string(),
                     message: err.to_string(),
+                    peer: None,
                 };
             }
         };
@@ -69,6 +74,7 @@ impl SessionServer {
             return ServerMessage::Error {
                 code: "rename-failed".to_string(),
                 message: err.to_string(),
+                peer: None,
             };
         }
         // Session services run from the store being moved and were started with the old name, so
@@ -81,6 +87,7 @@ impl SessionServer {
             return ServerMessage::Error {
                 code: "rename-failed".into(),
                 message: error.to_string(),
+                peer: None,
             };
         }
         let retired = self.endpoint.replace(new_endpoint);

@@ -216,6 +216,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
             ServerMessage::Error {
                 code: "protocol-mismatch".into(),
                 message: "private-token".into(),
+                peer: None,
             },
         ),
     ] {

@@ -889,7 +889,8 @@ fn golden_server_messages_json_shape() {
     assert_eq!(
         serde_json::to_value(ServerMessage::Error {
             code: "bad".into(),
-            message: "no".into()
+            message: "no".into(),
+            peer: None,
         })
         .unwrap(),
         serde_json::json!({"type":"error","code":"bad","message":"no"})

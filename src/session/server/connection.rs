@@ -369,6 +369,7 @@ impl SessionServer {
             ServerMessage::Error {
                 code: "attach-required".to_string(),
                 message: "first client message must be attach".to_string(),
+                peer: None,
             },
         );
         self.set_close_after_flush(id);
@@ -647,6 +648,7 @@ impl SessionServer {
                         ServerMessage::Error {
                             code: code.to_string(),
                             message,
+                            peer: None,
                         },
                     )],
                 }
@@ -778,6 +780,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: code.to_string(),
                         message,
+                        peer: None,
                     },
                 )],
             },
@@ -1109,6 +1112,7 @@ impl SessionServer {
                         "this session runs rozi {}, which does not support that request",
                         env!("CARGO_PKG_VERSION")
                     ),
+                    peer: None,
                 },
             )],
             message @ (ClientMessage::Shutdown | ClientMessage::ShutdownForRestart) => {
@@ -1207,6 +1211,7 @@ impl SessionServer {
             return Some(ServerMessage::Error {
                 code: "browse-path-too-long".to_string(),
                 message: "browse path exceeds the server limit".to_string(),
+                peer: None,
             });
         }
 
@@ -1335,6 +1340,7 @@ impl SessionServer {
             _ => ServerMessage::Error {
                 code: "browse-result-encode-failed".to_string(),
                 message: "browse result could not be encoded".to_string(),
+                peer: None,
             },
         };
         if encode_control(&fallback).is_some() {
@@ -1346,6 +1352,7 @@ impl SessionServer {
                 ServerMessage::Error {
                     code: "browse-result-encode-failed".to_string(),
                     message: "browse result could not be encoded".to_string(),
+                    peer: None,
                 },
             );
         }
@@ -1379,6 +1386,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -1392,6 +1400,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -1403,6 +1412,7 @@ impl SessionServer {
                 ServerMessage::Error {
                     code: "server-identity-mismatch".to_string(),
                     message: "the session endpoint belongs to a different server".to_string(),
+                    peer: None,
                 },
             )];
         }
@@ -1530,6 +1540,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -1543,6 +1554,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }

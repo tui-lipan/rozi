@@ -375,6 +375,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(crate::session::protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -388,6 +389,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -405,6 +407,7 @@ impl SessionServer {
                         "the request comes from a pane of another server than {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }

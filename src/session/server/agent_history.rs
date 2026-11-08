@@ -459,6 +459,7 @@ impl SessionServer {
             self.enqueue(client, Target::Sender, ServerMessage::Error {
                 code: "conflict".into(),
                 message: "pane is restoring agent history; input queue is full, retry after restoration".into(),
+                peer: None,
             });
             return;
         }

@@ -637,16 +637,25 @@ pub(crate) fn upgrade_current_session(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
     }
-    if let Some(target) = remote_target.as_ref() {
+    let failure = if let Some(target) = remote_target.as_ref() {
         let config = ctx.state.config.remote.clone();
-        if let Err(err) = crate::session::remote::upgrade_remote_session(target, &name, &config) {
-            crate::pane::pty_events::notify_error(ctx, "Upgrade failed", err);
-            return Update::full();
+        match crate::session::remote::upgrade_remote_session(target, &name, &config) {
+            Ok(_) => {
+                crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &name, target);
+                None
+            }
+            Err(err) => Some(err),
         }
-        crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &name, target);
-    } else if let Err(err) = crate::session::server::stop_named_session_for_upgrade(&name) {
-        crate::pane::pty_events::notify_error(ctx, "Upgrade failed", err.to_string());
-        return Update::full();
+    } else {
+        crate::session::server::stop_named_session_for_upgrade(&name)
+            .err()
+            .map(|err| err.to_string())
+    };
+    if let Some(err) = failure {
+        // The session may well still be running - a refused upgrade, a dropped ssh connection -
+        // so go back to it rather than leave this client detached. Never start it afresh here.
+        crate::pane::pty_events::notify_error(ctx, "Upgrade failed", err);
+        return attach_session_by_name(ctx, name, remote_host, remote_target, false);
     }
     attach_session_by_name(ctx, name, remote_host, remote_target, true)
 }

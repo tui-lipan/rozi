@@ -350,17 +350,58 @@ pub(crate) fn release_order(session_version: &str) -> Option<ReleaseOrder> {
     })
 }
 
-/// The release a running named session reports, asked once with time to answer. A discovery sweep
-/// gives up on a slow server quickly and lists it busy; a command about this one session can wait.
-pub(crate) fn session_rozi_version(name: &str) -> Option<String> {
-    let endpoint = crate::session::server::session_endpoint(name).ok()?;
-    let mut stream = endpoint.connect().ok()?;
-    match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT)
-        .ok()?
-        .status
-    {
-        DiscoveredSessionStatus::Running { rozi_version, .. } => rozi_version,
-        _ => None,
+/// What one named session says about the release it runs, asked once with time to answer. A
+/// discovery sweep gives up on a slow server quickly and lists it busy; a command about this one
+/// session can wait.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SessionRelease {
+    /// It answered; the release is `None` only from a server that predates reporting it.
+    Running(Option<String>),
+    /// It refused this build's generation. `None` from a server before generation 52, which never
+    /// said who it was and is therefore older than any build that asks.
+    Incompatible(Option<crate::session::protocol::PeerRelease>),
+    /// Not running, or no answer.
+    Unknown,
+}
+
+pub(crate) fn session_release(name: &str) -> SessionRelease {
+    let Some(mut stream) = crate::session::server::session_endpoint(name)
+        .ok()
+        .and_then(|endpoint| endpoint.connect().ok())
+    else {
+        return SessionRelease::Unknown;
+    };
+    match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT) {
+        Ok(QueryAnswer {
+            status: DiscoveredSessionStatus::Running { rozi_version, .. },
+            ..
+        }) => SessionRelease::Running(rozi_version),
+        Ok(answer)
+            if answer.refusal.as_deref()
+                == Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE) =>
+        {
+            SessionRelease::Incompatible(answer.refused_by)
+        }
+        _ => SessionRelease::Unknown,
+    }
+}
+
+impl SessionRelease {
+    /// Whether moving this session onto this build would replace it with an older release: either
+    /// it reports a newer release, or it speaks a newer generation than this build does.
+    pub(crate) fn newer_than_this_build(&self) -> Option<String> {
+        match self {
+            Self::Running(Some(version)) if release_order(version) == Some(ReleaseOrder::Newer) => {
+                Some(version.clone())
+            }
+            Self::Incompatible(Some(peer))
+                if peer.protocol_min > crate::session::protocol::PROTOCOL_VERSION
+                    || release_order(&peer.rozi_version) == Some(ReleaseOrder::Newer) =>
+            {
+                Some(peer.rozi_version.clone())
+            }
+            _ => None,
+        }
     }
 }
 
@@ -501,6 +542,8 @@ struct QueryAnswer {
     instance: Option<crate::session::protocol::SessionInstanceId>,
     /// The error code a server answered with instead, such as `protocol-mismatch`.
     refusal: Option<String>,
+    /// The refusing server's release and window, when it said.
+    refused_by: Option<crate::session::protocol::PeerRelease>,
 }
 
 impl QueryAnswer {
@@ -516,6 +559,7 @@ impl QueryAnswer {
             projects: Vec::new(),
             instance: None,
             refusal: None,
+            refused_by: None,
         }
     }
 }
@@ -576,9 +620,11 @@ fn query_status_within(
             projects,
             instance,
             refusal: None,
+            refused_by: None,
         }),
-        ServerMessage::Error { code, .. } => Ok(QueryAnswer {
+        ServerMessage::Error { code, peer, .. } => Ok(QueryAnswer {
             refusal: Some(code),
+            refused_by: peer,
             ..QueryAnswer::unknown()
         }),
         _ => Ok(QueryAnswer::unknown()),
@@ -1186,6 +1232,52 @@ mod tests {
 
     use super::*;
 
+    /// An upgrade may replace an older session, never a newer one: not one that answers with a
+    /// newer release, and not one that refuses this build because it speaks a newer generation.
+    #[test]
+    fn only_an_older_session_counts_as_safe_to_replace() {
+        use crate::session::protocol::{PROTOCOL_VERSION, PeerRelease};
+        let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        let newer = semver::Version::new(this.major, this.minor, this.patch + 1).to_string();
+
+        assert_eq!(
+            SessionRelease::Running(Some("0.0.1".into())).newer_than_this_build(),
+            None
+        );
+        assert_eq!(
+            SessionRelease::Running(Some(env!("CARGO_PKG_VERSION").into())).newer_than_this_build(),
+            None
+        );
+        assert_eq!(
+            SessionRelease::Running(Some(newer.clone())).newer_than_this_build(),
+            Some(newer.clone())
+        );
+        // A refusal that names no release comes from a server before generation 52.
+        assert_eq!(
+            SessionRelease::Incompatible(None).newer_than_this_build(),
+            None
+        );
+        let future = PeerRelease {
+            rozi_version: newer.clone(),
+            protocol_min: PROTOCOL_VERSION + 1,
+            protocol_max: PROTOCOL_VERSION + 1,
+        };
+        assert_eq!(
+            SessionRelease::Incompatible(Some(future)).newer_than_this_build(),
+            Some(newer)
+        );
+        let older = PeerRelease {
+            rozi_version: "0.0.1".into(),
+            protocol_min: PROTOCOL_VERSION - 1,
+            protocol_max: PROTOCOL_VERSION - 1,
+        };
+        assert_eq!(
+            SessionRelease::Incompatible(Some(older)).newer_than_this_build(),
+            None
+        );
+        assert_eq!(SessionRelease::Unknown.newer_than_this_build(), None);
+    }
+
     /// A remote row's server runs the host's install, so its hint must not offer this machine's
     /// rollback, whatever kind of install this one is.
     #[test]
@@ -1393,6 +1485,7 @@ mod tests {
                     &ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: "speaks another version".to_string(),
+                        peer: None,
                     },
                 )
                 .expect("error reply");

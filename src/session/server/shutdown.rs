@@ -121,10 +121,23 @@ pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<Option<St
 
 /// Stop a named session's server by signal so it saves its snapshot before exiting, keeping both
 /// its snapshot and its deployments for the replacement server to restore.
+///
+/// A session on a newer release is refused, whether it answers this build or turns it away as
+/// incompatible: replacing it would downgrade it, and this build may not read its snapshot.
 pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
     let endpoint = super::session_endpoint(name)?;
     if !path_entry_exists(endpoint.path())? {
         return Ok(false);
+    }
+    if let Some(newer) = crate::session::discovery::session_release(name).newer_than_this_build() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Session `{name}` runs rozi {newer}, newer than this rozi {}. Upgrade it with \
+                 rozi {newer} or newer instead.",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ));
     }
     shutdown_existing_named_session(&endpoint, name, Ending::Upgrade).map(|_| true)
 }
@@ -423,6 +436,7 @@ mod tests {
         let refusal = handshake_against(ServerMessage::Error {
             code: protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
             message: "server supports 41-41".to_string(),
+            peer: None,
         })
         .expect_err("a refused handshake cannot shut the server down");
         assert!(refusal.incompatible, "{:?}", refusal.error);
@@ -430,6 +444,7 @@ mod tests {
         let other = handshake_against(ServerMessage::Error {
             code: "auth".to_string(),
             message: "refused".to_string(),
+            peer: None,
         })
         .expect_err("a refused handshake cannot shut the server down");
         assert!(!other.incompatible, "{:?}", other.error);

@@ -564,6 +564,12 @@ pub enum ServerMessage {
     Error {
         code: String,
         message: String,
+        /// Who refused, on a `protocol-mismatch`: the release and generation window of the server.
+        /// Every build from generation 52 on sends it, so a refusal without it comes from an older
+        /// server. A client uses it to tell an older server, which an upgrade replaces, from a
+        /// newer one, which this build must not replace.
+        #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+        peer: Option<PeerRelease>,
     },
     Attached {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -930,6 +936,26 @@ impl ServerMessage {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None
             }
+        }
+    }
+}
+
+/// A peer's release and the session wire generations it speaks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PeerRelease {
+    pub rozi_version: String,
+    pub protocol_min: u32,
+    pub protocol_max: u32,
+}
+
+impl PeerRelease {
+    /// This build.
+    pub fn current() -> Self {
+        Self {
+            rozi_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_min: super::MIN_SUPPORTED_PROTOCOL,
+            protocol_max: super::PROTOCOL_VERSION,
         }
     }
 }

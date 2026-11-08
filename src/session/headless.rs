@@ -214,7 +214,7 @@ fn query_capabilities(
             protocol::Capabilities::negotiated(capabilities.as_ref()),
             rozi_version,
         )),
-        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
             session: name.to_owned(),
             code,
             message,
@@ -302,7 +302,7 @@ pub fn run_session_subscribe(
             let _ = stream.set_read_timeout(None);
             Ok((stream, response))
         }
-        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
             session: name.to_string(),
             code,
             message,
@@ -372,7 +372,9 @@ pub fn pump_session_records(
                     return Ok(end);
                 }
             }
-            Ok(ServerMessage::Error { code, message }) => return Err(format!("{code}: {message}")),
+            Ok(ServerMessage::Error { code, message, .. }) => {
+                return Err(format!("{code}: {message}"));
+            }
             Ok(_) => {}
             Err(err)
                 if matches!(
@@ -478,7 +480,7 @@ fn exchange(
             response,
             protocol::Capabilities::negotiated(capabilities.as_ref()),
         )),
-        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
             session: name.to_string(),
             code,
             message,

@@ -51,6 +51,11 @@ generations. Fields may only be added. It consists of:
   `protocol-mismatch` (`PROTOCOL_MISMATCH_ERROR_CODE`);
 - the remote preamble in `src/session/remote/preamble.rs`.
 
+A `protocol-mismatch` refusal carries the server's `rozi_version`, `protocol_min`, and
+`protocol_max` (`PeerRelease`). Every build from generation 52 sends them, so a refusal without
+them comes from an older server. Upgrade session relies on this to replace only an older session,
+never a newer one it cannot talk to.
+
 `Attached` and `SessionInfo` carry the server's `rozi_version` so a client can name the release a
 session runs.
 

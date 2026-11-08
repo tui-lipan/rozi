@@ -2177,6 +2177,7 @@ fn unsupported_reply(capability: protocol::Capability) -> ServerMessage {
             "this client did not negotiate {}, which the reply needs",
             capability.as_str()
         ),
+        peer: None,
     }
 }
 

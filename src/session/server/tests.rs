@@ -1621,6 +1621,15 @@ fn runtime_metrics_request_serves_peers_that_negotiated_it() {
         ),
         "older peers are rejected"
     );
+    // The refusal says who refused, so a client can tell an older server from a newer one.
+    assert!(
+        matches!(
+            responses.as_slice(),
+            [(_, ServerMessage::Error { peer: Some(peer), .. })]
+                if *peer == crate::session::protocol::PeerRelease::current()
+        ),
+        "{responses:?}"
+    );
 }
 
 /// The send gate, end to end: whatever path queues a gated message - a broadcast, a message
@@ -1685,7 +1694,7 @@ fn a_gated_reply_becomes_an_unsupported_message_refusal() {
     assert!(
         matches!(
             replies.as_slice(),
-            [ServerMessage::Error { code, message }]
+            [ServerMessage::Error { code, message, .. }]
                 if code == protocol::UNSUPPORTED_MESSAGE_ERROR_CODE
                     && message.contains("runtime-metrics")
         ),
@@ -3359,7 +3368,7 @@ fn controller_evicts_another_client_with_a_reason_then_closes_it() {
 
     let responses = server.handle_message(controller, ClientMessage::EvictClient { target: other });
 
-    let [(Target::Client(id), ServerMessage::Error { code, message })] = responses.as_slice()
+    let [(Target::Client(id), ServerMessage::Error { code, message, .. })] = responses.as_slice()
     else {
         panic!("expected one evict error, got {responses:?}");
     };

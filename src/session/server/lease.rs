@@ -439,6 +439,7 @@ impl SessionServer {
             ServerMessage::Error {
                 code: protocol::EVICTED_ERROR_CODE.to_string(),
                 message: format!("removed from the session by {by}"),
+                peer: None,
             },
         )]
     }

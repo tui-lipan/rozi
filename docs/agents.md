@@ -528,7 +528,7 @@ cannot publish agent responses. An update carries at most 64 responses, each tex
 the whole update, so send large responses in separate updates. Rows whose ids are changed by cleaning, or that fall past the 64-row limit,
 cannot own a response, and the update is rejected. A response that could not reach the session
 is sent again with the publisher's next update and after a reconnect, for as long as its row keeps
-the status it had. See [writing extensions](writing-extensions.md) for stream ownership.
+the status and `native_session` it had. See [writing extensions](writing-extensions.md) for stream ownership.
 
 `rozi status` and a plain `rozi publish` report activities, not agents. Their rows appear in
 Activity, but not in the Agents view or `rozi agents`, and they do not keep the host awake. A

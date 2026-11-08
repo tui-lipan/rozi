@@ -494,6 +494,108 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn standby_responses_do_not_cross_native_sessions_and_stay_bounded() {
+        use super::super::{SessionServer, protocol, runtime, tests};
+        use crate::control::PublishedAgentResponse;
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(7, tests::test_pane(1));
+        let (first, _first_stream) = tests::attach_client(&mut server);
+        let (second, _second_stream) = tests::attach_client(&mut server);
+        let row_for = |id: &str, session: &str| -> protocol::PublishedRow {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "title": "review", "status": "done", "native_session": session
+            }))
+            .unwrap()
+        };
+        let publisher = |responses| runtime::PanePublisher {
+            id: "provider".into(),
+            kind: protocol::PublisherKind::Agent,
+            epoch: 1,
+            responses,
+        };
+        server
+            .report_pane_rows(
+                first,
+                7,
+                1,
+                false,
+                publisher(Vec::new()),
+                vec![row_for("conv-1", "s1")],
+            )
+            .unwrap();
+        // Standby client reports a response for `s1`, then switches `conv-1` to `s2` without a
+        // new response; `s1`'s response must not survive to be stored under `s2`.
+        server
+            .report_pane_rows(
+                second,
+                7,
+                1,
+                false,
+                publisher(vec![PublishedAgentResponse {
+                    id: "conv-1".into(),
+                    seq: 1,
+                    response: payload("answer from s1"),
+                }]),
+                vec![row_for("conv-1", "s1")],
+            )
+            .unwrap();
+        server
+            .report_pane_rows(
+                second,
+                7,
+                1,
+                false,
+                publisher(Vec::new()),
+                vec![row_for("conv-1", "s2")],
+            )
+            .unwrap();
+        // Accumulate ten 1 MiB responses across standby updates; standby storage must evict the
+        // oldest to stay within the 4 MiB per-update budget.
+        let big = "x".repeat(crate::session::protocol::MAX_AGENT_RESPONSE_BYTES);
+        let rows: Vec<_> = (0..10)
+            .map(|n| row_for(&format!("r{n}"), &format!("s-{n}")))
+            .collect();
+        for n in 0..10 {
+            server
+                .report_pane_rows(
+                    second,
+                    7,
+                    1,
+                    false,
+                    publisher(vec![PublishedAgentResponse {
+                        id: format!("r{n}"),
+                        seq: 1,
+                        response: payload(&big),
+                    }]),
+                    rows.clone(),
+                )
+                .unwrap();
+        }
+        let standby_key = protocol::qualified_publisher(second, "provider");
+        let kept = &server.panes[&7].agent.standby_rows[&standby_key].responses;
+        assert!(
+            kept.iter()
+                .map(PublishedAgentResponse::wire_len)
+                .sum::<usize>()
+                <= crate::session::protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
+        );
+        assert!(!kept.iter().any(|r| r.id == "conv-1" || r.id == "r0"));
+        assert!(kept.iter().any(|r| r.id == "r9"));
+
+        server.withdraw_client_rows(first);
+        for runtime in server.agent_runtimes_for(7, &server.panes[&7]) {
+            assert!(
+                server
+                    .agent_responses
+                    .latest(&runtime.reference, &Some("s2".into()))
+                    .is_none(),
+                "s1 response must never be promoted under s2"
+            );
+        }
+    }
+
     #[test]
     fn a_response_must_name_a_row_that_survives_sanitizing() {
         use super::super::{protocol, runtime};

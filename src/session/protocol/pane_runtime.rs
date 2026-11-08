@@ -585,6 +585,23 @@ pub fn clean_pane_text(value: &str, limit: usize) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Whether `value` is an acceptable native session reference: an opaque identifier, kept exactly
+/// as given, so it is validated rather than cleaned.
+pub fn native_session_is_valid(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+}
+
+/// The cleaned `(status, native_session)` a canonical agent row will install with on the server.
+pub fn canonical_row_response_scope(row: &PublishedRow) -> Option<(String, Option<String>)> {
+    let status = clean_pane_text(&row.status, super::PANE_STATUS_MAX_LEN)?;
+    let native_session = row
+        .native_session
+        .as_deref()
+        .filter(|session| native_session_is_valid(session))
+        .map(str::to_string);
+    Some((status, native_session))
+}
+
 /// The ids that may own a response: rows `sanitize_rows` will install with their id untouched,
 /// within [`super::MAX_PANE_ROWS`], and whose cleaned id no other installed row shares. An id that
 /// cleaning would change, or that collides after cleaning, is ambiguous and cannot own a response.

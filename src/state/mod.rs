@@ -122,9 +122,12 @@ pub struct PublishStreamKey {
 #[derive(Clone, Debug)]
 pub struct RetainedResponse {
     pub response: crate::control::PublishedAgentResponse,
-    /// The answered row's status when the response arrived. A different status means a newer
-    /// turn, and replaying the response would present an old answer as a new one.
+    /// The answered row's cleaned status when the response arrived. A different status means a
+    /// newer turn, and replaying the response would present an old answer as a new one.
     pub status: String,
+    /// The answered row's canonical native session when the response arrived. A different
+    /// conversation in the same row slot must never receive an older conversation's answer.
+    pub native_session: Option<String>,
     /// Whether it was handed to a reachable session connection since the last attach.
     pub delivered: bool,
 }

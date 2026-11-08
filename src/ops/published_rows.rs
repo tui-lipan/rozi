@@ -425,9 +425,24 @@ fn retain_responses(
 ) -> bool {
     use crate::session::protocol::{
         MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_REPORT_PANE_ROWS_FRAME_BYTES,
-        MAX_RESPONSES_PER_UPDATE, canonical_published_row_ids, validate_published_responses,
+        MAX_RESPONSES_PER_UPDATE, canonical_published_row_ids, canonical_row_response_scope,
+        validate_published_responses,
     };
     if validate_published_responses(stream.identity.kind, rows, responses).is_err() {
+        return false;
+    }
+    // If this update carries responses and cannot fit inside one session frame on its own, do not
+    // retain or partially evict it: forward it whole so the transport handles it atomically rather
+    // than turning it into a partial update with missing responses.
+    if !responses.is_empty()
+        && encoded_report_len(
+            pane_id,
+            &stream.identity,
+            stream.id,
+            rows,
+            responses.to_vec(),
+        ) > MAX_REPORT_PANE_ROWS_FRAME_BYTES
+    {
         return false;
     }
     let canonical = canonical_published_row_ids(rows);
@@ -435,15 +450,24 @@ fn retain_responses(
         canonical.contains(&kept.response.id)
             && rows
                 .iter()
-                .any(|row| row.id == kept.response.id && row.status == kept.status)
+                .find(|row| row.id == kept.response.id)
+                .and_then(canonical_row_response_scope)
+                .is_some_and(|(status, native_session)| {
+                    status == kept.status && native_session == kept.native_session
+                })
     });
     for response in responses {
-        let Some(row) = rows.iter().find(|row| row.id == response.id) else {
+        let Some((status, native_session)) = rows
+            .iter()
+            .find(|row| row.id == response.id)
+            .and_then(canonical_row_response_scope)
+        else {
             continue;
         };
         let new = crate::state::RetainedResponse {
             response: response.clone(),
-            status: row.status.clone(),
+            status,
+            native_session,
             delivered: false,
         };
         let kept = &mut stream.last_responses;
@@ -476,7 +500,16 @@ fn retain_responses(
                     .collect(),
             ) > MAX_REPORT_PANE_ROWS_FRAME_BYTES)
     {
-        stream.last_responses.remove(0);
+        // Never evict a response belonging to the current update; all of `responses` fit the frame
+        // budget on their own (checked above), so evicting older cached responses is always enough.
+        let Some(index) = stream
+            .last_responses
+            .iter()
+            .position(|kept| !responses.iter().any(|fresh| fresh.id == kept.response.id))
+        else {
+            break;
+        };
+        stream.last_responses.remove(index);
     }
     true
 }
@@ -1493,6 +1526,21 @@ mod tests {
                 response_reports(&outbound),
                 vec![Vec::<(String, u64)>::new()]
             );
+            // Switching `native_session` on the same row id and status also ends the answer's
+            // lifetime so an older conversation's response cannot cross into the new one.
+            let mut s1 = row("a", "done");
+            s1.native_session = Some("s1".into());
+            report_with_response(backend, vec![s1], "a", 2);
+            outbound.try_iter().for_each(drop);
+            let mut s2 = row("a", "done");
+            s2.native_session = Some("s2".into());
+            report(backend, 1, vec![s2]);
+            outbound.try_iter().for_each(drop);
+            super::resend_rows(backend.state_mut());
+            assert_eq!(
+                response_reports(&outbound),
+                vec![Vec::<(String, u64)>::new()]
+            );
         });
     }
 
@@ -1524,6 +1572,7 @@ mod tests {
                     },
                 },
                 status: "done".into(),
+                native_session: None,
                 delivered: false,
             });
             report(backend, 1, vec![row("a", "done")]);
@@ -1617,6 +1666,24 @@ mod tests {
                 frames[0].1,
                 vec!["r8".to_string(), "r9".to_string()],
                 "oldest responses evicted so large rows + responses fit one frame"
+            );
+
+            // An update whose own rows + fresh responses exceed the frame budget is never trimmed
+            // into a partial valid update: all of its responses are forwarded together, and nothing
+            // from it is retained for replay.
+            let mut huge_rows = vec![row("r0", "done"), row("r1", "done")];
+            huge_rows[0].cwd = Some("x".repeat(6 * 1024 * 1024));
+            report_responses(backend, huge_rows, &[("r0", 2, big), ("r1", 2, big)]);
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("r0".to_string(), 2), ("r1".to_string(), 2)]],
+                "current update responses must not be partially evicted"
+            );
+            super::resend_rows(backend.state_mut());
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("r8".to_string(), 1), ("r9".to_string(), 1)]],
+                "oversized update was not retained"
             );
         });
     }

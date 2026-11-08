@@ -551,7 +551,7 @@ fn validate_integration_update(
 /// given, so it is validated rather than cleaned. The one rule for a hook report and a published row,
 /// which are matched to each other by exact equality.
 fn native_session_is_valid(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+    protocol::native_session_is_valid(value)
 }
 
 fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()> {
@@ -2365,24 +2365,41 @@ fn another_client_speaks(rows: &[protocol::PublishedRow], publisher: &str) -> bo
 /// listing it left.
 /// Record an update from an agent publisher waiting behind another client's copy.
 ///
-/// Responses are merged across updates within the same stream epoch for as long as their row is
-/// still listed with the same status, so a response sent before a later rows-only update is still
-/// promoted when the speaking client leaves.
+/// Responses are merged across updates within the same stream epoch for as long as their row
+/// remains canonical with the same cleaned status and native session, and bounded to one update's
+/// response budget (evicting the oldest first), so a response sent before a later rows-only update
+/// is still promoted when the speaking client leaves without crossing conversations or growing
+/// without bound.
 fn record_standby_update(
     pane: &mut ServerPane,
     publisher: PanePublisher,
     rows: Vec<protocol::PublishedRow>,
 ) {
+    let canonical = protocol::canonical_published_row_ids(&rows);
     let mut responses = match pane.agent.standby_rows.remove(&publisher.id) {
         Some(previous) if previous.epoch == publisher.epoch => previous
             .responses
             .into_iter()
             .filter(|kept| {
-                let Some(old_row) = previous.rows.iter().find(|row| row.id == kept.id) else {
+                if !canonical.contains(&kept.id) {
+                    return false;
+                }
+                let Some(old_scope) = previous
+                    .rows
+                    .iter()
+                    .find(|row| row.id == kept.id)
+                    .and_then(protocol::canonical_row_response_scope)
+                else {
                     return false;
                 };
-                rows.iter()
-                    .any(|row| row.id == kept.id && row.status == old_row.status)
+                let Some(new_scope) = rows
+                    .iter()
+                    .find(|row| row.id == kept.id)
+                    .and_then(protocol::canonical_row_response_scope)
+                else {
+                    return false;
+                };
+                old_scope == new_scope
             })
             .collect(),
         _ => Vec::new(),
@@ -2396,6 +2413,15 @@ fn record_standby_update(
             }
             None => responses.push(response),
         }
+    }
+    while responses.len() > protocol::MAX_RESPONSES_PER_UPDATE
+        || responses
+            .iter()
+            .map(crate::control::PublishedAgentResponse::wire_len)
+            .sum::<usize>()
+            > protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
+    {
+        responses.remove(0);
     }
     pane.agent.standby_rows.insert(
         publisher.id,

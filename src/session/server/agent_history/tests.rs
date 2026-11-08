@@ -1,6 +1,7 @@
-use super::super::tests::{attach_client, decode_outbox_controls, test_pane};
+use super::super::tests::{attach_client, catalog_from, decode_outbox_controls, test_pane};
 use super::*;
 use crate::control::{AgentResponseFidelity, AgentTarget, AgentWaitCondition, CaptureRender};
+use crate::session::protocol::AttachmentOperation;
 use std::os::unix::net::UnixStream;
 
 // An external TUI boundary: real stdin, PTY mouse reports and redraws. All traversal, lease,
@@ -67,10 +68,24 @@ struct Rig {
     _stream: UnixStream,
     reference: protocol::AgentRef,
     scratch: tempfile::TempDir,
+    /// Run runtime detection each tick, as the production loop does. Off for rigs that set the
+    /// agent state by hand, which detection would overwrite.
+    poll_runtime: bool,
 }
+
+const CLAUDE_WITH_HISTORY: &str = r#"
+[[agents]]
+id = "claude"
+match = { names = ["claude"] }
+history = "mouse-scroll"
+"#;
 
 impl Rig {
     fn new(mode: &str) -> Self {
+        Self::with_agents(mode, CLAUDE_WITH_HISTORY)
+    }
+
+    fn with_agents(mode: &str, agents: &str) -> Self {
         let scratch = tempfile::tempdir().unwrap();
         let (tx, events) = mpsc::channel();
         let pty = TerminalPty::spawn(
@@ -96,6 +111,7 @@ impl Rig {
         )
         .unwrap();
         let mut server = SessionServer::new_named("history-test");
+        server.settings.agents = catalog_from(agents);
         let mut pane = test_pane(7);
         pane.pty = Some(pty);
         pane.cols = 30;
@@ -118,6 +134,7 @@ impl Rig {
             _stream: stream,
             reference,
             scratch,
+            poll_runtime: false,
         };
         rig.until(|rig| rig.screen().contains("footer"));
         rig
@@ -133,6 +150,7 @@ impl Rig {
         screen.export_text(0, screen.total_text_lines())
     }
 
+    /// One production loop turn: drain output, poll runtime detection, then pump the reader.
     fn tick(&mut self) {
         while let Ok(event) = self.events.try_recv() {
             if let Some(outbound) = self
@@ -141,6 +159,10 @@ impl Rig {
             {
                 self.server.send_outbound(None, &outbound);
             }
+        }
+        if self.poll_runtime {
+            self.server.last_runtime_poll = Instant::now() - Duration::from_secs(1);
+            self.server.poll_pane_runtime();
         }
         self.server.pump_agent_history();
     }
@@ -489,4 +511,246 @@ fn lease_rejects_headless_input_and_ignores_unchanged_geometry() {
     assert!(!rig.scratch.path().join("input").exists());
     rig.server.cancel_client_history(rig.client);
     rig.finish();
+}
+
+fn resize(cols: u16, rows: u16) -> PaneResizeRequest {
+    PaneResizeRequest {
+        pane_id: 3,
+        local: false,
+        generation: 7,
+        cols,
+        rows,
+        cell_width: 10,
+        cell_height: 20,
+    }
+}
+
+#[test]
+fn a_to_b_to_a_resizes_replay_in_order_and_end_at_a() {
+    let mut rig = Rig::new("bottom");
+    rig.begin(true);
+    assert!(rig.server.agent_history.contains_key(&3));
+    for request in [resize(40, 10), resize(30, 8)] {
+        let replies = rig
+            .server
+            .handle_resize_with(rig.client, request, |_| panic!("resize during restoration"));
+        assert!(replies.is_empty());
+    }
+    assert_eq!(rig.server.agent_history[&3].mutations.len(), 2);
+    assert_eq!(
+        (rig.server.panes[&3].cols, rig.server.panes[&3].rows),
+        (30, 8)
+    );
+    rig.finish();
+    assert_eq!(
+        (rig.server.panes[&3].cols, rig.server.panes[&3].rows),
+        (30, 8)
+    );
+    let resized = decode_outbox_controls(rig.server.client(rig.client).unwrap())
+        .into_iter()
+        .filter_map(|message| match message {
+            ServerMessage::Resized { cols, rows, .. } => Some((cols, rows)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resized, [(40, 10), (30, 8)]);
+}
+
+#[test]
+fn same_size_resize_retry_cannot_bypass_the_lease() {
+    let mut rig = Rig::new("bottom");
+    rig.server.panes.get_mut(&3).unwrap().pty_resize_pending = true;
+    rig.begin(true);
+    rig.server
+        .handle_resize_with(rig.client, resize(30, 8), |_| {
+            panic!("pending resize retried during restoration")
+        });
+    assert!(rig.server.panes[&3].pty_resize_pending);
+    assert!(rig.server.agent_history[&3].mutations.is_empty());
+}
+
+#[test]
+fn history_page_matching_a_working_rule_never_changes_agent_state() {
+    let agents = format!(
+        "{CLAUDE_WITH_HISTORY}\n[[agents.states]]\nstate = \"working\"\nscreen = {{ any_of = [\"line 03\"] }}\n"
+    );
+    let mut rig = Rig::with_agents("bottom", &agents);
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .env
+        .push(("ROZI_AGENT".into(), "claude".into()));
+    // Settle detection on the bottom page, outside any startup grace, before traversing.
+    rig.poll_runtime = true;
+    for _ in 0..3 {
+        rig.tick();
+    }
+    rig.server.panes.get_mut(&3).unwrap().agent.startup = None;
+    rig.tick();
+    // Detection named the agent for real, so the reference the rig resolved earlier is stale.
+    rig.reference = rig
+        .server
+        .resolve_agent_wait_target(AgentTarget::Pane(3))
+        .unwrap();
+    let state = |rig: &Rig| {
+        rig.server.panes[&3]
+            .runtime
+            .detected_agent
+            .as_ref()
+            .map(|agent| agent.state)
+    };
+    assert_ne!(state(&rig), Some(protocol::DetectedAgentState::Working));
+    let completions = |rig: &Rig| {
+        rig.server
+            .agent_runtimes_for(3, &rig.server.panes[&3])
+            .iter()
+            .map(|agent| agent.completions)
+            .sum::<u64>()
+    };
+    rig.begin(true);
+    let before = (state(&rig), completions(&rig));
+    rig.until(|rig| rig.screen().contains("line 03"));
+    // Several polls over the historical page, as the production loop makes.
+    for _ in 0..3 {
+        rig.tick();
+    }
+    assert_eq!((state(&rig), completions(&rig)), before);
+    let result = rig.finish();
+    assert_eq!(
+        result["data"]["response"]["source"], "alternate-screen-history",
+        "{result}"
+    );
+    assert_eq!((state(&rig), completions(&rig)), before);
+}
+
+#[test]
+fn history_requires_the_definition_to_declare_mouse_scroll() {
+    for declaration in ["", "history = \"none\"\n"] {
+        let agents = format!(
+            "[[agents]]\nid = \"claude\"\nmatch = {{ names = [\"claude\"] }}\n{declaration}"
+        );
+        let mut rig = Rig::with_agents("bottom", &agents);
+        rig.begin(true);
+        assert!(rig.server.agent_history.is_empty());
+        assert!(rig.result()["data"]["response"].is_null());
+        assert!(!rig.scratch.path().join("input").exists());
+    }
+}
+
+#[test]
+fn inline_image_in_a_history_page_still_restores_the_viewport() {
+    let mut rig = Rig::new("bottom");
+    let original = rig.screen();
+    rig.begin(true);
+    rig.until(|rig| rig.screen().contains("line 04"));
+    // The older page now carries a terminal image: a Kitty graphics placement.
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .process_bytes(b"\x1b_Ga=T,f=24,s=1,v=1,t=d;AAAA\x1b\\");
+    assert!(
+        !rig.server
+            .panes
+            .get_mut(&3)
+            .unwrap()
+            .screen_without_change()
+            .render_snapshot()
+            .images
+            .is_empty()
+    );
+    rig.tick();
+    assert!(
+        rig.server.agent_history.contains_key(&3),
+        "lease released without restoring"
+    );
+    assert!(rig.server.agent_history[&3].cancelled);
+    let result = rig.finish();
+    assert!(result["data"]["response"].is_null(), "{result}");
+    let _ = original;
+}
+
+fn stage_upload(rig: &mut Rig, transfer: u64) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    for operation in [
+        AttachmentOperation::Begin {
+            pane_id: 3,
+            generation: 7,
+            local: false,
+            name: "photo.png".into(),
+            size: 4,
+        },
+        AttachmentOperation::Chunk {
+            data: STANDARD.encode(b"data"),
+        },
+    ] {
+        assert!(
+            rig.server
+                .attachment_step(rig.client, transfer, operation)
+                .is_empty()
+        );
+        let end = Instant::now() + Duration::from_secs(5);
+        while rig.server.attachments.is_busy((rig.client, transfer)) {
+            assert!(Instant::now() < end);
+            rig.server.poll_attachment_work();
+            std::thread::yield_now();
+        }
+    }
+}
+
+fn attachment_error(rig: &Rig) -> Option<String> {
+    decode_outbox_controls(rig.server.client(rig.client).unwrap())
+        .into_iter()
+        .find_map(|message| match message {
+            ServerMessage::AttachmentAck { error, .. } => error,
+            _ => None,
+        })
+}
+
+#[test]
+fn attachment_begin_and_completion_never_write_under_the_lease() {
+    // Begin during traversal is refused.
+    let mut rig = Rig::new("bottom");
+    rig.begin(true);
+    let replies = rig.server.attachment_step(
+        rig.client,
+        1,
+        AttachmentOperation::Begin {
+            pane_id: 3,
+            generation: 7,
+            local: false,
+            name: "photo.png".into(),
+            size: 4,
+        },
+    );
+    assert!(matches!(
+        replies.as_slice(),
+        [(_, ServerMessage::AttachmentAck { error: Some(_), .. })]
+    ));
+    rig.finish();
+
+    // An upload whose final step is already with the worker completes during traversal.
+    let mut rig = Rig::new("bottom");
+    stage_upload(&mut rig, 2);
+    assert!(
+        rig.server
+            .attachment_step(rig.client, 2, AttachmentOperation::Finish)
+            .is_empty()
+    );
+    rig.begin(true);
+    assert!(rig.server.agent_history.contains_key(&3));
+    let end = Instant::now() + Duration::from_secs(5);
+    while rig.server.attachments.has_pending() {
+        assert!(Instant::now() < end);
+        rig.server.poll_attachment_work();
+        std::thread::yield_now();
+    }
+    assert!(
+        attachment_error(&rig).is_some(),
+        "completion must be refused"
+    );
+    rig.finish();
+    assert!(!rig.scratch.path().join("input").exists());
 }

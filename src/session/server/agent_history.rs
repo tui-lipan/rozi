@@ -168,9 +168,28 @@ impl SessionServer {
         }
         let screen = pane.screen_without_change();
         let snapshot = screen.render_snapshot();
-        screen.scrollback_offset() == 0
+        let eligible = screen.scrollback_offset() == 0
             && snapshot.mouse_mode.mode != MouseMode::None
-            && snapshot.images.is_empty()
+            && snapshot.images.is_empty();
+        eligible && self.history_declared(reference)
+    }
+
+    /// Synthetic wheel input is only ever sent to an agent whose definition declares that the
+    /// wheel reversibly scrolls its transcript.
+    fn history_declared(&self, reference: &protocol::AgentRef) -> bool {
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return false;
+        };
+        self.agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|agent| agent.reference == *reference)
+            .and_then(|agent| {
+                self.settings
+                    .agents
+                    .by_id(&agent.identity.id)
+                    .map(|d| d.history)
+            })
+            .is_some_and(|history| history == crate::agent_detection::AgentHistory::MouseScroll)
     }
 
     fn history_authorized(&self, wait: &HistoryWait) -> bool {
@@ -288,11 +307,16 @@ impl SessionServer {
         };
         let screen = pane.screen_without_change();
         let snapshot = screen.render_snapshot();
-        if !screen.is_alternate_screen()
-            || snapshot.mouse_mode != read.mouse
-            || !snapshot.images.is_empty()
-        {
+        // Without an alternate screen or a mouse mode there is no way left to scroll back.
+        if !screen.is_alternate_screen() || snapshot.mouse_mode.mode == MouseMode::None {
             return HistoryReadStep::Finished(Err(HistoryReadError::RestoreUnproven));
+        }
+        // An image or a changed mouse protocol makes the pages untrustworthy, but the viewport
+        // still has to be restored: stop reconstructing and let the reader scroll back, using
+        // the protocol the application now speaks.
+        if !snapshot.images.is_empty() || snapshot.mouse_mode != read.mouse {
+            read.mouse = snapshot.mouse_mode;
+            read.cancel();
         }
         read.reader
             .observe(screen.history_read_frame(), Instant::now())
@@ -488,13 +512,36 @@ impl SessionServer {
         if read.reference().pane.generation != request.generation {
             return false;
         }
-        read.cancel();
-        self.queue_history_mutation(
-            request.pane_id,
-            client,
-            0,
-            DeferredMutation::Resize(client, request),
-        );
+        // Compare with where the pane will be once the queue replays, not where it is now:
+        // A -> B -> A has to queue both transitions, and a request that changes nothing must not
+        // reach the pane at all, or its pending-resize retry would bypass the lease.
+        let Some(pane) = self.panes.get(&request.pane_id) else {
+            return true;
+        };
+        let (mut cols, mut rows, mut cell) = (pane.cols, pane.rows, pane.cell);
+        for mutation in &read.mutations {
+            if let DeferredMutation::Resize(_, queued) = mutation {
+                (cols, rows) = (queued.cols.max(1), queued.rows.max(1));
+                if let Some(queued_cell) =
+                    protocol::wire_cell(queued.cell_width, queued.cell_height)
+                {
+                    cell = queued_cell;
+                }
+            }
+        }
+        let changes = cols != request.cols.max(1)
+            || rows != request.rows.max(1)
+            || protocol::wire_cell(request.cell_width, request.cell_height)
+                .is_some_and(|requested| requested != cell);
+        if changes {
+            read.cancel();
+            self.queue_history_mutation(
+                request.pane_id,
+                client,
+                0,
+                DeferredMutation::Resize(client, request),
+            );
+        }
         true
     }
 

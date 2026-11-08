@@ -519,6 +519,10 @@ pub struct AgentScratch {
     /// Set from a launch until the agent is ready: its loading spinner is not a run. See
     /// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE).
     pub startup: Option<AgentStartup>,
+    /// Rozi is scrolling this pane to read its history, so the screen shows pages Rozi caused
+    /// rather than what the agent is doing. Screen detection keeps its last answer meanwhile;
+    /// integration reports still apply.
+    pub history_frozen: bool,
     /// The next agent named here was already running: the definitions changed under it, so naming
     /// it is not a launch and starts no [`Self::startup`].
     pub adopting: bool,

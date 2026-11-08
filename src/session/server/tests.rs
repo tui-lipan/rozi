@@ -1851,7 +1851,7 @@ fn wait_for_server_events(server: &SessionServer, count: usize) -> Vec<ServerEve
 }
 
 /// The catalog a `[[agents]]` block resolves to, as the controller's config reload would build it.
-fn catalog_from(toml_text: &str) -> Arc<crate::agent_detection::AgentCatalog> {
+pub(super) fn catalog_from(toml_text: &str) -> Arc<crate::agent_detection::AgentCatalog> {
     let mut warnings = Vec::new();
     let specs: Vec<crate::agent_detection::AgentSpec> = toml::from_str::<toml::Table>(toml_text)
         .expect("agents parse")

@@ -964,6 +964,7 @@ The control command `split --workspace` and `--focus` override `workspace` and `
 | `match.names` | array of strings | `[]` | Executable names. |
 | `match.paths` | array of strings | `[]` | Lowercase substrings of the path or arguments. |
 | `states` | array of state tables | `[]` | State rules. |
+| `history` | string | `"none"` | `"mouse-scroll"` declares that the mouse wheel only scrolls the agent's transcript and scrolling back restores the view, which lets `agents prompt --result` read its [alternate-screen history](agents.md#read-the-agents-response). A built-in override keeps the built-in's setting when omitted. |
 
 A new definition needs at least one match name or path. A definition that replaces a built-in may
 omit `match` and keep the built-in's process match.

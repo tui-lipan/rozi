@@ -7,8 +7,8 @@
 use serde::Deserialize;
 
 use super::definition::{
-    AgentDefinition, AgentStateOutcome, AgentStateRule, MatchScope, MatchSource, Pattern,
-    normalized_name, normalized_path,
+    AgentDefinition, AgentHistory, AgentStateOutcome, AgentStateRule, MatchScope, MatchSource,
+    Pattern, normalized_name, normalized_path,
 };
 
 /// A file that carries nothing but agent definitions - the embedded built-in catalog.
@@ -33,6 +33,18 @@ pub struct AgentSpec {
     pub r#match: AgentMatchSpec,
     pub states: Vec<AgentStateSpec>,
     pub resume: Option<AgentResumeSpec>,
+    /// Declares that the mouse wheel reversibly scrolls this agent's transcript. Unset keeps a
+    /// built-in's setting; otherwise history is never read.
+    pub history: Option<AgentHistorySpec>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentHistorySpec {
+    /// No synthetic input is ever sent to read history.
+    None,
+    /// The mouse wheel only scrolls the transcript, and scrolling back restores the view.
+    MouseScroll,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -225,6 +237,11 @@ pub fn build_definitions(
             resume_argv,
             attach_argv,
             reported_resume_argv,
+            history: match spec.history {
+                Some(AgentHistorySpec::MouseScroll) => AgentHistory::MouseScroll,
+                Some(AgentHistorySpec::None) => AgentHistory::None,
+                None => inherited.map_or(AgentHistory::None, |definition| definition.history),
+            },
         });
     }
     built
@@ -622,6 +639,7 @@ mod tests {
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
             attach_argv: None,
             reported_resume_argv: None,
+            history: AgentHistory::None,
         }];
         let built = build_definitions(
             parse(
@@ -664,6 +682,7 @@ mod tests {
             resume_argv: Some(vec!["claude".into(), "--resume".into(), "{session}".into()]),
             attach_argv: None,
             reported_resume_argv: None,
+            history: AgentHistory::None,
         }];
         let built = build_definitions(
             parse(

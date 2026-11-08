@@ -442,15 +442,27 @@ An integration response takes priority. When none is available at the end of an 
 turn, Rozi reads retained terminal history with `source: "terminal"`. This rendered text can include
 earlier turns and interface text, and always has `complete: false`.
 
-For an alternate-screen agent, Rozi can scroll through its history when the agent is idle or done,
-mouse reporting is enabled, and the transcript is at the bottom. A successful read has
+For an alternate-screen agent, Rozi can scroll through its history when its definition declares
+`history = "mouse-scroll"`, the agent is idle or done, mouse reporting is enabled, and the transcript
+is at the bottom. Declare it only for an agent whose mouse wheel does nothing but scroll its
+transcript, because Rozi sends real wheel events to read it:
+
+```toml
+[[agents]]
+id = "mycoolagent"
+history = "mouse-scroll"
+```
+
+No built-in definition declares it, and an agent without the declaration is never sent input. A
+built-in override keeps the built-in's setting when `history` is omitted. A successful read has
 `source: "alternate-screen-history"` and `fidelity: "rendered"`. `complete: true` means all history
 reachable by scrolling was read and the original viewport was restored; it does not identify one
 assistant turn. Ambiguous pages, unsupported terminals, and failed restoration return no
 reconstructed response. Rozi never resizes a pane to collect its history.
 
 Typing or resizing cancels the read. Input and resize requests wait for restoration, then run in
-order. Concurrent agent prompts and headless input requests receive a busy error. Traversal is
+order, so resizing away and back ends at the original size. Screen detection holds its last state
+while Rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent prompts and headless input requests receive a busy error. Traversal is
 bounded to ten seconds, with up to three more seconds for restoration; a prompt deadline can stop
 it sooner. A manually scrolled transcript is restored to its starting position and left unread.
 `--capture` still captures the terminal when the turn resolves, before any scrolling.

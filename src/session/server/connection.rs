@@ -409,6 +409,9 @@ impl SessionServer {
         if owner.is_none() && !self.is_controller(client_id) {
             return Vec::new();
         }
+        if self.defer_history_resize(client_id, request) {
+            return Vec::new();
+        }
         let image_media = self.image_media();
         let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
             pane.generation == generation
@@ -417,9 +420,6 @@ impl SessionServer {
                     || protocol::wire_cell(cell_width, cell_height)
                         .is_some_and(|cell| cell != pane.cell))
         });
-        if boundary && self.defer_history_resize(client_id, request) {
-            return Vec::new();
-        }
         if boundary {
             if let Some(pane) = self.pane_mut(owner, pane_id) {
                 pane.graphics_pacer.reset();

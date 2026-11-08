@@ -15,8 +15,8 @@ mod spec;
 
 pub use catalog::AgentCatalog;
 pub use definition::{
-    AgentDefinition, AgentDetectionInput, AgentStateOutcome, AgentStateRule, FOOTER_ROWS,
-    MatchScope, MatchSource, Pattern,
+    AgentDefinition, AgentDetectionInput, AgentHistory, AgentStateOutcome, AgentStateRule,
+    FOOTER_ROWS, MatchScope, MatchSource, Pattern,
 };
 pub use spec::{AgentMatchSpec, AgentOrigin, AgentSpec, AgentStateSpec, build_definitions};
 

@@ -158,6 +158,23 @@ fn trail_number(
     }
 }
 
+/// The longest `settle_ms` or `settle_max_ms` may be: past this the cursor reads as stuck.
+const MAX_TRAIL_SETTLE_MS: u64 = 1_000;
+
+/// Apply a `[animations.cursor_trail]` settle wait in milliseconds, warning when it is too long.
+fn trail_millis(value: Option<u64>, key: &str, target: &mut Duration, warnings: &mut Vec<String>) {
+    let Some(value) = value else {
+        return;
+    };
+    if value <= MAX_TRAIL_SETTLE_MS {
+        *target = Duration::from_millis(value);
+    } else {
+        warnings.push(format!(
+            "Ignored animations.cursor_trail.{key} = {value} (expected 0 to {MAX_TRAIL_SETTLE_MS})"
+        ));
+    }
+}
+
 /// `#rrggbb` as a color.
 fn hex_color(value: &str) -> Option<(u8, u8, u8)> {
     let hex = value.trim().strip_prefix('#')?;
@@ -241,6 +258,18 @@ fn apply_cursor_trail(
     if let Some(value) = raw.glide_ms {
         target.glide_duration = Duration::from_millis(value);
     }
+    trail_millis(
+        raw.settle_ms,
+        "settle_ms",
+        &mut target.settle.quiet,
+        warnings,
+    );
+    trail_millis(
+        raw.settle_max_ms,
+        "settle_max_ms",
+        &mut target.settle.max,
+        warnings,
+    );
     trail_number(
         raw.max_length,
         "max_length",
@@ -550,6 +579,8 @@ mod tests {
             trailing_exponent = 2.0
             damping = 0.6
             glide_ms = 240
+            settle_ms = 80
+            settle_max_ms = 300
             max_length = 12
             opacity = 0.9
             taper = 0.5
@@ -575,6 +606,10 @@ mod tests {
         assert_eq!(trail.spring.damping, 0.6);
         assert_eq!(trail.glide_duration, Duration::from_millis(240));
         assert_eq!(
+            (trail.settle.quiet, trail.settle.max),
+            (Duration::from_millis(80), Duration::from_millis(300))
+        );
+        assert_eq!(
             (trail.max_length, trail.opacity, trail.taper),
             (12.0, 0.9, 0.5)
         );
@@ -598,6 +633,7 @@ mod tests {
             mode = "zoom"
             color = "pink"
             damping = 1.5
+            settle_ms = 5000
             [cursor_trail.particles]
             max = 0
             "#,
@@ -607,7 +643,7 @@ mod tests {
             CursorTrailConfig::default(),
             "bad values change nothing"
         );
-        assert_eq!(warnings.len(), 4, "{warnings:?}");
+        assert_eq!(warnings.len(), 5, "{warnings:?}");
         for key in [
             "cursor_trail.mode",
             "cursor_trail.color",

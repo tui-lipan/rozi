@@ -25,5 +25,20 @@
       "work_started_at": 1
     }
   ],
-  "type": "report-pane-rows"
+  "type": "report-pane-rows",
+  "epoch": 2,
+  "responses": [
+    {
+      "id": "example",
+      "seq": 1,
+      "response": {
+        "text": "Fixed the failing test.",
+        "source": "native-hook",
+        "fidelity": "semantic",
+        "complete": true,
+        "truncated": false,
+        "turn_id": "turn-1"
+      }
+    }
+  ]
 }

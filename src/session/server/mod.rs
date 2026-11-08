@@ -23,6 +23,7 @@ use crate::session::protocol::{
 use crate::session::queue::{ByteQueue, PushError, ReplacementKey};
 
 mod acquisition;
+mod agent_history;
 mod agent_summary;
 mod attachments;
 mod automation;
@@ -56,6 +57,7 @@ pub(crate) use resurrect::{
     Unrestorable, discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
     unrestorable_snapshot, unrestorable_snapshot_error,
 };
+mod responses;
 mod runtime;
 mod shutdown;
 mod subscriptions;
@@ -192,6 +194,8 @@ pub struct SessionServer {
     allow_takeover: bool,
     clients: Vec<ClientConn>,
     agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
+    agent_responses: responses::AgentResponseStore,
+    agent_history: HashMap<PaneId, agent_history::PendingHistoryRead>,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
@@ -480,6 +484,7 @@ pub struct AgentScratch {
     /// Exact semantic occupants currently present in this pane. Separate from detection caches so
     /// a state transition does not change identity and a departed occupant cannot reuse its ref.
     references: HashMap<Option<protocol::RowKey>, TrackedAgentReference>,
+    response_sequences: HashMap<protocol::AgentRef, (u64, u64)>,
     next_incarnation: u64,
     /// Launch whose screen-detected reference was last synchronized.
     reference_launch: u64,
@@ -492,7 +497,7 @@ pub struct AgentScratch {
     row_reports: HashMap<String, runtime::RowReport>,
     /// The latest rows of each agent publisher waiting for another client's copy of it to stop
     /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
-    standby_rows: HashMap<String, Vec<protocol::PublishedRow>>,
+    standby_rows: HashMap<String, runtime::StandbyPublisher>,
     /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
     /// A service closes its stream when its window moves to another session, and the agent runs on:
     /// reporting the same rows on return continues their runs rather than starting new ones.
@@ -514,6 +519,10 @@ pub struct AgentScratch {
     /// Set from a launch until the agent is ready: its loading spinner is not a run. See
     /// [`AGENT_STARTUP_GRACE`](super::runtime::AGENT_STARTUP_GRACE).
     pub startup: Option<AgentStartup>,
+    /// Rozi is scrolling this pane to read its history, so the screen shows pages Rozi caused
+    /// rather than what the agent is doing. Screen detection keeps its last answer meanwhile;
+    /// integration reports still apply.
+    pub history_frozen: bool,
     /// The next agent named here was already running: the definitions changed under it, so naming
     /// it is not a launch and starts no [`Self::startup`].
     pub adopting: bool,
@@ -1781,6 +1790,8 @@ impl SessionServer {
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
             agent_waits: HashMap::new(),
+            agent_responses: Default::default(),
+            agent_history: HashMap::new(),
             capture_waits: HashMap::new(),
             attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),
@@ -1940,6 +1951,7 @@ impl SessionServer {
         self.poll_pane_runtime();
         self.expire_agent_waits();
         self.resolve_capture_waits();
+        self.pump_agent_history();
         self.pump_recordings();
         self.flush_pending_foreground();
         self.adopt_pending_listener(listener);

@@ -583,10 +583,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.worktree_picker.is_some() {
         root = root.child(worktree_overlay(ctx));
     }
-    if ctx.state.show_session_picker {
+    if ctx.state.show_session_picker && !ctx.state.defer_startup_picker {
         root = root.child(session_picker_overlay(ctx));
     }
-    if ctx.state.remote_picker.is_some() {
+    if ctx.state.remote_picker.is_some() && !ctx.state.defer_startup_picker {
         root = root.child(remote_picker_overlay(ctx));
     }
     if ctx.state.agent_picker.is_some() {

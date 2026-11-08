@@ -2020,7 +2020,7 @@ fn wait_for_server_events(server: &SessionServer, count: usize) -> Vec<ServerEve
 }
 
 /// The catalog a `[[agents]]` block resolves to, as the controller's config reload would build it.
-fn catalog_from(toml_text: &str) -> Arc<crate::agent_detection::AgentCatalog> {
+pub(super) fn catalog_from(toml_text: &str) -> Arc<crate::agent_detection::AgentCatalog> {
     let mut warnings = Vec::new();
     let specs: Vec<crate::agent_detection::AgentSpec> = toml::from_str::<toml::Table>(toml_text)
         .expect("agents parse")
@@ -6470,6 +6470,7 @@ fn agent_report(
 ) -> crate::control::ControlResponse {
     let command = match state {
         Some(state) => crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: token.into(),
@@ -6529,6 +6530,7 @@ fn report_unless_quiet(
     agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: "client".into(),
@@ -6610,6 +6612,7 @@ fn a_report_that_may_never_be_replaced_follows_the_screen_until_it_is_quiet() {
     let refused = agent_control(
         &mut server,
         crate::control::ControlCommand::AgentPrompt {
+            result: false,
             target: crate::control::AgentTarget::Pane(7),
             prompt: "typed".into(),
             wait: None,
@@ -6685,6 +6688,7 @@ fn prompt_for(server: &mut SessionServer) -> crate::control::ControlResponse {
     agent_control(
         server,
         crate::control::ControlCommand::AgentPrompt {
+            result: false,
             target: crate::control::AgentTarget::Pane(7),
             prompt: "typed".into(),
             wait: None,
@@ -6709,6 +6713,7 @@ fn pane_reporting(server: &mut SessionServer, agent: &str, screen: &str) {
     let response = agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: agent.into(),
             integration: "client".into(),
@@ -6882,6 +6887,7 @@ fn report_turn_end_as(
     agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: token.into(),
@@ -7032,6 +7038,7 @@ fn only_a_fallback_can_be_confirmed() {
         let response = agent_control(
             &mut server,
             crate::control::ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "client".into(),
@@ -7122,6 +7129,8 @@ fn a_row_reporter_whose_conversation_is_withdrawn_is_retired() {
             1,
             false,
             super::runtime::PanePublisher {
+                epoch: 0,
+                responses: Vec::new(),
                 id: "sessions".into(),
                 kind: protocol::PublisherKind::Agent,
             },
@@ -7172,6 +7181,8 @@ fn one_windows_copy_of_an_agent_publisher_speaks_for_the_pane() {
     server.panes.get_mut(&7).unwrap().runtime.rows.clear();
     let agent = protocol::PublisherKind::Agent;
     let publisher = || super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "sessions".into(),
         kind: agent,
     };
@@ -7233,6 +7244,8 @@ fn rows_withdrawn_while_their_agent_runs_keep_their_clock_when_they_return() {
     let generation = server.panes[&7].generation;
     server.panes.get_mut(&7).unwrap().runtime.rows.clear();
     let publisher = || super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "sessions".into(),
         kind: protocol::PublisherKind::Agent,
     };
@@ -7351,6 +7364,8 @@ fn a_hook_report_never_reaches_an_activity_row() {
 
     // Whatever a publisher sends, an activity row keeps no conversation.
     let publisher = super::runtime::PanePublisher {
+        epoch: 0,
+        responses: Vec::new(),
         id: "watch".into(),
         kind: protocol::PublisherKind::Activity,
     };
@@ -7404,6 +7419,7 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
             1,
             crate::control::ControlRequest {
                 command: crate::control::ControlCommand::AgentPrompt {
+                    result: false,
                     target: crate::control::AgentTarget::Pane(7),
                     prompt: "go".into(),
                     wait: None,
@@ -9072,6 +9088,7 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
         (AgentState::Blocked, Some("approval".to_string()), 2),
     ] {
         let res = harness.headless_control(ControlCommand::AgentReport {
+            response: None,
             target: Some(1),
             agent: "claude".to_string(),
             integration: "claude-hook".to_string(),

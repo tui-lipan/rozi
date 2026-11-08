@@ -409,6 +409,7 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::PaneClose { .. }
         | ControlCommand::AgentsList
         | ControlCommand::AgentGet { .. }
+        | ControlCommand::AgentResponse { .. }
         | ControlCommand::AgentRead { .. }
         | ControlCommand::Metrics
         | ControlCommand::ExtensionsStatus

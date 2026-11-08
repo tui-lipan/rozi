@@ -11,5 +11,13 @@
   "seq": 1,
   "state": "working",
   "type": "report-agent",
-  "unless_quiet": "working"
+  "unless_quiet": "working",
+  "response": {
+    "text": "Fixed the failing test.",
+    "source": "native-hook",
+    "fidelity": "semantic",
+    "complete": true,
+    "truncated": false,
+    "turn_id": "turn-1"
+  }
 }

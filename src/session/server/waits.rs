@@ -18,6 +18,7 @@ pub(super) struct PendingAgentWait {
     armed: bool,
     reply: ReplyTo,
     capture: Option<crate::control::CaptureRender>,
+    response_fence: Option<super::responses::AgentResponseFence>,
 }
 
 /// What a wait is watching.
@@ -30,6 +31,15 @@ enum WaitSubject {
     Pane { pane_id: PaneId, generation: u64 },
 }
 
+impl WaitSubject {
+    fn agent_reference(&self) -> Option<&protocol::AgentRef> {
+        match self {
+            Self::Agent(reference) => Some(reference),
+            Self::Pane { .. } => None,
+        }
+    }
+}
+
 enum WaitEvaluation {
     Pending,
     Ready(Option<Box<protocol::AgentRuntime>>),
@@ -37,6 +47,14 @@ enum WaitEvaluation {
 }
 
 impl PendingAgentWait {
+    fn adopt_response_session(&mut self, native_session: Option<String>) {
+        if let Some(fence) = self.response_fence.as_mut()
+            && fence.native_session.is_none()
+        {
+            fence.native_session = native_session;
+        }
+    }
+
     fn needs_departure(&self, evaluation: &WaitEvaluation) -> bool {
         if !self.require_transition || self.armed {
             return false;
@@ -53,6 +71,19 @@ impl PendingAgentWait {
 }
 
 impl SessionServer {
+    pub(super) fn has_conflicting_prompt(
+        &self,
+        reference: &protocol::AgentRef,
+        result: bool,
+    ) -> bool {
+        self.agent_history.contains_key(&reference.pane.pane_id)
+            || self.agent_waits.values().any(|wait| {
+                wait.require_transition
+                    && matches!(&wait.subject, WaitSubject::Agent(current) if current == reference)
+                    && (result || wait.response_fence.is_some())
+            })
+    }
+
     pub(super) fn register_agent_wait(
         &mut self,
         client_id: ClientId,
@@ -80,6 +111,7 @@ impl SessionServer {
             AgentTarget::Pane(pane_id) if self.pane_awaits_agent(pane_id) => {
                 if until == AgentWaitCondition::Gone {
                     return Some(ControlResponse::ok(AgentWaitResult {
+                        response: None,
                         reference: None,
                         condition: until,
                         result: None,
@@ -99,6 +131,7 @@ impl SessionServer {
         let (subject, evaluation) = self.evaluate_wait_subject(subject, until);
         match evaluation {
             WaitEvaluation::Ready(agent) => Some(ControlResponse::ok(AgentWaitResult {
+                response: None,
                 reference: match subject {
                     WaitSubject::Agent(reference) => Some(reference),
                     WaitSubject::Pane { .. } => None,
@@ -120,6 +153,7 @@ impl SessionServer {
                             .map(Duration::from_millis)
                             .and_then(|duration| Instant::now().checked_add(duration)),
                         capture: None,
+                        response_fence: None,
                         require_transition: false,
                         initial_state: None,
                         armed: true,
@@ -196,8 +230,13 @@ impl SessionServer {
             };
             let (subject, mut evaluation) =
                 self.evaluate_wait_subject(wait.subject.clone(), wait.until);
-            let needs_departure = wait.needs_departure(&evaluation);
+            let fresh_response = self.fresh_prompt_response(wait, &mut evaluation);
+            let needs_departure = !fresh_response && wait.needs_departure(&evaluation);
+            let adopted_session = subject
+                .agent_reference()
+                .and_then(|reference| self.response_native_session(reference));
             let wait = self.agent_waits.get_mut(&key).expect("wait read above");
+            wait.adopt_response_session(adopted_session);
             wait.subject = subject;
             if needs_departure {
                 match evaluation {
@@ -211,6 +250,31 @@ impl SessionServer {
             }
         }
         self.finish_agent_waits(completed);
+    }
+
+    fn fresh_prompt_response(
+        &self,
+        wait: &PendingAgentWait,
+        evaluation: &mut WaitEvaluation,
+    ) -> bool {
+        if matches!(evaluation, WaitEvaluation::Error(_, _)) {
+            return false;
+        }
+        let (Some(reference), Some(fence)) =
+            (wait.subject.agent_reference(), wait.response_fence.as_ref())
+        else {
+            return false;
+        };
+        if fence.native_session.is_some()
+            && self.response_native_session(reference) != fence.native_session
+        {
+            *evaluation = WaitEvaluation::Error(
+                ControlErrorCode::AgentReplaced,
+                "agent changed its native session while waiting for a response".into(),
+            );
+            return false;
+        }
+        self.agent_responses.after(reference, fence).is_some()
     }
 
     pub(super) fn expire_agent_waits(&mut self) {
@@ -266,15 +330,37 @@ impl SessionServer {
                 continue;
             };
             let response = match evaluation {
-                WaitEvaluation::Ready(agent) => self.agent_wait_response(
-                    wait.until,
-                    agent,
-                    wait.capture,
-                    match wait.subject {
-                        WaitSubject::Agent(reference) => Some(reference),
-                        WaitSubject::Pane { .. } => None,
-                    },
-                ),
+                WaitEvaluation::Ready(agent) => {
+                    let reference = wait.subject.agent_reference().cloned();
+                    let result = match self.agent_wait_result(
+                        wait.until,
+                        agent,
+                        wait.capture,
+                        wait.response_fence.as_ref(),
+                        reference,
+                    ) {
+                        Ok(result) => result,
+                        Err(response) => {
+                            self.answer_held(key.0, &wait.reply, response);
+                            continue;
+                        }
+                    };
+                    if let Some(fence) = wait.response_fence {
+                        let pending = super::agent_history::HistoryWait {
+                            key,
+                            reply: wait.reply.clone(),
+                            deadline: wait.deadline,
+                            fence,
+                            result,
+                        };
+                        let Some(response) = self.fallback_agent_result(pending) else {
+                            continue;
+                        };
+                        response
+                    } else {
+                        ControlResponse::ok(result)
+                    }
+                }
                 WaitEvaluation::Error(code, message) => ControlResponse::error_with(code, message),
                 WaitEvaluation::Pending => continue,
             };
@@ -282,29 +368,27 @@ impl SessionServer {
         }
     }
 
-    fn agent_wait_response(
+    fn agent_wait_result(
         &mut self,
         condition: AgentWaitCondition,
         agent: Option<Box<protocol::AgentRuntime>>,
         render: Option<crate::control::CaptureRender>,
+        response_fence: Option<&super::responses::AgentResponseFence>,
         reference: Option<protocol::AgentRef>,
-    ) -> ControlResponse {
+    ) -> std::result::Result<AgentWaitResult, ControlResponse> {
         let result = if let (Some(render), Some(agent)) = (render, agent.as_ref()) {
             let id = agent.reference.pane.pane_id;
             let pane = self
                 .panes
                 .get_mut(&id)
                 .expect("wait resolved against this pane");
-            let content = match crate::pane::capture_screen(
+            let content = crate::pane::capture_screen(
                 pane.screen_without_change(),
                 None,
                 render,
                 None,
                 false,
-            ) {
-                Ok(content) => content,
-                Err(response) => return response,
-            };
+            )?;
             Some(crate::control::AgentPromptResult::Terminal {
                 capture: crate::control::PaneCapture {
                     id,
@@ -315,7 +399,13 @@ impl SessionServer {
         } else {
             None
         };
-        ControlResponse::ok(AgentWaitResult {
+        let response = reference.as_ref().and_then(|reference| {
+            self.agent_responses
+                .after(reference, response_fence?)
+                .cloned()
+        });
+        Ok(AgentWaitResult {
+            response,
             reference,
             condition,
             agent: agent.map(|agent| *agent),
@@ -327,15 +417,19 @@ impl SessionServer {
     pub(super) fn remove_agent_waits(&mut self, client_id: ClientId) {
         self.agent_waits
             .retain(|&(client, _), _| client != client_id);
+        self.cancel_client_history(client_id);
     }
 
     /// Whether `client_id` still holds a wait, which keeps a headless connection open.
     pub(super) fn holds_agent_wait(&self, client_id: ClientId) -> bool {
-        self.agent_waits
-            .keys()
-            .any(|&(client, _)| client == client_id)
+        self.holds_agent_history(client_id)
+            || self
+                .agent_waits
+                .keys()
+                .any(|&(client, _)| client == client_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn register_post_prompt_wait(
         &mut self,
         client_id: ClientId,
@@ -343,6 +437,7 @@ impl SessionServer {
         until: AgentWaitCondition,
         timeout_ms: Option<u64>,
         capture: Option<crate::control::CaptureRender>,
+        result: bool,
         reply: ReplyTo,
     ) -> std::result::Result<(), ControlResponse> {
         let evaluation = self.evaluate_agent_wait(&reference, until);
@@ -360,12 +455,16 @@ impl SessionServer {
         self.agent_waits.insert(
             (client_id, reply.hold_id()),
             PendingAgentWait {
-                subject: WaitSubject::Agent(reference),
+                subject: WaitSubject::Agent(reference.clone()),
                 until,
                 deadline: timeout_ms
                     .map(Duration::from_millis)
                     .and_then(|duration| Instant::now().checked_add(duration)),
                 capture,
+                response_fence: result.then(|| {
+                    self.agent_responses
+                        .fence(self.response_native_session(&reference))
+                }),
                 require_transition: true,
                 initial_state,
                 armed,
@@ -583,6 +682,7 @@ mod tests {
                     AgentWaitCondition::Turn,
                     None,
                     None,
+                    false,
                     headless(),
                 )
                 .unwrap();
@@ -623,6 +723,7 @@ mod tests {
                     AgentWaitCondition::Turn,
                     None,
                     Some(crate::control::CaptureRender::Text),
+                    false,
                     if attached {
                         ReplyTo::Attached { request_id: 42 }
                     } else {
@@ -683,6 +784,178 @@ mod tests {
             };
             assert!(text.contains("Approve the plan?"));
             assert!(!text.contains("later output"));
+        }
+    }
+
+    #[test]
+    fn semantic_response_is_atomic_and_fenced_for_both_transports() {
+        use crate::control::{AgentResponseFidelity, AgentResponsePayload, AgentResponseSource};
+        for (attached, rows, cols) in [
+            (false, 5, 20),
+            (true, 5, 20),
+            (false, 80, 200),
+            (true, 80, 200),
+        ] {
+            let mut server = server_with_agent(protocol::DetectedAgentState::Idle);
+            server
+                .panes
+                .get_mut(&3)
+                .unwrap()
+                .screen_mut()
+                .resize(rows, cols);
+            let generation = server.panes[&3].generation;
+            let report = |seq, text: &str| runtime::AgentIntegrationUpdate {
+                agent: Some("claude".into()),
+                integration: "hooks".into(),
+                state: Some(protocol::AgentState::Done),
+                reason: None,
+                native_session: Some("native".into()),
+                unless_quiet: None,
+                ended: false,
+                seq,
+                response: Some(AgentResponsePayload {
+                    text: text.into(),
+                    turn_id: Some(format!("turn-{seq}")),
+                    source: AgentResponseSource::NativeHook,
+                    fidelity: AgentResponseFidelity::Semantic,
+                    complete: true,
+                    truncated: false,
+                }),
+            };
+            server
+                .apply_agent_integration(None, 3, generation, report(1, "old"))
+                .unwrap();
+            let reference = server
+                .resolve_agent_wait_target(AgentTarget::Pane(3))
+                .unwrap();
+            let (client, mut stream) = super::super::tests::attach_client(&mut server);
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            server
+                .register_post_prompt_wait(
+                    client,
+                    reference.clone(),
+                    AgentWaitCondition::Turn,
+                    None,
+                    Some(crate::control::CaptureRender::Text),
+                    true,
+                    if attached {
+                        ReplyTo::Attached { request_id: 42 }
+                    } else {
+                        headless()
+                    },
+                )
+                .unwrap();
+            server.resolve_agent_waits();
+            assert_eq!(
+                server.agent_waits.len(),
+                1,
+                "old response cannot complete a new wait"
+            );
+            assert!(
+                server
+                    .apply_agent_integration(None, 3, generation, report(1, "replay"))
+                    .is_err()
+            );
+            assert_eq!(
+                server
+                    .agent_responses
+                    .latest(&reference, &Some("native".into()))
+                    .unwrap()
+                    .content
+                    .text,
+                "old"
+            );
+            assert_eq!(server.agent_waits.len(), 1);
+            let text = "## Findings\n\n| Key | Value |\n|---|---|\n| 🌷 | 日本語 |\n".repeat(2000);
+            server
+                .apply_agent_integration(None, 3, generation, report(2, &text))
+                .unwrap();
+            assert!(server.agent_waits.is_empty());
+            // A nonblocking flush need not drain a frame this large in one pass, so read it on
+            // its own thread while the server keeps flushing, as the real loop does.
+            stream.set_nonblocking(false).unwrap();
+            let reader = std::thread::spawn(move || {
+                protocol::read_frame::<_, ServerMessage>(&mut stream)
+                    .map(|message| (message, stream))
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !reader.is_finished() {
+                assert!(Instant::now() < deadline, "response frame never drained");
+                server.flush_clients();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let (message, mut stream) = reader.join().unwrap().unwrap();
+            let response = match message {
+                ServerMessage::AttachedControlResult {
+                    request_id: 42,
+                    response,
+                } if attached => response,
+                ServerMessage::SessionControlResult { response, .. } if !attached => response,
+                other => panic!("unexpected response: {other:?}"),
+            };
+            let result: AgentWaitResult = serde_json::from_value(response.data.unwrap()).unwrap();
+            assert_eq!(result.response.unwrap().content.text, text);
+            assert!(
+                result.result.is_some(),
+                "capture and semantic response coexist"
+            );
+            assert!(
+                server
+                    .apply_agent_integration(None, 3, generation, report(2, "replacement"))
+                    .is_err()
+            );
+            let snapshot = serde_json::to_string(&server.panes[&3].runtime).unwrap();
+            assert!(
+                !snapshot.contains("Findings"),
+                "content must not enter runtime metadata"
+            );
+            assert!(
+                server
+                    .apply_agent_integration(
+                        None,
+                        3,
+                        generation,
+                        report(
+                            3,
+                            &"x".repeat(super::super::responses::MAX_RESPONSE_BYTES + 1)
+                        )
+                    )
+                    .is_err()
+            );
+            assert_eq!(
+                server.panes[&3].runtime.integration.as_ref().unwrap().seq,
+                2
+            );
+            if attached {
+                server
+                    .register_post_prompt_wait(
+                        client,
+                        reference.clone(),
+                        AgentWaitCondition::Turn,
+                        None,
+                        None,
+                        true,
+                        ReplyTo::Attached { request_id: 43 },
+                    )
+                    .unwrap();
+                let mut switched = report(3, "another conversation");
+                switched.native_session = Some("another-native-session".into());
+                server
+                    .apply_agent_integration(None, 3, generation, switched)
+                    .unwrap();
+                server.flush_clients();
+                let message: ServerMessage = protocol::read_frame(&mut stream).unwrap();
+                let ServerMessage::AttachedControlResult {
+                    request_id: 43,
+                    response,
+                } = message
+                else {
+                    panic!("{message:?}")
+                };
+                assert_eq!(response.code, Some(ControlErrorCode::AgentReplaced));
+            }
         }
     }
 
@@ -903,6 +1176,7 @@ mod tests {
                 AgentWaitCondition::Idle,
                 None,
                 None,
+                false,
                 ReplyTo::Headless {
                     capabilities: protocol::Capabilities::default(),
                     effective_protocol: PROTOCOL_VERSION,

@@ -118,12 +118,31 @@ pub struct PublishStreamKey {
     pub publisher: String,
 }
 
+/// A published response and the delivery state that bounds how long it is replayed.
+#[derive(Clone, Debug)]
+pub struct RetainedResponse {
+    pub response: crate::control::PublishedAgentResponse,
+    /// The answered row's cleaned status when the response arrived. A different status means a
+    /// newer turn, and replaying the response would present an old answer as a new one.
+    pub status: String,
+    /// The answered row's canonical native session when the response arrived. A different
+    /// conversation in the same row slot must never receive an older conversation's answer.
+    pub native_session: Option<String>,
+    /// Whether it was handed to a reachable session connection since the last attach.
+    pub delivered: bool,
+}
+
 pub struct PublishStreamState {
     pub id: u64,
     pub identity: PublisherIdentity,
     /// The publisher's latest snapshot, resent when this client attaches again: the session server
     /// withdraws a client's rows when it leaves, and a reconnect is a new client to it.
     pub last_rows: Vec<crate::session::protocol::PublishedRow>,
+    /// Semantic responses the publisher sent with those rows, kept for as long as the row they
+    /// answer still reports the status it had then. A response sent while the session was not
+    /// reachable is delivered with the next report, and every one is sent again after a
+    /// reconnect; the session server drops what it already has by `(epoch, seq)`.
+    pub last_responses: Vec<RetainedResponse>,
     pub sender: std::sync::mpsc::SyncSender<String>,
     pub extension: Option<crate::control::ExtensionProvenance>,
     /// Set for a placed worker's stream: its rows are taken only while the session on screen lies
@@ -422,6 +441,8 @@ pub struct State {
     /// screen. Cleared when it fires.
     pub(crate) release_notes_due: bool,
     pub(crate) show_release_notes: bool,
+    /// Keep startup pickers out of the overlay stack until automatic release notes close.
+    pub(crate) defer_startup_picker: bool,
     /// The startup decision to welcome a first install once a session is on screen. Cleared when
     /// it fires.
     pub(crate) welcome_due: bool,
@@ -765,6 +786,7 @@ impl State {
             release_notes_tab: 0,
             release_notes_due: false,
             show_release_notes: false,
+            defer_startup_picker: false,
             welcome_due: false,
             show_welcome: false,
             event_hub: crate::events::EventHub::default(),
@@ -1292,8 +1314,14 @@ impl State {
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),
             (self.agent_picker.is_some(), "agent-picker"),
-            (self.remote_picker.is_some(), "remote-picker"),
-            (self.show_session_picker, "session-picker"),
+            (
+                self.remote_picker.is_some() && !self.defer_startup_picker,
+                "remote-picker",
+            ),
+            (
+                self.show_session_picker && !self.defer_startup_picker,
+                "session-picker",
+            ),
             (self.worktree_picker.is_some(), "worktree-picker"),
             (self.show_profile_picker, "profile-picker"),
             (self.recording_mark.is_some(), "recording-mark"),

@@ -128,6 +128,14 @@ pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> std::io
     write_control_frame(writer, value)
 }
 
+/// Total on-wire byte length of a JSON control frame (the 5-byte length + kind header plus the
+/// serialized JSON body), matching the outbound queue accounting and [`MAX_FRAME_SIZE`] check.
+pub fn control_frame_wire_bytes<T: Serialize>(value: &T) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len().saturating_add(super::CONTROL_FRAME_OVERHEAD))
+        .unwrap_or(usize::MAX)
+}
+
 pub fn write_control_frame<W: Write, T: Serialize>(
     writer: &mut W,
     value: &T,

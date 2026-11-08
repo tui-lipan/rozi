@@ -174,6 +174,8 @@ fn framed_messages_round_trip() {
             },
         },
         ClientMessage::ReportPaneRows {
+            epoch: 0,
+            responses: Vec::new(),
             pane_id: 3,
             local: false,
             generation: 2,

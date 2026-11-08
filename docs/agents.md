@@ -423,6 +423,60 @@ The capture is taken when the wait resolves. It is terminal content, including p
 and earlier output visible on screen. It is not an extracted assistant message. Capture requires
 a wait other than `gone`. Timeouts, lost agents, replacements, and stale references remain errors.
 
+### Read the agent's response
+
+Use `--result` with a prompt wait to request the agent's response:
+
+```bash
+rozi --session dev agents prompt --target 3 "Review this diff" --wait turn --timeout 10m --result
+rozi --session dev agents response --target 3 --format json
+```
+
+Text output prints the response. JSON adds a separate `response` object with `response_id`,
+optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`.
+`fidelity: "semantic"` means original agent text, including Markdown, independent of pane size.
+`fidelity: "rendered"` means terminal text. Check `complete` and `truncated` before treating a
+response as complete. `--capture` and `--result` can be combined.
+
+An integration response takes priority. When none is available at the end of an idle or completed
+turn, Rozi reads retained terminal history with `source: "terminal"`. This rendered text can include
+earlier turns and interface text, and always has `complete: false`.
+
+For an alternate-screen agent, Rozi can scroll through its history when its definition declares
+`history = "mouse-scroll"`, the agent is idle or done, mouse reporting is enabled, and the transcript
+is at the bottom. Declare it only for an agent whose mouse wheel does nothing but scroll its
+transcript, because Rozi sends real wheel events to read it:
+
+```toml
+[[agents]]
+id = "mycoolagent"
+history = "mouse-scroll"
+```
+
+No built-in definition declares it, and an agent without the declaration is never sent input. A
+built-in override keeps the built-in's setting when `history` is omitted. A successful read has
+`source: "alternate-screen-history"` and `fidelity: "rendered"`. `complete: true` means all history
+reachable by scrolling was read and the original viewport was restored; it does not identify one
+assistant turn. Ambiguous pages, unsupported terminals, and failed restoration return no
+reconstructed response. Rozi never resizes a pane to collect its history.
+
+Typing or resizing cancels the read. Input and resize requests wait for restoration, then run in
+order, so resizing away and back ends at the original size. Screen detection holds its last state
+while Rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent prompts and headless input requests receive a busy error. Traversal is
+bounded to ten seconds, with up to three more seconds for restoration; a prompt deadline can stop
+it sooner. A manually scrolled transcript is restored to its starting position and left unread.
+`--capture` still captures the terminal when the turn resolves, before any scrolling.
+
+A prompt only returns an integration response published after that prompt was submitted for the same agent
+incarnation and native conversation. Switching conversations while waiting fails the request.
+Result requests refuse a working agent even with `--allow-working`, and overlapping prompt waits
+with a result request are refused. A blocked or failed turn may have no response. In that case JSON omits `response`
+and text output says it is unavailable. `agents response` returns the latest retained response,
+or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
+Each response accepts at most 1 MiB of text. Oversized reports fail explicitly. Normal terminal
+history is truncated at a UTF-8 boundary with `truncated: true`; oversized alternate-screen history
+returns no reconstruction.
+
 ### Report state from agent hooks
 
 Agent hooks can report state that screen detection cannot see:
@@ -434,6 +488,16 @@ rozi --session dev agents report --target "$ROZI_PANE" \
 rozi --session dev agents release --target "$ROZI_PANE" \
   --integration "$AGENT_RUN_ID" --seq 2
 ```
+
+A report can include a response with `--response-stdin`. Supply a JSON object on standard input:
+
+```json
+{"text":"## Findings\n\nNo issues found.","source":"native-hook","fidelity":"semantic","complete":true,"truncated":false,"turn_id":"turn-42"}
+```
+
+The response and state are accepted together under the report's sequence number. Do not put
+response text in command-line arguments. Sources are `native-hook`, `native-api`, `transcript`,
+`acp`, `terminal`, and `alternate-screen-history`.
 
 - Generate one unique `--integration` token per agent process. Sequence numbers increase within a
   token.
@@ -480,6 +544,23 @@ For an agent rozi cannot follow on screen, use one of the agent paths:
   not rozi detects anything in the pane, so it also covers an agent that exists only behind an
   API. While an agent publisher has rows, rozi shows them instead of screen detection. Selecting a
   row can also bring that run into view inside the program.
+
+An agent publisher can include a `responses` array beside `rows` in an update:
+
+```json
+{"rows":[{"id":"review","title":"Review","status":"done","native_session":"session-1"}],"responses":[{"id":"review","seq":1,"response":{"text":"No issues found.","source":"native-api","fidelity":"semantic","complete":true,"turn_id":"turn-1"}}]}
+```
+
+Each response names a row in that same update. Increase `seq` for each response to that row
+within the stream. Replayed sequences are ignored. Publish completion and its response together,
+so `agents prompt --result` can read the answer as soon as its wait resolves. Activity publishers
+cannot publish agent responses. An update carries at most 64 responses, each text at most 1 MiB, and
+4 MiB of responses in total. The server accepts the rows and every response together or rejects
+the whole update, so spread responses for multiple rows across updates and truncate a single
+response to 1 MiB. Rows whose ids are changed by cleaning, or that fall past the 64-row limit,
+cannot own a response, and the update is rejected. A response that could not reach the session
+is sent again with the publisher's next update and after a reconnect, for as long as its row keeps
+the status and `native_session` it had. See [writing extensions](writing-extensions.md) for stream ownership.
 
 `rozi status` and a plain `rozi publish` report activities, not agents. Their rows appear in
 Activity, but not in the Agents view or `rozi agents`, and they do not keep the host awake. A

@@ -354,6 +354,7 @@ type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>)
 type IntegrationResult<T> = std::result::Result<T, (&'static str, String)>;
 
 pub(super) struct AgentIntegrationUpdate {
+    pub response: Option<crate::control::AgentResponsePayload>,
     pub agent: Option<String>,
     pub integration: String,
     pub state: Option<protocol::AgentState>,
@@ -550,7 +551,7 @@ fn validate_integration_update(
 /// given, so it is validated rather than cleaned. The one rule for a hook report and a published row,
 /// which are matched to each other by exact equality.
 fn native_session_is_valid(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+    protocol::native_session_is_valid(value)
 }
 
 fn validate_native_session(native_session: Option<&str>) -> IntegrationResult<()> {
@@ -872,9 +873,12 @@ impl SessionServer {
                     .to_string(),
             ));
         }
+        super::responses::validate_published(&publisher, &rows)?;
         // The identity is the client's own; qualified by the client, it never meets another
         // client's publisher of the same name. See [`protocol::qualified_publisher`].
         let publisher = PanePublisher {
+            epoch: publisher.epoch,
+            responses: publisher.responses,
             id: protocol::qualified_publisher(client_id, &publisher.id),
             kind: publisher.kind,
         };
@@ -896,7 +900,7 @@ impl SessionServer {
         // conversations. One speaks for the pane; the rest wait their turn.
         if publisher.kind == protocol::PublisherKind::Agent {
             if !rows.is_empty() && another_client_speaks(&pane.runtime.rows, &publisher.id) {
-                pane.agent.standby_rows.insert(publisher.id, rows);
+                record_standby_update(pane, publisher, rows);
                 return Ok(None);
             }
             pane.agent.standby_rows.remove(&publisher.id);
@@ -951,8 +955,12 @@ impl SessionServer {
             pane.runtime.integration.as_deref(),
             now,
         );
+        let mut promoted = None;
         if rows.is_empty() {
-            rows = promote_standby_rows(pane, &publisher.id, &previous, now, local);
+            let (standby_rows, standby_publisher) =
+                promote_standby_rows(pane, &publisher.id, &previous, now, local);
+            rows = standby_rows;
+            promoted = standby_publisher;
             if rows.is_empty() && !previous.is_empty() {
                 pane.agent
                     .withdrawn_rows
@@ -961,6 +969,11 @@ impl SessionServer {
         }
         let next = splice_publisher_rows(&pane.runtime.rows, &publisher.id, rows);
         if next == pane.runtime.rows {
+            self.store_published_responses(owner, pane_id, &publisher);
+            if let Some(promoted) = &promoted {
+                self.store_published_responses(owner, pane_id, promoted);
+            }
+            self.resolve_agent_waits();
             return Ok(None);
         }
         let baseline = owner
@@ -977,6 +990,10 @@ impl SessionServer {
         // update, or a row change that leaves the conversation as it was, is not.
         if resume_changed {
             self.mark_dirty();
+        }
+        self.store_published_responses(owner, pane_id, &publisher);
+        if let Some(promoted) = &promoted {
+            self.store_published_responses(owner, pane_id, promoted);
         }
         self.resolve_agent_waits();
         Ok(Some(message))
@@ -1024,13 +1041,18 @@ impl SessionServer {
             let mut publishers: Vec<&str> =
                 withdrawn.iter().map(|row| row.publisher.as_str()).collect();
             publishers.dedup();
+            let mut promoted_publishers = Vec::new();
             for publisher in publishers {
                 let previous: Vec<_> = withdrawn
                     .iter()
                     .filter(|row| row.publisher == publisher)
                     .cloned()
                     .collect();
-                next.extend(promote_standby_rows(pane, publisher, &previous, now, local));
+                let (rows, promoted) = promote_standby_rows(pane, publisher, &previous, now, local);
+                next.extend(rows);
+                if let Some(promoted) = promoted {
+                    promoted_publishers.push(promoted);
+                }
             }
             // The agent and its conversation are still running; only the window that listed
             // them left. Keep what a snapshot would have resumed from those rows - unless another
@@ -1048,10 +1070,16 @@ impl SessionServer {
                 pane.agent.retained_resume = Some(before);
             }
             resume_changed |= super::resurrect::resume_target(pane) != target_before;
-            changed_panes.push((pane_id, pane.generation, pane.runtime.clone(), baseline));
+            changed_panes.push((
+                pane_id,
+                pane.generation,
+                pane.runtime.clone(),
+                baseline,
+                promoted_publishers,
+            ));
         }
         let mut messages = Vec::with_capacity(changed_panes.len());
-        for (pane_id, generation, state, baseline) in changed_panes {
+        for (pane_id, generation, state, baseline, promoted_publishers) in changed_panes {
             messages.push(self.finish_pane_runtime_change(
                 None,
                 pane_id,
@@ -1059,6 +1087,9 @@ impl SessionServer {
                 state,
                 Some(baseline),
             ));
+            for promoted in &promoted_publishers {
+                self.store_published_responses(None, pane_id, promoted);
+            }
         }
         if resume_changed {
             self.mark_dirty();
@@ -1087,6 +1118,7 @@ impl SessionServer {
             ));
         }
         let AgentIntegrationUpdate {
+            response,
             agent,
             integration,
             state,
@@ -1096,6 +1128,16 @@ impl SessionServer {
             ended,
             seq,
         } = update;
+        if let Some(response) = response.as_ref() {
+            super::responses::validate_payload(response)?;
+            if state.is_none() {
+                return Err((
+                    "invalid-argument",
+                    "a released report cannot include a response".into(),
+                ));
+            }
+        }
+        let response_session = native_session.clone();
         validate_unless_quiet(state, unless_quiet, ended)?;
         let report = state.map(|state| (state, reason, native_session));
         let previous_runtime = pane.runtime.clone();
@@ -1187,6 +1229,37 @@ impl SessionServer {
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
+        if let Some(response) = response {
+            // Sequence validation and incarnation observation above must both succeed first.
+            if let Some(pane) = self.pane(owner, pane_id) {
+                let reference = self
+                    .agent_runtimes_for(pane_id, pane)
+                    .into_iter()
+                    .find(|runtime| {
+                        if !to_row {
+                            return runtime.reference.slot.is_none()
+                                || protocol::occupant_native_session(
+                                    &pane.runtime.rows,
+                                    pane.runtime.integration.as_deref(),
+                                    runtime.reference.slot.as_ref(),
+                                ) == response_session;
+                        }
+                        runtime
+                            .reference
+                            .slot
+                            .as_ref()
+                            .and_then(|slot| pane.runtime.rows.iter().find(|row| row.has_key(slot)))
+                            .and_then(agent_reporting_session)
+                            == response_session.as_deref()
+                    })
+                    .map(|runtime| runtime.reference);
+                if let Some(reference) = reference {
+                    let native_session = self.response_native_session(&reference);
+                    self.agent_responses
+                        .insert(reference, native_session, response);
+                }
+            }
+        }
         self.resolve_agent_waits();
         self.mark_dirty();
         Ok(Some(message))
@@ -1385,12 +1458,14 @@ impl SessionServer {
         let tracks_snapshot = owner.is_none() && self.settings.resurrect;
         let tracks_snapshot_foreground = tracks_snapshot
             && self.settings.resurrect_foreground != crate::config::ForegroundRestore::Never;
+        let history_leased = owner.is_none() && self.agent_history.contains_key(&pane_id);
         let Some(pane) = self.pane_mut(owner, pane_id) else {
             return;
         };
         if pane.generation != generation {
             return;
         }
+        pane.agent.history_frozen = history_leased;
         let inspector = PlatformProcessInspector::default();
         let mut next = compute_runtime_state(
             pane,
@@ -2211,13 +2286,24 @@ fn next_activity_run_start(
 
 /// How many rows one publisher may publish into a pane. A tab bar is a human-sized list; a
 /// publisher sending thousands is malfunctioning, and every row costs a sidebar row.
-const MAX_PANE_ROWS: usize = 64;
+use super::protocol::MAX_PANE_ROWS;
 
 /// Who is replacing rows in [`SessionServer::report_pane_rows`], as the UI client identified the
 /// stream: its stable id within the pane and the kind it declared.
 pub(super) struct PanePublisher {
+    pub epoch: u64,
+    pub responses: Vec<crate::control::PublishedAgentResponse>,
     pub id: String,
     pub kind: protocol::PublisherKind,
+}
+
+/// A waiting agent publisher's latest rows and the semantic responses that arrived for them while
+/// another client's copy spoke for the pane. Promoted together when that copy leaves or withdraws.
+#[derive(Debug)]
+pub(super) struct StandbyPublisher {
+    pub rows: Vec<protocol::PublishedRow>,
+    pub epoch: u64,
+    pub responses: Vec<crate::control::PublishedAgentResponse>,
 }
 
 fn publisher_id_is_valid(id: &str) -> bool {
@@ -2236,6 +2322,12 @@ pub(super) fn replace_pane_rows(pane: &mut ServerPane, next: Vec<protocol::Publi
         .any(protocol::PublishedRow::is_agent);
     let before = pane.agent.agent_states(&pane.runtime);
     pane.runtime.rows = next;
+    pane.agent.response_sequences.retain(|reference, _| {
+        reference
+            .slot
+            .as_ref()
+            .is_some_and(|slot| pane.runtime.rows.iter().any(|row| row.has_key(slot)))
+    });
     // An agent publisher that enumerates its own sessions is better informed than the scraper,
     // which can only see the one it draws. Drop anything the scraper was holding for this pane.
     // An activity publisher says nothing about the pane's agent, so detection carries on.
@@ -2273,15 +2365,85 @@ fn another_client_speaks(rows: &[protocol::PublishedRow], publisher: &str) -> bo
 /// The rows of the client's copy that takes over from `withdrawn`, the publisher that spoke for
 /// the pane, whose `previous` rows they continue: a run does not restart because the client
 /// listing it left.
+/// Record an update from an agent publisher waiting behind another client's copy.
+///
+/// Responses are merged across updates within the same stream epoch for as long as their row
+/// remains canonical with the same cleaned status and native session, and bounded to one update's
+/// response budget (evicting the oldest first), so a response sent before a later rows-only update
+/// is still promoted when the speaking client leaves without crossing conversations or growing
+/// without bound.
+fn record_standby_update(
+    pane: &mut ServerPane,
+    publisher: PanePublisher,
+    rows: Vec<protocol::PublishedRow>,
+) {
+    let canonical = protocol::canonical_published_row_ids(&rows);
+    let mut responses = match pane.agent.standby_rows.remove(&publisher.id) {
+        Some(previous) if previous.epoch == publisher.epoch => previous
+            .responses
+            .into_iter()
+            .filter(|kept| {
+                if !canonical.contains(&kept.id) {
+                    return false;
+                }
+                let Some(old_scope) = previous
+                    .rows
+                    .iter()
+                    .find(|row| row.id == kept.id)
+                    .and_then(protocol::canonical_row_response_scope)
+                else {
+                    return false;
+                };
+                let Some(new_scope) = rows
+                    .iter()
+                    .find(|row| row.id == kept.id)
+                    .and_then(protocol::canonical_row_response_scope)
+                else {
+                    return false;
+                };
+                old_scope == new_scope
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    for response in publisher.responses {
+        match responses.iter().position(|kept| kept.id == response.id) {
+            Some(index) if responses[index].seq >= response.seq => {}
+            Some(index) => {
+                responses.remove(index);
+                responses.push(response);
+            }
+            None => responses.push(response),
+        }
+    }
+    while responses.len() > protocol::MAX_RESPONSES_PER_UPDATE
+        || responses
+            .iter()
+            .map(crate::control::PublishedAgentResponse::wire_len)
+            .sum::<usize>()
+            > protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
+    {
+        responses.remove(0);
+    }
+    pane.agent.standby_rows.insert(
+        publisher.id,
+        StandbyPublisher {
+            rows,
+            epoch: publisher.epoch,
+            responses,
+        },
+    );
+}
+
 fn promote_standby_rows(
     pane: &mut ServerPane,
     withdrawn: &str,
     previous: &[protocol::PublishedRow],
     now: u64,
     local: bool,
-) -> Vec<protocol::PublishedRow> {
+) -> (Vec<protocol::PublishedRow>, Option<PanePublisher>) {
     if previous.is_empty() {
-        return Vec::new();
+        return (Vec::new(), None);
     }
     let name = protocol::publisher_owner(withdrawn).map(|(_, name)| name);
     let Some(id) = pane
@@ -2292,10 +2454,14 @@ fn promote_standby_rows(
         .min()
         .cloned()
     else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
-    let rows = pane.agent.standby_rows.remove(&id).unwrap_or_default();
+    let Some(standby) = pane.agent.standby_rows.remove(&id) else {
+        return (Vec::new(), None);
+    };
     let publisher = PanePublisher {
+        epoch: standby.epoch,
+        responses: standby.responses,
         id,
         kind: protocol::PublisherKind::Agent,
     };
@@ -2307,7 +2473,7 @@ fn promote_standby_rows(
             ..row
         })
         .collect();
-    let mut rows = sanitize_rows(rows, &previous, now, local, &publisher);
+    let mut rows = sanitize_rows(standby.rows, &previous, now, local, &publisher);
     fold_row_reports(&mut rows, &pane.agent.row_reports);
     restamp_row_clocks(
         &mut rows,
@@ -2315,7 +2481,7 @@ fn promote_standby_rows(
         pane.runtime.integration.as_deref(),
         now,
     );
-    rows
+    (rows, Some(publisher))
 }
 
 fn splice_publisher_rows(
@@ -2455,12 +2621,7 @@ fn unix_now_secs() -> u64 {
 }
 
 fn clean_text(value: &str, limit: usize) -> Option<String> {
-    let value = tui_lipan::utils::sanitize_display_text(value)
-        .trim()
-        .chars()
-        .take(limit)
-        .collect::<String>();
-    (!value.is_empty()).then_some(value)
+    protocol::clean_pane_text(value, limit)
 }
 
 /// Resolve one detection sweep into the state that leaves this process, maintaining `hold`.
@@ -2623,6 +2784,9 @@ fn read_agent_state(pane: &mut ServerPane, agents: &AgentCatalog) -> Option<Dete
         pane.agent.read = None;
         return None;
     };
+    if pane.agent.history_frozen {
+        return pane.runtime.detected_agent.clone();
+    }
     let title = pane.effective_title();
     let screen = pane.screen_without_change().snapshot();
     let now = Instant::now();
@@ -2977,6 +3141,8 @@ mod tests {
 
     fn test_publisher() -> PanePublisher {
         PanePublisher {
+            epoch: 0,
+            responses: Vec::new(),
             id: "sessions".into(),
             kind: protocol::PublisherKind::Agent,
         }

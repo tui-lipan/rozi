@@ -25,6 +25,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "list --all [--format text|json]",
                 "List agents in every session and on every host",
             ),
+            row("response --target <PANE>", "Read the latest agent response"),
             row("go --location <JSON>", "Go to an agent, from list --all"),
             row(
                 "get --target <PANE> [--format text|json]",
@@ -74,6 +75,14 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "The --until states, or turn (includes blocked)",
             ),
             row(
+                "    --result",
+                "Return the agent response with a prompt wait",
+            ),
+            row(
+                "    --response-stdin",
+                "Read a report response as JSON from stdin",
+            ),
+            row(
                 "    --capture text|ansi",
                 "Return the terminal when the prompt wait resolves",
             ),
@@ -114,7 +123,7 @@ pub(super) fn parse_agents_args(
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
     let subcommand = iter.next().ok_or_else(|| {
-        "agents requires a subcommand (list, go, get, read, wait, prompt, report, or release)"
+        "agents requires a subcommand (list, go, get, read, response, wait, prompt, report, or release)"
             .to_string()
     })?;
     let args = iter.collect::<Vec<_>>();
@@ -151,6 +160,11 @@ pub(super) fn parse_agents_args(
             let location = location.ok_or_else(|| "agents go requires --location".to_string())?;
             Ok((ControlCommand::AgentGo { location }, None))
         }
+        "response" => {
+            let (target, format, rest) = parse_target_and_format(args, "agents response")?;
+            reject_rest(rest, "agents response")?;
+            Ok((ControlCommand::AgentResponse { target }, format))
+        }
         "get" => {
             let (target, format, rest) = parse_target_and_format(args, "agents get")?;
             reject_rest(rest, "agents get")?;
@@ -162,7 +176,7 @@ pub(super) fn parse_agents_args(
         "report" => parse_report(args),
         "release" => parse_release(args),
         other => Err(format!(
-            "unknown agents subcommand `{other}`; expected list, go, get, read, wait, prompt, report, or release"
+            "unknown agents subcommand `{other}`; expected list, go, get, read, response, wait, prompt, report, or release"
         )),
     }
 }
@@ -178,6 +192,7 @@ fn parse_report(
     let mut native_session = None;
     let mut unless_quiet = None;
     let mut ended = false;
+    let mut response = None;
     let mut seq = None;
     let mut iter = args.into_iter();
     while let Some(flag) = iter.next() {
@@ -193,6 +208,21 @@ fn parse_report(
             "--unless-quiet" => {
                 let value = super::require_value(&mut iter, "--unless-quiet requires a state")?;
                 unless_quiet = Some(parse_report_state(&value)?);
+            }
+            "--response-stdin" => {
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                std::io::stdin()
+                    .take(7 * 1024 * 1024 + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| format!("--response-stdin: {error}"))?;
+                if bytes.len() > 7 * 1024 * 1024 {
+                    return Err("response JSON exceeds 7 MiB".into());
+                }
+                response = Some(
+                    serde_json::from_slice(&bytes)
+                        .map_err(|error| format!("--response-stdin: {error}"))?,
+                );
             }
             "--ended" => ended = true,
             "--state" => {
@@ -232,6 +262,7 @@ fn parse_report(
     }
     Ok((
         ControlCommand::AgentReport {
+            response,
             target,
             agent: agent.ok_or_else(|| "agents report requires --agent".to_string())?,
             integration: integration
@@ -312,6 +343,7 @@ fn parse_prompt(
     let mut timeout_ms = None;
     let mut allow_working = false;
     let mut capture = None;
+    let mut result = false;
     let mut format = None;
     let mut iter = args.into_iter();
     while let Some(argument) = iter.next() {
@@ -342,6 +374,7 @@ fn parse_prompt(
                     return Err("agents prompt --capture specified more than once".into());
                 }
             }
+            "--result" => result = true,
             "--allow-working" => allow_working = true,
             "--format" => set_format(&mut format, &mut iter, "agents prompt")?,
             value if prompt.is_none() => prompt = Some(value.to_string()),
@@ -356,9 +389,10 @@ fn parse_prompt(
             }
         }
     }
-    if capture.is_some() && (wait.is_none() || wait == Some(AgentWaitCondition::Gone)) {
+    if (capture.is_some() || result) && (wait.is_none() || wait == Some(AgentWaitCondition::Gone)) {
         return Err(
-            "agents prompt --capture requires --wait with an outcome other than gone".into(),
+            "agents prompt --capture/--result requires --wait with an outcome other than gone"
+                .into(),
         );
     }
     match (wait, timeout_ms) {
@@ -374,6 +408,7 @@ fn parse_prompt(
     }
     Ok((
         ControlCommand::AgentPrompt {
+            result,
             target: require_target(target, "agents prompt")?,
             prompt: prompt.ok_or_else(|| "agents prompt requires prompt text".to_string())?,
             wait,
@@ -593,6 +628,58 @@ fn positional_target(command: &str, pane: &str) -> String {
 mod tests {
     use super::super::{ParsedCli, parse_cli_args};
     use super::*;
+
+    #[test]
+    fn response_commands_keep_capture_and_semantic_output_independent() {
+        let parse = |values: &[&str]| {
+            parse_agents_args(values.iter().map(|value| (*value).into()).collect())
+        };
+        let (command, _) = parse(&[
+            "prompt",
+            "--target",
+            "3",
+            "review",
+            "--wait",
+            "turn",
+            "--timeout",
+            "2m",
+            "--result",
+            "--capture",
+            "text",
+        ])
+        .unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentPrompt {
+                result: true,
+                capture: Some(CaptureRender::Text),
+                wait: Some(AgentWaitCondition::Turn),
+                ..
+            }
+        ));
+        let (command, _) = parse(&["response", "--target", "3"]).unwrap();
+        assert!(matches!(
+            command,
+            ControlCommand::AgentResponse {
+                target: AgentTarget::Pane(3)
+            }
+        ));
+        assert!(parse(&["prompt", "--target", "3", "review", "--result"]).is_err());
+        assert!(
+            parse(&[
+                "prompt",
+                "--target",
+                "3",
+                "review",
+                "--wait",
+                "gone",
+                "--timeout",
+                "2m",
+                "--result"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn option_values_never_consume_the_next_flag() {
@@ -948,6 +1035,7 @@ mod tests {
         assert_eq!(
             command,
             ControlCommand::AgentPrompt {
+                result: false,
                 target: AgentTarget::Pane(3),
                 prompt: "fix the test".into(),
                 wait: Some(AgentWaitCondition::Idle),
@@ -979,6 +1067,7 @@ mod tests {
         assert_eq!(
             command,
             ControlCommand::AgentReport {
+                response: None,
                 target: Some(3),
                 agent: "claude".into(),
                 integration: "hook-abc".into(),

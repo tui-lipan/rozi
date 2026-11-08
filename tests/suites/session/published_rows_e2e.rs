@@ -97,6 +97,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
 
     let (mut follower, _) = attach_client(server.endpoint(), server.session(), "follower");
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -122,6 +124,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
 
     // Reordering and retitling must not restart a run: identity is the publisher's id.
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 1,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -159,6 +163,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
 
     // A blocked row keeps its run: blocking and resuming are one run, as for a whole pane.
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -175,6 +181,8 @@ fn published_rows_broadcast_and_keep_a_run_clock_per_row() {
 
     // Withdrawing hands the pane back to screen detection.
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -197,6 +205,8 @@ fn published_rows_survive_detach_and_reattach() {
     spawn_pane(&mut controller);
 
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -248,6 +258,8 @@ fn a_row_cwd_resolves_to_its_worktree_on_the_server() {
     spawn_pane(&mut controller);
 
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 1,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -293,6 +305,8 @@ fn report(
     rows: Vec<PublishedRow>,
 ) {
     client.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,
@@ -460,6 +474,8 @@ fn attached_agent_records_and_monitor_summaries_name_the_same_pane() {
     let (mut controller, _) = attach_client(server.endpoint(), server.session(), "controller");
     spawn_pane(&mut controller);
     controller.write_control(&ClientMessage::ReportPaneRows {
+        epoch: 0,
+        responses: Vec::new(),
         pane_id: PANE_ID,
         local: false,
         generation: PANE_GENERATION,

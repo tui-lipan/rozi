@@ -644,10 +644,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             ack,
         ),
         Msg::PublishedRowsReported {
+            responses,
             stream_id,
             pane_id,
             rows,
-        } => crate::ops::published_rows::rows_reported(ctx, stream_id, pane_id, rows),
+        } => crate::ops::published_rows::rows_reported(ctx, stream_id, pane_id, rows, responses),
         Msg::PublishStreamClosed { stream_id, pane_id } => {
             crate::ops::published_rows::stream_closed(ctx, stream_id, pane_id)
         }

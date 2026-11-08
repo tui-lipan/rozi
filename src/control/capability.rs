@@ -9,6 +9,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ControlCapability {
     AgentPromptResults,
+    /// `agents prompt` and `agents wait` return the agent's own reply when its integration reports
+    /// one, instead of only a terminal capture.
+    AgentResponses,
     AgentWaits,
     /// A UI's control socket accepts `record-start`, `record-stop`, `record-list`, and `record-mark`,
     /// forwarding them to the session server it is attached to.
@@ -107,8 +110,9 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 38] = [
+    pub const ALL: [ControlCapability; 39] = [
         ControlCapability::AgentPromptResults,
+        ControlCapability::AgentResponses,
         ControlCapability::AgentWaits,
         ControlCapability::AttachedControl,
         ControlCapability::AttachedSessionScope,
@@ -152,6 +156,7 @@ impl ControlCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             ControlCapability::AgentPromptResults => "agent-prompt-results",
+            ControlCapability::AgentResponses => "agent-responses",
             ControlCapability::AgentWaits => "agent-waits",
             ControlCapability::AttachedControl => "attached-control",
             ControlCapability::AttachedSessionScope => "attached-session-scope",

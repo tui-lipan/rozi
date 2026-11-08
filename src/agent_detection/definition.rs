@@ -211,6 +211,20 @@ pub struct AgentDefinition {
     /// `resume_argv`. Such a conversation belongs to the client that reported it, and reopening it
     /// has to leave hooks able to keep reporting.
     pub reported_resume_argv: Option<Vec<String>>,
+    /// Whether synthetic mouse-wheel input is known to scroll this agent's transcript and nothing
+    /// else. Off unless the definition says so.
+    pub history: AgentHistory,
+}
+
+/// How, if at all, Rozi may read an alternate-screen agent's rendered transcript.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentHistory {
+    /// Rozi never sends input to read this agent's history.
+    #[default]
+    None,
+    /// The mouse wheel scrolls the transcript and scrolling back restores it, with no other
+    /// effect on the application.
+    MouseScroll,
 }
 
 /// Put the session reference into the whole-argument placeholders of `argv`.
@@ -385,6 +399,7 @@ mod tests {
             resume_argv: None,
             attach_argv: None,
             reported_resume_argv: None,
+            history: AgentHistory::None,
         }
     }
 

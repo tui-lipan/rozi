@@ -27,6 +27,7 @@ fn valid_origin(origin: &SessionOrigin) -> bool {
 }
 
 /// Canonical pane geometry reported by a client.
+#[derive(Clone, Copy)]
 pub(super) struct PaneResizeRequest {
     pub pane_id: PaneId,
     pub local: bool,
@@ -132,7 +133,7 @@ impl SessionServer {
     }
 
     /// Write a client's pane input, if that client may type into the pane.
-    fn accept_pane_input(
+    pub(super) fn accept_pane_input(
         &mut self,
         id: ClientId,
         pane_id: PaneId,
@@ -148,6 +149,9 @@ impl SessionServer {
             self.client_may_input(id)
         };
         if may_operate {
+            if self.defer_history_input(id, pane_id, local, generation, bytes, latency_sensitive) {
+                return;
+            }
             if latency_sensitive {
                 self.handle_pane_input(owner, pane_id, generation, bytes);
             } else {
@@ -405,6 +409,9 @@ impl SessionServer {
         if owner.is_none() && !self.is_controller(client_id) {
             return Vec::new();
         }
+        if self.defer_history_resize(client_id, request) {
+            return Vec::new();
+        }
         let image_media = self.image_media();
         let boundary = self.pane(owner, pane_id).is_some_and(|pane| {
             pane.generation == generation
@@ -645,6 +652,7 @@ impl SessionServer {
                 }
             }
             ClientMessage::ReportAgent {
+                response,
                 request_id,
                 pane_id,
                 local,
@@ -676,6 +684,7 @@ impl SessionServer {
                     pane_id,
                     generation,
                     runtime::AgentIntegrationUpdate {
+                        response,
                         agent,
                         integration,
                         state,
@@ -734,6 +743,8 @@ impl SessionServer {
                 Vec::new()
             }
             ClientMessage::ReportPaneRows {
+                epoch,
+                responses,
                 pane_id,
                 local,
                 generation,
@@ -746,6 +757,8 @@ impl SessionServer {
                 generation,
                 local,
                 runtime::PanePublisher {
+                    epoch,
+                    responses,
                     id: publisher,
                     kind,
                 },
@@ -1020,6 +1033,16 @@ impl SessionServer {
                 bytes,
                 token,
             } => {
+                let message = ClientMessage::MarkedInput {
+                    pane_id,
+                    local,
+                    generation,
+                    bytes: bytes.clone(),
+                    token,
+                };
+                if self.defer_history_marked_input(client_id, &message) {
+                    return Vec::new();
+                }
                 // The mark divides the pane's output for the sender's wait, so output after it must
                 // not replace independent graphics queued ahead of it, in any outbox or mailbox.
                 if let Some(pane) = self

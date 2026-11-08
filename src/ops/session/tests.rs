@@ -1381,6 +1381,7 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
             state.rename_session = Some(SessionRenameState::new(&name, NamingMode::CreateSession));
         }
         backend.render();
+        backend.take_cursor_trail_skip();
         // `update_level`, not `dispatch`: every assertion below is about what the create
         // installs synchronously, and no server is ever going to answer for this name.
         // `dispatch` drains until idle, so the create thread's fast failure could land in
@@ -1429,6 +1430,16 @@ fn create_session_starts_fresh_instead_of_carrying_current_panes() {
         );
         assert_eq!(state.workbar.command_epoch, 3);
         assert_eq!(state.workbar.command_in_flight.get("date"), Some(&3));
+        backend.render();
+        assert!(
+            backend.take_cursor_trail_skip(),
+            "creating a session skips the trail even though installation resets workspace history"
+        );
+        backend.render();
+        assert!(
+            !backend.take_cursor_trail_skip(),
+            "later frames leave normal cursor trails enabled"
+        );
     });
 }
 

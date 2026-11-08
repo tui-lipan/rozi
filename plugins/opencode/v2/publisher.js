@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { createInterface } from "node:readline"
 import { activate, SessionRows } from "./rows.js"
+import { SessionResponses } from "./responses.js"
 
 function insideRozi(env) {
   return env.ROZI === "1" && env.ROZI_BIN && env.ROZI_PANE && env.ROZI_SOCKET && env.ROZI_SESSION_INSTANCE
@@ -26,6 +27,8 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
   })
   const input = createInterface({ input: child.stdout })
   const state = new SessionRows()
+  const responses = new SessionResponses(context, refresh)
+  const pendingResponses = new Map()
   const hydrated = new Set()
   let last
   let pending
@@ -39,6 +42,7 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
     stopped = true
     clearInterval(timer)
     unsubscribe()
+    responses.stop()
     input.close()
     // EOF withdraws this publisher's rows. Kill also covers a stuck bridge during unload.
     child.stdin.end()
@@ -46,10 +50,14 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
   }
 
   function drain() {
-    if (stopped || !writable || pending === undefined) return
-    const line = pending
-    pending = undefined
-    writable = child.stdin.write(line)
+    while (!stopped && writable && pending !== undefined) {
+      const content = pendingResponses.values().next().value
+      if (content) pendingResponses.delete(content.id)
+      // Keep other completions working until their own response can travel in the same line.
+      const rows = pending.map((row) => pendingResponses.has(row.id) ? { ...row, status: "working" } : row)
+      if (!pendingResponses.size) pending = undefined
+      writable = child.stdin.write(JSON.stringify({ rows, ...(content ? { responses: [content] } : {}) }) + "\n")
+    }
   }
 
   function hydrate(rows) {
@@ -81,12 +89,18 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
 
   function refresh() {
     if (stopped) return
-    const rows = state.snapshot(context)
+    const rows = responses.rows(state.snapshot(context))
     hydrate(rows)
+    for (const row of rows) {
+      if (row.status === "working") pendingResponses.delete(row.id)
+      const response = row.status !== "working" ? responses.take(row.id) : undefined
+      if (response) pendingResponses.set(row.id, response)
+    }
+    for (const id of pendingResponses.keys()) if (!rows.some((row) => row.id === id)) pendingResponses.delete(id)
     const next = JSON.stringify({ rows }) + "\n"
-    if (last === next) return
+    if (last === next && !pendingResponses.size) return
     last = next
-    pending = next
+    pending = rows
     drain()
   }
 
@@ -100,7 +114,7 @@ export function startPublisher(context, { env = process.env, launch = spawn, int
   child.stdin.on("error", stop)
   child.on("error", stop)
   child.on("exit", stop)
-  unsubscribe = context.data.listen(({ details }) => { state.event(context, details); refresh() })
+  unsubscribe = context.data.listen(({ details }) => { state.event(context, details); responses.event(details); refresh() })
   // UI-only changes (tab order/focus/closure) need no server event. Read their current state too.
   timer = setInterval(refresh, interval)
   timer.unref()

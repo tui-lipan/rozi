@@ -502,6 +502,9 @@ impl SessionServer {
                 None
             }
             ServerEvent::Pty(owner, id, generation, event) => {
+                if owner.is_none() && matches!(&event, TerminalPtyEvent::Output(_)) {
+                    self.note_history_output(id, generation);
+                }
                 let prepared = self.media.take_ready((owner, id, generation));
                 let pane = self.pane_mut(owner, id)?;
                 if pane.generation != generation {

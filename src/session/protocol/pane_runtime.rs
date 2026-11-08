@@ -599,3 +599,116 @@ pub struct AgentIntegrationReport {
     pub seq: u64,
     pub reported_at_unix_ms: u64,
 }
+
+/// Clean and bound display text the way the session server sanitizes pane statuses and row fields.
+pub fn clean_pane_text(value: &str, limit: usize) -> Option<String> {
+    let value = tui_lipan::utils::sanitize_display_text(value)
+        .trim()
+        .chars()
+        .take(limit)
+        .collect::<String>();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Whether `value` is an acceptable native session reference: an opaque identifier, kept exactly
+/// as given, so it is validated rather than cleaned.
+pub fn native_session_is_valid(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+}
+
+/// The cleaned `(status, native_session)` a canonical agent row will install with on the server.
+pub fn canonical_row_response_scope(row: &PublishedRow) -> Option<(String, Option<String>)> {
+    let status = clean_pane_text(&row.status, super::PANE_STATUS_MAX_LEN)?;
+    let native_session = row
+        .native_session
+        .as_deref()
+        .filter(|session| native_session_is_valid(session))
+        .map(str::to_string);
+    Some((status, native_session))
+}
+
+/// The ids that may own a response: rows `sanitize_rows` will install with their id untouched,
+/// within [`super::MAX_PANE_ROWS`], and whose cleaned id no other installed row shares. An id that
+/// cleaning would change, or that collides after cleaning, is ambiguous and cannot own a response.
+pub fn canonical_published_row_ids(rows: &[PublishedRow]) -> std::collections::HashSet<String> {
+    let installed: Vec<(&str, String)> = rows
+        .iter()
+        .filter_map(|row| {
+            clean_pane_text(&row.status, super::PANE_STATUS_MAX_LEN)?;
+            Some((
+                row.id.as_str(),
+                clean_pane_text(&row.id, super::PANE_STATUS_MAX_LEN)?,
+            ))
+        })
+        .take(super::MAX_PANE_ROWS)
+        .collect();
+    installed
+        .iter()
+        .filter(|(raw, cleaned)| {
+            raw == cleaned
+                && installed
+                    .iter()
+                    .filter(|(_, other)| other == cleaned)
+                    .count()
+                    == 1
+        })
+        .map(|(_, cleaned)| cleaned.clone())
+        .collect()
+}
+
+/// Validate a single semantic agent response payload against the protocol limits.
+pub fn validate_agent_response_payload(
+    response: &crate::control::AgentResponsePayload,
+) -> std::result::Result<(), (&'static str, String)> {
+    if response.text.len() > super::MAX_AGENT_RESPONSE_BYTES
+        || response.turn_id.as_ref().is_some_and(|id| id.len() > 1024)
+    {
+        return Err((
+            "invalid-argument",
+            "agent response exceeds the 1 MiB text or 1024 byte turn id limit".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the responses carried by a publisher update against the kind, row ownership, sequence,
+/// and per-update size limits. Shared by the session server and the client's replay cache so the
+/// client never retains a response the server will reject.
+pub fn validate_published_responses(
+    kind: super::PublisherKind,
+    rows: &[PublishedRow],
+    responses: &[crate::control::PublishedAgentResponse],
+) -> std::result::Result<(), (&'static str, String)> {
+    if responses.is_empty() {
+        return Ok(());
+    }
+    if kind != super::PublisherKind::Agent || responses.len() > super::MAX_RESPONSES_PER_UPDATE {
+        return Err((
+            "invalid-argument",
+            "only agent publishers may publish responses, at most 64 per update".into(),
+        ));
+    }
+    if responses
+        .iter()
+        .map(crate::control::PublishedAgentResponse::wire_len)
+        .sum::<usize>()
+        > super::MAX_AGENT_RESPONSES_UPDATE_BYTES
+    {
+        return Err((
+            "invalid-argument",
+            "an update's responses exceed the 4 MiB total limit".into(),
+        ));
+    }
+    let canonical = canonical_published_row_ids(rows);
+    let mut ids = std::collections::HashSet::new();
+    for item in responses {
+        validate_agent_response_payload(&item.response)?;
+        if item.seq == 0 || !ids.insert(&item.id) || !canonical.contains(&item.id) {
+            return Err((
+                "invalid-argument",
+                "each response needs a unique owned row id and a positive sequence".into(),
+            ));
+        }
+    }
+    Ok(())
+}

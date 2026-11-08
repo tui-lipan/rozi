@@ -158,6 +158,58 @@
       ],
       "type": "object"
     },
+    "AgentResponseFidelity": {
+      "enum": [
+        "semantic",
+        "rendered"
+      ],
+      "type": "string"
+    },
+    "AgentResponsePayload": {
+      "description": "Content supplied by an integration, separate from lifecycle metadata.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentResponseFidelity"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentResponseSource"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "source",
+        "fidelity",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "AgentResponseSource": {
+      "enum": [
+        "native-hook",
+        "native-api",
+        "transcript",
+        "acp",
+        "terminal",
+        "alternate-screen-history"
+      ],
+      "type": "string"
+    },
     "AgentState": {
       "oneOf": [
         {
@@ -1318,6 +1370,16 @@
               "minimum": 0,
               "type": "integer"
             },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "seq": {
               "format": "uint64",
               "minimum": 0,
@@ -1405,6 +1467,12 @@
         {
           "description": "Replace one publisher's rows in the pane, leaving every other publisher's alone. An empty\nlist withdraws them; once no agent publisher has rows, the pane falls back to screen\ndetection.",
           "properties": {
+            "epoch": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "generation": {
               "format": "uint64",
               "minimum": 0,
@@ -1423,6 +1491,12 @@
             },
             "publisher": {
               "type": "string"
+            },
+            "responses": {
+              "items": {
+                "$ref": "#/$defs/PublishedAgentResponse"
+              },
+              "type": "array"
             },
             "rows": {
               "items": {
@@ -3198,6 +3272,10 @@
             "prompt": {
               "type": "string"
             },
+            "result": {
+              "default": false,
+              "type": "boolean"
+            },
             "target": {
               "$ref": "#/$defs/AgentTarget"
             },
@@ -3228,6 +3306,23 @@
           "type": "object"
         },
         {
+          "description": "Read the latest response for one exact agent incarnation.",
+          "properties": {
+            "cmd": {
+              "const": "agent-response",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -3254,6 +3349,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "seq": {
@@ -5057,6 +5162,28 @@
       "required": [
         "session",
         "root"
+      ],
+      "type": "object"
+    },
+    "PublishedAgentResponse": {
+      "description": "One response for a row owned by an open agent publisher. Sent beside, never inside, rows.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "response": {
+          "$ref": "#/$defs/AgentResponsePayload"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "seq",
+        "response"
       ],
       "type": "object"
     },

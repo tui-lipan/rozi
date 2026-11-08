@@ -438,11 +438,14 @@ mode = "jump"
 style = "sparks"
 ```
 
-With `"jump"`, a jump inside one pane is drawn once the cursor has held still for a moment, so a
-cursor that lands in steps, such as a shell's newline and then its prompt, gets one smear straight
-to where it settled. A move to another pane draws at once. A pane that moves, such as one sliding
+With `"jump"`, a jump along one line, such as deleting whole words, draws at once and follows the
+cursor as it keeps moving. A jump to another line, or to the start of the line, is drawn once the
+cursor has held still for `settle_ms`, so a cursor that lands in steps, such as a shell's newline
+and then its prompt, gets one smear straight to where it settled. A move to another pane draws at
+once. A pane that moves, such as one sliding
 with its workspace or a floating pane you drag, carries its cursor along without a trail. Switching
-to another workspace or session draws no trail either: the cursor arrives with the new screen.
+to another workspace or session, or creating a session, draws no trail either: the cursor arrives
+with the new screen.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
@@ -455,6 +458,8 @@ to another workspace or session draws no trail either: the cursor arrives with t
 | `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10: `0.3` tapers it to about a quarter of the cursor, `3.0` keeps three quarters. It stays full near the cursor and thins mostly at its end. |
 | `damping` | float | `0.82` | How much speed the smear loses each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
+| `settle_ms` | integer | `50` | How long, in milliseconds, the cursor must hold still after a jump to another line or to the start of the line before its smear starts, from 0 to 1000. Raise it if a prompt that arrives in several writes still gets a smear through the start of a line; `0` starts every jump at once. |
+| `settle_max_ms` | integer | `200` | The longest, in milliseconds, such a jump waits for a cursor that keeps moving, from 0 to 1000. |
 | `max_length` | float | `0.0` | The smear's tail trails the cursor by no more than this along its way, from the start of a jump, up to 500, in cell widths as they look on screen: a row counts for as many as a cell is taller than wide. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
@@ -963,6 +968,7 @@ The control command `split --workspace` and `--focus` override `workspace` and `
 | `match.names` | array of strings | `[]` | Executable names. |
 | `match.paths` | array of strings | `[]` | Lowercase substrings of the path or arguments. |
 | `states` | array of state tables | `[]` | State rules. |
+| `history` | string | `"none"` | `"mouse-scroll"` declares that the mouse wheel only scrolls the agent's transcript and scrolling back restores the view, which lets `agents prompt --result` read its [alternate-screen history](agents.md#read-the-agents-response). A built-in override keeps the built-in's setting when omitted. |
 
 A new definition needs at least one match name or path. A definition that replaces a built-in may
 omit `match` and keep the built-in's process match.

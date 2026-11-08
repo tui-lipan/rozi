@@ -240,6 +240,8 @@ pub(crate) fn attached(
     // was already on screen, so it is not a new view to reveal.
     if !reconnect {
         ctx.state.session_view_revision += 1;
+        // A delayed attach can land after the picker has closed and the Connecting scene drew.
+        ctx.skip_cursor_trail();
     }
     ctx.state.current_mut().path_family = client.path_family;
     ctx.state.current_mut().ssh_connection = client.ssh_connection.clone();
@@ -373,7 +375,7 @@ pub(crate) fn attached(
     crate::ops::focus::request_current_pane_focus(ctx);
     // A reconnect is a new client to the server, which withdrew the rows this client's publish
     // streams had reported under its old identity.
-    crate::ops::published_rows::resend_rows(&ctx.state);
+    crate::ops::published_rows::resend_rows(&mut ctx.state);
 
     let named = !crate::session::naming::is_ephemeral_session_name(&session);
     if !populated {

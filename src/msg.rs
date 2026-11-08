@@ -667,6 +667,7 @@ pub enum Msg {
     },
     /// One row list from an open stream, replacing whatever that pane published before.
     PublishedRowsReported {
+        responses: Vec<control::PublishedAgentResponse>,
         stream_id: u64,
         pane_id: crate::pane::id::PaneId,
         rows: Vec<crate::session::protocol::PublishedRow>,

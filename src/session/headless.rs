@@ -550,6 +550,7 @@ mod tests {
             timeout_ms,
         };
         let prompt = |wait, timeout_ms| ControlCommand::AgentPrompt {
+            result: false,
             target: target(),
             prompt: "go".to_string(),
             wait,

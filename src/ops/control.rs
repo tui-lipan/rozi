@@ -419,7 +419,9 @@ pub(crate) fn handle_control_request(
                 envelope.caller,
             );
         }
-        ControlCommand::AgentWait { .. } | ControlCommand::AgentPrompt { .. } => {
+        ControlCommand::AgentResponse { .. }
+        | ControlCommand::AgentWait { .. }
+        | ControlCommand::AgentPrompt { .. } => {
             return crate::ops::attached_control::forward_agent(
                 ctx,
                 envelope.request,
@@ -464,6 +466,7 @@ pub(crate) fn handle_control_request(
             crate::ops::ui_recording::mark_command(ctx, &label)
         }
         ControlCommand::AgentReport {
+            response,
             target,
             agent,
             integration,
@@ -481,6 +484,7 @@ pub(crate) fn handle_control_request(
                 Some(agent),
                 integration,
                 Some(state),
+                response,
                 reason,
                 native_session,
                 unless_quiet,
@@ -500,6 +504,7 @@ pub(crate) fn handle_control_request(
                 agent_report_epoch,
                 None,
                 integration,
+                None,
                 None,
                 None,
                 None,
@@ -1303,6 +1308,7 @@ fn report_agent(
     agent: Option<String>,
     integration: String,
     state: Option<crate::session::protocol::AgentState>,
+    response: Option<crate::control::AgentResponsePayload>,
     reason: Option<String>,
     native_session: Option<String>,
     unless_quiet: Option<crate::session::protocol::AgentState>,
@@ -1345,6 +1351,7 @@ fn report_agent(
         agent,
         integration,
         state,
+        response,
         reason,
         native_session,
         unless_quiet,

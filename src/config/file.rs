@@ -754,6 +754,8 @@ pub(super) struct CursorTrailFileConfig {
     pub(super) trailing_exponent: Option<f32>,
     pub(super) damping: Option<f32>,
     pub(super) glide_ms: Option<u64>,
+    pub(super) settle_ms: Option<u64>,
+    pub(super) settle_max_ms: Option<u64>,
     pub(super) max_length: Option<f32>,
     pub(super) opacity: Option<f32>,
     pub(super) taper: Option<f32>,

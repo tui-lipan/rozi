@@ -75,6 +75,13 @@ class HookTestCase(unittest.TestCase):
         self.hook("PermissionRequest", tool_name=call["tool_name"], tool_input=tool_input)
 
 class ActivityTests(HookTestCase):
+    def test_hook_input_and_delivery_use_utf8_independently_of_locale(self):
+        event = {"hook_event_name": "Stop", "session_id": "native-id", "last_agent_message": "日本語 🌷"}
+        source = io.TextIOWrapper(io.BytesIO(json.dumps(event, ensure_ascii=False).encode("utf-8")), encoding="cp1252")
+        with patch.object(activity.sys, "stdin", source), patch.object(activity, "handle") as handle:
+            activity.main()
+        self.assertEqual(handle.call_args.args[0], event)
+
     def test_confirmed_turn_reports_the_transcript_response_via_stdin(self):
         self.first_turn()
         transcript = Path(self.temp.name) / "turn.jsonl"
@@ -87,6 +94,7 @@ class ActivityTests(HookTestCase):
         args, options = self.calls[-1]
         self.assertIn("--response-stdin", args)
         self.assertNotIn(message, args)
+        self.assertEqual(options["encoding"], "utf-8")
         payload = json.loads(options["input"])
         self.assertEqual(payload["text"], message)
         self.assertEqual(payload["turn_id"], "turn-1")
@@ -729,14 +737,14 @@ class ActivityTests(HookTestCase):
 
     def test_main_is_silent_and_successful_on_bad_input_and_cli_failure(self):
         for raw in ("bad json", "[]", '{"hook_event_name": [], "session_id": "id"}'):
-            with patch.object(activity.sys, "stdin", io.StringIO(raw)), \
+            with patch.object(activity.sys, "stdin", io.TextIOWrapper(io.BytesIO(raw.encode("utf-8")))), \
                  patch.object(activity.sys, "stdout", io.StringIO()) as out, \
                  patch.object(activity.sys, "stderr", io.StringIO()) as err, \
                  patch.dict(activity.os.environ, self.env, clear=True):
                 activity.main()
                 self.assertEqual(out.getvalue() + err.getvalue(), "")
         event = {"hook_event_name": "SessionStart", "session_id": "id"}
-        with patch.object(activity.sys, "stdin", io.StringIO(json.dumps(event))), \
+        with patch.object(activity.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode("utf-8")))), \
              patch.dict(activity.os.environ, self.env, clear=True), \
              patch.object(activity.subprocess, "run", side_effect=FileNotFoundError):
             activity.main()

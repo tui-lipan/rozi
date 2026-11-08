@@ -351,7 +351,7 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float, 
     result = subprocess.run(args, env=env,
                             **({"input": response} if response is not None else {"stdin": subprocess.DEVNULL}),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                            text=True, timeout=timeout, check=False)
+                            text=True, encoding="utf-8", timeout=timeout, check=False)
     # A timed-out release may have reached the server. These two refusals establish that the
     # token no longer owns the pane; other failures must leave the release pending.
     already_released = state == "release" and result.stderr in {
@@ -463,7 +463,7 @@ def handle(event: dict, env: dict[str, str], parent_pid: int) -> None:
 
 def main() -> None:
     try:
-        event = json.load(sys.stdin)
+        event = json.load(sys.stdin.buffer)
         if isinstance(event, dict):
             handle(event, dict(os.environ), os.getppid())
     except (OSError, ValueError, TypeError, sqlite3.Error, subprocess.SubprocessError):

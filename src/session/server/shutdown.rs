@@ -443,7 +443,9 @@ mod tests {
         let checked = replacement.wrapping_add(1);
         let server = std::thread::spawn(move || {
             let mut conn = bound.listener().accept().expect("accept");
-            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            // macOS refuses the option, with EINVAL, once the peer has already hung up - which is
+            // what a refusing client does.
+            let _ = conn.set_read_timeout(Some(Duration::from_secs(2)));
             let mut received = Vec::new();
             let _ = conn.read_to_end(&mut received);
             received

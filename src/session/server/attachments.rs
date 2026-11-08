@@ -134,6 +134,16 @@ fn disk_step(
 }
 
 impl Attachments {
+    #[cfg(all(test, unix))]
+    pub(super) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn is_busy(&self, key: Key) -> bool {
+        self.pending.get(&key).is_some_and(|pending| pending.busy)
+    }
+
     fn can_reserve(&self, client: ClientId, size: u64) -> bool {
         let reserved: u64 = self.pending.values().map(|p| p.size).sum();
         let retained: u64 = self.retained.iter().map(|file| file.size).sum();
@@ -162,7 +172,11 @@ impl SessionServer {
         } else {
             self.client_may_input(client)
         };
+        // The history reader owns the pane's input until it has restored the viewport.
+        let history_leased =
+            !destination.local && self.agent_history.contains_key(&destination.pane);
         may_input
+            && !history_leased
             && self
                 .pane(destination.local.then_some(client), destination.pane)
                 .is_some_and(|pane| pane.generation == destination.generation && pane.pty.is_some())
@@ -189,7 +203,10 @@ impl SessionServer {
             local: *local,
         };
         if !self.attachment_destination_valid(key.0, destination) {
-            return Err("pane is unavailable or input is blocked".into());
+            return Err(
+                "pane is unavailable, input is blocked, or agent history is being read; retry"
+                    .into(),
+            );
         }
         if name.is_empty() || name.len() > 1024 || *size > MAX_ATTACHMENT_BYTES {
             return Err("attachment exceeds name or 16 MiB file limit".into());
@@ -233,7 +250,10 @@ impl SessionServer {
             return Err("wait for the previous upload acknowledgement".into());
         }
         if !self.attachment_destination_valid(key.0, pending.destination) {
-            return Err("pane is unavailable or input is blocked".into());
+            return Err(
+                "pane is unavailable, input is blocked, or agent history is being read; retry"
+                    .into(),
+            );
         }
         let pending = self
             .attachments
@@ -373,7 +393,9 @@ impl SessionServer {
         };
         self.attachments.pending.remove(&key);
         if !self.attachment_destination_valid(key.0, destination) {
-            return Err("pane changed or input is blocked".into());
+            return Err(
+                "pane changed, input is blocked, or agent history is being read; retry".into(),
+            );
         }
         let pane = self
             .pane(destination.local.then_some(key.0), destination.pane)

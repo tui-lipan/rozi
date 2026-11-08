@@ -191,8 +191,10 @@ open. The check never installs anything, and it stays silent when rozi is curren
 unavailable.
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available`, with the version
-step and the update command for your install channel. If the release raises the extension API or
-needs running sessions restarted, the toast uses warning colors and adds a row saying so. Each
+step and the update command for your install channel, and a row saying what the update means for
+running sessions: they keep working, or sessions on the current protocol generation need
+[Upgrade session](sessions.md#upgrade-a-session). If the release raises the extension API or
+starts a new generation, the toast uses warning colors. Each
 release is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
 Commands, which runs the update in a popup (see
 [Update notices](configuration.md#update-notices)).

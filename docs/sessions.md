@@ -41,6 +41,7 @@ rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions new scratch --detach --remote workbox  # ... on another machine
 rozi sessions list
 rozi sessions restart dev             # restart a running session, ending its programs
+rozi sessions upgrade dev             # restart it on this release from its snapshot
 rozi sessions kill dev
 ```
 

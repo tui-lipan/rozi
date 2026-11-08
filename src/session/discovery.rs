@@ -12,6 +12,8 @@ const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
 /// be the pane's own, and its report is then lost. Every server is asked at once, so this bounds
 /// the whole lookup, which has to leave room in a hook's budget for the report itself.
 const INSTANCE_QUERY_TIMEOUT: Duration = Duration::from_millis(400);
+/// How long a command about one named session waits for it to answer.
+const SINGLE_SESSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiscoveredSessionStatus {
@@ -324,6 +326,20 @@ fn diagnostic_session_status(
 pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>> {
     let endpoint = crate::session::server::session_endpoint(name)?;
     Ok(query_session_endpoint(name, &endpoint))
+}
+
+/// The release a running named session reports, asked once with time to answer. A discovery sweep
+/// gives up on a slow server quickly and lists it busy; a command about this one session can wait.
+pub(crate) fn session_rozi_version(name: &str) -> Option<String> {
+    let endpoint = crate::session::server::session_endpoint(name).ok()?;
+    let mut stream = endpoint.connect().ok()?;
+    match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT)
+        .ok()?
+        .status
+    {
+        DiscoveredSessionStatus::Running { rozi_version, .. } => rozi_version,
+        _ => None,
+    }
 }
 
 pub fn discover_sessions_excluding(

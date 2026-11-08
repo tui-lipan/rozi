@@ -250,14 +250,16 @@ pub(crate) fn run_restart_session_cli(
 
 pub(crate) fn run_upgrade_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
     let Some(remote) = remote else {
-        if let Ok(rows) = session::discovery::discover_sessions()
-            && let Some(row) = rows.iter().find(|row| row.name == name)
-            && row.rozi_version() == Some(env!("CARGO_PKG_VERSION"))
-        {
-            eprintln!(
-                "Session `{name}` is already on rozi {}; restarting from its snapshot.",
-                env!("CARGO_PKG_VERSION")
-            );
+        let current = env!("CARGO_PKG_VERSION");
+        match session::discovery::session_rozi_version(name) {
+            Some(version) if version == current => eprintln!(
+                "Session `{name}` is already on rozi {current}; restarting from its snapshot."
+            ),
+            Some(version) => {
+                eprintln!("Upgrading session `{name}` from rozi {version} to {current}.")
+            }
+            // Not running, or too old to say: the upgrade itself reports what it finds.
+            None => {}
         }
         session::server::upgrade_named_session(name)?;
         return Ok(());

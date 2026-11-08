@@ -658,10 +658,11 @@ impl SessionServer {
             ControlCommand::AgentGet { target } => self.session_agent_get(target),
             ControlCommand::AgentResponse { target } => {
                 match self.resolve_agent_wait_target(target) {
-                    Ok(reference) => ControlResponse::ok(
+                    Ok(reference) => ControlResponse::ok(crate::control::AgentResponseLookup(
                         self.agent_responses
-                            .latest(&reference, &self.response_native_session(&reference)),
-                    ),
+                            .latest(&reference, &self.response_native_session(&reference))
+                            .cloned(),
+                    )),
                     Err(response) => response,
                 }
             }

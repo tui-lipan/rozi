@@ -301,6 +301,17 @@
       ],
       "type": "string"
     },
+    "AgentResponseLookup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentResponse"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The latest retained response, or null when this agent has not published one."
+    },
     "AgentResponsePayload": {
       "description": "Content supplied by an integration, separate from lifecycle metadata.",
       "properties": {

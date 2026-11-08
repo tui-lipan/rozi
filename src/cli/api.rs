@@ -50,7 +50,7 @@ fn schema() -> serde_json::Value {
 const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("actions-list", &["ActionInfo[]"]),
     ("agent-get", &["AgentInfo"]),
-    ("agent-response", &["AgentResponse"]),
+    ("agent-response", &["AgentResponseLookup"]),
     ("agent-prompt", &["AgentPromptAccepted", "AgentWaitResult"]),
     ("agent-read", &["PaneCapture"]),
     ("agent-wait", &["AgentWaitResult"]),

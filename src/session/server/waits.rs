@@ -382,16 +382,13 @@ impl SessionServer {
                 .panes
                 .get_mut(&id)
                 .expect("wait resolved against this pane");
-            let content = match crate::pane::capture_screen(
+            let content = crate::pane::capture_screen(
                 pane.screen_without_change(),
                 None,
                 render,
                 None,
                 false,
-            ) {
-                Ok(content) => content,
-                Err(response) => return Err(response),
-            };
+            )?;
             Some(crate::control::AgentPromptResult::Terminal {
                 capture: crate::control::PaneCapture {
                     id,

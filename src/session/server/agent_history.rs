@@ -33,7 +33,7 @@ pub(super) struct PendingHistoryRead {
 
 enum DeferredMutation {
     Input(DeferredInput),
-    Control(ClientId, ClientMessage),
+    Control(ClientId, Box<ClientMessage>),
     Resize(ClientId, PaneResizeRequest),
 }
 
@@ -368,7 +368,7 @@ impl SessionServer {
                 input.latency_sensitive,
             ),
             DeferredMutation::Control(client, message) => {
-                self.process_client_control_now(client, message);
+                self.process_client_control_now(client, *message);
             }
             DeferredMutation::Resize(client, resize) => {
                 let replies = self.handle_resize_with(client, resize, |pane| {
@@ -469,7 +469,7 @@ impl SessionServer {
             *pane_id,
             client,
             bytes.len(),
-            DeferredMutation::Control(client, message.clone()),
+            DeferredMutation::Control(client, Box::new(message.clone())),
         );
         true
     }

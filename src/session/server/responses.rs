@@ -164,10 +164,14 @@ pub(super) fn validate_published(
             "only agent publishers may publish responses, at most 64 per update".into(),
         ));
     }
+    // Ownership is checked against the rows that will actually be installed: sanitizing cleans
+    // and truncates ids and drops rows past the cap, and a response naming anything else would
+    // pass here and then find no row to belong to.
+    let canonical = super::runtime::canonical_row_ids(rows);
     let mut ids = std::collections::HashSet::new();
     for item in &publisher.responses {
         validate_payload(&item.response)?;
-        if item.seq == 0 || !ids.insert(&item.id) || !rows.iter().any(|row| row.id == item.id) {
+        if item.seq == 0 || !ids.insert(&item.id) || !canonical.contains(&item.id) {
             return Err((
                 "invalid-argument",
                 "each response needs a unique owned row id and a positive sequence".into(),
@@ -410,6 +414,49 @@ mod tests {
         );
         let snapshot = serde_json::to_string(&server.panes[&7].runtime).unwrap();
         assert!(!snapshot.contains("exact answer"));
+    }
+
+    #[test]
+    fn a_response_must_name_a_row_that_survives_sanitizing() {
+        use super::super::{SessionServer, protocol, runtime, tests};
+        use crate::control::PublishedAgentResponse;
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(7, tests::test_pane(1));
+        let (client, _stream) = tests::attach_client(&mut server);
+        let long = "x".repeat(100);
+        let row = |id: &str| -> protocol::PublishedRow {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "title": "t", "status": "done", "native_session": "native"
+            }))
+            .unwrap()
+        };
+        let publisher = |id: &str| runtime::PanePublisher {
+            id: "provider".into(),
+            kind: protocol::PublisherKind::Agent,
+            epoch: 1,
+            responses: vec![PublishedAgentResponse {
+                id: id.into(),
+                seq: 1,
+                response: payload("answer"),
+            }],
+        };
+        let truncated =
+            server.report_pane_rows(client, 7, 1, false, publisher(&long), vec![row(&long)]);
+        assert!(
+            truncated.is_err(),
+            "an id that sanitizing would change cannot own a response"
+        );
+        let mut rows: Vec<_> = (0..70).map(|n| row(&format!("row-{n}"))).collect();
+        let past_cap =
+            server.report_pane_rows(client, 7, 1, false, publisher("row-69"), rows.clone());
+        assert!(
+            past_cap.is_err(),
+            "a row past the cap cannot own a response"
+        );
+        rows.truncate(3);
+        server
+            .report_pane_rows(client, 7, 1, false, publisher("row-2"), rows)
+            .unwrap();
     }
 
     #[test]

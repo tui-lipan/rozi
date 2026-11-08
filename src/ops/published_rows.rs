@@ -219,6 +219,7 @@ pub(crate) fn stream_opened(
             id: stream_id,
             identity,
             last_rows: Vec::new(),
+            last_responses: Vec::new(),
             sender,
             extension,
             binding,
@@ -370,17 +371,49 @@ pub(crate) fn rows_reported(
     let Some(stream) = ctx.state.publish_streams.get_mut(&key) else {
         return Update::none();
     };
+    retain_responses(stream, &rows, responses);
     stream.last_rows = rows;
-    send_latest(&ctx.state, &key, responses);
+    send_latest(&mut ctx.state, &key, false);
     Update::none()
 }
 
-/// Send a stream's latest snapshot to the session it is bound to, if it may reach it now.
-fn send_latest(
-    state: &crate::state::State,
-    key: &PublishStreamKey,
+/// Merge `responses` into what the stream retains, dropping any whose row is gone or has since
+/// changed status: that row is on a newer turn, and the old answer must not be replayed for it.
+fn retain_responses(
+    stream: &mut crate::state::PublishStreamState,
+    rows: &[PublishedRow],
     responses: Vec<crate::control::PublishedAgentResponse>,
 ) {
+    let fresh: Vec<_> = responses
+        .into_iter()
+        .filter_map(|response| {
+            let status = rows
+                .iter()
+                .find(|row| row.id == response.id)?
+                .status
+                .clone();
+            Some(crate::state::RetainedResponse {
+                response,
+                status,
+                delivered: false,
+            })
+        })
+        .collect();
+    let mut retained = std::mem::take(&mut stream.last_responses);
+    retained.retain(|kept| {
+        !fresh.iter().any(|new| new.response.id == kept.response.id)
+            && rows
+                .iter()
+                .any(|row| row.id == kept.response.id && row.status == kept.status)
+    });
+    retained.extend(fresh);
+    stream.last_responses = retained;
+}
+
+/// Send a stream's latest snapshot to the session it is bound to, if it may reach it now.
+///
+/// Responses not yet delivered go with it; `replay` sends the delivered ones again as well.
+fn send_latest(state: &mut crate::state::State, key: &PublishStreamKey, replay: bool) {
     let Some(stream) = state.publish_streams.get(key) else {
         return;
     };
@@ -389,7 +422,13 @@ fn send_latest(
     }) {
         return;
     }
-    report_rows(
+    let responses = stream
+        .last_responses
+        .iter()
+        .filter(|kept| replay || !kept.delivered)
+        .map(|kept| kept.response.clone())
+        .collect();
+    let sent = report_rows(
         state,
         key,
         &stream.identity,
@@ -397,6 +436,11 @@ fn send_latest(
         stream.id,
         responses,
     );
+    if sent && let Some(stream) = state.publish_streams.get_mut(key) {
+        for kept in &mut stream.last_responses {
+            kept.delivered = true;
+        }
+    }
 }
 
 /// Report every live stream's latest snapshot again, after this client attached to a session.
@@ -404,9 +448,10 @@ fn send_latest(
 /// The server keeps a client's rows only while that client is attached, so a reconnect would
 /// otherwise leave every live publisher's rows withdrawn until it next changed them. A stream
 /// whose rows are unchanged on a server that still has them costs the server one comparison.
-pub(crate) fn resend_rows(state: &crate::state::State) {
-    for key in state.publish_streams.keys() {
-        send_latest(state, key, Vec::new());
+pub(crate) fn resend_rows(state: &mut crate::state::State) {
+    let keys: Vec<_> = state.publish_streams.keys().cloned().collect();
+    for key in &keys {
+        send_latest(state, key, true);
     }
 }
 
@@ -419,12 +464,14 @@ fn report_rows(
     rows: Vec<PublishedRow>,
     epoch: u64,
     responses: Vec<crate::control::PublishedAgentResponse>,
-) {
+) -> bool {
     if let Some((generation, Some(client), local)) = target(state, &key.origin, key.pane) {
         client.report_pane_rows(
             key.pane, generation, local, publisher, rows, epoch, responses,
         );
+        return true;
     }
+    false
 }
 
 /// Drop one stream and withdraw its rows, leaving the pane's other publishers alone.
@@ -1275,6 +1322,119 @@ mod tests {
 
     /// The server withdraws a client's rows when it leaves, so attaching again resends every live
     /// stream's latest snapshot.
+    /// The responses carried by every `ReportPaneRows` sent so far, as `(row id, seq)`.
+    fn response_reports(outbound: &mpsc::Receiver<ClientOutbound>) -> Vec<Vec<(String, u64)>> {
+        outbound
+            .try_iter()
+            .filter_map(|message| match message {
+                ClientOutbound::Control(ClientMessage::ReportPaneRows { responses, .. }) => {
+                    Some(responses.into_iter().map(|r| (r.id, r.seq)).collect())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn report_with_response(
+        backend: &mut TestBackend<crate::AppRoot>,
+        rows: Vec<PublishedRow>,
+        id: &str,
+        seq: u64,
+    ) {
+        backend
+            .dispatch(crate::Msg::PublishedRowsReported {
+                responses: vec![crate::control::PublishedAgentResponse {
+                    id: id.into(),
+                    seq,
+                    response: crate::control::AgentResponsePayload {
+                        text: "answer".into(),
+                        turn_id: None,
+                        source: crate::control::AgentResponseSource::NativeApi,
+                        fidelity: crate::control::AgentResponseFidelity::Semantic,
+                        complete: true,
+                        truncated: false,
+                    },
+                }],
+                stream_id: 1,
+                pane_id: 1,
+                rows,
+            })
+            .expect("dispatch rows");
+    }
+
+    #[test]
+    fn a_response_is_replayed_after_an_attach_while_its_row_keeps_its_status() {
+        with_backend(|backend| {
+            let outbound = attach(backend);
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            open_stream(backend, Open::anonymous(1), tx);
+            report_with_response(backend, vec![row("a", "done")], "a", 1);
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("a".to_string(), 1)]]
+            );
+            // An update that adds nothing does not repeat what was already delivered.
+            report(backend, 1, vec![row("a", "done")]);
+            assert_eq!(
+                response_reports(&outbound),
+                vec![Vec::<(String, u64)>::new()]
+            );
+            // A reconnect is a new client to the server, so the answer goes again.
+            super::resend_rows(backend.state_mut());
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("a".to_string(), 1)]]
+            );
+            // A newer turn ends the answer's lifetime: it is never replayed for it.
+            report(backend, 1, vec![row("a", "working")]);
+            report(backend, 1, vec![row("a", "done")]);
+            outbound.try_iter().for_each(drop);
+            super::resend_rows(backend.state_mut());
+            assert_eq!(
+                response_reports(&outbound),
+                vec![Vec::<(String, u64)>::new()]
+            );
+        });
+    }
+
+    #[test]
+    fn a_response_published_out_of_reach_goes_with_the_next_report() {
+        with_backend(|backend| {
+            let outbound = attach(backend);
+            let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+            open_stream(backend, Open::anonymous(1), tx);
+            let key = backend
+                .state()
+                .publish_streams
+                .keys()
+                .next()
+                .unwrap()
+                .clone();
+            let stream = backend.state_mut().publish_streams.get_mut(&key).unwrap();
+            stream.last_responses.push(crate::state::RetainedResponse {
+                response: crate::control::PublishedAgentResponse {
+                    id: "a".into(),
+                    seq: 1,
+                    response: crate::control::AgentResponsePayload {
+                        text: "answer".into(),
+                        turn_id: None,
+                        source: crate::control::AgentResponseSource::NativeApi,
+                        fidelity: crate::control::AgentResponseFidelity::Semantic,
+                        complete: true,
+                        truncated: false,
+                    },
+                },
+                status: "done".into(),
+                delivered: false,
+            });
+            report(backend, 1, vec![row("a", "done")]);
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("a".to_string(), 1)]]
+            );
+        });
+    }
+
     #[test]
     fn live_streams_resend_their_rows_after_an_attach() {
         with_backend(|backend| {
@@ -1283,7 +1443,7 @@ mod tests {
             open_stream(backend, Open::anonymous(1), tx);
             report(backend, 1, vec![row("a", "working")]);
             assert_eq!(reports(&outbound).len(), 1);
-            super::resend_rows(backend.state());
+            super::resend_rows(backend.state_mut());
             assert_eq!(
                 reports(&outbound),
                 [(

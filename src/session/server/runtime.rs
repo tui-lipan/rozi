@@ -2475,6 +2475,18 @@ fn sanitize_rows(
         .collect()
 }
 
+/// The ids [`sanitize_rows`] will install for `rows`: those that survive cleaning, as cleaned, and
+/// no more than the row cap.
+pub(super) fn canonical_row_ids(rows: &[protocol::PublishedRow]) -> HashSet<String> {
+    rows.iter()
+        .filter_map(|row| {
+            clean_text(&row.status, PANE_STATUS_MAX_LEN)?;
+            clean_text(&row.id, PANE_STATUS_MAX_LEN)
+        })
+        .take(MAX_PANE_ROWS)
+        .collect()
+}
+
 /// Give each row the run clock its *effective* status implies: the integration report's for the row
 /// whose native session it names, the publisher's otherwise. `previous` is the rows as they were
 /// last presented, with the integration report that was live then already merged in.

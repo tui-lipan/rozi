@@ -851,8 +851,20 @@ mod tests {
                 .apply_agent_integration(None, 3, generation, report(2, &text))
                 .unwrap();
             assert!(server.agent_waits.is_empty());
-            server.flush_clients();
-            let message: ServerMessage = protocol::read_frame(&mut stream).unwrap();
+            // A nonblocking flush need not drain a frame this large in one pass, so read it on
+            // its own thread while the server keeps flushing, as the real loop does.
+            stream.set_nonblocking(false).unwrap();
+            let reader = std::thread::spawn(move || {
+                protocol::read_frame::<_, ServerMessage>(&mut stream)
+                    .map(|message| (message, stream))
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !reader.is_finished() {
+                assert!(Instant::now() < deadline, "response frame never drained");
+                server.flush_clients();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let (message, mut stream) = reader.join().unwrap().unwrap();
             let response = match message {
                 ServerMessage::AttachedControlResult {
                     request_id: 42,

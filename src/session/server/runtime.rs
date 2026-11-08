@@ -354,6 +354,7 @@ type IntegrationPayload = (protocol::AgentState, Option<String>, Option<String>)
 type IntegrationResult<T> = std::result::Result<T, (&'static str, String)>;
 
 pub(super) struct AgentIntegrationUpdate {
+    pub response: Option<crate::control::AgentResponsePayload>,
     pub agent: Option<String>,
     pub integration: String,
     pub state: Option<protocol::AgentState>,
@@ -1087,6 +1088,7 @@ impl SessionServer {
             ));
         }
         let AgentIntegrationUpdate {
+            response,
             agent,
             integration,
             state,
@@ -1096,6 +1098,18 @@ impl SessionServer {
             ended,
             seq,
         } = update;
+        if let Some(response) = response.as_ref() {
+            if state.is_none()
+                || response.text.len() > super::responses::MAX_RESPONSE_BYTES
+                || response.turn_id.as_ref().is_some_and(|id| id.len() > 1024)
+            {
+                return Err((
+                    "invalid-argument",
+                    "agent response exceeds the 1 MiB text or 1024 byte turn id limit".into(),
+                ));
+            }
+        }
+        let response_session = native_session.clone();
         validate_unless_quiet(state, unless_quiet, ended)?;
         let report = state.map(|state| (state, reason, native_session));
         let previous_runtime = pane.runtime.clone();
@@ -1187,6 +1201,35 @@ impl SessionServer {
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         let state = pane.runtime.clone();
         let message = self.finish_pane_runtime_change(owner, pane_id, generation, state, baseline);
+        if let Some(response) = response {
+            // Sequence validation and incarnation observation above must both succeed first.
+            if let Some(pane) = self.pane(owner, pane_id) {
+                let reference = self
+                    .agent_runtimes_for(pane_id, pane)
+                    .into_iter()
+                    .find(|runtime| {
+                        if !to_row {
+                            return runtime.reference.slot.is_none()
+                                || protocol::occupant_native_session(
+                                    &pane.runtime.rows,
+                                    pane.runtime.integration.as_deref(),
+                                    runtime.reference.slot.as_ref(),
+                                ) == response_session;
+                        }
+                        runtime
+                            .reference
+                            .slot
+                            .as_ref()
+                            .and_then(|slot| pane.runtime.rows.iter().find(|row| row.has_key(slot)))
+                            .and_then(agent_reporting_session)
+                            == response_session.as_deref()
+                    })
+                    .map(|runtime| runtime.reference);
+                if let Some(reference) = reference {
+                    self.agent_responses.insert(reference, response);
+                }
+            }
+        }
         self.resolve_agent_waits();
         self.mark_dirty();
         Ok(Some(message))

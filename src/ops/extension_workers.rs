@@ -151,6 +151,7 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::PaneClose { .. }
         | ControlCommand::AgentsList
         | ControlCommand::AgentGet { .. }
+        | ControlCommand::AgentResponse { .. }
         | ControlCommand::AgentRead { .. }
         | ControlCommand::AgentWait { .. }
         | ControlCommand::AgentPrompt { .. }
@@ -344,6 +345,7 @@ fn pane_targets(command: &ControlCommand) -> Result<Vec<Option<PaneId>>, Control
         | ControlCommand::Focus { target } => vec![Some(*target)],
         ControlCommand::PaneSwap { target, with, .. } => vec![Some(*target), Some(*with)],
         ControlCommand::AgentGet { target }
+        | ControlCommand::AgentResponse { target }
         | ControlCommand::AgentRead { target, .. }
         | ControlCommand::AgentWait { target, .. }
         | ControlCommand::AgentPrompt { target, .. } => vec![agent(target)?],

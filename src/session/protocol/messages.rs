@@ -187,6 +187,8 @@ pub enum ClientMessage {
         reason: Option<String>,
     },
     ReportAgent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        response: Option<crate::control::AgentResponsePayload>,
         request_id: u64,
         pane_id: PaneId,
         local: bool,

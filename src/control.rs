@@ -34,6 +34,7 @@ pub const API_SCHEMA_VERSION: u32 = 3;
 pub const API_SCHEMA_DOCUMENT: &str = include_str!("../docs/schema/rozi-control-v1.schema.json");
 
 pub const CALLER_CONTEXT_CAPABILITY: &str = "caller-context";
+pub const AGENT_RESPONSES_CAPABILITY: &str = "agent-responses";
 pub const AGENT_PROMPT_RESULTS_CAPABILITY: &str = "agent-prompt-results";
 pub const AGENT_WAITS_CAPABILITY: &str = "agent-waits";
 pub const PANE_CONTROL_CAPABILITY: &str = "pane-control";
@@ -143,6 +144,7 @@ impl ApiDescription {
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,
             capabilities: vec![
                 AGENT_PROMPT_RESULTS_CAPABILITY,
+                AGENT_RESPONSES_CAPABILITY,
                 AGENT_WAITS_CAPABILITY,
                 ATTACHED_CONTROL_CAPABILITY,
                 ATTACHED_SESSION_SCOPE_CAPABILITY,
@@ -768,6 +770,8 @@ pub enum ControlCommand {
     },
     /// Type a prompt into an agent, optionally waiting for it to reach a condition.
     AgentPrompt {
+        #[serde(default)]
+        result: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture: Option<CaptureRender>,
         target: AgentTarget,
@@ -779,8 +783,12 @@ pub enum ControlCommand {
         #[serde(default)]
         allow_working: bool,
     },
+    /// Read the latest response for one exact agent incarnation.
+    AgentResponse { target: AgentTarget },
     /// Report an agent's state from its own integration, for a pane.
     AgentReport {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        response: Option<AgentResponsePayload>,
         #[serde(default)]
         target: Option<PaneId>,
         agent: String,
@@ -2432,6 +2440,8 @@ pub struct AgentPromptAccepted {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentWaitResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<AgentResponse>,
     #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<crate::session::protocol::AgentRef>,
     pub condition: AgentWaitCondition,
@@ -2447,6 +2457,48 @@ pub struct AgentWaitResult {
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum AgentPromptResult {
     Terminal { capture: PaneCapture },
+}
+
+/// Content supplied by an integration, separate from lifecycle metadata.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentResponsePayload {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub source: AgentResponseSource,
+    pub fidelity: AgentResponseFidelity,
+    pub complete: bool,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentResponse {
+    pub response_id: u64,
+    #[serde(flatten)]
+    pub content: AgentResponsePayload,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AgentResponseSource {
+    NativeHook,
+    NativeApi,
+    Transcript,
+    Acp,
+    Terminal,
+    AlternateScreenHistory,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub enum AgentResponseFidelity {
+    Semantic,
+    Rendered,
 }
 
 /// Caller identity verified by the session server. Environment hints alone never fill `pane`.
@@ -2807,7 +2859,7 @@ pub fn bind_control_socket() -> std::io::Result<(IpcListener, ControlSocketGuard
 ///
 /// This bound is for incoming request and stream-update lines. Replies Rozi writes, including
 /// `capture-pane --scrollback full`, are read without it.
-pub const MAX_CONTROL_MESSAGE: usize = 1024 * 1024;
+pub const MAX_CONTROL_MESSAGE: usize = 8 * 1024 * 1024;
 
 pub(crate) const OVERSIZED_CONTROL_MESSAGE: &str = "control message exceeds maximum size";
 pub(crate) const MAX_PICK_ROWS: usize = 512;

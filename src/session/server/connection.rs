@@ -641,6 +641,7 @@ impl SessionServer {
                 }
             }
             ClientMessage::ReportAgent {
+                response,
                 request_id,
                 pane_id,
                 local,
@@ -672,6 +673,7 @@ impl SessionServer {
                     pane_id,
                     generation,
                     runtime::AgentIntegrationUpdate {
+                        response,
                         agent,
                         integration,
                         state,

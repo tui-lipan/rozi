@@ -56,6 +56,7 @@ pub(crate) use resurrect::{
     Unrestorable, discard_snapshot_for_restart, has_snapshot, list_snapshot_names_by_recency,
     unrestorable_snapshot, unrestorable_snapshot_error,
 };
+mod responses;
 mod runtime;
 mod shutdown;
 mod subscriptions;
@@ -192,6 +193,7 @@ pub struct SessionServer {
     allow_takeover: bool,
     clients: Vec<ClientConn>,
     agent_waits: HashMap<waits::WaitKey, waits::PendingAgentWait>,
+    agent_responses: responses::AgentResponseStore,
     capture_waits: HashMap<ClientId, capture_waits::PendingCaptureWait>,
     attachments: attachments::Attachments,
     /// Pane recordings running now, by id.
@@ -1768,6 +1770,7 @@ impl SessionServer {
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
             agent_waits: HashMap::new(),
+            agent_responses: Default::default(),
             capture_waits: HashMap::new(),
             attachments: attachments::Attachments::default(),
             recordings: recordings::Recordings::new(),

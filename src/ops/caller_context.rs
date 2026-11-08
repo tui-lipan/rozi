@@ -265,6 +265,7 @@ mod tests {
                 &mut backend,
                 &caller,
                 ControlCommand::AgentPrompt {
+                    result: false,
                     target: AgentTarget::Pane(caller.pane_id),
                     prompt: "hello".into(),
                     wait: None,

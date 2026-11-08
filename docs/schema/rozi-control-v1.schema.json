@@ -254,6 +254,98 @@
       ],
       "type": "object"
     },
+    "AgentResponse": {
+      "description": "Content supplied by an integration, separate from lifecycle metadata.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentResponseFidelity"
+        },
+        "response_id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentResponseSource"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "response_id",
+        "text",
+        "source",
+        "fidelity",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "AgentResponseFidelity": {
+      "enum": [
+        "semantic",
+        "rendered"
+      ],
+      "type": "string"
+    },
+    "AgentResponsePayload": {
+      "description": "Content supplied by an integration, separate from lifecycle metadata.",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "fidelity": {
+          "$ref": "#/$defs/AgentResponseFidelity"
+        },
+        "source": {
+          "$ref": "#/$defs/AgentResponseSource"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "source",
+        "fidelity",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "AgentResponseSource": {
+      "enum": [
+        "native-hook",
+        "native-api",
+        "transcript",
+        "acp",
+        "terminal",
+        "alternate-screen-history"
+      ],
+      "type": "string"
+    },
     "AgentRuntime": {
       "description": "One automation-facing agent in a pane: an occupant of [`pane_occupants`] that is an agent,\npaired with the reference that names it.",
       "properties": {
@@ -373,6 +465,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentResponse"
             },
             {
               "type": "null"
@@ -2101,6 +2203,10 @@
             "prompt": {
               "type": "string"
             },
+            "result": {
+              "default": false,
+              "type": "boolean"
+            },
             "target": {
               "$ref": "#/$defs/AgentTarget"
             },
@@ -2131,6 +2237,23 @@
           "type": "object"
         },
         {
+          "description": "Read the latest response for one exact agent incarnation.",
+          "properties": {
+            "cmd": {
+              "const": "agent-response",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -2157,6 +2280,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "seq": {
@@ -3835,6 +3968,10 @@
             "prompt": {
               "type": "string"
             },
+            "result": {
+              "default": false,
+              "type": "boolean"
+            },
             "target": {
               "$ref": "#/$defs/AgentTarget"
             },
@@ -3865,6 +4002,23 @@
           "type": "object"
         },
         {
+          "description": "Read the latest response for one exact agent incarnation.",
+          "properties": {
+            "cmd": {
+              "const": "agent-response",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/AgentTarget"
+            }
+          },
+          "required": [
+            "cmd",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Report an agent's state from its own integration, for a pane.",
           "properties": {
             "agent": {
@@ -3891,6 +4045,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentResponsePayload"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "seq": {

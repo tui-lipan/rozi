@@ -797,6 +797,7 @@ impl SessionClient {
         agent: Option<String>,
         integration: String,
         state: Option<protocol::AgentState>,
+        response: Option<crate::control::AgentResponsePayload>,
         reason: Option<String>,
         native_session: Option<String>,
         unless_quiet: Option<protocol::AgentState>,
@@ -804,6 +805,7 @@ impl SessionClient {
         seq: u64,
     ) {
         self.send_control(ClientMessage::ReportAgent {
+            response,
             request_id,
             pane_id,
             local,

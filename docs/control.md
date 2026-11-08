@@ -314,6 +314,7 @@ protocol version, and capabilities of the installed binary. It does not connect 
   "session_protocol": 46,
   "capabilities": [
     "agent-prompt-results",
+    "agent-responses",
     "agent-waits",
     "attached-control",
     "attached-session-scope",

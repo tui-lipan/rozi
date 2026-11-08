@@ -2519,6 +2519,7 @@ mod tests {
             }
         };
         let report = |target| control::ControlCommand::AgentReport {
+            response: None,
             target,
             agent: "claude".into(),
             integration: "hook-a".into(),

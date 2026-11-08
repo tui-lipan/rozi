@@ -423,6 +423,27 @@ The capture is taken when the wait resolves. It is terminal content, including p
 and earlier output visible on screen. It is not an extracted assistant message. Capture requires
 a wait other than `gone`. Timeouts, lost agents, replacements, and stale references remain errors.
 
+### Read the agent's response
+
+Use `--result` with a prompt wait to request the response published by the agent's integration:
+
+```bash
+rozi --session dev agents prompt --target 3 "Review this diff" --wait turn --timeout 10m --result
+rozi --session dev agents response --target 3 --format json
+```
+
+Text output prints the response. JSON adds a separate `response` object with `response_id`,
+optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`.
+`fidelity: "semantic"` means original agent text, including Markdown, independent of pane size.
+`fidelity: "rendered"` means terminal text. Check `complete` and `truncated` before treating a
+response as complete. `--capture` and `--result` can be combined.
+
+A prompt only returns a response published after that prompt was submitted for the same agent
+incarnation. A blocked or failed turn may have no response. In that case JSON omits `response`
+and text output says it is unavailable. `agents response` returns the latest retained response,
+or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
+Each response accepts at most 1 MiB of text. Oversized reports fail explicitly.
+
 ### Report state from agent hooks
 
 Agent hooks can report state that screen detection cannot see:
@@ -434,6 +455,16 @@ rozi --session dev agents report --target "$ROZI_PANE" \
 rozi --session dev agents release --target "$ROZI_PANE" \
   --integration "$AGENT_RUN_ID" --seq 2
 ```
+
+A report can include a response with `--response-stdin`. Supply a JSON object on standard input:
+
+```json
+{"text":"## Findings\n\nNo issues found.","source":"native-hook","fidelity":"semantic","complete":true,"truncated":false,"turn_id":"turn-42"}
+```
+
+The response and state are accepted together under the report's sequence number. Do not put
+response text in command-line arguments. Sources are `native-hook`, `native-api`, `transcript`,
+`acp`, `terminal`, and `alternate-screen-history`.
 
 - Generate one unique `--integration` token per agent process. Sequence numbers increase within a
   token.

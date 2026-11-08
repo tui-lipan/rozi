@@ -1231,6 +1231,7 @@ fn a_pane_with_no_ui_finds_its_own_server_and_reports_its_agent_there() {
     let report = |source| ControlRequest {
         source_session: Some(source),
         ..request(ControlCommand::AgentReport {
+            response: None,
             target: Some(pane),
             agent: "claude".into(),
             integration: "hook-e2e".into(),

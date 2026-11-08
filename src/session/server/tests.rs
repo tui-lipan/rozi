@@ -6301,6 +6301,7 @@ fn agent_report(
 ) -> crate::control::ControlResponse {
     let command = match state {
         Some(state) => crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: token.into(),
@@ -6360,6 +6361,7 @@ fn report_unless_quiet(
     agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: "client".into(),
@@ -6441,6 +6443,7 @@ fn a_report_that_may_never_be_replaced_follows_the_screen_until_it_is_quiet() {
     let refused = agent_control(
         &mut server,
         crate::control::ControlCommand::AgentPrompt {
+            result: false,
             target: crate::control::AgentTarget::Pane(7),
             prompt: "typed".into(),
             wait: None,
@@ -6516,6 +6519,7 @@ fn prompt_for(server: &mut SessionServer) -> crate::control::ControlResponse {
     agent_control(
         server,
         crate::control::ControlCommand::AgentPrompt {
+            result: false,
             target: crate::control::AgentTarget::Pane(7),
             prompt: "typed".into(),
             wait: None,
@@ -6540,6 +6544,7 @@ fn pane_reporting(server: &mut SessionServer, agent: &str, screen: &str) {
     let response = agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: agent.into(),
             integration: "client".into(),
@@ -6713,6 +6718,7 @@ fn report_turn_end_as(
     agent_control(
         server,
         crate::control::ControlCommand::AgentReport {
+            response: None,
             target: Some(7),
             agent: "claude".into(),
             integration: token.into(),
@@ -6863,6 +6869,7 @@ fn only_a_fallback_can_be_confirmed() {
         let response = agent_control(
             &mut server,
             crate::control::ControlCommand::AgentReport {
+                response: None,
                 target: Some(7),
                 agent: "claude".into(),
                 integration: "client".into(),
@@ -7235,6 +7242,7 @@ fn a_forwarded_prompt_types_with_its_clients_authority_under_an_input_lock() {
             1,
             crate::control::ControlRequest {
                 command: crate::control::ControlCommand::AgentPrompt {
+                    result: false,
                     target: crate::control::AgentTarget::Pane(7),
                     prompt: "go".into(),
                     wait: None,
@@ -8903,6 +8911,7 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
         (AgentState::Blocked, Some("approval".to_string()), 2),
     ] {
         let res = harness.headless_control(ControlCommand::AgentReport {
+            response: None,
             target: Some(1),
             agent: "claude".to_string(),
             integration: "claude-hook".to_string(),

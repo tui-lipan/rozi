@@ -87,7 +87,7 @@ pub(crate) fn shutdown_named_session_if_present(name: &str) -> io::Result<bool> 
         return Ok(false);
     }
 
-    shutdown_existing_named_session(&endpoint, name, Ending::Delete)?;
+    shutdown_existing_named_session(&endpoint, name, Ending::Delete, None)?;
     Ok(true)
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<Option<St
     if !path_entry_exists(endpoint.path())? {
         return Ok(None);
     }
-    shutdown_existing_named_session(&endpoint, name, Ending::Restart).map(Some)
+    shutdown_existing_named_session(&endpoint, name, Ending::Restart, None).map(Some)
 }
 
 /// Stop a named session's server by signal so it saves its snapshot before exiting, keeping both
@@ -129,7 +129,8 @@ pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
     if !path_entry_exists(endpoint.path())? {
         return Ok(false);
     }
-    if let Some(newer) = crate::session::discovery::session_release(name).newer_than_this_build() {
+    let (release, checked_server) = crate::session::discovery::session_release_and_server(name);
+    if let Some(newer) = release.newer_than_this_build() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
@@ -139,7 +140,8 @@ pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
             ),
         ));
     }
-    shutdown_existing_named_session(&endpoint, name, Ending::Upgrade).map(|_| true)
+    // Stop only the server that was just checked. Another one may have taken the name since.
+    shutdown_existing_named_session(&endpoint, name, Ending::Upgrade, checked_server).map(|_| true)
 }
 
 /// Whether a refused shutdown handshake was a protocol-version refusal.
@@ -158,10 +160,13 @@ impl From<io::Error> for GracefulFailure {
     }
 }
 
+/// `expected_server`, when given, is the process the caller already checked: a different server
+/// behind the endpoint is left alone and the stop fails.
 fn shutdown_existing_named_session(
     endpoint: &IpcEndpoint,
     name: &str,
     ending: Ending,
+    expected_server: Option<u32>,
 ) -> io::Result<StoppedForRestart> {
     let mut stream = match endpoint.connect() {
         Ok(stream) => stream,
@@ -172,6 +177,14 @@ fn shutdown_existing_named_session(
     };
 
     let server_pid = stream.peer_pid();
+    if let Some(expected) = expected_server
+        && server_pid != Some(expected)
+    {
+        return Err(io::Error::other(format!(
+            "Session `{name}` was replaced by another server while it was being checked; nothing \
+             was stopped. Run the command again."
+        )));
+    }
     let graceful = match ending.message() {
         // Take the same path as a server this build cannot talk to: stop it by its process, which
         // saves a final snapshot the replacement restores.
@@ -409,6 +422,43 @@ fn graceful_shutdown(
 mod tests {
     use super::*;
     use crate::platform::ipc::PipedConnection;
+
+    /// An upgrade checks a session's server and then stops it over a second connection. When a
+    /// different server answers that second connection, the one that was checked is gone and the
+    /// replacement - possibly a newer release - must be left running, untouched.
+    #[cfg(unix)]
+    #[test]
+    fn an_upgrade_never_stops_a_server_it_did_not_check() {
+        use std::io::Read;
+        let dir = tempfile::Builder::new()
+            .prefix("rz")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let endpoint = IpcEndpoint::at_path(dir.path().join("s.sock"));
+        let bound = endpoint
+            .bind()
+            .expect("bind the replacement server's endpoint");
+        // The server behind the endpoint is this test process; the checked one was another.
+        let replacement = std::process::id();
+        let checked = replacement.wrapping_add(1);
+        let server = std::thread::spawn(move || {
+            let mut conn = bound.listener().accept().expect("accept");
+            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut received = Vec::new();
+            let _ = conn.read_to_end(&mut received);
+            received
+        });
+
+        let err = shutdown_existing_named_session(&endpoint, "dev", Ending::Upgrade, Some(checked))
+            .expect_err("a server other than the checked one is refused");
+
+        assert!(err.to_string().contains("replaced"), "{err}");
+        assert!(
+            server.join().expect("server thread").is_empty(),
+            "nothing is sent to the replacement"
+        );
+        assert!(endpoint.path().exists(), "its endpoint is left in place");
+    }
 
     /// Run the shutdown handshake against a scripted server that answers the attach with `reply`.
     fn handshake_against(reply: ServerMessage) -> Result<(), GracefulFailure> {

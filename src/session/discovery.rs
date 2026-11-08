@@ -365,13 +365,20 @@ pub(crate) enum SessionRelease {
 }
 
 pub(crate) fn session_release(name: &str) -> SessionRelease {
+    session_release_and_server(name).0
+}
+
+/// [`session_release`], with the process id of the server that answered, so a caller about to act
+/// on the answer can make sure it acts on that same server.
+pub(crate) fn session_release_and_server(name: &str) -> (SessionRelease, Option<u32>) {
     let Some(mut stream) = crate::session::server::session_endpoint(name)
         .ok()
         .and_then(|endpoint| endpoint.connect().ok())
     else {
-        return SessionRelease::Unknown;
+        return (SessionRelease::Unknown, None);
     };
-    match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT) {
+    let server = stream.peer_pid();
+    let release = match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT) {
         Ok(QueryAnswer {
             status: DiscoveredSessionStatus::Running { rozi_version, .. },
             ..
@@ -383,7 +390,8 @@ pub(crate) fn session_release(name: &str) -> SessionRelease {
             SessionRelease::Incompatible(answer.refused_by)
         }
         _ => SessionRelease::Unknown,
-    }
+    };
+    (release, server)
 }
 
 impl SessionRelease {

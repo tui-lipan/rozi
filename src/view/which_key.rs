@@ -148,6 +148,7 @@ struct Row {
     keys: String,
     label: String,
     priority: usize,
+    disabled: bool,
 }
 
 impl Row {
@@ -208,6 +209,7 @@ struct Candidate {
     keys: String,
     label: String,
     category: String,
+    disabled_reason: Option<String>,
 }
 
 fn candidates(ctx: &Context<AppRoot>) -> Vec<Candidate> {
@@ -223,12 +225,15 @@ fn candidates(ctx: &Context<AppRoot>) -> Vec<Candidate> {
                 .shortcuts
                 .iter()
                 .find_map(|binding| prefix_continuation(binding, &prefix))?;
+            let disabled_reason = crate::input::Action::from_id(entry.id.as_str())
+                .and_then(|action| crate::commands::action_disabled_reason(action, &ctx.state));
             Some(Candidate {
                 id: entry.id.as_str().to_string(),
                 keys,
                 label: crate::commands::builtin_label(entry.id.as_str())
                     .map_or_else(|| entry.label.to_string(), str::to_string),
                 category: entry.category.as_deref().unwrap_or("Other").to_string(),
+                disabled_reason,
             })
         })
         .collect()
@@ -252,6 +257,7 @@ fn workspace_row(candidates: &[Candidate]) -> Option<Row> {
         keys: "1-9".to_string(),
         label: "Workspace".to_string(),
         priority: category_priority("Workspaces"),
+        disabled: false,
     })
 }
 
@@ -276,6 +282,7 @@ fn forward_prefix_row(ctx: &Context<AppRoot>) -> Option<Row> {
         keys,
         label: "Send prefix".to_string(),
         priority: category_priority("App"),
+        disabled: false,
     })
 }
 
@@ -294,6 +301,12 @@ fn rows(ctx: &Context<AppRoot>) -> Vec<Row> {
             .map(|id| candidates.iter().find(|candidate| candidate.id == *id))
             .collect();
         let Some(members) = members else { continue };
+        if members
+            .iter()
+            .any(|member| member.disabled_reason.is_some())
+        {
+            continue;
+        }
         let keys: Vec<String> = members.iter().map(|member| member.keys.clone()).collect();
         let Some(keys) = collapse_keys(&keys, family.joiner) else {
             continue;
@@ -311,6 +324,7 @@ fn rows(ctx: &Context<AppRoot>) -> Vec<Row> {
                 keys: keys.clone(),
                 label: (*label).to_string(),
                 priority: category_priority(&candidate.category),
+                disabled: false,
             });
             continue;
         }
@@ -322,10 +336,15 @@ fn rows(ctx: &Context<AppRoot>) -> Vec<Row> {
             rows.extend(workspace_row.take());
             continue;
         }
+        let (label, disabled) = match candidate.disabled_reason.as_deref() {
+            Some(reason) => (format!("{} · {reason}", candidate.label), true),
+            None => (candidate.label.clone(), false),
+        };
         rows.push(Row {
             keys: candidate.keys.clone(),
-            label: candidate.label.clone(),
+            label,
             priority: category_priority(&candidate.category),
+            disabled,
         });
     }
 
@@ -441,6 +460,7 @@ pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Elem
 
     let key_style = Style::new().fg(theme.border_active).bold();
     let label_style = fg_only(&theme.primary);
+    let disabled_style = fg_only(&theme.border);
     let mut grid = HStack::new()
         .gap(COLUMN_GAP as u16)
         .height(Length::Px(height - 2));
@@ -448,10 +468,15 @@ pub(crate) fn layer(ctx: &Context<AppRoot>, content: Rect) -> Option<(Rect, Elem
         let column_width = column.iter().map(|row| row.width()).max().unwrap_or(0);
         let mut stack = VStack::new().width(Length::Px(u16::try_from(column_width).ok()?));
         for row in column {
+            let (row_key_style, row_label_style) = if row.disabled {
+                (disabled_style, disabled_style)
+            } else {
+                (key_style, label_style)
+            };
             stack = stack.child(
                 Text::from_spans([
-                    Span::new(format!("{} ", row.keys)).style(key_style),
-                    Span::new(row.label.clone()).style(label_style),
+                    Span::new(format!("{} ", row.keys)).style(row_key_style),
+                    Span::new(row.label.clone()).style(row_label_style),
                 ])
                 .height(Length::Px(1))
                 .overflow(Overflow::Ellipsis),
@@ -509,6 +534,7 @@ mod tests {
             keys: keys.to_string(),
             label: label.to_string(),
             priority: 0,
+            disabled: false,
         }
     }
 

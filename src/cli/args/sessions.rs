@@ -46,6 +46,10 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Restart a running session, ending its programs",
             ),
             row(
+                "upgrade <NAME> [--remote <HOST>]",
+                "Restart a session on this rozi from its snapshot",
+            ),
+            row(
                 "kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),
@@ -91,7 +95,10 @@ pub(super) fn parse(
         return Ok(ParsedCli::SessionsHelp);
     };
     let spelling = format!("sessions {command}");
-    if matches!(command.as_str(), "watch" | "list" | "restart" | "kill") {
+    if matches!(
+        command.as_str(),
+        "watch" | "list" | "restart" | "upgrade" | "kill"
+    ) {
         if let Some(option) = cli.launch_only_option() {
             return Err(format!("{option} does not apply to {spelling}"));
         }
@@ -112,9 +119,10 @@ pub(super) fn parse(
         "attach" => parse_attach(iter, cli),
         "new" => parse_new(iter, cli),
         "restart" => parse_restart(iter, cli.remote, cli.config_path),
+        "upgrade" => parse_upgrade(iter, cli.remote, cli.config_path),
         "kill" => parse_kill(iter, cli.remote, cli.config_path),
         other => Err(format!(
-            "unknown sessions command `{other}` (expected list, watch, attach, new, restart, or kill)"
+            "unknown sessions command `{other}` (expected list, watch, attach, new, restart, upgrade, or kill)"
         )),
     }
 }
@@ -336,6 +344,42 @@ fn parse_restart(
     }))
 }
 
+/// `sessions upgrade <NAME> [--remote <HOST>]`.
+fn parse_upgrade(
+    iter: &mut impl Iterator<Item = String>,
+    mut remote: Option<String>,
+    config_path: Option<String>,
+) -> std::result::Result<ParsedCli, String> {
+    let name = require_value(iter, "sessions upgrade requires a session name")?;
+    if !session::discovery::valid_session_name(&name) {
+        return Err("invalid session name".to_string());
+    }
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--remote" => {
+                let target = require_value(
+                    iter,
+                    "sessions upgrade --remote requires a host alias or ssh:// URL",
+                )?;
+                session::remote::parse_remote_target(&target)?;
+                if remote.replace(target).is_some() {
+                    return Err("sessions upgrade --remote specified more than once".to_string());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unexpected argument `{other}` after sessions upgrade"
+                ));
+            }
+        }
+    }
+    Ok(ParsedCli::Sessions(SessionsCommand::Upgrade {
+        name,
+        remote,
+        config_path,
+    }))
+}
+
 fn parse_kill(
     iter: &mut impl Iterator<Item = String>,
     mut remote: Option<String>,
@@ -416,7 +460,42 @@ mod tests {
         ));
         assert_eq!(
             parse_cli_args(vec!["sessions".into(), "lst".into()]).expect_err("must reject"),
-            "unknown sessions command `lst` (expected list, watch, attach, new, restart, or kill)"
+            "unknown sessions command `lst` (expected list, watch, attach, new, restart, upgrade, or kill)"
+        );
+    }
+
+    #[test]
+    fn sessions_upgrade_parses_its_options_and_refuses_the_rest() {
+        assert!(matches!(
+            parse(&["sessions", "upgrade", "dev"]),
+            Ok(ParsedCli::Sessions(SessionsCommand::Upgrade {
+                name,
+                remote: None,
+                ..
+            })) if name == "dev"
+        ));
+        for args in [
+            &["sessions", "upgrade", "dev", "--remote", "workbox"][..],
+            &["--remote", "workbox", "sessions", "upgrade", "dev"][..],
+        ] {
+            assert!(matches!(
+                parse(args),
+                Ok(ParsedCli::Sessions(SessionsCommand::Upgrade { remote: Some(host), .. }))
+                    if host == "workbox"
+            ));
+        }
+        assert_eq!(
+            parse(&["sessions", "upgrade"]).expect_err("needs a name"),
+            "sessions upgrade requires a session name"
+        );
+        assert_eq!(
+            parse(&["sessions", "upgrade", "dev;rm"]).expect_err("hostile name"),
+            "invalid session name"
+        );
+        assert_eq!(
+            parse(&["sessions", "upgrade", "dev", "--no-resurrect"])
+                .expect_err("upgrade always restores from snapshot"),
+            "unexpected argument `--no-resurrect` after sessions upgrade"
         );
     }
 

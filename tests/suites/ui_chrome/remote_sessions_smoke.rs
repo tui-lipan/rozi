@@ -14,6 +14,8 @@ fn running(name: &str, clients: u32, target: &RemoteTarget) -> DiscoveredSession
             panes: 1,
             clients,
             has_layout: false,
+            effective_protocol: None,
+            rozi_version: None,
         },
         ephemeral: false,
         host: Some(target.display_label()),

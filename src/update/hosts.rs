@@ -316,6 +316,8 @@ mod tests {
                     panes: 2,
                     clients: 0,
                     has_layout: false,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             };
             backend
@@ -385,6 +387,8 @@ mod tests {
                     panes: 2,
                     clients: 0,
                     has_layout: true,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             };
             let selected = row("dev");

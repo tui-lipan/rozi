@@ -316,6 +316,12 @@ pub(crate) enum SessionsCommand {
         remote: Option<String>,
         config_path: Option<String>,
     },
+    /// `sessions upgrade <NAME> [--remote <HOST>]`.
+    Upgrade {
+        name: String,
+        remote: Option<String>,
+        config_path: Option<String>,
+    },
     Kill {
         name: String,
         remote: Option<String>,

@@ -47,12 +47,13 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     // (first-seen order) so each category header appears once even when entries of the same
     // category aren't registered contiguously.
     let mut groups: Vec<(String, Vec<SearchEntry<Callback<()>>>)> = Vec::new();
+    let mut disabled_reasons = std::collections::HashMap::new();
     let mut item_index = 0;
     let mut toggle_sidebar_index = None;
     for entry in ctx.command_registry().entries() {
+        let action = Action::from_id(entry.id.as_str());
         if !crate::commands::is_palette_eligible(entry.id.as_str())
-            || Action::from_id(entry.id.as_str())
-                .is_some_and(|action| !crate::commands::palette_visible(action, &ctx.state))
+            || action.is_some_and(|action| !crate::commands::palette_visible(action, &ctx.state))
             || hidden_named_command(ctx, entry.id.as_str())
         {
             continue;
@@ -61,8 +62,16 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
             toggle_sidebar_index = Some(item_index);
         }
         let category = entry.category.as_deref().unwrap_or("Other").to_string();
+        let disabled_reason =
+            action.and_then(|action| crate::commands::action_disabled_reason(action, &ctx.state));
+        let handler = if let Some(reason) = disabled_reason.as_ref() {
+            disabled_reasons.insert(entry.label.to_string(), reason.clone());
+            Callback::new(|_| {})
+        } else {
+            entry.handler.clone()
+        };
         let mut item = SearchEntry::Item(
-            SearchItem::new(entry.label.to_string(), entry.handler.clone())
+            SearchItem::new(entry.label.to_string(), handler)
                 .aliases(command_palette_aliases(entry.id.as_str()))
                 .priority(i32::from(
                     ctx.state.command_palette_sidebar_query
@@ -70,9 +79,13 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
                 )),
         );
         item_index += 1;
-        let hint = entry.keybinding_hint.as_deref().unwrap_or("");
-        if !hint.is_empty() {
-            item = item.description(picker_description(hint));
+        if let Some(reason) = disabled_reason.as_deref() {
+            item = item.description(picker_description(reason));
+        } else {
+            let hint = entry.keybinding_hint.as_deref().unwrap_or("");
+            if !hint.is_empty() {
+                item = item.description(picker_description(hint));
+            }
         }
         match groups.iter_mut().find(|(name, _)| *name == category) {
             Some((_, items)) => items.push(item),
@@ -81,7 +94,7 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     }
 
     let entries = command_entries_with_groups(groups);
-    let palette = action_search_palette(ctx, entries, "Search commands…")
+    let mut palette = action_search_palette(ctx, entries, "Search commands…")
         .initial_selected_item_index(
             ctx.state
                 .command_palette_sidebar_query
@@ -92,6 +105,20 @@ pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
             ctx.link()
                 .callback(|query: Arc<str>| Msg::CommandPaletteQueryChanged(query.to_string())),
         );
+    if !disabled_reasons.is_empty() {
+        let disabled_style = fg_only(&ctx.state.theme.border);
+        palette = palette.render_item(Arc::new(move |item, _highlight| {
+            let reason = disabled_reasons.get(item.label.as_ref())?;
+            Some(
+                super::palette::picker_row(
+                    [Span::new(item.label.as_ref()).style(disabled_style)],
+                    reason.as_str(),
+                    disabled_style,
+                )
+                .pointer_shape(PointerShape::Default),
+            )
+        }));
+    }
 
     action_palette(
         ctx,
@@ -205,6 +232,7 @@ pub(super) fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         ]),
         "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
         "update-rozi" => alias_list(&["upgrade", "new version", "release"]),
+        "upgrade-session" => alias_list(&["upgrade", "restart from snapshot", "update session"]),
         "release-notes" => alias_list(&["release notes", "changelog", "changes", "news"]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
         "screenshot-pane" | "screenshot-ui" => alias_list(&["capture", "png", "image", "snapshot"]),

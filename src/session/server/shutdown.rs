@@ -25,13 +25,16 @@ enum Ending {
     /// but the protocol leaves a snapshot for that start to discard, or to restore when the server
     /// was [incompatible](StoppedForRestart::Incompatible).
     Restart,
+    /// Stop the server by signal so it saves a final snapshot for the replacement server to
+    /// restore, keeping its snapshot and deployments.
+    Upgrade,
 }
 
 impl Ending {
     fn message(self) -> ClientMessage {
         match self {
             Self::Delete => ClientMessage::Shutdown,
-            Self::Restart => ClientMessage::ShutdownForRestart,
+            Self::Restart | Self::Upgrade => ClientMessage::ShutdownForRestart,
         }
     }
 
@@ -40,7 +43,7 @@ impl Ending {
     fn forget_session(self, name: &str) -> Option<io::Error> {
         match self {
             Self::Delete => super::delete_snapshot(name).err(),
-            Self::Restart => None,
+            Self::Restart | Self::Upgrade => None,
         }
     }
 }
@@ -110,6 +113,16 @@ pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<Option<St
     shutdown_existing_named_session(&endpoint, name, Ending::Restart).map(Some)
 }
 
+/// Stop a named session's server by signal so it saves its snapshot before exiting, keeping both
+/// its snapshot and its deployments for the replacement server to restore.
+pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
+    let endpoint = super::session_endpoint(name)?;
+    if !path_entry_exists(endpoint.path())? {
+        return Ok(false);
+    }
+    shutdown_existing_named_session(&endpoint, name, Ending::Upgrade).map(|_| true)
+}
+
 /// Whether a refused shutdown handshake was a protocol-version refusal.
 #[derive(Debug)]
 struct GracefulFailure {
@@ -141,6 +154,12 @@ fn shutdown_existing_named_session(
 
     let server_pid = stream.peer_pid();
     let graceful = (|| -> Result<(), GracefulFailure> {
+        if ending == Ending::Upgrade {
+            return Err(GracefulFailure {
+                error: io::Error::other("upgrade stops by signal to preserve snapshot"),
+                incompatible: true,
+            });
+        }
         stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
         stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
         graceful_shutdown(&mut stream, name, ending)

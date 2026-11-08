@@ -73,6 +73,8 @@ pub enum Action {
     KillSession,
     /// Shut down the current session's server and immediately recreate it, staying attached.
     RestartSession,
+    /// Restart an older attached session onto this binary from its snapshot, staying attached.
+    UpgradeSession,
     OpenThemePicker,
     OpenSettings,
     OpenExtensions,
@@ -217,6 +219,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::KillWorkspace,
     Action::KillSession,
     Action::RestartSession,
+    Action::UpgradeSession,
     Action::OpenThemePicker,
     Action::OpenSettings,
     Action::OpenExtensions,
@@ -349,6 +352,7 @@ impl Action {
             Action::KillWorkspace => "kill-workspace",
             Action::KillSession => "kill-session",
             Action::RestartSession => "restart-session",
+            Action::UpgradeSession => "upgrade-session",
             Action::OpenThemePicker => "choose-theme",
             Action::OpenSettings => "settings",
             Action::OpenExtensions => "extensions",
@@ -430,6 +434,178 @@ impl Action {
             .copied()
             .find(|action| action.id() == Some(id))
     }
+
+    /// Optional session capability required for this action to run on the connected server.
+    ///
+    /// Exhaustive by design (no wildcard arm): every new action must decide whether it depends on a
+    /// negotiated [`crate::session::protocol::Capability`].
+    pub const fn required_capability(self) -> Option<crate::session::protocol::Capability> {
+        match self {
+            Action::Spawn
+            | Action::SpawnFloat
+            | Action::RespawnPane
+            | Action::TogglePaneLogging
+            | Action::Close
+            | Action::Focus(_)
+            | Action::FocusNoWrap(_)
+            | Action::SmartFocus(_)
+            | Action::FocusNextBlockedPane
+            | Action::Move(_)
+            | Action::SwitchWorkspace(_)
+            | Action::MoveToWorkspace(_)
+            | Action::RelocateWorkspace(_)
+            | Action::MoveWorkspace(..)
+            | Action::ToggleFloat
+            | Action::TogglePin
+            | Action::ToggleFullscreen
+            | Action::RenamePane
+            | Action::RenameWorkspace
+            | Action::Paste
+            | Action::Swap(_)
+            | Action::CycleFocus(_)
+            | Action::PromoteToMaster
+            | Action::FlipSplit
+            | Action::AdjustRatio(_)
+            | Action::EnterResizeMode
+            | Action::ToggleLayout
+            | Action::OpenLayoutPicker
+            | Action::EnterCopyMode
+            | Action::EnterHintMode
+            | Action::ToggleScratchpad
+            | Action::OpenSearch
+            | Action::SaveProfile
+            | Action::OpenProfilePicker
+            | Action::OpenWorktrees
+            | Action::ApplyProfile
+            | Action::OpenSessionPicker
+            | Action::OpenAgentPicker
+            | Action::OpenCollaborators
+            | Action::RenameSession
+            | Action::NewTemporarySession
+            | Action::RequestControl
+            | Action::GrantControl
+            | Action::ToggleControlTakeover
+            | Action::ToggleInputLock
+            | Action::Quit
+            | Action::KillWorkspace
+            | Action::KillSession
+            | Action::RestartSession
+            | Action::UpgradeSession
+            | Action::OpenThemePicker
+            | Action::OpenSettings
+            | Action::OpenExtensions
+            | Action::UpdateRozi
+            | Action::ShowReleaseNotes
+            | Action::OpenAppearance
+            | Action::OpenAlerts
+            | Action::ToggleDoNotDisturb
+            | Action::TogglePalette
+            | Action::ToggleHelp
+            | Action::ToggleDevtools
+            | Action::ToggleTitles
+            | Action::CycleTitlebar
+            | Action::ToggleWorkbar
+            | Action::ToggleWorkbarGap
+            | Action::ToggleWorkbarBackground
+            | Action::ToggleWorkbarPosition
+            | Action::ToggleWorkbarPowerline
+            | Action::ToggleSidebar
+            | Action::ToggleLeftSidebar
+            | Action::ToggleRightSidebar
+            | Action::SidebarTabs
+            | Action::ToggleSidebarGap
+            | Action::ToggleSidebarBackground
+            | Action::ToggleSidebarBackgroundFollowsCanvas
+            | Action::CycleSidebarTabStyle
+            | Action::FocusSidebar
+            | Action::ToggleAnimations
+            | Action::ToggleNerdIcons
+            | Action::ToggleFocusOnHover
+            | Action::ToggleHighlightFocusedBackground
+            | Action::ToggleHighlightFocusedBorder
+            | Action::ToggleHighlightFocusedTitlebar
+            | Action::CycleBorderMode
+            | Action::CycleAlertBorder
+            | Action::CycleWorkbarAlert
+            | Action::CycleWorkbarAlertPaint
+            | Action::ToggleBackgroundFollowsTerminal
+            | Action::CycleBorderStyle
+            | Action::CycleFloatBorderStyle
+            | Action::CycleScratchBorderStyle
+            | Action::CycleFullscreenBorderStyle
+            | Action::CyclePickerBorderStyle
+            | Action::TogglePickerTabBackground
+            | Action::CyclePickerTabStyle
+            | Action::CyclePickerSelectionStyle
+            | Action::CycleTitleStyle
+            | Action::CycleWorkbarBadgeStyle
+            | Action::CycleWorkbarTabStyle
+            | Action::CycleWorkbarStyle
+            | Action::TogglePaneSynchronization
+            | Action::OpenConfigFile
+            | Action::ReloadExtensions
+            | Action::EditScrollback
+            | Action::CopyLastOutput
+            | Action::ScreenshotPane
+            | Action::ScreenshotUi
+            | Action::TogglePaneRecording
+            | Action::MarkPaneRecording
+            | Action::ToggleUiRecording
+            | Action::MarkUiRecording
+            | Action::RunNamedCommand(_)
+            | Action::RunUserCommand(_) => None,
+        }
+    }
+
+    /// The capability this action needs, consulting [`Self::required_capability`] first and any
+    /// scoped [`Self::with_required_capability`] guard while all variants return `None`.
+    pub fn effective_required_capability(self) -> Option<crate::session::protocol::Capability> {
+        self.required_capability().or_else(|| {
+            SCOPED_REQUIRED_CAPABILITY.with(|slot| {
+                slot.get()
+                    .and_then(|(gated, capability)| (gated == self).then_some(capability))
+            })
+        })
+    }
+
+    /// Why this action is disabled when the connected session negotiated `capabilities`, or `None`
+    /// when it is supported (or no session is attached).
+    pub fn disabled_reason_for_capabilities(
+        self,
+        capabilities: Option<&crate::session::protocol::Capabilities>,
+    ) -> Option<String> {
+        let capability = self.effective_required_capability()?;
+        let capabilities = capabilities?;
+        (!capabilities.supports(capability)).then(|| {
+            format!(
+                "needs this session on rozi ≥ {}",
+                capability.introduced_in()
+            )
+        })
+    }
+
+    /// Run `f` with `self` requiring `capability` in the production enablement check.
+    pub fn with_required_capability<R>(
+        self,
+        capability: crate::session::protocol::Capability,
+        f: impl FnOnce() -> R,
+    ) -> R {
+        struct ResetGuard(Option<(Action, crate::session::protocol::Capability)>);
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                SCOPED_REQUIRED_CAPABILITY.with(|slot| slot.set(self.0));
+            }
+        }
+        let previous =
+            SCOPED_REQUIRED_CAPABILITY.with(|slot| slot.replace(Some((self, capability))));
+        let _guard = ResetGuard(previous);
+        f()
+    }
+}
+
+thread_local! {
+    static SCOPED_REQUIRED_CAPABILITY: std::cell::Cell<Option<(Action, crate::session::protocol::Capability)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]

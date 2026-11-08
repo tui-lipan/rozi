@@ -570,6 +570,8 @@ mv "$4.tmp" "$4"
                 panes: 1,
                 clients: 0,
                 has_layout: true,
+                effective_protocol: None,
+                rozi_version: None,
             },
             origin: Default::default(),
             ephemeral: false,

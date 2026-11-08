@@ -202,6 +202,18 @@ fn push_local_current_session(
                 .sum(),
             clients: ctx.state.attached_client_count(),
             has_layout: true,
+            effective_protocol: ctx
+                .state
+                .current()
+                .session_client
+                .as_ref()
+                .map(|client| client.effective_protocol()),
+            rozi_version: ctx
+                .state
+                .current()
+                .session_client
+                .as_ref()
+                .and_then(|client| client.server_version().map(str::to_owned)),
         },
     });
 }

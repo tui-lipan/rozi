@@ -393,6 +393,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::GrantControl => shared
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
+        Action::UpgradeSession => can_upgrade_attached_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
         Action::ShowReleaseNotes => state.release_notes.is_some(),
         Action::ScreenshotPane => state.focused_pane().is_some(),
@@ -404,6 +405,29 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::MarkUiRecording => crate::ops::ui_recording::is_recording(state),
         _ => true,
     }
+}
+
+pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
+    state.current().session_attached
+        && !state.is_ephemeral_session()
+        && state
+            .current()
+            .session_client
+            .as_ref()
+            .and_then(|client| client.server_version())
+            .is_some_and(|version| version != env!("CARGO_PKG_VERSION"))
+}
+
+/// Why `action` is disabled on the currently attached session, or `None` when the session supports
+/// it (or no session is attached).
+pub(crate) fn action_disabled_reason(action: Action, state: &State) -> Option<String> {
+    action.disabled_reason_for_capabilities(
+        state
+            .current()
+            .session_client
+            .as_ref()
+            .map(|client| client.capabilities()),
+    )
 }
 
 /// Whether the command palette lists `action` right now. Stricter than [`command_available`]: a
@@ -1786,5 +1810,292 @@ mod tests {
         assert!(commands_active(&state));
         state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
         assert!(!commands_active(&state));
+    }
+
+    fn attach_scripted_session(
+        capabilities: Option<crate::session::protocol::Capabilities>,
+        rozi_version: Option<&str>,
+    ) -> (
+        crate::session::client::SessionClient,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::pipe;
+        use std::sync::mpsc;
+
+        use crate::platform::ipc::{IpcConnection, PipedConnection};
+        use crate::session::client::SessionClient;
+        use crate::session::protocol::{
+            self, ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInstanceId,
+        };
+
+        let (server_reader, client_writer) = pipe().expect("client->server pipe");
+        let (client_reader, server_writer) = pipe().expect("server->client pipe");
+        let rozi_version = rozi_version.map(str::to_string);
+        let server = std::thread::spawn(move || {
+            let mut conn = PipedConnection::from_reader_writer(server_writer, server_reader);
+            let _attach: ClientMessage =
+                protocol::read_frame(&mut conn).expect("read client attach");
+            protocol::write_frame(
+                &mut conn,
+                &ServerMessage::Attached {
+                    capabilities,
+                    session_instance: SessionInstanceId::generate(),
+                    protocol_version: PROTOCOL_VERSION,
+                    effective_protocol: PROTOCOL_VERSION,
+                    session: "dev".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 0,
+                    layout: None,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: true,
+                    origin: Default::default(),
+                    rozi_version,
+                },
+            )
+            .expect("send Attached");
+            while protocol::read_frame::<_, ClientMessage>(&mut conn).is_ok() {}
+        });
+        let client_conn = IpcConnection::from_piped(PipedConnection::from_reader_writer(
+            client_writer,
+            client_reader,
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let (client, _) =
+            SessionClient::from_stream_attached(client_conn, "dev", tx, false).expect("attach");
+        (client, server)
+    }
+
+    #[test]
+    fn upgrade_session_is_visible_only_when_attached_session_differs_in_version() {
+        use crate::session::protocol::Capabilities;
+
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+
+        let (same_client, same_server) = attach_scripted_session(
+            Some(Capabilities::current()),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(same_client);
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+        state.current_mut().session_client = None;
+        same_server.join().expect("server thread");
+
+        let (older_client, older_server) =
+            attach_scripted_session(Some(Capabilities::default()), Some("0.0.41"));
+        state.current_mut().session_client = Some(older_client);
+        assert!(can_upgrade_attached_session(&state));
+        assert!(palette_visible(Action::UpgradeSession, &state));
+
+        state.current_mut().session_name = Some("eph-1".into());
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+
+        state.current_mut().session_client = None;
+        older_server.join().expect("server thread");
+    }
+
+    #[test]
+    fn capability_gated_action_is_disabled_in_palette_which_key_settings_and_toasts_on_shortcut() {
+        use std::time::Duration;
+
+        use crate::Msg;
+        use crate::session::protocol::{Capabilities, Capability};
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::{
+            App, KeyCode, KeyDispatchPolicy, KeyEvent, KeyMods, Rect, TerminalKeyPolicy,
+        };
+
+        crate::test_support::on_deeper_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            assert_eq!(
+                Action::ToggleNerdIcons.required_capability(),
+                None,
+                "current built-in actions require no capability above the floor"
+            );
+            let empty = Capabilities::default();
+            let current = Capabilities::current();
+
+            Action::with_required_capability(
+                Action::ToggleNerdIcons,
+                Capability::RuntimeMetrics,
+                || {
+                    assert_eq!(
+                        Action::ToggleNerdIcons
+                            .disabled_reason_for_capabilities(Some(&empty))
+                            .as_deref(),
+                        Some("needs this session on rozi ≥ 0.0.44")
+                    );
+                    assert_eq!(
+                        Action::ToggleNerdIcons.disabled_reason_for_capabilities(Some(&current)),
+                        None
+                    );
+
+                    let (client, server) =
+                        attach_scripted_session(Some(Capabilities::default()), Some("0.0.41"));
+                    let app = App::new()
+                        .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+                        .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+                        .command_chord_reveal_delay(Duration::ZERO);
+                    let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 120,
+                        h: 32,
+                    });
+                    {
+                        let state = backend.state_mut();
+                        state.config.animations.enabled = false;
+                        state.config.input.which_key = crate::config::WhichKey::Instant;
+                        state.show_session_picker = false;
+                        state.session_picker = None;
+                        state.current_mut().session_name = Some("dev".into());
+                        state.current_mut().session_attached = true;
+                        state.current_mut().session_client = Some(client);
+                        let pane = &mut state.current_mut().workspaces[0].panes[0];
+                        pane.opening = false;
+                        pane.terminal_active = true;
+                    }
+                    backend.render();
+
+                    // 1. Command Palette: shows Upgrade session and shows a capability-gated
+                    // command ("New floating pane" / Action::SpawnFloating) disabled with the
+                    // reason "needs this session on rozi ≥ 0.0.44".
+                    Action::with_required_capability(
+                        Action::SpawnFloat,
+                        Capability::RuntimeMetrics,
+                        || {
+                            backend
+                                .dispatch(Msg::RunAction(Action::TogglePalette))
+                                .unwrap();
+                            backend.render();
+                            let palette_frame = backend.capture_frame();
+                            let palette_grid = palette_frame.to_fixed_grid_lines().join("\n");
+                            assert!(
+                                palette_grid.contains("New floating pane")
+                                    && palette_grid.contains("needs this session on rozi ≥ 0.0.44"),
+                                "Command palette should show disabled action and reason:\n{palette_grid}"
+                            );
+                            let row_y = palette_frame
+                                .to_fixed_grid_lines()
+                                .iter()
+                                .position(|line| line.contains("New floating pane"))
+                                .expect("row in palette")
+                                as u16;
+                            let col_x = palette_frame.to_fixed_grid_lines()[usize::from(row_y)]
+                                .chars()
+                                .position(|ch| ch == 'N')
+                                .expect("label start")
+                                as u16;
+                            assert_eq!(
+                                backend.state().theme.border.fg,
+                                Some(palette_frame.cell(col_x, row_y).fg.into()),
+                                "disabled command row must render in muted border style"
+                            );
+
+                            for ch in "Upgrade".chars() {
+                                backend
+                                    .send_key(KeyEvent {
+                                        code: KeyCode::Char(ch),
+                                        mods: KeyMods::NONE,
+                                    })
+                                    .unwrap();
+                            }
+                            backend.render();
+                            let upgrade_grid =
+                                backend.capture_frame().to_fixed_grid_lines().join("\n");
+                            assert!(
+                                upgrade_grid.contains("Upgrade session"),
+                                "Upgrade session should appear in palette for an older session:\n{upgrade_grid}"
+                            );
+                            backend.dispatch(Msg::ClosePalette).unwrap();
+                            backend.render();
+
+                            // 2. Which Key: Spawn ("ctrl-a Enter") shows the disabled reason when
+                            // the prefix chord is pending.
+                            backend
+                                .send_key(KeyEvent {
+                                    code: KeyCode::Char('a'),
+                                    mods: KeyMods::CTRL,
+                                })
+                                .unwrap();
+                            backend.render();
+                            let which_key_grid =
+                                backend.capture_frame().to_fixed_grid_lines().join("\n");
+                            assert!(
+                                which_key_grid.contains("needs this session on rozi ≥ 0.0.44"),
+                                "Which Key should show capability disabled reason:\n{which_key_grid}"
+                            );
+                            backend
+                                .send_key(KeyEvent {
+                                    code: KeyCode::Esc,
+                                    mods: KeyMods::NONE,
+                                })
+                                .unwrap();
+                            backend.render();
+                        },
+                    );
+
+                    // 3. Settings: open Settings and verify "Nerd icons" shows the disabled
+                    // reason and refuses to toggle.
+                    let initial_nerd = backend.state().config.nerd_icons;
+                    backend
+                        .dispatch(Msg::RunAction(Action::OpenSettings))
+                        .unwrap();
+                    backend.state_mut().settings_selected =
+                        Some(crate::state::SettingsAction::ToggleNerdIcons);
+                    backend
+                        .state_mut()
+                        .settings_navigation
+                        .query
+                        .set_text("Nerd icons");
+                    backend.render();
+                    let settings_grid = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                    assert!(
+                        settings_grid.contains("Nerd icons")
+                            && settings_grid.contains("needs this session on rozi ≥ 0.0.44"),
+                        "Settings should show capability disabled reason:\n{settings_grid}"
+                    );
+                    backend
+                        .dispatch(Msg::SettingsActivate(
+                            crate::state::SettingsAction::ToggleNerdIcons,
+                        ))
+                        .unwrap();
+                    assert_eq!(
+                        backend.state().config.nerd_icons,
+                        initial_nerd,
+                        "disabled setting must not toggle"
+                    );
+                    backend.dispatch(Msg::CloseSettings).unwrap();
+
+                    // 4. Shortcut / action dispatch raises a toast with the same reason.
+                    backend
+                        .dispatch(Msg::RunAction(Action::ToggleNerdIcons))
+                        .unwrap();
+                    assert_eq!(
+                        backend.state().config.nerd_icons,
+                        initial_nerd,
+                        "shortcut dispatch must not run a capability-disabled action"
+                    );
+                    backend.render();
+                    let toast_grid = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                    assert!(
+                        toast_grid.contains("needs this session on rozi ≥ 0.0.44"),
+                        "Shortcut dispatch should raise a toast with the capability reason:\n{toast_grid}"
+                    );
+
+                    backend.state_mut().current_mut().session_client = None;
+                    server.join().expect("server thread");
+                },
+            );
+        });
     }
 }

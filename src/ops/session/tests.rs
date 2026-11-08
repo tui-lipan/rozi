@@ -18,6 +18,8 @@ fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
+            effective_protocol: None,
+            rozi_version: None,
         },
     }
 }

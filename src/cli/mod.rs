@@ -42,7 +42,7 @@ pub(crate) use record::run_record_cli;
 pub(crate) use session::{
     run_kill_session_cli, run_list_sessions_cli, run_new_detached_session_cli, run_remote_call_cli,
     run_remote_control_cli, run_remote_serve_cli, run_remote_worktrees_cli,
-    run_restart_session_cli, run_server_cli,
+    run_restart_session_cli, run_server_cli, run_upgrade_session_cli,
 };
 pub(crate) use skill::{print_skill_help, run_skill_cli};
 pub(crate) use update::{recover_managed_installation, run_install_cli, run_update_cli};

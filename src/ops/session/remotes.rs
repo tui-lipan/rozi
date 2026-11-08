@@ -996,6 +996,8 @@ mod tests {
                         panes: 1,
                         clients: 0,
                         has_layout: true,
+                        effective_protocol: None,
+                        rozi_version: None,
                     },
                     origin: Default::default(),
                     ephemeral: false,
@@ -1361,6 +1363,8 @@ mod tests {
                             panes: 1,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]),
                 })
@@ -1425,6 +1429,8 @@ mod tests {
                     panes: 2,
                     clients: 0,
                     has_layout: true,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             };
             backend
@@ -1575,6 +1581,8 @@ mod tests {
                             panes: 1,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]),
                 })
@@ -1629,6 +1637,8 @@ mod tests {
                             panes: 2,
                             clients: 0,
                             has_layout: false,
+                            effective_protocol: None,
+                            rozi_version: None,
                         },
                     }]),
                 })

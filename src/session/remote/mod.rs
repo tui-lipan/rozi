@@ -28,6 +28,7 @@ pub use connect::RemoteConnectError;
 pub(crate) use connect::connect_remote_within;
 pub use connect::{
     connect_remote, create_remote_detached_session, kill_remote_session, restart_remote_session,
+    upgrade_remote_session,
 };
 pub use preamble::{RemotePreamble, read_preamble};
 pub use proxy::run_remote_serve;

@@ -14,7 +14,10 @@ use crate::Msg;
 use crate::config::EXTENSION_API_VERSION;
 use crate::platform::install_source::InstallSource;
 use crate::release_app::ROZI;
-use crate::session::protocol::PROTOCOL_VERSION;
+use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
+
+/// Every session generation this build attaches to, so every generation a running session may be on.
+const THIS_WINDOW: std::ops::RangeInclusive<u32> = MIN_SUPPORTED_PROTOCOL..=PROTOCOL_VERSION;
 
 /// The `rozi-compatibility.json` layout this build reads. A document with another schema reads as
 /// no compatibility information: the notice then names only the version step.
@@ -79,7 +82,7 @@ impl AvailableUpdate {
     /// a warning rather than news.
     pub(crate) fn needs_caution(&self) -> bool {
         self.compatibility.as_ref().is_some_and(|compatibility| {
-            compatibility.raises_extension_api() || !compatibility.speaks_this_generation()
+            compatibility.raises_extension_api() || !compatibility.covers_this_window()
         })
     }
 
@@ -100,12 +103,10 @@ impl AvailableUpdate {
                 compatibility.extension_api
             ));
         }
-        notes.push(if compatibility.speaks_this_generation() {
+        notes.push(if compatibility.covers_this_window() {
             SESSIONS_KEEP_WORKING_NOTE.to_string()
         } else {
-            format!(
-                "sessions on generation {PROTOCOL_VERSION} need Upgrade session · ends their programs"
-            )
+            compatibility.sessions_needing_upgrade_note()
         });
         notes
     }
@@ -170,10 +171,41 @@ impl ReleaseCompatibility {
         self.extension_api > EXTENSION_API_VERSION
     }
 
-    /// Whether the release still accepts sessions started on this build's generation, so a client
-    /// updated to it attaches to them as they are.
-    fn speaks_this_generation(&self) -> bool {
-        (self.session_protocol_min..=self.session_protocol_max).contains(&PROTOCOL_VERSION)
+    /// Whether the release still accepts every session this build can be running alongside.
+    ///
+    /// A session server keeps the generation it started on, and this build attaches to any
+    /// generation in its own window. So the release must cover the whole window, not only this
+    /// build's newest generation, before "running sessions keep working" is true.
+    fn covers_this_window(&self) -> bool {
+        self.refused_generations(THIS_WINDOW).is_empty()
+    }
+
+    /// The generations of `window` the release does not speak.
+    fn refused_generations(&self, window: std::ops::RangeInclusive<u32>) -> Vec<u32> {
+        window
+            .filter(|generation| {
+                !(self.session_protocol_min..=self.session_protocol_max).contains(generation)
+            })
+            .collect()
+    }
+
+    /// Which running sessions the release refuses, for a release that does not cover the window.
+    fn sessions_needing_upgrade_note(&self) -> String {
+        let refused = self.refused_generations(THIS_WINDOW);
+        let generations = match refused.as_slice() {
+            [one] => format!("generation {one}"),
+            [first, .., last] if last - first + 1 == refused.len() as u32 => {
+                format!("generations {first}-{last}")
+            }
+            many => format!(
+                "generations {}",
+                many.iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        format!("sessions on {generations} need Upgrade session · ends their programs")
     }
 }
 
@@ -418,6 +450,36 @@ mod tests {
             assert_eq!(body.lines().count(), 3, "{body}");
             assert!(update.installed_body().ends_with(&upgrade_note()));
         }
+    }
+
+    /// With a window of two generations, a release that keeps only the newer one must not say
+    /// every running session keeps working: a session started on the older one is refused.
+    #[test]
+    fn a_release_must_cover_the_whole_window_to_keep_every_session() {
+        let next = compatibility(EXTENSION_API_VERSION, 53, 54);
+        assert_eq!(
+            next.compatibility
+                .as_ref()
+                .unwrap()
+                .refused_generations(52..=53),
+            [52]
+        );
+        let same = compatibility(EXTENSION_API_VERSION, 52, 54);
+        assert!(
+            same.compatibility
+                .as_ref()
+                .unwrap()
+                .refused_generations(52..=53)
+                .is_empty()
+        );
+        let far = compatibility(EXTENSION_API_VERSION, 55, 56);
+        assert_eq!(
+            far.compatibility
+                .as_ref()
+                .unwrap()
+                .refused_generations(52..=53),
+            [52, 53]
+        );
     }
 
     #[test]

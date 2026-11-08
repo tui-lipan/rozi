@@ -495,7 +495,7 @@ pub struct AgentScratch {
     row_reports: HashMap<String, runtime::RowReport>,
     /// The latest rows of each agent publisher waiting for another client's copy of it to stop
     /// speaking for the pane, by qualified publisher. One takes over when that copy goes away.
-    standby_rows: HashMap<String, Vec<protocol::PublishedRow>>,
+    standby_rows: HashMap<String, runtime::StandbyPublisher>,
     /// The rows a publisher last withdrew, by qualified publisher, until the pane's program changes.
     /// A service closes its stream when its window moves to another session, and the agent runs on:
     /// reporting the same rows on return continues their runs rather than starting new ones.

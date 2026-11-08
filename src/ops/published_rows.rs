@@ -371,67 +371,72 @@ pub(crate) fn rows_reported(
     let Some(stream) = ctx.state.publish_streams.get_mut(&key) else {
         return Update::none();
     };
-    let retained = retain_responses(stream, &rows, &responses);
-    stream.last_rows = rows;
-    send_latest(
-        &mut ctx.state,
-        &key,
-        false,
-        (!retained).then_some(responses),
-    );
+    let retained = retain_responses(stream, pane_id, &rows, &responses);
+    if retained {
+        stream.last_rows = rows;
+        send_latest(&mut ctx.state, &key, false, None);
+    } else {
+        send_latest(&mut ctx.state, &key, false, Some((rows, responses)));
+    }
     Update::none()
 }
 
-/// Whether `responses` would pass the session server's checks on this update, judged from what
-/// the client can see: one response per row the update names, each within the size limits, all
-/// within the update's budget. The server stays the authority; this decides only whether the
-/// update is worth keeping for replay.
-fn update_looks_valid(
+/// Encoded byte length of a `ReportPaneRows` control message carrying `rows` and `responses`.
+fn encoded_report_len(
+    pane_id: PaneId,
+    publisher: &PublisherIdentity,
+    epoch: u64,
+    rows: &[PublishedRow],
+    responses: Vec<crate::control::PublishedAgentResponse>,
+) -> usize {
+    serde_json::to_vec(&crate::session::protocol::ClientMessage::ReportPaneRows {
+        epoch,
+        responses,
+        pane_id,
+        local: false,
+        generation: u64::MAX,
+        publisher: publisher.id.clone(),
+        kind: publisher.kind,
+        rows: rows.to_vec(),
+    })
+    .map_or(usize::MAX, |bytes| bytes.len())
+}
+
+/// Retain `responses` for replay, if the whole update passes the session server's validation.
+///
+/// An update is one report, accepted or rejected whole, and so is its replay: nothing of an
+/// invalid update (nor its rows) is kept, or a later rows-only update could combine with it or a
+/// reconnect could present part of it as valid. A retained response is dropped once its row is
+/// gone from the canonical set or has changed status: that row is on a newer turn, and the old
+/// answer must not be replayed for it. A response replaces the retained one for its id only with
+/// a greater `seq`, as the session server orders them.
+///
+/// The cache holds at most one update's budget and keeps the complete encoded `ReportPaneRows`
+/// message (latest rows, retained responses, and envelope) within
+/// [`crate::session::protocol::MAX_REPORT_PANE_ROWS_FRAME_BYTES`], evicting the oldest responses
+/// first, so a reconnect is always a single valid frame.
+///
+/// Returns whether the update is valid and was retained.
+fn retain_responses(
+    stream: &mut crate::state::PublishStreamState,
+    pane_id: PaneId,
     rows: &[PublishedRow],
     responses: &[crate::control::PublishedAgentResponse],
 ) -> bool {
     use crate::session::protocol::{
-        MAX_AGENT_RESPONSE_BYTES, MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_RESPONSES_PER_UPDATE,
+        MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_REPORT_PANE_ROWS_FRAME_BYTES,
+        MAX_RESPONSES_PER_UPDATE, canonical_published_row_ids, validate_published_responses,
     };
-    responses.len() <= MAX_RESPONSES_PER_UPDATE
-        && responses
-            .iter()
-            .map(crate::control::PublishedAgentResponse::wire_len)
-            .sum::<usize>()
-            <= MAX_AGENT_RESPONSES_UPDATE_BYTES
-        && responses.iter().enumerate().all(|(index, response)| {
-            response.seq > 0
-                && response.response.text.len() <= MAX_AGENT_RESPONSE_BYTES
-                && rows.iter().any(|row| row.id == response.id)
-                && responses[..index]
-                    .iter()
-                    .all(|earlier| earlier.id != response.id)
-        })
-}
-
-/// Retain `responses` for replay, if the whole update is one the server can accept.
-///
-/// An update is one report, accepted or rejected whole, and so is its replay: nothing of an update
-/// that looks invalid is kept, or a reconnect would present part of it as a valid update of its
-/// own. A retained response is dropped once its row is gone or has changed status: that row is on
-/// a newer turn, and the old answer must not be replayed for it. A response replaces the retained
-/// one for its id only with a greater `seq`, as the session server orders them. The cache holds
-/// at most one update's budget, evicting the oldest, so a reconnect is a single report.
-///
-/// Returns whether `responses` was retained.
-fn retain_responses(
-    stream: &mut crate::state::PublishStreamState,
-    rows: &[PublishedRow],
-    responses: &[crate::control::PublishedAgentResponse],
-) -> bool {
-    use crate::session::protocol::{MAX_AGENT_RESPONSES_UPDATE_BYTES, MAX_RESPONSES_PER_UPDATE};
-    stream.last_responses.retain(|kept| {
-        rows.iter()
-            .any(|row| row.id == kept.response.id && row.status == kept.status)
-    });
-    if !update_looks_valid(rows, responses) {
+    if validate_published_responses(stream.identity.kind, rows, responses).is_err() {
         return false;
     }
+    let canonical = canonical_published_row_ids(rows);
+    stream.last_responses.retain(|kept| {
+        canonical.contains(&kept.response.id)
+            && rows
+                .iter()
+                .any(|row| row.id == kept.response.id && row.status == kept.status)
+    });
     for response in responses {
         let Some(row) = rows.iter().find(|row| row.id == response.id) else {
             continue;
@@ -451,13 +456,25 @@ fn retain_responses(
             None => kept.push(new),
         }
     }
-    while stream.last_responses.len() > MAX_RESPONSES_PER_UPDATE
-        || stream
-            .last_responses
-            .iter()
-            .map(|kept| kept.response.wire_len())
-            .sum::<usize>()
-            > MAX_AGENT_RESPONSES_UPDATE_BYTES
+    while !stream.last_responses.is_empty()
+        && (stream.last_responses.len() > MAX_RESPONSES_PER_UPDATE
+            || stream
+                .last_responses
+                .iter()
+                .map(|kept| kept.response.wire_len())
+                .sum::<usize>()
+                > MAX_AGENT_RESPONSES_UPDATE_BYTES
+            || encoded_report_len(
+                pane_id,
+                &stream.identity,
+                stream.id,
+                rows,
+                stream
+                    .last_responses
+                    .iter()
+                    .map(|kept| kept.response.clone())
+                    .collect(),
+            ) > MAX_REPORT_PANE_ROWS_FRAME_BYTES)
     {
         stream.last_responses.remove(0);
     }
@@ -474,7 +491,10 @@ fn send_latest(
     state: &mut crate::state::State,
     key: &PublishStreamKey,
     replay: bool,
-    raw: Option<Vec<crate::control::PublishedAgentResponse>>,
+    raw: Option<(
+        Vec<PublishedRow>,
+        Vec<crate::control::PublishedAgentResponse>,
+    )>,
 ) {
     let Some(stream) = state.publish_streams.get(key) else {
         return;
@@ -485,22 +505,18 @@ fn send_latest(
         return;
     }
     let sends_raw = raw.is_some();
-    let responses = raw.unwrap_or_else(|| {
-        stream
-            .last_responses
-            .iter()
-            .filter(|kept| replay || !kept.delivered)
-            .map(|kept| kept.response.clone())
-            .collect()
+    let (rows, responses) = raw.unwrap_or_else(|| {
+        (
+            stream.last_rows.clone(),
+            stream
+                .last_responses
+                .iter()
+                .filter(|kept| replay || !kept.delivered)
+                .map(|kept| kept.response.clone())
+                .collect(),
+        )
     });
-    let sent = report_rows(
-        state,
-        key,
-        &stream.identity,
-        stream.last_rows.clone(),
-        stream.id,
-        responses,
-    );
+    let sent = report_rows(state, key, &stream.identity, rows, stream.id, responses);
     if sent
         && !sends_raw
         && let Some(stream) = state.publish_streams.get_mut(key)
@@ -1430,12 +1446,27 @@ mod tests {
             .expect("dispatch rows");
     }
 
+    fn open_agent_stream(
+        backend: &mut TestBackend<crate::AppRoot>,
+        stream_id: u64,
+        sender: std::sync::mpsc::SyncSender<String>,
+    ) {
+        open_stream(
+            backend,
+            Open {
+                kind: PublisherKind::Agent,
+                ..Open::anonymous(stream_id)
+            },
+            sender,
+        );
+    }
+
     #[test]
     fn a_response_is_replayed_after_an_attach_while_its_row_keeps_its_status() {
         with_backend(|backend| {
             let outbound = attach(backend);
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-            open_stream(backend, Open::anonymous(1), tx);
+            open_agent_stream(backend, 1, tx);
             report_with_response(backend, vec![row("a", "done")], "a", 1);
             assert_eq!(
                 response_reports(&outbound),
@@ -1470,7 +1501,7 @@ mod tests {
         with_backend(|backend| {
             let outbound = attach(backend);
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-            open_stream(backend, Open::anonymous(1), tx);
+            open_agent_stream(backend, 1, tx);
             let key = backend
                 .state()
                 .publish_streams
@@ -1533,11 +1564,11 @@ mod tests {
     }
 
     #[test]
-    fn a_replay_is_one_report_within_the_update_budget() {
+    fn a_replay_is_one_report_within_the_update_and_frame_budgets() {
         with_backend(|backend| {
             let outbound = attach(backend);
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-            open_stream(backend, Open::anonymous(1), tx);
+            open_agent_stream(backend, 1, tx);
             let big = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
             let ids: Vec<String> = (0..10).map(|n| format!("r{n}")).collect();
             let rows: Vec<_> = ids.iter().map(|id| row(id, "done")).collect();
@@ -1556,15 +1587,46 @@ mod tests {
             assert!(
                 sent[0].len() * big <= crate::session::protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
             );
+
+            // A later rows-only update with large rows evicts enough retained responses so the
+            // complete serialized `ReportPaneRows` still fits within the session frame budget.
+            let mut large_rows = rows;
+            large_rows[0].cwd = Some("x".repeat(5 * 1024 * 1024));
+            report(backend, 1, large_rows);
+            outbound.try_iter().for_each(drop);
+            super::resend_rows(backend.state_mut());
+            let frames: Vec<(usize, Vec<String>)> = outbound
+                .try_iter()
+                .filter_map(|message| match message {
+                    ClientOutbound::Control(
+                        ref message @ ClientMessage::ReportPaneRows { ref responses, .. },
+                    ) => Some((
+                        serde_json::to_vec(message).unwrap().len(),
+                        responses.iter().map(|r| r.id.clone()).collect(),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(frames.len(), 1);
+            assert!(
+                frames[0].0 <= crate::session::protocol::MAX_REPORT_PANE_ROWS_FRAME_BYTES,
+                "frame len {} exceeded budget",
+                frames[0].0
+            );
+            assert_eq!(
+                frames[0].1,
+                vec!["r8".to_string(), "r9".to_string()],
+                "oldest responses evicted so large rows + responses fit one frame"
+            );
         });
     }
 
     #[test]
-    fn a_rejected_update_leaves_no_valid_part_to_replay() {
+    fn a_rejected_update_leaves_no_valid_part_to_replay_even_after_later_row_fixes() {
         with_backend(|backend| {
             let outbound = attach(backend);
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-            open_stream(backend, Open::anonymous(1), tx);
+            open_agent_stream(backend, 1, tx);
             // `b` names no row, so the server rejects the whole update; `a` must not outlive it.
             report_responses(backend, vec![row("a", "done")], &[("a", 1, 1), ("b", 1, 1)]);
             let sent = response_reports(&outbound);
@@ -1579,6 +1641,26 @@ mod tests {
                 response_reports(&outbound),
                 vec![Vec::<(String, u64)>::new()]
             );
+
+            // A post-sanitizing collision is rejected by the server; fixing the rows in a later
+            // rows-only update must not resurrect the rejected response on reconnect.
+            report_responses(
+                backend,
+                vec![row("a", "done"), row(" a ", "done")],
+                &[("a", 1, 1)],
+            );
+            assert_eq!(
+                response_reports(&outbound),
+                vec![vec![("a".to_string(), 1)]]
+            );
+            report(backend, 1, vec![row("a", "done")]);
+            outbound.try_iter().for_each(drop);
+            super::resend_rows(backend.state_mut());
+            assert_eq!(
+                response_reports(&outbound),
+                vec![Vec::<(String, u64)>::new()]
+            );
+
             // Over the aggregate budget is just as invalid, and just as unretained.
             let big = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
             let rows: Vec<_> = (0..5).map(|n| row(&format!("r{n}"), "done")).collect();
@@ -1603,7 +1685,7 @@ mod tests {
         with_backend(|backend| {
             let outbound = attach(backend);
             let (tx, _rx) = std::sync::mpsc::sync_channel(1);
-            open_stream(backend, Open::anonymous(1), tx);
+            open_agent_stream(backend, 1, tx);
             report_responses(backend, vec![row("a", "done")], &[("a", 2, 1)]);
             report_responses(backend, vec![row("a", "done")], &[("a", 1, 1)]);
             outbound.try_iter().for_each(drop);

@@ -41,6 +41,12 @@ pub const MAX_RESPONSES_PER_UPDATE: usize = 64;
 /// and is accepted or rejected whole, so this is chosen to leave a valid one comfortably inside
 /// [`MAX_FRAME_SIZE`] and the client's outbound queue, rows and framing included.
 pub const MAX_AGENT_RESPONSES_UPDATE_BYTES: usize = 4 * 1024 * 1024;
+/// Most rows one publisher may publish into a pane. A tab bar is a human-sized list; a publisher
+/// sending thousands is malfunctioning, and every row costs a sidebar row.
+pub const MAX_PANE_ROWS: usize = 64;
+/// Safe upper bound for the encoded size of a single `ReportPaneRows` message on the wire, leaving
+/// headroom inside [`MAX_FRAME_SIZE`] and the client's outbound queue.
+pub const MAX_REPORT_PANE_ROWS_FRAME_BYTES: usize = MAX_FRAME_SIZE - 64 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
 /// How many publishers one client may have in one pane at once. The UI refuses a stream beyond it

@@ -140,59 +140,14 @@ fn response_bytes(entries: &VecDeque<StoredResponse>) -> usize {
 pub(super) fn validate_payload(
     response: &AgentResponsePayload,
 ) -> Result<(), (&'static str, String)> {
-    if response.text.len() > MAX_RESPONSE_BYTES
-        || response.turn_id.as_ref().is_some_and(|id| id.len() > 1024)
-    {
-        return Err((
-            "invalid-argument",
-            "agent response exceeds the 1 MiB text or 1024 byte turn id limit".into(),
-        ));
-    }
-    Ok(())
+    super::protocol::validate_agent_response_payload(response)
 }
 
 pub(super) fn validate_published(
     publisher: &super::runtime::PanePublisher,
     rows: &[super::protocol::PublishedRow],
 ) -> Result<(), (&'static str, String)> {
-    if publisher.responses.is_empty() {
-        return Ok(());
-    }
-    if publisher.kind != super::protocol::PublisherKind::Agent
-        || publisher.responses.len() > super::protocol::MAX_RESPONSES_PER_UPDATE
-    {
-        return Err((
-            "invalid-argument",
-            "only agent publishers may publish responses, at most 64 per update".into(),
-        ));
-    }
-    // Ownership is checked against the rows that will actually be installed: sanitizing cleans
-    // and truncates ids and drops rows past the cap, and a response naming anything else would
-    // pass here and then find no row to belong to.
-    if publisher
-        .responses
-        .iter()
-        .map(crate::control::PublishedAgentResponse::wire_len)
-        .sum::<usize>()
-        > super::protocol::MAX_AGENT_RESPONSES_UPDATE_BYTES
-    {
-        return Err((
-            "invalid-argument",
-            "an update's responses exceed the 4 MiB total limit".into(),
-        ));
-    }
-    let canonical = super::runtime::canonical_row_ids(rows);
-    let mut ids = std::collections::HashSet::new();
-    for item in &publisher.responses {
-        validate_payload(&item.response)?;
-        if item.seq == 0 || !ids.insert(&item.id) || !canonical.contains(&item.id) {
-            return Err((
-                "invalid-argument",
-                "each response needs a unique owned row id and a positive sequence".into(),
-            ));
-        }
-    }
-    Ok(())
+    super::protocol::validate_published_responses(publisher.kind, rows, &publisher.responses)
 }
 
 impl super::SessionServer {
@@ -428,6 +383,115 @@ mod tests {
         );
         let snapshot = serde_json::to_string(&server.panes[&7].runtime).unwrap();
         assert!(!snapshot.contains("exact answer"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standby_publisher_retains_responses_until_promoted() {
+        use super::super::{SessionServer, protocol, runtime, tests};
+        use crate::control::PublishedAgentResponse;
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(7, tests::test_pane(1));
+        let (first, _first_stream) = tests::attach_client(&mut server);
+        let (second, _second_stream) = tests::attach_client(&mut server);
+        let (third, _third_stream) = tests::attach_client(&mut server);
+        let row = |status: &str| -> protocol::PublishedRow {
+            serde_json::from_value(serde_json::json!({
+                "id": "conv-1", "title": "review", "status": status, "native_session": "native"
+            }))
+            .unwrap()
+        };
+        let publisher = |responses| runtime::PanePublisher {
+            id: "provider".into(),
+            kind: protocol::PublisherKind::Agent,
+            epoch: 5,
+            responses,
+        };
+        // First client speaks for the pane; second and third wait in standby with semantic
+        // responses.
+        server
+            .report_pane_rows(
+                first,
+                7,
+                1,
+                false,
+                publisher(Vec::new()),
+                vec![row("working")],
+            )
+            .unwrap();
+        server
+            .report_pane_rows(
+                second,
+                7,
+                1,
+                false,
+                publisher(vec![PublishedAgentResponse {
+                    id: "conv-1".into(),
+                    seq: 1,
+                    response: payload("from second"),
+                }]),
+                vec![row("done")],
+            )
+            .unwrap();
+        // A follow-up rows-only report from the standby client with the same status keeps the
+        // pending response.
+        server
+            .report_pane_rows(
+                second,
+                7,
+                1,
+                false,
+                publisher(Vec::new()),
+                vec![row("done")],
+            )
+            .unwrap();
+        server
+            .report_pane_rows(
+                third,
+                7,
+                1,
+                false,
+                publisher(vec![PublishedAgentResponse {
+                    id: "conv-1".into(),
+                    seq: 2,
+                    response: payload("from third"),
+                }]),
+                vec![row("done")],
+            )
+            .unwrap();
+
+        // Departing client promotes the second client's standby rows and stores its response.
+        server.withdraw_client_rows(first);
+        let second_ref = server.agent_runtimes_for(7, &server.panes[&7])[0]
+            .reference
+            .clone();
+        assert_eq!(
+            server
+                .agent_responses
+                .latest(&second_ref, &Some("native".into()))
+                .unwrap()
+                .content
+                .text,
+            "from second"
+        );
+
+        // Explicit withdrawal by the second client promotes the third client and stores its
+        // response.
+        server
+            .report_pane_rows(second, 7, 1, false, publisher(Vec::new()), Vec::new())
+            .unwrap();
+        let third_ref = server.agent_runtimes_for(7, &server.panes[&7])[0]
+            .reference
+            .clone();
+        assert_eq!(
+            server
+                .agent_responses
+                .latest(&third_ref, &Some("native".into()))
+                .unwrap()
+                .content
+                .text,
+            "from third"
+        );
     }
 
     #[test]

@@ -132,3 +132,10 @@ and [plugin reference](https://code.claude.com/docs/en/plugins-reference). Herdr
 informed native identity reporting; the separate
 [Claude lifecycle plugin](https://github.com/daocoding/herdr-claude-lifecycle) informed the activity
 mapping. This plugin uses Rozi's public CLI rather than Herdr's socket protocol.
+
+## Read responses
+
+Add `--result` to `rozi agents prompt --wait turn --timeout 10m` to read the final response,
+including Markdown and Unicode, independently of the pane dimensions. `rozi agents response
+--target <PANE>` reads the latest retained response. A failed or interrupted turn may have no
+response. Text over 1 MiB is returned with `truncated: true` and `complete: false` in JSON output.

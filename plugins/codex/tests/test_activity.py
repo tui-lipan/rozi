@@ -75,6 +75,24 @@ class HookTestCase(unittest.TestCase):
         self.hook("PermissionRequest", tool_name=call["tool_name"], tool_input=tool_input)
 
 class ActivityTests(HookTestCase):
+    def test_confirmed_turn_reports_the_transcript_response_via_stdin(self):
+        self.first_turn()
+        transcript = Path(self.temp.name) / "turn.jsonl"
+        transcript.touch()
+        with patch.object(activity, "start_watcher"):
+            self.hook("Stop", turn_id="turn-1", transcript_path=str(transcript))
+        message = "## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n" * 3000
+        outcome = {"type": "task_complete", "turn_id": "turn-1", "last_agent_message": message}
+        activity.confirm_turn_end(self.env, "thread-id", "turn-1", activity.turn_ended_change(outcome), outcome)
+        args, options = self.calls[-1]
+        self.assertIn("--response-stdin", args)
+        self.assertNotIn(message, args)
+        payload = json.loads(options["input"])
+        self.assertEqual(payload["text"], message)
+        self.assertEqual(payload["turn_id"], "turn-1")
+        self.assertEqual(payload["source"], "transcript")
+        self.assertIn("--ended", args)
+
     def test_main_lifecycle_uses_one_token_and_increasing_sequences(self):
         self.hook("SessionStart", source="startup")
         self.hook("UserPromptSubmit")

@@ -131,6 +131,11 @@ def initialize_state(db: sqlite3.Connection) -> None:
         token TEXT PRIMARY KEY, seq INTEGER NOT NULL
     )""")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS response (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        token TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL
+    )""")
+
 
 def open_state(path: Path) -> sqlite3.Connection:
     db = connect_private(path, STATE_LOCK_TIMEOUT)
@@ -289,6 +294,22 @@ def update_blockers(db: sqlite3.Connection, event: dict, change: tuple) -> None:
         update_notification_blockers(db, event, change)
 
 
+def record_response(db: sqlite3.Connection, event: dict, token: str, seq: int) -> None:
+    if event["hook_event_name"] in {"SessionStart", "UserPromptSubmit", "SessionEnd", "StopFailure", "Interrupt"}:
+        db.execute("DELETE FROM response")
+    message = event.get("last_assistant_message") if event["hook_event_name"] == "Stop" else None
+    if isinstance(message, str):
+        encoded = message.encode("utf-8")
+        truncated = len(encoded) > 1024 * 1024
+        payload = {"text": encoded[:1024 * 1024].decode("utf-8", errors="ignore"),
+                   "source": "native-hook", "fidelity": "semantic",
+                   "complete": not truncated, "truncated": truncated,
+                   "turn_id": event.get("turn_id") or "hook:" + uuid.uuid4().hex}
+        db.execute("INSERT OR REPLACE INTO response VALUES (1, ?, ?, ?)",
+                   (token, seq, json.dumps(payload, ensure_ascii=False)))
+    db.execute("UPDATE response SET seq = ? WHERE token = ?", (seq, token))
+
+
 def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     row = current_run(db, event)
     if row is None:
@@ -300,11 +321,12 @@ def record_event(db: sqlite3.Connection, event: dict, change: tuple) -> None:
     db.execute("UPDATE run SET seq = ?, released = ?", (row[2] + 1, int(released)))
     db.execute("INSERT OR REPLACE INTO status VALUES (1, ?, ?, ?)",
                (state, reason, int(not released)))
+    record_response(db, event, row[0], row[2] + 1)
     if released:
         queue_release(db, row)
 
 
-def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) -> bool:
+def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float, response: str | None = None) -> bool:
     state, reason = change
     args = [env.get("ROZI_BIN") or "rozi", "agents"]
     if state == "release":
@@ -321,7 +343,10 @@ def send_report(env: dict[str, str], row: tuple, change: tuple, timeout: float) 
     # ROZI_PANE selects the calling pane: through ROZI_SOCKET when the pane has a UI, and
     # otherwise in the session server ROZI_SESSION_INSTANCE names, which rozi finds itself.
     # Never infer a session name from a pane number, or open the platform-specific socket here.
-    result = subprocess.run(args, env=env, stdin=subprocess.DEVNULL,
+    if response is not None and state != "release":
+        args += ["--response-stdin"]
+    result = subprocess.run(args, env=env,
+                            **({"input": response} if response is not None else {"stdin": subprocess.DEVNULL}),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             text=True, timeout=timeout, check=False)
     # A timed-out release may have reached the server. These two refusals establish that the
@@ -350,6 +375,7 @@ def next_delivery(db: sqlite3.Connection) -> tuple | None:
         if attempted and attempted[0] >= seq:
             seq = attempted[0] + 1
             db.execute("UPDATE run SET seq = ? WHERE token = ?", (seq, token))
+            db.execute("UPDATE response SET seq = ? WHERE token = ?", (seq, token))
         db.execute("INSERT OR REPLACE INTO attempts VALUES (?, ?)", (token, seq))
         return token, session, seq, state, reason
 
@@ -358,6 +384,7 @@ def acknowledge_delivery(db: sqlite3.Connection, delivery: tuple) -> None:
     token, _, seq, state, _ = delivery
     with db:
         db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM response WHERE token = ? AND seq = ?", (token, seq))
         if state == "release":
             db.execute("DELETE FROM releases WHERE token = ? AND seq = ?", (token, seq))
         else:
@@ -403,7 +430,10 @@ def deliver_pending(db: sqlite3.Connection, env: dict[str, str], deadline: float
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return False
-    if not send_report(env, delivery[:3], delivery[3:], min(CLI_TIMEOUT, remaining)):
+    pending_response = db.execute("SELECT payload FROM response WHERE token = ? AND seq = ?",
+                                  (delivery[0], delivery[2])).fetchone()
+    if not send_report(env, delivery[:3], delivery[3:], min(CLI_TIMEOUT, remaining),
+                       pending_response[0] if pending_response else None):
         return False
     acknowledge_delivery(db, delivery)
     return True

@@ -57,6 +57,34 @@ class ActivityTests(unittest.TestCase):
         args = self.calls[call][0]
         return args[args.index(flag) + 1]
 
+    def test_stop_reports_exact_text_via_stdin_and_clears_pending_content(self):
+        self.hook("SessionStart")
+        message = "## Findings\n| Key | Value |\n| 🌷 | 日本語 |\n" * 3000
+        self.hook("Stop", last_assistant_message=message)
+        args, options = self.calls[-1]
+        self.assertIn("--response-stdin", args)
+        self.assertNotIn(message, args)
+        payload = json.loads(options["input"])
+        self.assertEqual(payload["text"], message)
+        self.assertEqual(payload["source"], "native-hook")
+        self.assertTrue(payload["complete"])
+        db = activity.open_state(activity.state_path(self.env, 123))
+        try:
+            self.assertEqual(db.execute("SELECT count(*) FROM response").fetchone()[0], 0)
+        finally:
+            db.close()
+        self.hook("StopFailure")
+        self.assertNotIn("--response-stdin", self.calls[-1][0])
+
+    def test_oversized_unicode_response_reports_explicit_truncation(self):
+        self.hook("SessionStart")
+        self.hook("Stop", last_assistant_message="🌷" * 300000, background_tasks=[{}])
+        payload = json.loads(self.calls[-1][1]["input"])
+        self.assertEqual(self.field("--state"), "working")
+        self.assertTrue(payload["truncated"])
+        self.assertFalse(payload["complete"])
+        self.assertLessEqual(len(payload["text"].encode()), 1024 * 1024)
+
     def test_a_prompt_holds_only_while_the_screen_shows_the_turn(self):
         # Another hook can reject it, and then no later hook runs.
         self.hook("SessionStart", source="startup")

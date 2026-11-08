@@ -68,9 +68,10 @@ session command.
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
 named `attach`, use `rozi --session attach`.
 
-`rozi sessions list --format json` includes an `origin` object for a session created from a profile
-or a Git worktree. A worktree origin holds the checkout path on the session host. Restorable
-sessions keep their origin.
+`rozi sessions list` shows the rozi release and protocol generation each running session runs on;
+`--format json` reports them as `rozi_version` and `effective_protocol`. The JSON also includes an
+`origin` object for a session created from a profile or a Git worktree. A worktree origin holds the
+checkout path on the session host. Restorable sessions keep their origin.
 
 Remote hosts use the same session commands. See [Remote sessions](remote.md).
 

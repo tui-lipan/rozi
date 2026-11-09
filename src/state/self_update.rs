@@ -134,7 +134,11 @@ pub enum SelfUpdateEvent {
         downloaded: u64,
         total: Option<u64>,
     },
-    Installing,
+    /// The release archive, `bytes` long, arrived in full and passed verification: the download
+    /// is over, whether or not its length was known, and installing begins.
+    ArchiveReady {
+        bytes: u64,
+    },
     /// Complete lines a package manager printed since the last report.
     Output(Vec<String>),
 }
@@ -147,12 +151,12 @@ impl SelfUpdateRun {
         }
         match event {
             SelfUpdateEvent::Downloaded { downloaded, total } => {
-                if total.is_some_and(|total| downloaded >= total) {
-                    self.downloaded = Some(downloaded);
-                }
                 self.phase = UpdatePhase::Downloading { downloaded, total };
             }
-            SelfUpdateEvent::Installing => self.phase = UpdatePhase::Installing,
+            SelfUpdateEvent::ArchiveReady { bytes } => {
+                self.downloaded = Some(bytes);
+                self.phase = UpdatePhase::Installing;
+            }
             SelfUpdateEvent::Output(lines) => {
                 self.output.extend(lines);
                 while self.output.len() > OUTPUT_LINES {

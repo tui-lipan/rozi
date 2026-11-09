@@ -152,12 +152,6 @@ pub(crate) fn finished(
     run.stop = None;
     match result {
         Ok(installed) => {
-            // A download of unknown length never says it is done; what arrived is its size.
-            if let UpdatePhase::Downloading { downloaded, .. } = run.phase
-                && downloaded > 0
-            {
-                run.downloaded.get_or_insert(downloaded);
-            }
             run.installed = Some(installed.clone());
             run.phase = UpdatePhase::Installed;
             settle_offer(ctx, &installed);
@@ -377,8 +371,10 @@ fn newer_than_running(
     }
 }
 
-/// Turns relswap's byte counts into card progress: only the archive, at a steady rate, and the
-/// moment it is complete the card moves on to installing.
+/// Turns relswap's reports into card progress: the archive's bytes at a steady rate, and the
+/// moment relswap says the archive arrived and verified, the move on to installing. That moment
+/// comes from relswap rather than from the byte count, which cannot tell when a download of
+/// unknown length is over.
 struct DownloadReporter {
     generation: u64,
     link: Mutex<CommandLink<Msg>>,
@@ -401,21 +397,23 @@ impl relswap::ProgressObserver for DownloadReporter {
             }
             *last = Some(Instant::now());
         }
-        let link = self
-            .link
+        self.send(SelfUpdateEvent::Downloaded { downloaded, total });
+    }
+
+    fn archive_ready(&self, bytes: u64) {
+        self.send(SelfUpdateEvent::ArchiveReady { bytes });
+    }
+}
+
+impl DownloadReporter {
+    fn send(&self, event: SelfUpdateEvent) {
+        self.link
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let generation = self.generation;
-        link.send(Msg::SelfUpdateProgress {
-            generation,
-            event: SelfUpdateEvent::Downloaded { downloaded, total },
-        });
-        if complete {
-            link.send(Msg::SelfUpdateProgress {
-                generation,
-                event: SelfUpdateEvent::Installing,
+            .unwrap_or_else(|poison| poison.into_inner())
+            .send(Msg::SelfUpdateProgress {
+                generation: self.generation,
+                event,
             });
-        }
     }
 }
 
@@ -531,6 +529,25 @@ impl LineBuffer {
     }
 }
 
+/// `bytes` as UTF-8, where a stray byte in `0x80..=0x9f` - one that is not part of a valid UTF-8
+/// character - becomes the C1 control it is to an 8-bit terminal, rather than a replacement
+/// character that would hide the sequence it opens. The same values inside a valid character are
+/// continuation bytes, and stay text.
+fn decode(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        text.push_str(chunk.valid());
+        for &byte in chunk.invalid() {
+            text.push(if (0x80..=0x9f).contains(&byte) {
+                char::from(byte)
+            } else {
+                char::REPLACEMENT_CHARACTER
+            });
+        }
+    }
+    text
+}
+
 /// `bytes` as the text a terminal would show, trimmed: every escape sequence goes, whether 7-bit
 /// (`ESC [`, `ESC ]`, …) or its 8-bit C1 form, and so does every other control character.
 fn clean(bytes: &[u8]) -> String {
@@ -539,7 +556,7 @@ fn clean(bytes: &[u8]) -> String {
     /// The 8-bit String Terminator, and the 7-bit one's second character after `ESC`.
     const ST: char = '\u{9c}';
 
-    let text = String::from_utf8_lossy(bytes);
+    let text = decode(bytes);
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     // Skip a control string to its terminator: ST, `ESC \`, or BEL, which xterm also accepts.
@@ -909,7 +926,10 @@ mod tests {
                     total: Some(18 * MB),
                 },
             );
-            report(&mut backend, SelfUpdateEvent::Installing);
+            report(
+                &mut backend,
+                SelfUpdateEvent::ArchiveReady { bytes: 18 * MB },
+            );
             let installing = screen(&mut backend);
             assert!(installing.contains("Installing…"), "{installing}");
             assert!(
@@ -1150,14 +1170,12 @@ mod tests {
         });
     }
 
-    /// A download whose length the server never said does not report that it finished, so the
-    /// card learns it from the update succeeding: the size that arrived, and both steps done.
+    /// A download whose length the server never sent has no 100% to reach. The card moves on when
+    /// relswap says the archive arrived and verified, and the finished row shows its size.
     #[test]
-    fn a_download_of_unknown_length_ends_with_its_size() {
+    fn a_download_of_unknown_length_moves_on_when_the_archive_is_ready() {
         crate::test_support::on_large_stack(|| {
             let mut backend = updating(InstallSource::Managed);
-            // Animations on, so the installed card stays up until it is told to settle.
-            backend.state_mut().config.animations.enabled = true;
             report(
                 &mut backend,
                 SelfUpdateEvent::Downloaded {
@@ -1165,12 +1183,28 @@ mod tests {
                     total: None,
                 },
             );
-            finish(&mut backend, Ok(semver::Version::new(9, 9, 9)));
-            // The card is still opening at this frame, so read what it draws from: the row for a
-            // finished download shows `downloaded`, as the first test sees on screen.
-            let run = backend.state().self_update.run.as_ref().unwrap();
-            assert_eq!(run.phase, UpdatePhase::Installed);
-            assert_eq!(run.downloaded, Some(5 * MB));
+            let arriving = screen(&mut backend);
+            assert!(arriving.contains("5.0 MB"), "{arriving}");
+            assert!(!arriving.contains("Installing…"), "{arriving}");
+
+            report(
+                &mut backend,
+                SelfUpdateEvent::ArchiveReady { bytes: 5 * MB },
+            );
+            let installing = screen(&mut backend);
+            assert!(installing.contains("Installing…"), "{installing}");
+            assert!(installing.contains("5.0 MB"), "{installing}");
         });
+    }
+
+    /// Bytes in `0x80..=0x9f` that are not part of valid UTF-8 are what an 8-bit terminal reads
+    /// as C1 controls, so they open sequences too; the same bytes inside a UTF-8 character are
+    /// text and stay.
+    #[test]
+    fn raw_c1_bytes_are_controls_but_utf8_continuations_are_text() {
+        assert_eq!(clean(b"\x9b31mraw C1\x9b0m"), "raw C1");
+        assert_eq!(clean(b"\x9d0;title\x9cafter"), "after");
+        assert_eq!(clean("Über → Û".as_bytes()), "Über → Û");
+        assert_eq!(clean(b"bad \xff byte"), "bad \u{fffd} byte");
     }
 }

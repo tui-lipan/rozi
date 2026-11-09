@@ -455,7 +455,7 @@ pub fn run() -> Result<()> {
 
     let mut plan = StartupPlan::resolve(&cli, config::load_config());
     if let Some(id) = resume {
-        plan.session = super::relaunch::resume_session(&id, &plan.config, &mut plan.messages);
+        plan.session = super::relaunch::resume_session(&id, &mut plan.messages);
     }
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);

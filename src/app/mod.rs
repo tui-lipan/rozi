@@ -250,11 +250,11 @@ impl AppRoot {
                 ctx.state.remote.startup_resume = Some((target, name));
                 return SessionStart::Picker { epoch };
             }
-            StartupSession::Resume { handoff, problems } => {
+            StartupSession::Resume { handoff } => {
                 // Sessionless until the first session comes back, as a startup picker leaves it.
                 let seed = std::mem::take(ctx.state.current_mut());
                 ctx.state.launcher_seed = Some(seed);
-                ops::relaunch::begin_restore(ctx, handoff, problems);
+                ops::relaunch::begin_restore(ctx, handoff);
                 return SessionStart::Resume;
             }
             StartupSession::Picker {

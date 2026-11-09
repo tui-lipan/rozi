@@ -34,12 +34,17 @@ pub enum Msg {
     RelaunchCancel,
     /// Move focus to one of the Restart rozi dialog's answers.
     RelaunchFocusAnswer(usize),
-    /// Stop waiting for servers that have not reserved this client's slot.
-    RelaunchPrepareTimeout {
-        generation: u64,
+    /// Stop waiting for servers that have not answered a reservation or a commit.
+    RelaunchAnswerTimeout {
+        attempt: u64,
     },
-    /// Attach the next session a relaunched client is bringing back.
+    /// Take the next step of bringing a relaunched client's sessions back.
     RelaunchRestoreNext,
+    /// A session a relaunched client had to upgrade was restarted on this build, or was not.
+    RelaunchUpgraded {
+        attempt: u64,
+        result: std::result::Result<(), String>,
+    },
     /// This install is about to join the anonymous weekly usage count for the first time, and this
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.
@@ -856,6 +861,12 @@ pub enum Msg {
         epoch: u64,
         request_id: u64,
         token: String,
+        error: Option<String>,
+    },
+    /// The server committed this client's reserved slot, or refused to (`error`).
+    SessionHandoffCommitted {
+        epoch: u64,
+        request_id: u64,
         error: Option<String>,
     },
     /// Whether an attach that presented a handoff token took over the reserved slot.

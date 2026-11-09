@@ -30,6 +30,21 @@ pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
 /// the session being switched to. Named and ephemeral sessions are both retained; parked sessions
 /// are only torn down on quit (see [`crate::ops::exit`]).
 pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
+    park_current_session_with(ctx, ParkLease::Release);
+}
+
+/// What parking does with the layout-control lease the session on screen may hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParkLease {
+    /// Tell the server the session is in the background, which hands the lease on. Every switch.
+    Release,
+    /// Say nothing to the server, so the session keeps its lease while another one attaches. Only a
+    /// relaunched client restoring its sessions does this, for the session that was on screen,
+    /// which it returns to before it is done; see [`crate::ops::relaunch`].
+    Keep,
+}
+
+pub(crate) fn park_current_session_with(ctx: &mut Context<AppRoot>, lease: ParkLease) {
     ctx.state.sidebar.invalidate_sessions();
     // The popup is bound to the current server and cannot cross the switch. The client-owned
     // scratchpad only hides while the attachment under it changes.
@@ -37,7 +52,9 @@ pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
-    mark_current_parked(ctx, true);
+    if lease == ParkLease::Release {
+        mark_current_parked(ctx, true);
+    }
     let old_epoch = ctx.state.runtime_epoch;
     ctx.state
         .park_current(old_epoch, crate::state::Attachment::new());
@@ -766,6 +783,16 @@ pub(crate) fn begin_named_attach(
     request: crate::state::AttachRequest,
     seed: Option<crate::state::Attachment>,
 ) -> Update {
+    begin_named_attach_parking(ctx, request, seed, ParkLease::Release)
+}
+
+/// [`begin_named_attach`], parking the session on screen with `lease`.
+pub(crate) fn begin_named_attach_parking(
+    ctx: &mut Context<AppRoot>,
+    request: crate::state::AttachRequest,
+    seed: Option<crate::state::Attachment>,
+    lease: ParkLease,
+) -> Update {
     ctx.state.remote.startup_resume = None;
     // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
     // stay scoped to their own identity. Reusing an offline attachment here would seed its panes
@@ -778,7 +805,7 @@ pub(crate) fn begin_named_attach(
     let left =
         if retain_current {
             parked_epoch = Some(ctx.state.runtime_epoch);
-            park_current_session(ctx);
+            park_current_session_with(ctx, lease);
             None
         } else {
             let left = ctx.state.current().session_name.clone().map(|left_name| {

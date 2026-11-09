@@ -1259,8 +1259,21 @@ pub(crate) fn connecting_workspace_panel(
 }
 
 /// Placeholder shown while a relaunched client brings its sessions back, until the one that was on
-/// screen arrives.
-pub(crate) fn restoring_workspace_panel(done: usize, total: usize, theme: &Theme) -> Element {
+/// screen is back on screen.
+pub(crate) fn restoring_workspace_panel(
+    activity: &crate::state::RestoreActivity,
+    theme: &Theme,
+) -> Element {
+    let (headline, detail) = match activity {
+        crate::state::RestoreActivity::Attaching { done, total } => (
+            "Restoring sessions…".to_string(),
+            format!("{done} of {total}"),
+        ),
+        crate::state::RestoreActivity::Upgrading { session } => (
+            format!("Upgrading {session}…"),
+            "Its programs end; it reopens from its snapshot.".to_string(),
+        ),
+    };
     Frame::new()
         .header_left("Session")
         .header_padding(1)
@@ -1278,11 +1291,11 @@ pub(crate) fn restoring_workspace_panel(done: usize, total: usize, theme: &Theme
                 .child(
                     Spinner::new()
                         .spinner_style(SpinnerStyle::Dots)
-                        .label("Restoring sessions…")
+                        .label(headline)
                         .style(Style::new().fg(theme.status.info))
                         .label_style(super::fg_only(&theme.primary)),
                 )
-                .child(Text::new(format!("{done} of {total}")).style(super::fg_only(&theme.muted))),
+                .child(Text::new(detail).style(super::fg_only(&theme.muted))),
         )
         .into()
 }

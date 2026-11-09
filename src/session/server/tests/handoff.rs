@@ -24,6 +24,37 @@ fn prepare(server: &mut SessionServer, client: ClientId) -> String {
     }
 }
 
+/// Commit `client`'s reservation, as the outgoing client does once its handoff is written.
+fn commit(server: &mut SessionServer, client: ClientId, token: &str) {
+    let replies = server.handle_message(
+        client,
+        ClientMessage::CommitHandoff {
+            request_id: 9,
+            token: token.to_string(),
+        },
+    );
+    assert!(
+        matches!(
+            replies.as_slice(),
+            [(
+                Target::Sender,
+                ServerMessage::HandoffCommitted {
+                    request_id: 9,
+                    error: None
+                }
+            )]
+        ),
+        "{replies:?}"
+    );
+}
+
+/// Reserve and commit `client`'s slot, returning the token that claims it.
+fn hand_off(server: &mut SessionServer, client: ClientId) -> String {
+    let token = prepare(server, client);
+    commit(server, client, &token);
+    token
+}
+
 fn claim_with(
     server: &mut SessionServer,
     token: &str,
@@ -78,7 +109,7 @@ fn the_relaunched_client_keeps_the_lease_its_previous_process_held() {
     let (old, _old_stream) = attach_client(&mut server);
     let (follower, _follower_stream) = attach_client(&mut server);
     let before = membership_events(&mut server).len();
-    let token = prepare(&mut server, old);
+    let token = hand_off(&mut server, old);
 
     server.remove_client(old);
     assert_eq!(
@@ -104,7 +135,7 @@ fn the_relaunched_client_keeps_the_lease_its_previous_process_held() {
 fn a_token_claims_only_once() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
-    let token = prepare(&mut server, old);
+    let token = hand_off(&mut server, old);
     server.remove_client(old);
     let (first, _first_stream, claimed) = claim(&mut server, &token);
     assert_eq!(claimed, Some(true));
@@ -133,7 +164,7 @@ fn a_claim_that_beats_the_old_connection_closing_takes_the_slot_over_whole() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
     let (_follower, _follower_stream) = attach_client(&mut server);
-    let token = prepare(&mut server, old);
+    let token = hand_off(&mut server, old);
 
     // The replacement attaches before the server has read the old connection's close.
     let (new, _new_stream, claimed) = claim(&mut server, &token);
@@ -147,7 +178,7 @@ fn an_unclaimed_slot_expires_into_an_ordinary_departure() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
     let (follower, _follower_stream) = attach_client(&mut server);
-    let token = prepare(&mut server, old);
+    let token = hand_off(&mut server, old);
     server.remove_client(old);
     let before = membership_events(&mut server);
 
@@ -165,20 +196,62 @@ fn an_unclaimed_slot_expires_into_an_ordinary_departure() {
 }
 
 #[test]
-fn a_reservation_the_client_never_used_does_not_hold_its_later_departure() {
+fn a_reservation_the_client_never_committed_does_not_hold_its_departure() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
     let (follower, _follower_stream) = attach_client(&mut server);
-    prepare(&mut server, old);
+    let token = prepare(&mut server, old);
 
-    // The relaunch was abandoned; the client stays and leaves long after.
-    server
-        .handoffs
-        .age_for_test(crate::session::server::handoff::HANDOFF_HOLD);
+    // The relaunch was cancelled; the client quits normally right away.
     server.remove_client(old);
 
     assert_eq!(server.controller, Some(follower));
     assert!(!server.handoffs.any_in_transit());
+    let (_late, _late_stream, claimed) = claim(&mut server, &token);
+    assert_eq!(claimed, Some(false), "an uncommitted token claims nothing");
+}
+
+#[test]
+fn an_aborted_commit_leaves_an_ordinary_departure() {
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let token = hand_off(&mut server, old);
+    server.handle_message(old, ClientMessage::AbortHandoff { token });
+
+    server.remove_client(old);
+    assert_eq!(server.controller, Some(follower));
+    assert!(!server.handoffs.any_in_transit());
+}
+
+#[test]
+fn a_commit_needs_the_clients_own_live_token() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    let token = prepare(&mut server, first);
+    for (client, token) in [(second, token.as_str()), (first, "not-a-token")] {
+        let replies = server.handle_message(
+            client,
+            ClientMessage::CommitHandoff {
+                request_id: 3,
+                token: token.to_string(),
+            },
+        );
+        assert!(
+            matches!(
+                replies.as_slice(),
+                [(
+                    Target::Sender,
+                    ServerMessage::HandoffCommitted {
+                        request_id: 3,
+                        error: Some(_)
+                    }
+                )]
+            ),
+            "{replies:?}"
+        );
+    }
 }
 
 #[test]
@@ -187,7 +260,7 @@ fn a_parked_client_comes_back_parked_and_without_the_lease() {
     let (controller, _controller_stream) = attach_client(&mut server);
     let (parked, _parked_stream) = attach_client(&mut server);
     server.handle_message(parked, ClientMessage::SetParked { parked: true });
-    let token = prepare(&mut server, parked);
+    let token = hand_off(&mut server, parked);
     server.remove_client(parked);
     assert_eq!(server.controller, Some(controller));
 
@@ -201,7 +274,7 @@ fn a_parked_client_comes_back_parked_and_without_the_lease() {
 fn an_ephemeral_session_waits_for_a_client_in_transit() {
     let mut server = SessionServer::new_named("eph-handoff-test");
     let (old, _old_stream) = attach_client(&mut server);
-    prepare(&mut server, old);
+    hand_off(&mut server, old);
     server.remove_client(old);
 
     let mut no_client_since = Some(Instant::now() - EPHEMERAL_NO_CLIENT_GRACE);
@@ -225,7 +298,7 @@ fn an_evicted_client_cannot_come_back_through_its_reservation() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _controller_stream) = attach_client(&mut server);
     let (target, _target_stream) = attach_client(&mut server);
-    let token = prepare(&mut server, target);
+    let token = hand_off(&mut server, target);
     server.handle_message(controller, ClientMessage::EvictClient { target });
     server.remove_client(target);
 
@@ -237,9 +310,26 @@ fn an_evicted_client_cannot_come_back_through_its_reservation() {
 fn a_client_without_the_capability_cannot_claim() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
-    let token = prepare(&mut server, old);
+    let token = hand_off(&mut server, old);
     server.remove_client(old);
 
     claim_with(&mut server, &token, None);
     assert_eq!(server.controller, Some(old), "the slot stays reserved");
+}
+
+/// A relaunch plans against the server's whole range, not the generation one client agreed on.
+#[test]
+fn the_attach_reply_names_every_generation_the_server_speaks() {
+    let mut server = SessionServer::new_named("dev");
+    let (joined, _stream, _) = claim(&mut server, "unused");
+    let ServerMessage::Attached {
+        protocol_version,
+        protocol_min,
+        ..
+    } = attached_reply(&server, joined)
+    else {
+        unreachable!("attached_reply returns Attached");
+    };
+    assert_eq!(protocol_version, PROTOCOL_VERSION);
+    assert_eq!(protocol_min, Some(protocol::MIN_SUPPORTED_PROTOCOL));
 }

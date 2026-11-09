@@ -733,6 +733,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             token,
             error,
         } => crate::ops::relaunch::handoff_prepared(ctx, epoch, request_id, token, error),
+        Msg::SessionHandoffCommitted {
+            epoch,
+            request_id,
+            error,
+        } => crate::ops::relaunch::handoff_committed(ctx, epoch, request_id, error),
         Msg::SessionHandoffClaimed { epoch, claimed } => {
             crate::ops::relaunch::handoff_claimed(ctx, epoch, claimed)
         }
@@ -806,10 +811,13 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::RelaunchConfirm => crate::ops::relaunch::confirm(ctx),
         Msg::RelaunchCancel => crate::ops::relaunch::close(ctx),
         Msg::RelaunchFocusAnswer(index) => crate::ops::relaunch::focus_answer(ctx, index),
-        Msg::RelaunchPrepareTimeout { generation } => {
-            crate::ops::relaunch::prepare_timeout(ctx, generation)
+        Msg::RelaunchAnswerTimeout { attempt } => {
+            crate::ops::relaunch::answer_timeout(ctx, attempt)
         }
         Msg::RelaunchRestoreNext => crate::ops::relaunch::restore_next(ctx),
+        Msg::RelaunchUpgraded { attempt, result } => {
+            crate::ops::relaunch::upgraded(ctx, attempt, result)
+        }
         Msg::SessionOriginSet { epoch, origin } => session::origin_set(ctx, epoch, origin),
         Msg::SessionPaneMetadata {
             epoch,

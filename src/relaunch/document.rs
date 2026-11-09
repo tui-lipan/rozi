@@ -136,6 +136,15 @@ fn store_in(dir: &std::path::Path, handoff: &ClientHandoff) -> io::Result<String
     Ok(id)
 }
 
+/// Delete the document `id` names, for a relaunch that did not go ahead.
+pub fn discard(id: &str) {
+    if valid_id(id)
+        && let Ok(dir) = directory(&PlatformEnv::from_process())
+    {
+        let _ = std::fs::remove_file(dir.join(id));
+    }
+}
+
 /// Read and delete the document `id` names. It is deleted even when it cannot be used, so a claim
 /// token never outlives the one attempt to use it.
 pub fn take(id: &str) -> Result<ClientHandoff, String> {
@@ -218,6 +227,15 @@ mod tests {
         assert_eq!(handoff.foreground, None, "the launcher stands in");
         handoff.remove(5);
         assert_eq!(handoff.sessions.len(), 1);
+    }
+
+    #[test]
+    fn a_discarded_document_cannot_be_read() {
+        let handoff = ClientHandoff::new(None, vec![session("dev", 0)]);
+        let id = store(&handoff).unwrap();
+        discard(&id);
+        assert!(take(&id).is_err());
+        discard("../not-an-id");
     }
 
     #[test]

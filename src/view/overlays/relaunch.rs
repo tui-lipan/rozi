@@ -23,7 +23,7 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
             Some(PromptCaption::Note("Checking the installed rozi…")),
             vec![cancel("Cancel")],
         ),
-        RelaunchStage::Preparing(_) => (
+        RelaunchStage::Preparing(_) | RelaunchStage::Committing(_) => (
             Some(PromptCaption::Note("Handing over…")),
             vec![cancel("Cancel")],
         ),
@@ -35,9 +35,15 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
             vec![cancel("Close")],
         ),
         RelaunchStage::Ready(plan) => {
-            let caption = plan.armed.then_some(PromptCaption::Armed(
-                "Programs listed above end · again to restart",
-            ));
+            // A first press that armed says what a second one does; otherwise, why the last
+            // attempt did not go ahead, if it did not.
+            let caption = if plan.armed {
+                Some(PromptCaption::Armed(
+                    "Programs listed above end · again to restart",
+                ))
+            } else {
+                plan.notice.as_deref().map(PromptCaption::Note)
+            };
             let affirm = if plan.destructive() {
                 "Restart anyway"
             } else {
@@ -89,7 +95,9 @@ fn cancel(label: &str) -> DialogButton<'_> {
 fn facts(dialog: &RelaunchDialog) -> Vec<(String, String)> {
     let plan: Option<&RelaunchPlan> = match &dialog.stage {
         RelaunchStage::Ready(plan) => Some(plan),
-        RelaunchStage::Preparing(preparation) => Some(&preparation.plan),
+        RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) => {
+            Some(&transaction.plan)
+        }
         RelaunchStage::Checking | RelaunchStage::Unavailable(_) => None,
     };
     let mut rows = Vec::new();

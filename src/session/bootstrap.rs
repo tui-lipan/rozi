@@ -939,6 +939,11 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 token,
                 error,
             },
+            ServerMessage::HandoffCommitted { request_id, error } => Msg::SessionHandoffCommitted {
+                epoch,
+                request_id,
+                error,
+            },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             // A newer server's message that skipped its send gate. Ignoring it keeps the session
             // attached; acting on it is impossible and treating it as an error would reconnect.

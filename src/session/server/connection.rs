@@ -1108,6 +1108,13 @@ impl SessionServer {
                 },
             )],
             ClientMessage::Detach => Vec::new(),
+            ClientMessage::CommitHandoff { request_id, token } => {
+                self.handle_commit_handoff(client_id, request_id, &token)
+            }
+            ClientMessage::AbortHandoff { token } => {
+                self.abort_handoff(client_id, &token);
+                Vec::new()
+            }
             // A newer client's request that skipped its send gate. Refuse that one request and keep
             // the connection: everything else the client does still works.
             ClientMessage::Unknown => vec![(
@@ -1482,6 +1489,7 @@ impl SessionServer {
             session_instance: self.instance_id.clone(),
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: effective,
+            protocol_min: Some(protocol::MIN_SUPPORTED_PROTOCOL),
             session,
             client_id,
             panes: self.pane_meta(),

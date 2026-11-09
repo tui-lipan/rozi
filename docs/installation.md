@@ -203,17 +203,26 @@ session:
 | --- | --- |
 | `Keeps running` | The new build attaches to the session as it is. |
 | `Reconnects` | The session is offline now; the new build reconnects to it. |
-| `Upgraded · its programs end` | The new build cannot attach to this session's release, so it [upgrades the session](sessions.md#upgrade-a-session) before it starts. |
+| `Upgraded · its programs end` | The session runs an older rozi that the new build cannot attach to, so the new build [upgrades the session](sessions.md#upgrade-a-session). |
 | `Blocked` | The session cannot be carried over, for the reason shown, and the restart waits until you deal with it. |
 
-A session is blocked when it runs a newer rozi than the one installed, when you only view it
-read-only, when it is a temporary session that needs an upgrade (name it with **Rename session**
-first; a temporary session has no snapshot), or when it lives on a remote host whose rozi would
-have to be replaced while `[remote] install` is `"never"`. Upgrading a remote session asks before it
-installs rozi on the host, unless `[remote] install` is `"always"`.
+A session is blocked when it runs a newer rozi than the one installed, when rozi cannot tell which
+release it runs, when you only view it read-only, when it is a temporary session that needs an
+upgrade (name it with **Rename session** first; a temporary session has no snapshot), or when it
+lives on a remote host whose rozi would have to be replaced while `[remote] install` is `"never"`.
 
 Scratchpad shells and an open popup run in the client itself, so they end with it; the dialog lists
 them. When a restart ends programs, **Restart anyway** asks for a second press.
+
+The restart goes ahead only when every session it carries over has agreed to keep this client's
+place. If one does not answer or refuses, rozi stays as it was and the dialog says which session;
+**Restart** tries again. If your sessions change while the dialog is open, it shows what the restart
+would do now before anything happens.
+
+The new rozi brings back every session that keeps running first, then upgrades the ones that need
+it, showing which session it is upgrading. Upgrading a remote session asks before it installs rozi
+on the host, unless `[remote] install` is `"always"`. A session that cannot be brought back is
+listed in a warning once the rest are back.
 
 After **Update rozi** succeeds, the dialog opens on its own. Choose **Later** to keep working on the
 old build and run **Restart rozi** when you are ready. If the new build cannot start, every session

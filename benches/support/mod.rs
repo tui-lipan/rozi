@@ -139,6 +139,7 @@ pub fn attached_message() -> ServerMessage {
         origin: rozi::session::origin::SessionOrigin::default(),
         rozi_version: None,
         handoff_claimed: None,
+        protocol_min: None,
         protocol_version: PROTOCOL_VERSION,
         effective_protocol: PROTOCOL_VERSION,
         session: "benchmark-session".to_string(),

@@ -313,11 +313,24 @@ pub enum ClientMessage {
     },
     /// Reserve this client's slot for the process that replaces it, such as the same client
     /// relaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a
-    /// one-time token. Once this connection goes, the slot is held until the token is claimed by an
-    /// attach that presents it or the reservation expires: the layout-control lease is not handed
-    /// on, and an ephemeral session does not count the gap as having no client.
+    /// one-time token. The reservation is inert: the client leaving without committing it discards
+    /// it, so a relaunch abandoned at this point changes nothing.
     PrepareHandoff {
         request_id: u64,
+    },
+    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. Once
+    /// committed, this client's departure holds its slot until an attach presents the token or the
+    /// reservation expires: the layout-control lease is not handed on, and an ephemeral session
+    /// does not count the gap as having no client. A client leaves only after every commit it sent
+    /// was answered, so a replacement never attaches before its slot is committed.
+    CommitHandoff {
+        request_id: u64,
+        token: String,
+    },
+    /// Discard the reservation `token` names, committed or not: the relaunch it was for failed and
+    /// this client stays.
+    AbortHandoff {
+        token: String,
     },
     SetInputLock {
         locked: bool,
@@ -595,6 +608,10 @@ pub enum ServerMessage {
         /// Negotiated wire generation for this connection.
         #[serde(default)]
         effective_protocol: u32,
+        /// Server's minimum supported protocol version, so a client can tell whether another build
+        /// could attach to this same server. Absent from a server that predates it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protocol_min: Option<u32>,
         session: String,
         client_id: ClientId,
         panes: Vec<PaneMeta>,
@@ -803,6 +820,13 @@ pub enum ServerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// Reply to [`ClientMessage::CommitHandoff`]. `error` is set when nothing was committed: the
+    /// token is unknown, spent, or expired.
+    HandoffCommitted {
+        request_id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     ClientsChanged {
         clients: Vec<ClientInfo>,
         input_locked: bool,
@@ -910,7 +934,9 @@ impl ClientMessage {
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => None,
             ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
-            ClientMessage::PrepareHandoff { .. } => Some(super::Capability::ClientHandoff),
+            ClientMessage::PrepareHandoff { .. }
+            | ClientMessage::CommitHandoff { .. }
+            | ClientMessage::AbortHandoff { .. } => Some(super::Capability::ClientHandoff),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -964,7 +990,9 @@ impl ServerMessage {
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
             ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
-            ServerMessage::HandoffPrepared { .. } => Some(super::Capability::ClientHandoff),
+            ServerMessage::HandoffPrepared { .. } | ServerMessage::HandoffCommitted { .. } => {
+                Some(super::Capability::ClientHandoff)
+            }
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

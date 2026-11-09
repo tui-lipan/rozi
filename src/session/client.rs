@@ -158,6 +158,9 @@ pub struct SessionClient {
     pub(crate) ssh_connection: Option<String>,
     /// Wire generation agreed with this server.
     effective_protocol: u32,
+    /// Every generation the server speaks, oldest first. A server that predates reporting its
+    /// oldest is taken to speak no older generation than the one agreed.
+    server_protocol: std::ops::RangeInclusive<u32>,
     /// What this connection may use beyond its generation's baseline. Every feature check goes
     /// through [`Self::supports`].
     capabilities: protocol::Capabilities,
@@ -284,6 +287,7 @@ impl SessionClient {
                 ssh_connection: None,
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
+                server_protocol: PROTOCOL_VERSION..=PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
                 server_version: None,
             },
@@ -471,14 +475,20 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(advice_for.as_deref(), &attached)?;
-        let (capabilities, server_version) = match &attached {
+        let (capabilities, server_version, server_protocol) = match &attached {
             ServerMessage::Attached {
                 capabilities,
                 rozi_version,
+                protocol_version,
+                protocol_min,
                 ..
             } => (
                 protocol::Capabilities::negotiated(capabilities.as_ref()),
                 rozi_version.clone(),
+                protocol_min
+                    .filter(|min| min <= protocol_version)
+                    .unwrap_or(effective_protocol)
+                    ..=(*protocol_version).max(effective_protocol),
             ),
             _ => unreachable!("validated attach reply"),
         };
@@ -611,6 +621,7 @@ impl SessionClient {
             ssh_connection: None,
             server_pid,
             effective_protocol,
+            server_protocol,
             capabilities,
             server_version,
             cell: tui_lipan::host_cell_size(),
@@ -626,6 +637,19 @@ impl SessionClient {
     /// Negotiated wire version for this connection.
     pub fn effective_protocol(&self) -> u32 {
         self.effective_protocol
+    }
+
+    /// Every generation the server speaks, which another build could attach to it with. The
+    /// generation this connection agreed is only the newest both ends speak.
+    pub fn server_protocol(&self) -> std::ops::RangeInclusive<u32> {
+        self.server_protocol.clone()
+    }
+
+    /// Stand in for a server that speaks `protocol`.
+    #[cfg(test)]
+    pub(crate) fn set_server_protocol(&mut self, protocol: std::ops::RangeInclusive<u32>) {
+        self.effective_protocol = *protocol.end();
+        self.server_protocol = protocol;
     }
 
     pub fn capabilities(&self) -> &protocol::Capabilities {
@@ -694,11 +718,22 @@ impl SessionClient {
         self.send_control(ClientMessage::SetParked { parked });
     }
 
-    /// Ask the server to hold this client's slot for the process that replaces it. `false` when
+    /// Ask the server to reserve this client's slot for the process that replaces it. `false` when
     /// the server cannot (see [`protocol::Capability::ClientHandoff`]); the answer arrives as
-    /// [`ServerMessage::HandoffPrepared`] carrying `request_id`.
+    /// [`ServerMessage::HandoffPrepared`] carrying `request_id`. The reservation does nothing until
+    /// [`Self::commit_handoff`] commits it.
     pub fn prepare_handoff(&self, request_id: u64) -> bool {
         self.send_control(ClientMessage::PrepareHandoff { request_id })
+    }
+
+    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`].
+    pub fn commit_handoff(&self, request_id: u64, token: String) -> bool {
+        self.send_control(ClientMessage::CommitHandoff { request_id, token })
+    }
+
+    /// Discard the reservation `token` names: the relaunch failed and this client stays.
+    pub fn abort_handoff(&self, token: String) {
+        self.send_control(ClientMessage::AbortHandoff { token });
     }
 
     /// Ask the server to list one directory on its own host.
@@ -1857,6 +1892,7 @@ mod tests {
             origin: crate::session::origin::SessionOrigin::default(),
             rozi_version: None,
             handoff_claimed: None,
+            protocol_min: None,
         }
     }
 
@@ -2263,6 +2299,7 @@ mod tests {
             ssh_connection: None,
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
+            server_protocol: PROTOCOL_VERSION..=PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),
             server_version: None,
             cell: tui_lipan::TerminalCellSize::default(),

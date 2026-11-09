@@ -6,9 +6,6 @@
 
 use std::ffi::OsString;
 
-use crate::config::Config;
-use crate::relaunch::document::ClientHandoff;
-use crate::relaunch::plan::Transition;
 use crate::state::Handover;
 
 use super::startup::StartupSession;
@@ -44,73 +41,23 @@ pub(super) fn hand_over(handover: Handover) -> ! {
     }
 }
 
-/// What a relaunched client starts with: the sessions to restore, once the ones the previous build
-/// could not carry over are upgraded onto this one. A handoff that cannot be read opens Sessions
-/// instead, where every session the previous process held is still listed.
-pub(super) fn resume_session(
-    id: &str,
-    config: &Config,
-    messages: &mut Vec<String>,
-) -> StartupSession {
-    let mut handoff = match crate::relaunch::document::take(id) {
-        Ok(handoff) => handoff,
+/// What a relaunched client starts with: the sessions the handoff names. A handoff that cannot be
+/// read opens Sessions instead, where every session the previous process held is still listed.
+///
+/// Nothing is done to any session here. The new client claims the sessions it carries over first,
+/// and only then upgrades the ones that need it, inside its UI, so no upgrade - however long it
+/// takes - can outlast the slots the servers hold for it.
+pub(super) fn resume_session(id: &str, messages: &mut Vec<String>) -> StartupSession {
+    match crate::relaunch::document::take(id) {
+        Ok(handoff) => StartupSession::Resume { handoff },
         Err(error) => {
             messages.push(format!(
                 "Restart could not bring your sessions back: {error}"
             ));
-            return StartupSession::Picker {
+            StartupSession::Picker {
                 remote: None,
                 last_session: None,
-            };
-        }
-    };
-    let problems = upgrade_sessions(&mut handoff, config);
-    StartupSession::Resume { handoff, problems }
-}
-
-/// Restart every session the previous build could not carry over, on this build, from its snapshot.
-/// A session that fails to upgrade is left out of the restore and reported.
-fn upgrade_sessions(handoff: &mut ClientHandoff, config: &Config) -> Vec<String> {
-    let mut problems = Vec::new();
-    let mut index = 0;
-    while index < handoff.sessions.len() {
-        let session = &handoff.sessions[index];
-        if session.transition != Transition::Upgrade {
-            index += 1;
-            continue;
-        }
-        let name = session.name.clone();
-        let remote = session.remote.clone();
-        let label = match &remote {
-            Some(host) => format!("{name}@{host}"),
-            None => name.clone(),
-        };
-        eprintln!(
-            "rozi: upgrading session `{label}` to rozi {}…",
-            env!("CARGO_PKG_VERSION")
-        );
-        match upgrade(&name, remote.as_deref(), config) {
-            Ok(()) => index += 1,
-            Err(error) => {
-                eprintln!("rozi: `{label}` was not upgraded: {error}");
-                problems.push(format!("`{label}` was not upgraded: {error}"));
-                handoff.remove(index);
             }
         }
     }
-    problems
-}
-
-fn upgrade(name: &str, remote: Option<&str>, config: &Config) -> Result<(), String> {
-    let Some(spec) = remote else {
-        return crate::session::server::upgrade_named_session(name).map_err(|e| e.to_string());
-    };
-    let target = crate::session::remote::parse_remote_target(spec)?;
-    // The host needs a rozi that speaks this build's generation before the session can move to it.
-    // Installing one asks first, on this terminal, unless `[remote] install` already decided.
-    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    crate::session::remote::ensure_remote_binary(&target, &config.remote, interactive)?;
-    let stderr = crate::session::remote::upgrade_remote_session(&target, name, &config.remote)?;
-    let _ = std::io::Write::write_all(&mut std::io::stderr(), &stderr);
-    Ok(())
 }

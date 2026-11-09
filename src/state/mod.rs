@@ -1030,6 +1030,18 @@ impl State {
         Some(restored_epoch)
     }
 
+    /// Stamp the background attachments `order` names as parked in that order, the last most
+    /// recently. A relaunched client attaches its sessions in an order of its own, then puts their
+    /// recency back the way the previous process had it.
+    pub fn restamp_parked(&mut self, order: &[AttachmentId]) {
+        for epoch in order {
+            let seq = self.next_parked_seq();
+            if let Some(attachment) = self.background.get_mut(epoch) {
+                attachment.parked_seq = seq;
+            }
+        }
+    }
+
     fn next_parked_seq(&mut self) -> u64 {
         self.next_parked_seq = self.next_parked_seq.wrapping_add(1);
         self.next_parked_seq

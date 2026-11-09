@@ -90,8 +90,8 @@ pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color
 
 fn workspace_empty_panel(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
-    if let Some((done, total)) = crate::ops::relaunch::covering_progress(&ctx.state) {
-        return workbar::restoring_workspace_panel(done, total, theme);
+    if let Some(activity) = crate::ops::relaunch::covering_activity(&ctx.state) {
+        return workbar::restoring_workspace_panel(&activity, theme);
     }
     let connecting = matches!(
         ctx.state.current().connection,

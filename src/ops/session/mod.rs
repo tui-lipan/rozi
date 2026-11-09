@@ -6,11 +6,11 @@ pub(crate) mod open;
 pub(crate) mod remotes;
 
 pub(crate) use attach::{
-    CONNECT_HOLD, abandon_session_reconnect, apply_pending_background_closes, arm_connect_hold,
-    attach_session_by_name, begin_named_attach, clear_pending_session_action, connect_hold_elapsed,
-    disconnect_host, ensure_session_for_pty, enter_launcher, enter_sessionless,
-    handle_offline_session_key, held_ephemeral_session_in, holding_previous_view,
-    install_fresh_attachment, install_pending_attach, kill_current_session,
+    CONNECT_HOLD, ParkLease, abandon_session_reconnect, apply_pending_background_closes,
+    arm_connect_hold, attach_session_by_name, begin_named_attach_parking,
+    clear_pending_session_action, connect_hold_elapsed, disconnect_host, ensure_session_for_pty,
+    enter_launcher, enter_sessionless, handle_offline_session_key, held_ephemeral_session_in,
+    holding_previous_view, install_fresh_attachment, install_pending_attach, kill_current_session,
     land_on_surviving_session, may_shutdown_ephemeral, needs_session_for_pty,
     park_current_and_install, park_current_session, reconnect_after_transport_loss,
     reconnect_current_session, recreate_lost_remote_session, release_background_for_exit,

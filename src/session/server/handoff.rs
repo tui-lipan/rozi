@@ -1,22 +1,25 @@
 //! Client slots held across a client relaunch.
 //!
 //! A client about to be replaced by a new process - the same UI started again on a newer build -
-//! asks for a reservation ([`ClientMessage::PrepareHandoff`]). Once its connection goes, the server
-//! treats the client as in transit rather than gone: the layout-control lease stays with it instead
-//! of passing to another client, nobody is told it left, and an ephemeral session does not start
-//! counting down to its own shutdown. The process that replaces it presents the token when it
-//! attaches and takes the slot over. A reservation nobody claims expires, and the client is then
-//! treated exactly as if it had left when its connection closed.
+//! reserves its slot in two steps, like a transaction. [`ClientMessage::PrepareHandoff`] creates an
+//! inert reservation and returns its token; nothing changes if the client then stays, or leaves,
+//! which discards it. [`ClientMessage::CommitHandoff`] commits it, and the client leaves only once
+//! every commit is answered; [`ClientMessage::AbortHandoff`] takes a commit back when the relaunch
+//! fails. Once a committed client leaves, the server treats the client as in transit rather than gone: the
+//! layout-control lease stays with it instead of passing to another client, nobody is told it left,
+//! and an ephemeral session does not start counting down to its own shutdown. The process that
+//! replaces it presents the token when it attaches and takes the slot over. A reservation nobody
+//! claims expires, and the client is then treated exactly as if it had left when it detached.
 
 use super::*;
 
-/// How long a reservation is held: from being issued to the client leaving, and again from the
-/// client leaving to the replacement claiming it.
+/// How long a reservation is held: from being issued to the client committing it, and again from
+/// the commit to the replacement claiming it.
 ///
-/// A relaunch replaces the process in well under a second, but the new build may first have to
-/// upgrade sessions that it cannot talk to, one of them perhaps over SSH, before it attaches to the
-/// rest. The lease is held for that long against every other client, so this is a bound on how
-/// long a relaunch that failed can keep a session without a controller, not a target.
+/// The replacement claims every slot before it does anything that can take long, such as
+/// upgrading another session, so a relaunch claims within seconds; a session on another host may
+/// first need an SSH connection. The lease is held for this long against every other client, so it
+/// bounds how long a relaunch that failed can keep a session without a controller.
 pub(super) const HANDOFF_HOLD: Duration = Duration::from_secs(120);
 
 /// One client's reserved slot.
@@ -25,6 +28,8 @@ pub(super) struct Reservation {
     client: ClientId,
     label: Option<String>,
     issued: Instant,
+    /// Set by [`ClientMessage::CommitHandoff`]. Until then the reservation holds nothing.
+    committed: bool,
     departure: Option<Departure>,
 }
 
@@ -112,6 +117,7 @@ impl SessionServer {
             client: client_id,
             label,
             issued: Instant::now(),
+            committed: false,
             departure: None,
         });
         vec![(
@@ -125,9 +131,45 @@ impl SessionServer {
         )]
     }
 
+    /// Commit `client`'s reservation `token`, and say whether it was. A token the client does not
+    /// hold, or one that expired, commits nothing.
+    pub(super) fn handle_commit_handoff(
+        &mut self,
+        client: ClientId,
+        request_id: u64,
+        token: &str,
+    ) -> Vec<(Target, ServerMessage)> {
+        let now = Instant::now();
+        let reservation = self
+            .handoffs
+            .held
+            .iter_mut()
+            .find(|held| held.client == client && held.token == token && !held.expired(now));
+        let error = match reservation {
+            Some(reservation) => {
+                reservation.committed = true;
+                // The hold before departure starts again: the client is about to leave.
+                reservation.issued = now;
+                None
+            }
+            None => Some("no reservation for that token".to_string()),
+        };
+        vec![(
+            Target::Sender,
+            ServerMessage::HandoffCommitted { request_id, error },
+        )]
+    }
+
+    /// Discard `client`'s reservation `token`: the relaunch failed and the client stays.
+    pub(super) fn abort_handoff(&mut self, client: ClientId, token: &str) {
+        self.handoffs
+            .held
+            .retain(|held| !(held.client == client && held.token == token));
+    }
+
     /// Record that a reserving client's connection went, and say whether its slot is now held. A
     /// held slot keeps the lease where it is; the caller skips promotion and the `client-left`
-    /// event.
+    /// event. An uncommitted reservation is discarded: the client left without handing over.
     pub(super) fn hold_departing_client(&mut self, client: ClientId, parked: bool) -> bool {
         let now = Instant::now();
         let held_lease = self.controller == Some(client);
@@ -135,7 +177,7 @@ impl SessionServer {
             return false;
         };
         let reservation = &mut self.handoffs.held[index];
-        if reservation.expired(now) {
+        if !reservation.committed || reservation.expired(now) {
             self.handoffs.held.remove(index);
             return false;
         }
@@ -151,11 +193,13 @@ impl SessionServer {
     /// leaving yet - its close is still unread - is removed first, so its slot passes over whole.
     pub(super) fn claim_handoff(&mut self, claimer: ClientId, token: &str) -> Option<Claimed> {
         let now = Instant::now();
+        // Only a committed reservation can be claimed: before the commit, the client that made it
+        // may still decide to stay.
         let index = self
             .handoffs
             .held
             .iter()
-            .position(|held| held.token == token && held.client != claimer)?;
+            .position(|held| held.token == token && held.client != claimer && held.committed)?;
         if self.handoffs.held[index].expired(now) {
             let expired = self.handoffs.held.remove(index);
             self.release_reservation(expired);

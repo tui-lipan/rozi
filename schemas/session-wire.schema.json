@@ -1735,7 +1735,7 @@
           "type": "object"
         },
         {
-          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token. Once this connection goes, the slot is held until the token is claimed by an\nattach that presents it or the reservation expires: the layout-control lease is not handed\non, and an ephemeral session does not count the gap as having no client.",
+          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token. The reservation is inert: the client leaving without committing it discards\nit, so a relaunch abandoned at this point changes nothing.",
           "properties": {
             "request_id": {
               "format": "uint64",
@@ -1750,6 +1750,46 @@
           "required": [
             "type",
             "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. Once\ncommitted, this client's departure holds its slot until an attach presents the token or the\nreservation expires: the layout-control lease is not handed on, and an ephemeral session\ndoes not count the gap as having no client. A client leaves only after every commit it sent\nwas answered, so a replacement never attaches before its slot is committed.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "commit-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Discard the reservation `token` names, committed or not: the relaunch it was for failed and\nthis client stays.",
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "abort-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "token"
           ],
           "type": "object"
         },
@@ -5901,6 +5941,15 @@
               },
               "type": "array"
             },
+            "protocol_min": {
+              "description": "Server's minimum supported protocol version, so a client can tell whether another build\ncould attach to this same server. Absent from a server that predates it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "protocol_version": {
               "description": "Server's maximum supported protocol version.",
               "format": "uint32",
@@ -6670,6 +6719,31 @@
             },
             "type": {
               "const": "handoff-prepared",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::CommitHandoff`]. `error` is set when nothing was committed: the\ntoken is unknown, spent, or expired.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "handoff-committed",
               "type": "string"
             }
           },

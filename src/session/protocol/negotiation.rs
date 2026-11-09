@@ -59,6 +59,32 @@ pub fn negotiate_protocol(
     Ok(effective)
 }
 
+/// What an attach presents beyond who it is: proof that a server is the one this client just
+/// started, and a claim on a slot a departing client reserved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AttachProof {
+    /// One-time identity proof for a server this client just spawned. When present, a same-name
+    /// server with a different startup nonce rejects the attach.
+    pub expected_server_nonce: Option<String>,
+    /// The token from [`super::ServerMessage::HandoffPrepared`] that claims a reserved client slot.
+    pub handoff_token: Option<String>,
+}
+
+impl AttachProof {
+    /// Proof that the endpoint belongs to the server this client started with `nonce`.
+    pub fn server_nonce(nonce: Option<String>) -> Self {
+        Self {
+            expected_server_nonce: nonce,
+            handoff_token: None,
+        }
+    }
+
+    pub fn with_handoff_token(mut self, token: Option<String>) -> Self {
+        self.handoff_token = token;
+        self
+    }
+}
+
 /// Attach message using this build's supported protocol range.
 pub fn attach_message(
     session: impl Into<String>,
@@ -66,16 +92,22 @@ pub fn attach_message(
     read_only: bool,
     shares_filesystem: bool,
 ) -> ClientMessage {
-    attach_message_with_server_nonce(session, label, read_only, shares_filesystem, None)
+    attach_message_with_proof(
+        session,
+        label,
+        read_only,
+        shares_filesystem,
+        AttachProof::default(),
+    )
 }
 
-/// Attach while proving that a just-created server owns the endpoint the proxy reached.
-pub fn attach_message_with_server_nonce(
+/// Attach presenting `proof`: a just-created server's nonce, a handoff claim, or both.
+pub fn attach_message_with_proof(
     session: impl Into<String>,
     label: impl Into<String>,
     read_only: bool,
     shares_filesystem: bool,
-    expected_server_nonce: Option<String>,
+    proof: AttachProof,
 ) -> ClientMessage {
     ClientMessage::Attach {
         capabilities: Some(super::Capabilities::current()),
@@ -85,6 +117,7 @@ pub fn attach_message_with_server_nonce(
         label: label.into(),
         read_only,
         shares_filesystem,
-        expected_server_nonce,
+        expected_server_nonce: proof.expected_server_nonce,
+        handoff_token: proof.handoff_token,
     }
 }

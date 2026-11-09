@@ -52,7 +52,7 @@ impl SshDeadline {
     }
 
     /// `interactive` is whether this ssh may prompt at all, `batch_mode` included.
-    fn with_prompts(connect_timeout_secs: u64, interactive: bool) -> Self {
+    pub(crate) fn with_prompts(connect_timeout_secs: u64, interactive: bool) -> Self {
         Self {
             connect_timeout_secs,
             interactive,

@@ -60,6 +60,13 @@ pub enum ClientMessage {
         /// it; when present, a same-name server with a different startup nonce must reject attach.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_server_nonce: Option<String>,
+        /// Claim the client slot a departing client reserved with
+        /// [`ClientMessage::PrepareHandoff`]: its layout-control lease and parked state pass to this
+        /// connection. A token the server does not hold - expired, spent, or never issued - is
+        /// ignored and the attach proceeds as an ordinary one. Sent only to a server that
+        /// negotiated [`super::Capability::ClientHandoff`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_token: Option<String>,
     },
     /// Record the provenance that supplied this session's initial panes. Sent only after the seed
     /// requests have been queued successfully.
@@ -303,6 +310,42 @@ pub enum ClientMessage {
     /// connection; the session itself and every other client keep running.
     EvictClient {
         target: ClientId,
+    },
+    /// Reserve this client's slot for the process that replaces it, such as the same client
+    /// relaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a
+    /// one-time token and how long it grants. The reservation is inert: the client leaving without
+    /// committing it discards it, so a relaunch abandoned at this point changes nothing.
+    PrepareHandoff {
+        request_id: u64,
+        /// How long, once this client has left, its replacement may take to claim the slot. The
+        /// server grants up to its own limit and says what it granted; zero asks for its default.
+        #[serde(default)]
+        hold_ms: u64,
+    },
+    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. A
+    /// committed reservation is ready, but still holds nothing: a connection lost now is an
+    /// ordinary departure. Only [`Self::DepartForHandoff`] makes this client's departure hold its
+    /// slot.
+    CommitHandoff {
+        request_id: u64,
+        token: String,
+    },
+    /// The last thing a client being replaced says before its connection ends: hold the slot
+    /// `token` reserves, committed, for the replacement. From then on the client is in transit
+    /// until an attach presents the token or the reservation expires: the layout-control lease is
+    /// not handed on, and an ephemeral session does not count the gap as having no client. Not
+    /// answered: the client has already let go. One that never arrives leaves an ordinary
+    /// departure, and the replacement attaches without the held place.
+    DepartForHandoff {
+        token: String,
+    },
+    /// Discard the reservation `token` names, whichever connection made it: the relaunch it was for
+    /// failed and the client stays. The token is the authority, so a client that had to reconnect
+    /// can still take back what it reserved. Answered by [`ServerMessage::HandoffAborted`] once no
+    /// reservation for the token remains.
+    AbortHandoff {
+        request_id: u64,
+        token: String,
     },
     SetInputLock {
         locked: bool,
@@ -580,6 +623,10 @@ pub enum ServerMessage {
         /// Negotiated wire generation for this connection.
         #[serde(default)]
         effective_protocol: u32,
+        /// Server's minimum supported protocol version, so a client can tell whether another build
+        /// could attach to this same server. Absent from a server that predates it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        protocol_min: Option<u32>,
         session: String,
         client_id: ClientId,
         panes: Vec<PaneMeta>,
@@ -594,6 +641,10 @@ pub enum ServerMessage {
         /// The server's release (`CARGO_PKG_VERSION`), so a client can name what a session runs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rozi_version: Option<String>,
+        /// Whether the attach's `handoff_token` claimed a reserved slot. Present only when the
+        /// attach presented one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_claimed: Option<bool>,
     },
     /// Retained inbox delivered immediately after attach, before live notification events.
     SessionNotifications {
@@ -772,6 +823,30 @@ pub enum ServerMessage {
     },
     /// Sent only to a requester whose pending control request the controller declined.
     ControlDeclined,
+    /// Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how
+    /// long the slot is held once the client has gone, which may be less than was asked for.
+    /// `error` is set, and `token` empty, when the server refused.
+    HandoffPrepared {
+        request_id: u64,
+        #[serde(default)]
+        token: String,
+        #[serde(default)]
+        hold_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Reply to [`ClientMessage::CommitHandoff`]. `error` is set when nothing was committed: the
+    /// token is unknown, spent, or expired.
+    HandoffCommitted {
+        request_id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains, whether it
+    /// was just discarded or was already gone.
+    HandoffAborted {
+        request_id: u64,
+    },
     ClientsChanged {
         clients: Vec<ClientInfo>,
         input_locked: bool,
@@ -879,6 +954,10 @@ impl ClientMessage {
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => None,
             ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
+            ClientMessage::PrepareHandoff { .. }
+            | ClientMessage::CommitHandoff { .. }
+            | ClientMessage::DepartForHandoff { .. }
+            | ClientMessage::AbortHandoff { .. } => Some(super::Capability::ClientHandoff),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -932,6 +1011,9 @@ impl ServerMessage {
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
             ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
+            ServerMessage::HandoffPrepared { .. }
+            | ServerMessage::HandoffCommitted { .. }
+            | ServerMessage::HandoffAborted { .. } => Some(super::Capability::ClientHandoff),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

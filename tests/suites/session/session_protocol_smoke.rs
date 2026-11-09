@@ -279,5 +279,6 @@ fn attach_message(session: &str, label: &str) -> ClientMessage {
         read_only: false,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     }
 }

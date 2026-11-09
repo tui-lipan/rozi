@@ -70,12 +70,19 @@ impl AvailableUpdate {
         lines.join("\n")
     }
 
-    /// What is left once the release is installed: this client runs the old build until it is
-    /// started again, and sessions outside the release's protocol window need upgrading.
-    pub(crate) fn installed_body(&self) -> String {
-        let mut lines = vec!["quit and start rozi again to use it".to_string()];
-        lines.extend(self.compatibility_notes());
-        lines.join("\n")
+    /// The release-wide step left once the release is installed, for the Restart rozi dialog:
+    /// a raised extension API. What happens to each session the dialog works out itself, from the
+    /// generation that session actually speaks.
+    pub(crate) fn extension_note(&self) -> Option<String> {
+        self.compatibility
+            .as_ref()
+            .filter(|compatibility| compatibility.raises_extension_api())
+            .map(|compatibility| {
+                format!(
+                    "extension API {EXTENSION_API_VERSION}→{} · review extensions first",
+                    compatibility.extension_api
+                )
+            })
     }
 
     /// Whether the release moves a contract the user has to act on, which is what makes the notice
@@ -250,41 +257,41 @@ pub(crate) fn run_update(
 /// Follow up on the update popup once its updater exits.
 ///
 /// Success installs the release for the next launch only - this client and every session server
-/// keep running the build they started with - so the toast names the step that is left. A failure
+/// keep running the build they started with - so Restart rozi opens to take the step. A failure
 /// is already on screen in the popup, which stays open; all that changes is that **Update rozi**
 /// comes back, so the user can try again without hunting for the command.
 ///
 /// The popup is recognised by the command it runs: only one popup can be open, and [`run_update`]
 /// refuses to start while another is.
-pub(crate) fn popup_exited(ctx: &mut tui_lipan::prelude::Context<crate::AppRoot>) {
+pub(crate) fn popup_exited(
+    ctx: &mut tui_lipan::prelude::Context<crate::AppRoot>,
+) -> tui_lipan::prelude::Update {
+    use tui_lipan::prelude::Update;
     if !ctx.state.update_started {
-        return;
+        return Update::none();
     }
     let (Some(popup), Some(update)) =
         (ctx.state.popup.as_ref(), ctx.state.available_update.clone())
     else {
-        return;
+        return Update::none();
     };
     let Some(command) = update.update_command() else {
-        return;
+        return Update::none();
     };
     if popup.identity.launch != Some(crate::pane::launch::PaneLaunch::shell(command)) {
-        return;
+        return Update::none();
     }
     let tui_lipan::prelude::ManagedTerminalStatus::Exited(code) = popup.terminal.status else {
-        return;
+        return Update::none();
     };
     if code != 0 {
         ctx.state.update_started = false;
         ctx.state.commands_dirty = true;
-        return;
+        return Update::none();
     }
-    crate::pane::pty_events::notify_update(
-        ctx,
-        format!("rozi v{} installed", update.latest),
-        update.installed_body(),
-        update.needs_caution(),
-    );
+    // The new build is on disk; this client is still the old one. Restart rozi replaces it and
+    // comes back to the same sessions.
+    crate::ops::relaunch::open_after_update(ctx, update.latest.clone(), update.extension_note())
 }
 
 /// Look for a newer release and report it to this client.
@@ -427,11 +434,7 @@ mod tests {
                 update.toast_body(false),
                 format!("v{running} → v9.0.0\nrun `rozi update`\nrunning sessions keep working")
             );
-            assert!(
-                update
-                    .installed_body()
-                    .ends_with("\nrunning sessions keep working")
-            );
+            assert_eq!(update.extension_note(), None);
         }
     }
 
@@ -448,7 +451,6 @@ mod tests {
             let body = update.toast_body(false);
             assert_eq!(body.lines().nth(2), Some(upgrade_note().as_str()), "{body}");
             assert_eq!(body.lines().count(), 3, "{body}");
-            assert!(update.installed_body().ends_with(&upgrade_note()));
         }
     }
 
@@ -497,6 +499,11 @@ mod tests {
             [extension_row.as_str(), "running sessions keep working"]
         );
 
+        assert_eq!(
+            kept.extension_note().as_deref(),
+            Some(extension_row.as_str())
+        );
+
         let moved = compatibility(next, PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1);
         let body = moved.toast_body(false);
         let rows: Vec<&str> = body.lines().skip(2).collect();
@@ -509,10 +516,7 @@ mod tests {
         let update = update(InstallSource::Managed);
         assert!(!update.needs_caution());
         assert_eq!(update.toast_body(false).lines().count(), 2);
-        assert_eq!(
-            update.installed_body(),
-            "quit and start rozi again to use it"
-        );
+        assert_eq!(update.extension_note(), None);
     }
 
     /// The body is rows a glance can take in, not a sentence: the step, then what to do.

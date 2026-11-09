@@ -87,6 +87,7 @@ fn restart_restores_layout_and_pane_replay(migrate_v2: bool) {
         read_only: false,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     });
     read_until(&mut client, |frame| {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))

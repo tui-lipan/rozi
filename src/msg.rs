@@ -22,6 +22,29 @@ pub enum Msg {
         update: crate::ops::update_check::AvailableUpdate,
         announce: bool,
     },
+    /// The binary a relaunch would run was found and described itself, or was not found. Fenced by
+    /// the dialog's generation.
+    RelaunchCandidate {
+        generation: u64,
+        result: std::result::Result<crate::relaunch::candidate::Candidate, String>,
+    },
+    /// Restart rozi: run the relaunch the dialog planned. A plan that ends programs arms first.
+    RelaunchConfirm,
+    /// Close the Restart rozi dialog without relaunching.
+    RelaunchCancel,
+    /// Move focus to one of the Restart rozi dialog's answers.
+    RelaunchFocusAnswer(usize),
+    /// Stop waiting for servers that have not answered a reservation or a commit.
+    RelaunchAnswerTimeout {
+        attempt: u64,
+    },
+    /// Take the next step of bringing a relaunched client's sessions back.
+    RelaunchRestoreNext,
+    /// A session a relaunched client had to upgrade was restarted on this build, or was not.
+    RelaunchUpgraded {
+        attempt: u64,
+        result: std::result::Result<(), String>,
+    },
     /// This install is about to join the anonymous weekly usage count for the first time, and this
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.
@@ -782,6 +805,9 @@ pub enum Msg {
         allow_takeover: bool,
         read_only: bool,
         origin: session::origin::SessionOrigin,
+        /// Whether a handoff token the attach presented claimed its reserved slot; `None` when it
+        /// presented none.
+        handoff_claimed: Option<bool>,
     },
     SessionOriginSet {
         epoch: u64,
@@ -832,6 +858,28 @@ pub enum Msg {
     SessionControlDeclined {
         epoch: u64,
     },
+    /// The server reserved this client's slot for the process that replaces it (see
+    /// [`crate::ops::relaunch`]). `error` is set when it refused.
+    SessionHandoffPrepared {
+        epoch: u64,
+        request_id: u64,
+        token: String,
+        /// How long the server holds the slot once this client has gone.
+        hold: std::time::Duration,
+        error: Option<String>,
+    },
+    /// The server discarded a reservation this client took back.
+    SessionHandoffAborted {
+        epoch: u64,
+        request_id: u64,
+    },
+    /// The server committed this client's reserved slot, or refused to (`error`).
+    SessionHandoffCommitted {
+        epoch: u64,
+        request_id: u64,
+        error: Option<String>,
+    },
+
     SessionPing {
         epoch: u64,
         seq: u64,

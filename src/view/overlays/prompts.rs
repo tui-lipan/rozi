@@ -421,7 +421,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<AppRoot>) -> Element {
         ),
         // The same ephemeral-naming prompt serves in-place naming and the leave prompt. The latter
         // is the last chance to keep the session, so it says what each answer does. It never shows
-        // the generated `eph-<pid>` name: everywhere else calls these "temporary" sessions, and a
+        // the generated `eph-<id>` name: everywhere else calls these "temporary" sessions, and a
         // name the user has never seen is no help when deciding whether to close one.
         crate::state::NamingMode::NameEphemeralSession if rename.leave.is_some() => (
             "Keep this session?".to_string(),
@@ -608,6 +608,7 @@ fn askpass_choice_overlay(
             title,
             detail: facts.is_none().then_some(question),
             facts: facts.as_deref().unwrap_or_default(),
+            rows: None,
             highlight: fingerprint,
             caption,
             dim_behind: true,

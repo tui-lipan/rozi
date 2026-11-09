@@ -187,15 +187,16 @@ fn rollback_available() -> bool {
 
 /// What to do about local session `name` when its server runs a build this one cannot attach to,
 /// phrased to follow a semicolon: finish its work on the build that started it where a rollback can
-/// reach that build, then restart it, which reopens it from its snapshot but ends its programs.
+/// reach that build, then upgrade it, which reopens it on this build from its snapshot but ends its
+/// programs.
 pub(crate) fn incompatible_session_advice(name: &str) -> String {
-    let restart = format!(
-        "`rozi sessions restart {name}` reopens it from its last snapshot and ends its programs"
+    let upgrade = format!(
+        "`rozi sessions upgrade {name}` reopens it on this rozi from its last snapshot and ends its programs"
     );
     if rollback_available() {
-        format!("to finish its work first, run `rozi update --rollback` and attach; then {restart}")
+        format!("to finish its work first, run `rozi update --rollback` and attach; then {upgrade}")
     } else {
-        restart
+        upgrade
     }
 }
 
@@ -204,12 +205,12 @@ pub(crate) fn incompatible_session_advice(name: &str) -> String {
 /// behavior applies to it.
 pub(crate) fn incompatible_session_hint(remote_host: Option<&str>) -> String {
     match remote_host {
-        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E restarts it"),
+        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E upgrades it"),
         None if rollback_available() => {
-            "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
+            "`rozi update --rollback` to finish its work · Ctrl+E upgrades it from its snapshot"
                 .to_string()
         }
-        None => "Ctrl+E restarts it from its snapshot".to_string(),
+        None => "Ctrl+E upgrades it from its snapshot".to_string(),
     }
 }
 
@@ -341,9 +342,13 @@ pub(crate) enum ReleaseOrder {
 
 /// Compare a session's reported release with this build. `None` when either is not a version.
 pub(crate) fn release_order(session_version: &str) -> Option<ReleaseOrder> {
+    release_order_against(session_version, &ReplacementTarget::this_build().release)
+}
+
+/// How `session_version` relates to `target`, or `None` when it is not a version.
+fn release_order_against(session_version: &str, target: &semver::Version) -> Option<ReleaseOrder> {
     let session = semver::Version::parse(session_version).ok()?;
-    let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
-    Some(match session.cmp(&this) {
+    Some(match session.cmp(target) {
         std::cmp::Ordering::Less => ReleaseOrder::Older,
         std::cmp::Ordering::Equal => ReleaseOrder::Same,
         std::cmp::Ordering::Greater => ReleaseOrder::Newer,
@@ -408,14 +413,44 @@ pub(crate) fn session_release_and_server(name: &str) -> (SessionRelease, Option<
     (release, server)
 }
 
-impl SessionRelease {
-    /// Whether an upgrade may replace this server. It fails closed: only positive evidence that the
-    /// server is no newer than this build allows it.
-    pub(crate) fn upgrade_disposition(&self) -> UpgradeDisposition {
+/// The build an upgrade would move a session onto: its release, and the session wire generations
+/// it speaks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReplacementTarget {
+    pub(crate) release: semver::Version,
+    pub(crate) protocol: std::ops::RangeInclusive<u32>,
+}
+
+impl ReplacementTarget {
+    /// The build that is running.
+    pub(crate) fn this_build() -> Self {
         use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
+        Self {
+            release: semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .expect("the package version is semver"),
+            protocol: MIN_SUPPORTED_PROTOCOL..=PROTOCOL_VERSION,
+        }
+    }
+}
+
+impl SessionRelease {
+    /// Whether an upgrade may replace this server with the running build. It fails closed: only
+    /// positive evidence that the server is no newer than this build allows it.
+    pub(crate) fn upgrade_disposition(&self) -> UpgradeDisposition {
+        self.upgrade_disposition_onto(&ReplacementTarget::this_build())
+    }
+
+    /// Whether an upgrade may replace this server with `target`, which need not be the running
+    /// build: a relaunch decides this for the build it is about to run. A negotiated generation says
+    /// nothing about which release is newer, so the order comes from the releases, and from the
+    /// generations only where they do not overlap at all.
+    pub(crate) fn upgrade_disposition_onto(
+        &self,
+        target: &ReplacementTarget,
+    ) -> UpgradeDisposition {
         match self {
             Self::NotRunning => UpgradeDisposition::Replace,
-            Self::Running(Some(version)) => match release_order(version) {
+            Self::Running(Some(version)) => match release_order_against(version, &target.release) {
                 Some(ReleaseOrder::Older | ReleaseOrder::Same) => UpgradeDisposition::Replace,
                 Some(ReleaseOrder::Newer) => UpgradeDisposition::RefuseNewer(version.clone()),
                 None => UpgradeDisposition::RefuseUnverified,
@@ -423,12 +458,13 @@ impl SessionRelease {
             // Only a server before generation 52 refuses without saying who it is.
             Self::Incompatible(None) => UpgradeDisposition::Replace,
             Self::Incompatible(Some(peer)) => {
-                let order = release_order(&peer.rozi_version);
-                if order == Some(ReleaseOrder::Newer) || peer.protocol_min > PROTOCOL_VERSION {
+                let order = release_order_against(&peer.rozi_version, &target.release);
+                if order == Some(ReleaseOrder::Newer) || peer.protocol_min > *target.protocol.end()
+                {
                     UpgradeDisposition::RefuseNewer(peer.rozi_version.clone())
                 } else if order == Some(ReleaseOrder::Older)
                     && peer.protocol_min <= peer.protocol_max
-                    && peer.protocol_max < MIN_SUPPORTED_PROTOCOL
+                    && peer.protocol_max < *target.protocol.start()
                 {
                     UpgradeDisposition::Replace
                 } else {
@@ -1336,7 +1372,7 @@ mod tests {
         let hint = incompatible_session_hint(Some("devbox"));
         assert!(hint.contains("on `devbox`"), "{hint}");
         assert!(!hint.contains("rozi update --rollback"), "{hint}");
-        assert!(incompatible_session_hint(None).contains("restarts it from its snapshot"));
+        assert!(incompatible_session_hint(None).contains("upgrades it from its snapshot"));
     }
 
     #[test]

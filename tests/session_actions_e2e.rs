@@ -814,6 +814,7 @@ fn attached_clients_learn_the_palette_and_read_only_ones_cannot_call() {
             read_only,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         });
         client
     };
@@ -948,6 +949,7 @@ exec = ["sh", "-c", "exec sleep 30"]
         read_only: false,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     });
     read_until(&mut client, |frame| {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))

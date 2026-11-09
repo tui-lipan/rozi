@@ -307,11 +307,13 @@ the configuration for `split`; other control commands reject it. Select a sessio
 
 ### Check the installed API
 
-`rozi api describe` prints the control API version, [schema](#json-schema) version, the range
-of session protocol generations, and capabilities of the installed binary. It does not connect to a UI or session:
+`rozi api describe` prints the release, control API version, [schema](#json-schema) version, the
+range of session protocol generations, and capabilities of the installed binary. It does not connect
+to a UI or session:
 
 ```json
 {
+  "release": "0.0.44",
   "api": 1,
   "schema": 4,
   "session_protocol": 52,

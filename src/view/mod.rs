@@ -47,7 +47,9 @@ use crate::AppRoot;
 use crate::layout::geometry::{empty_workspace_rect, viewport_bounds};
 use crate::state::WORKBAR_HEIGHT;
 
-pub(crate) use overlays::{DIALOG_AFFIRM, neighbor_keybinding_id, settings_query_selection};
+pub(crate) use overlays::{
+    DIALOG_AFFIRM, DIALOG_REFUSE, neighbor_keybinding_id, settings_query_selection,
+};
 
 use overlays::{
     agent_picker_overlay, askpass_overlay, collaboration_overlay, extension_detail_overlay,
@@ -88,6 +90,9 @@ pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color
 
 fn workspace_empty_panel(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
+    if let Some(activity) = crate::ops::relaunch::covering_activity(&ctx.state) {
+        return workbar::restoring_workspace_panel(&activity, theme);
+    }
     let connecting = matches!(
         ctx.state.current().connection,
         crate::state::ConnectionState::Connecting | crate::state::ConnectionState::Reconnecting
@@ -600,6 +605,9 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     }
     if ctx.state.show_release_notes {
         root = root.child(overlays::release_notes_overlay(ctx));
+    }
+    if ctx.state.relaunch.dialog.is_some() {
+        root = root.child(overlays::relaunch_overlay(ctx));
     }
     if show_reconnecting || show_offline {
         root = root.child(reconnecting_overlay(ctx));

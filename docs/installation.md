@@ -168,7 +168,8 @@ old ones automatically.
 
 An update installs the new build for the next launch; it restarts nothing that is running:
 
-- The client you updated from keeps the old build until you quit and start rozi again.
+- The client you updated from keeps the old build until you
+  [restart it](#restart-rozi-on-the-new-build).
 - Each session server keeps its old build until you [upgrade the session](sessions.md#upgrade-a-session)
   with the **Upgrade session** command or `rozi sessions upgrade <NAME>`. The session reopens from
   its snapshot on the new build, with its layout and terminal history; the programs running in its
@@ -183,6 +184,51 @@ An update installs the new build for the next launch; it restarts nothing that i
 
 On Windows, run the install script again when an update needs to replace the stable launcher
 itself.
+
+### Restart rozi on the new build
+
+**Restart rozi** (`restart-rozi` in the command palette) replaces the running client with the rozi
+installed now and brings it back as it was:
+
+- It returns to every session it was attached to, background sessions included, with the same
+  session, workspace, and pane in front. A read-only attachment stays read-only.
+- It keeps layout control of the sessions it controlled, even while other clients share them.
+- The sessions themselves keep running. The programs in them are not interrupted, and a temporary
+  session stays.
+
+The command opens a dialog first. It shows the release you are on and the one that will run, then
+lists your sessions under what happens to them, starting with anything the restart costs:
+
+| Row | Meaning |
+| --- | --- |
+| `Keeps running` | The new build attaches to the session as it is. |
+| `Reconnects` | The session is offline now; the new build reconnects to it. |
+| `Upgraded · programs end` | The session runs an older rozi that the new build cannot attach to, so the new build [upgrades the session](sessions.md#upgrade-a-session). |
+| `Blocked` | The session cannot be carried over, for the reason shown, and the restart waits until you deal with it. |
+
+A session is blocked when it runs a newer rozi than the one installed, when rozi cannot tell which
+release it runs, when you only view it read-only, when it is a temporary session that needs an
+upgrade (name it with **Rename session** first; a temporary session has no snapshot), or when it
+lives on a remote host whose rozi would have to be replaced while `[remote] install` is `"never"`.
+
+Scratchpad shells and an open popup run in the client itself, so they end with it; the dialog lists
+them under `Ends`. When a restart ends programs, **Restart anyway** asks for a second press.
+
+The restart goes ahead only when every session it carries over has agreed to keep this client's
+place for as long as the new rozi may take to reach it, including the time to type a password for
+each host it reconnects to before that one. If one does not answer, refuses, or cannot keep the
+place that long, rozi stays as it was and the dialog says which session;
+**Restart now** tries again. If your sessions change while the dialog is open, it shows what the restart
+would do now before anything happens.
+
+The new rozi brings back every session that keeps running first, then upgrades the ones that need
+it, showing which session it is upgrading. Upgrading a remote session asks before it installs rozi
+on the host, unless `[remote] install` is `"always"`. A session that cannot be brought back is
+listed in a warning once the rest are back.
+
+After **Update rozi** succeeds, the dialog opens on its own. Choose **Later** to keep working on the
+old build and run **Restart rozi** when you are ready. If the new build cannot start, every session
+keeps running; start rozi again and attach to them.
 
 ### Update notifications
 

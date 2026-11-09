@@ -2034,6 +2034,7 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
             allow_takeover: false,
             read_only: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            handoff_claimed: None,
         })
         .expect("flush pending geometry after reconnect");
     let mut resized: Vec<_> = reconnect_rx
@@ -2484,7 +2485,7 @@ fn local_reconnect_failure_leaves_the_session() {
 
 /// A failed *remote* connect that had parked a live session restores that session rather than
 /// falling back to a fresh local ephemeral. The ephemeral fallback would re-attach to this
-/// process's own `eph-<pid>` server — still controlled by the parked client — and come back as a
+/// process's own `eph-<id>` server — still controlled by the parked client — and come back as a
 /// follower of itself. Restoring the parked attachment keeps the user on their real session, and
 /// the dead empty connect attachment is discarded.
 #[test]
@@ -2652,6 +2653,7 @@ fn attach_policy_result(
                 allow_takeover,
                 read_only,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         let requested = outbound.try_iter().any(|message| {
@@ -2705,6 +2707,7 @@ fn land_on_occupied_session(
             allow_takeover: true,
             read_only: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            handoff_claimed: None,
         })
         .expect("dispatch attach");
     let requested = outbound.try_iter().any(|message| {
@@ -2828,6 +2831,7 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         assert_eq!(
@@ -2884,6 +2888,7 @@ fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         let state = backend.state();
@@ -3027,6 +3032,7 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
 
@@ -3353,6 +3359,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("attach shared pane");
 
@@ -3509,7 +3516,7 @@ fn attached_agent_acknowledgement_rejects_another_epoch_body() {
 }
 
 /// The update popup runs the updater and stays open. Success leaves the old build running, so it
-/// earns a toast naming the step that is left; failure brings **Update rozi** back to retry.
+/// opens Restart rozi for the release just installed; failure brings **Update rozi** back to retry.
 #[test]
 fn the_update_popup_exit_reports_what_is_left() {
     fn exit_update_popup(code: i32) -> TestBackend<crate::AppRoot> {
@@ -3550,21 +3557,18 @@ fn the_update_popup_exit_reports_what_is_left() {
 
     crate::test_support::on_large_stack(|| {
         let installed = exit_update_popup(0);
-        let toast = installed
+        let dialog = installed
             .state()
-            .replaceable_toasts
-            .values()
-            .next()
-            .expect("a successful update is followed up")
-            .content()
-            .replace('\u{0}', " ");
-        assert!(toast.starts_with("rozi v9.9.9 installed"), "{toast}");
-        assert!(toast.contains("quit and start rozi again"), "{toast}");
+            .relaunch
+            .dialog
+            .as_ref()
+            .expect("a successful update offers to restart onto it");
+        assert_eq!(dialog.expected, Some(semver::Version::new(9, 9, 9)));
         assert!(installed.state().popup.is_some(), "the popup stays open");
         assert!(installed.state().update_started);
 
         let failed = exit_update_popup(1);
-        assert!(failed.state().replaceable_toasts.is_empty());
+        assert!(failed.state().relaunch.dialog.is_none());
         assert!(
             !failed.state().update_started,
             "a failed update is offered again"
@@ -3616,6 +3620,7 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
                 allow_takeover: true,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("attach to a populated session");
         backend.render();
@@ -3939,6 +3944,7 @@ fn attachment_keeps_the_remote_path_family_across_disconnect() {
                     allow_takeover: false,
                     read_only: false,
                     origin: crate::session::origin::SessionOrigin::default(),
+                    handoff_claimed: None,
                 })
                 .expect("attach remote session");
             assert_eq!(backend.state().current().path_family, family);

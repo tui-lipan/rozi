@@ -104,9 +104,14 @@ fn control_forward_failure(code: Option<i32>, stderr: &str, session: &str, host:
             "run `rozi sessions list`",
             &format!("run `rozi sessions list --remote {host}`"),
         )
+        // A far side on an older rozi still names `restart`; both point at the host.
         .replace(
             &format!("`rozi sessions restart {session}`"),
             &format!("`rozi sessions restart {session} --remote {host}`"),
+        )
+        .replace(
+            &format!("`rozi sessions upgrade {session}`"),
+            &format!("`rozi sessions upgrade {session} --remote {host}`"),
         )
         .replace(
             "run `rozi update --rollback`",
@@ -382,6 +387,14 @@ mod tests {
         }
         .to_string();
         let message = control_forward_failure(Some(UNREACHABLE_EXIT), &refused, "dev", "workbox");
+        assert!(
+            message.contains("`rozi sessions upgrade dev --remote workbox`"),
+            "{message}"
+        );
+
+        // A far side on an older rozi still names `restart`, which is retargeted the same way.
+        let older = "session `dev` runs an incompatible rozi version (x); `rozi sessions restart dev` reopens it";
+        let message = control_forward_failure(Some(UNREACHABLE_EXIT), older, "dev", "workbox");
         assert!(
             message.contains("`rozi sessions restart dev --remote workbox`"),
             "{message}"

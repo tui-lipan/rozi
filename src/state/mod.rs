@@ -24,6 +24,7 @@ mod mode;
 mod pane;
 mod pickers;
 mod projects;
+mod relaunch;
 mod remote;
 mod search;
 mod services;
@@ -49,6 +50,7 @@ pub use keybindings::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
+pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
 pub use services::*;
@@ -447,6 +449,9 @@ pub struct State {
     /// it fires.
     pub(crate) welcome_due: bool,
     pub show_welcome: bool,
+    /// Replacing this client with another build: the dialog planning it, and the restore a
+    /// relaunched client works through.
+    pub relaunch: RelaunchState,
     pub event_hub: crate::events::EventHub,
     pub session_notification_cursors: HashMap<crate::session::protocol::SessionInstanceId, u64>,
     /// Open `publish` streams, keyed by the pane whose program opened one.
@@ -789,6 +794,7 @@ impl State {
             defer_startup_picker: false,
             welcome_due: false,
             show_welcome: false,
+            relaunch: RelaunchState::default(),
             event_hub: crate::events::EventHub::default(),
             session_notification_cursors: HashMap::new(),
             publish_streams: std::collections::HashMap::new(),
@@ -1022,6 +1028,18 @@ impl State {
         parked.parked_seq = self.next_parked_seq();
         self.background.insert(current_epoch, parked);
         Some(restored_epoch)
+    }
+
+    /// Stamp the background attachments `order` names as parked in that order, the last most
+    /// recently. A relaunched client attaches its sessions in an order of its own, then puts their
+    /// recency back the way the previous process had it.
+    pub fn restamp_parked(&mut self, order: &[AttachmentId]) {
+        for epoch in order {
+            let seq = self.next_parked_seq();
+            if let Some(attachment) = self.background.get_mut(epoch) {
+                attachment.parked_seq = seq;
+            }
+        }
     }
 
     fn next_parked_seq(&mut self) -> u64 {
@@ -1310,6 +1328,7 @@ impl State {
     pub(crate) fn modal_overlays(&self) -> impl Iterator<Item = &'static str> {
         [
             (self.askpass.is_some(), "askpass"),
+            (self.relaunch.dialog.is_some(), "relaunch"),
             (self.show_release_notes, "release-notes"),
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),

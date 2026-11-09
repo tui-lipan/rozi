@@ -40,6 +40,8 @@ pub const API_SCHEMA_DOCUMENT: &str = include_str!("../docs/schema/rozi-control-
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ApiDescription {
+    /// The rozi release this binary is (`CARGO_PKG_VERSION`).
+    pub release: &'static str,
     pub api: u32,
     /// Version of the JSON Schema this binary's API is described by, published at
     /// `docs/schema/rozi-control-v1.schema.json`.
@@ -54,6 +56,7 @@ pub struct ApiDescription {
 impl ApiDescription {
     pub fn current() -> Self {
         Self {
+            release: env!("CARGO_PKG_VERSION"),
             api: CONTROL_API_VERSION,
             schema: API_SCHEMA_VERSION,
             session_protocol: crate::session::protocol::PROTOCOL_VERSION,

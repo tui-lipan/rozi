@@ -807,6 +807,13 @@
                 "null"
               ]
             },
+            "handoff_token": {
+              "description": "Claim the client slot a departing client reserved with\n[`ClientMessage::PrepareHandoff`]: its layout-control lease and parked state pass to this\nconnection. A token the server does not hold - expired, spent, or never issued - is\nignored and the attach proceeds as an ordinary one. Sent only to a server that\nnegotiated [`super::Capability::ClientHandoff`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "label": {
               "type": "string"
             },
@@ -1724,6 +1731,95 @@
           "required": [
             "type",
             "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token and how long it grants. The reservation is inert: the client leaving without\ncommitting it discards it, so a relaunch abandoned at this point changes nothing.",
+          "properties": {
+            "hold_ms": {
+              "default": 0,
+              "description": "How long, once this client has left, its replacement may take to claim the slot. The\nserver grants up to its own limit and says what it granted; zero asks for its default.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "prepare-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. A\ncommitted reservation is ready, but still holds nothing: a connection lost now is an\nordinary departure. Only [`Self::DepartForHandoff`] makes this client's departure hold its\nslot.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "commit-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The last thing a client being replaced says before its connection ends: hold the slot\n`token` reserves, committed, for the replacement. From then on the client is in transit\nuntil an attach presents the token or the reservation expires: the layout-control lease is\nnot handed on, and an ephemeral session does not count the gap as having no client. Not\nanswered: the client has already let go. One that never arrives leaves an ordinary\ndeparture, and the replacement attaches without the held place.",
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "depart-for-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Discard the reservation `token` names, whichever connection made it: the relaunch it was for\nfailed and the client stays. The token is the authority, so a client that had to reconnect\ncan still take back what it reserved. Answered by [`ServerMessage::HandoffAborted`] once no\nreservation for the token remains.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "abort-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id",
+            "token"
           ],
           "type": "object"
         },
@@ -5841,6 +5937,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "handoff_claimed": {
+              "description": "Whether the attach's `handoff_token` claimed a reserved slot. Present only when the\nattach presented one.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "input_locked": {
               "type": "boolean"
             },
@@ -5867,6 +5970,15 @@
                 "$ref": "#/$defs/PaneMeta"
               },
               "type": "array"
+            },
+            "protocol_min": {
+              "description": "Server's minimum supported protocol version, so a client can tell whether another build\ncould attach to this same server. Absent from a server that predates it.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "protocol_version": {
               "description": "Server's maximum supported protocol version.",
@@ -6608,6 +6720,85 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how\nlong the slot is held once the client has gone, which may be less than was asked for.\n`error` is set, and `token` empty, when the server refused.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hold_ms": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "token": {
+              "default": "",
+              "type": "string"
+            },
+            "type": {
+              "const": "handoff-prepared",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::CommitHandoff`]. `error` is set when nothing was committed: the\ntoken is unknown, spent, or expired.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "handoff-committed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains, whether it\nwas just discarded or was already gone.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "handoff-aborted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
           ],
           "type": "object"
         },
@@ -8339,6 +8530,7 @@
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
     "agent-summaries",
+    "client-handoff",
     "graphics-root-frame-edits",
     "project-summaries",
     "runtime-metrics"

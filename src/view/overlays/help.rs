@@ -1330,6 +1330,7 @@ fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {
             title: "Reset all keybindings?",
             detail: Some("Remove every keybinding override and restore current defaults."),
             facts: &[],
+            rows: None,
             highlight: None,
             caption: None,
             dim_behind: false,

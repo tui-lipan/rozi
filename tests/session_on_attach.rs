@@ -84,6 +84,7 @@ fn automatic_take_attach(allow_takeover: bool) {
             allow_takeover: server_takeover,
             read_only: false,
             origin,
+            handoff_claimed: None,
         })
         .expect("apply attached session and automatic take policy");
     assert!(backend.state().follow_prompt.is_none());

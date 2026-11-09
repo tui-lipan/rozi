@@ -12,6 +12,7 @@ pub(super) struct AttachRequest {
     pub read_only: bool,
     pub shares_filesystem: bool,
     pub expected_server_nonce: Option<String>,
+    pub handoff_token: Option<String>,
 }
 
 fn valid_origin(origin: &SessionOrigin) -> bool {
@@ -349,6 +350,9 @@ impl SessionServer {
             self.set_close_after_flush(id);
         }
         if detach {
+            // A client that says it is leaving is leaving, whatever it reserved: only a connection
+            // that ends after a commit is a client in transit.
+            self.handoffs.forget_client(id);
             self.remove_client(id);
         }
     }
@@ -518,6 +522,7 @@ impl SessionServer {
                 read_only,
                 shares_filesystem,
                 expected_server_nonce,
+                handoff_token,
             } => self.handle_attach(
                 client_id,
                 AttachRequest {
@@ -529,8 +534,13 @@ impl SessionServer {
                     read_only,
                     shares_filesystem,
                     expected_server_nonce,
+                    handoff_token,
                 },
             ),
+            ClientMessage::PrepareHandoff {
+                request_id,
+                hold_ms,
+            } => self.handle_prepare_handoff(client_id, request_id, hold_ms),
             ClientMessage::SetSessionOrigin { origin } => {
                 if self.origin.is_empty()
                     && self.origin_seed_client == Some(client_id)
@@ -1102,6 +1112,16 @@ impl SessionServer {
                 },
             )],
             ClientMessage::Detach => Vec::new(),
+            ClientMessage::CommitHandoff { request_id, token } => {
+                self.handle_commit_handoff(client_id, request_id, &token)
+            }
+            ClientMessage::DepartForHandoff { token } => {
+                self.arm_handoff(client_id, &token);
+                Vec::new()
+            }
+            ClientMessage::AbortHandoff { request_id, token } => {
+                self.handle_abort_handoff(request_id, &token)
+            }
             // A newer client's request that skipped its send gate. Refuse that one request and keep
             // the connection: everything else the client does still works.
             ClientMessage::Unknown => vec![(
@@ -1372,6 +1392,7 @@ impl SessionServer {
             read_only,
             shares_filesystem,
             expected_server_nonce,
+            handoff_token,
         } = request;
         let effective = match protocol::negotiate_protocol(
             protocol_version,
@@ -1440,8 +1461,29 @@ impl SessionServer {
             }
         }
         self.sync_image_media_policy();
+        // A relaunched client takes over the slot its previous process reserved: the lease, if that
+        // process held it, and its parked state. A token that claims nothing is an ordinary attach.
+        let claimed = handoff_token
+            .as_deref()
+            .filter(|_| capabilities.supports(protocol::Capability::ClientHandoff))
+            .and_then(|token| self.claim_handoff(client_id, token));
+        let handoff_claimed = handoff_token.as_ref().map(|_| claimed.is_some());
+        let mut lease_passed = false;
+        if let Some(claimed) = &claimed {
+            if let Some(client) = self.client_mut(client_id) {
+                client.parked = claimed.parked;
+            }
+            lease_passed = claimed.held_lease && self.controller == Some(client_id);
+            // The new process is the same client: nobody saw it leave, so nobody sees it join.
+            joined_label = None;
+        }
         // First attacher is auto-granted the layout-control lease.
-        let granted = if self.controller.is_none() && !read_only {
+        let granted = if lease_passed {
+            true
+        } else if self.controller.is_none()
+            && !read_only
+            && claimed.as_ref().is_none_or(|claimed| !claimed.parked)
+        {
             self.controller = Some(client_id);
             true
         } else {
@@ -1454,6 +1496,7 @@ impl SessionServer {
             session_instance: self.instance_id.clone(),
             protocol_version: PROTOCOL_VERSION,
             effective_protocol: effective,
+            protocol_min: Some(protocol::MIN_SUPPORTED_PROTOCOL),
             session,
             client_id,
             panes: self.pane_meta(),
@@ -1465,6 +1508,7 @@ impl SessionServer {
             allow_takeover: self.allow_takeover,
             origin: self.origin.clone(),
             rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            handoff_claimed,
         };
         self.enqueue(client_id, Target::Sender, attached);
         if !self.notifications.is_empty() {

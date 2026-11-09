@@ -3169,6 +3169,7 @@ mod tests {
                 read_only: false,
                 shares_filesystem: true,
                 expected_server_nonce: None,
+                handoff_token: None,
             },
         );
         let attached = super::super::tests::attached_reply(&server, late);

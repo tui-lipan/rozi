@@ -564,6 +564,7 @@ fn golden_client_attach_json_shape() {
         read_only: true,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     })
     .unwrap();
     assert_eq!(
@@ -634,6 +635,7 @@ fn client_messages_round_trip() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
         ClientMessage::SetSessionOrigin {
             origin: crate::session::origin::SessionOrigin {
@@ -756,6 +758,7 @@ fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
         read_only: false,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     };
     let mut encoded = Vec::new();
     write_frame(&mut encoded, &attach).unwrap();
@@ -964,6 +967,7 @@ fn attach_without_min_protocol_deserializes_as_legacy_exact() {
             // A client that does not say cannot be assumed to be looking at this machine's files.
             shares_filesystem: false,
             expected_server_nonce: None,
+            handoff_token: None,
         }
     );
 }

@@ -62,6 +62,7 @@ impl ScratchRuntime {
                 name.clone(),
                 mailbox.clone(),
                 false,
+                crate::session::protocol::AttachProof::default(),
             ) {
                 Ok((client, _)) => {
                     mailbox.activate();

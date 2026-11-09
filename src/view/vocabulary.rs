@@ -50,6 +50,29 @@ pub(crate) const SEPARATOR: &str = " · ";
 /// session family and the idle agent glyph already use.
 pub(crate) const BACKGROUND_RUN: &str = "⧉";
 
+/// What happens to a session when this client is restarted on another build. Each says what the
+/// session will be afterwards, so it reads as a status, capitalized. A blocked session's reason is
+/// its own, and is drawn apart from the word.
+pub(crate) fn relaunch_transition(transition: &crate::relaunch::plan::Transition) -> &'static str {
+    use crate::relaunch::plan::Transition;
+    match transition {
+        Transition::Carry { .. } => "Keeps running",
+        Transition::Reconnect => "Reconnects",
+        Transition::Upgrade => "Upgraded",
+        Transition::Blocked { .. } => "Blocked",
+    }
+}
+
+/// What an upgrade costs, after the sessions it upgrades.
+pub(crate) const RELAUNCH_PROGRAMS_END: &str = "programs end";
+
+/// Marks a process this client runs itself, which a restart ends: the quiet marker, since it is
+/// nothing of the session family.
+pub(crate) const CLIENT_PROCESS_MARKER: &str = MARKER_QUIET;
+
+/// A process that lives in the client itself, which a restart ends.
+pub(crate) const RELAUNCH_ENDS: &str = "Ends";
+
 /// The name shown for a temporary session in place of its generated one. Lowercase because it sits
 /// in the name column, where it stands for a name rather than a state.
 pub(crate) const EPHEMERAL: &str = "ephemeral";

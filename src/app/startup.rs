@@ -160,6 +160,7 @@ impl StartupTasks {
             SessionStart::RemotePicker { target } => {
                 link.send(Msg::RemoteStartupActivate(target));
             }
+            SessionStart::Resume => link.send(Msg::RelaunchRestoreNext),
         }
     }
 }
@@ -181,6 +182,10 @@ pub(super) enum StartupSession {
         remote: Option<crate::session::remote::RemoteTarget>,
         /// The row to land on, from a `last` session that could not reopen.
         last_session: Option<String>,
+    },
+    /// Come back to the sessions a relaunched client held (see [`crate::relaunch`]).
+    Resume {
+        handoff: crate::relaunch::document::ClientHandoff,
     },
 }
 
@@ -212,6 +217,9 @@ impl StartupPlan {
             StartupSession::Attach { request, .. } => request.remote.as_ref(),
             StartupSession::RemoteLast { target, .. } => Some(target),
             StartupSession::Picker { remote, .. } => remote.as_ref(),
+            // Each session names its own host; one that needs rozi installed there is upgraded,
+            // asking first, once the UI is up.
+            StartupSession::Resume { .. } => None,
         }
     }
 }

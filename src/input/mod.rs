@@ -80,6 +80,8 @@ pub enum Action {
     OpenExtensions,
     /// Install the newer release a check found, in a popup, with this install's own updater.
     UpdateRozi,
+    /// Replace this client with the installed rozi, coming back to the same sessions.
+    RestartRozi,
     /// Show the notes of the release this build is.
     ShowReleaseNotes,
     OpenAppearance,
@@ -224,6 +226,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenSettings,
     Action::OpenExtensions,
     Action::UpdateRozi,
+    Action::RestartRozi,
     Action::ShowReleaseNotes,
     Action::OpenAppearance,
     Action::OpenAlerts,
@@ -357,6 +360,7 @@ impl Action {
             Action::OpenSettings => "settings",
             Action::OpenExtensions => "extensions",
             Action::UpdateRozi => "update-rozi",
+            Action::RestartRozi => "restart-rozi",
             Action::ShowReleaseNotes => "release-notes",
             Action::OpenAppearance => "change-appearance",
             Action::OpenAlerts => "alerts",
@@ -495,6 +499,7 @@ impl Action {
             | Action::OpenSettings
             | Action::OpenExtensions
             | Action::UpdateRozi
+            | Action::RestartRozi
             | Action::ShowReleaseNotes
             | Action::OpenAppearance
             | Action::OpenAlerts

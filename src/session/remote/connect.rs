@@ -340,6 +340,28 @@ fn resolve_attach_binary(
     Ok(binary)
 }
 
+/// The handshake after the proxy's preamble: a busy server answering its attach.
+const ATTACH_HANDSHAKE_ALLOWANCE: Duration = Duration::from_secs(15);
+
+/// The longest a join to an existing session on a host can take with `config`, prompts included:
+/// finding rozi there, connecting and authenticating - a password typed into the dialog included -
+/// and the attach handshake. A relaunched client asks each server to hold its place at least this
+/// long, so the user typing a password is never what loses it.
+pub(crate) fn join_budget(config: &RemoteConfig) -> Duration {
+    join_budget_for(
+        config,
+        super::askpass::SshPrompts::interactive().allows_prompt(config.batch_mode),
+    )
+}
+
+/// `interactive` is whether this ssh may prompt at all, `batch_mode` included.
+fn join_budget_for(config: &RemoteConfig, interactive: bool) -> Duration {
+    super::bootstrap::SshDeadline::with_prompts(config.connection_timeout_secs, interactive)
+        .command()
+        + preamble_timeout_for(config, interactive)
+        + ATTACH_HANDSHAKE_ALLOWANCE
+}
+
 /// Default wait for the proxy's first bytes when `[remote] connection_timeout_secs` is `0`.
 const DEFAULT_PREAMBLE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -686,5 +708,16 @@ mod tests {
 
         assert_eq!(finished_stderr_tail(handle), None);
         release_tx.send(()).unwrap();
+    }
+
+    /// A relaunch asks each server to hold its place this long, so it has to cover a password typed
+    /// twice - once to find rozi on the host, once to connect - wherever ssh can prompt.
+    #[test]
+    fn a_join_budget_allows_for_every_prompt_the_join_can_raise() {
+        let config = RemoteConfig::default();
+        let quiet = join_budget_for(&config, false);
+        let prompting = join_budget_for(&config, true);
+        assert_eq!(prompting, quiet + INTERACTIVE_AUTH_ALLOWANCE * 2);
+        assert!(quiet >= preamble_timeout_for(&config, false) + ATTACH_HANDSHAKE_ALLOWANCE);
     }
 }

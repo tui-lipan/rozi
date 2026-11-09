@@ -178,12 +178,12 @@ fn prove_ownership(endpoint: &IpcEndpoint, name: &str, nonce: &str) -> io::Resul
     stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT))?;
     protocol::write_frame(
         &mut stream,
-        &protocol::attach_message_with_server_nonce(
+        &protocol::attach_message_with_proof(
             name,
             crate::platform::user::current_user_label(),
             true,
             true,
-            Some(nonce.to_string()),
+            protocol::AttachProof::server_nonce(Some(nonce.to_string())),
         ),
     )?;
     match protocol::read_frame::<_, ServerMessage>(&mut stream)? {

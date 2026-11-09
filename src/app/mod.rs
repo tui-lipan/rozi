@@ -12,6 +12,7 @@ use crate::{commands, config, control, events, ops, state, update, view};
 
 mod entry;
 pub(crate) mod exit_report;
+mod relaunch;
 mod startup;
 
 pub use entry::run;
@@ -45,7 +46,7 @@ pub struct AppRoot {
     /// discover) a session server, arm the theme and workbar ticks. Only the real [`run`] wants it.
     ///
     /// A `TestBackend`-driven test builds its app through [`Default`], where none of that is
-    /// survivable. Every test in one binary derives the same `eph-<pid>` name, so they would all
+    /// survivable. Every test in one binary derives the same `eph-<id>` name, so they would all
     /// race to bootstrap and then share one real server; and any message such a task lands
     /// mid-test arrives inside whatever `pump` happens to be running, which is what made
     /// assertions about panes, hosts, and in-flight polls flake under load.
@@ -62,6 +63,13 @@ pub struct AppRoot {
     welcome: bool,
     event_hub: events::EventHub,
     render_host_terminal_color_generation: Cell<u64>,
+    /// Where a relaunch leaves the build to hand the terminal to, for the runner to find once the
+    /// UI is gone.
+    handover: state::HandoverSlot,
+    /// Whether Restart rozi may look for the installed rozi by running it. Only the real [`run`]
+    /// wants it: a test binary sits where the installed one would, and running it with
+    /// `api describe` would run tests.
+    finds_binaries: bool,
 }
 
 impl Default for AppRoot {
@@ -91,6 +99,8 @@ impl Default for AppRoot {
             welcome: false,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
+            handover: state::HandoverSlot::default(),
+            finds_binaries: false,
         }
     }
 }
@@ -138,7 +148,14 @@ impl AppRoot {
             welcome,
             event_hub: events::EventHub::default(),
             render_host_terminal_color_generation: Cell::new(0),
+            handover: state::HandoverSlot::default(),
+            finds_binaries: true,
         }
+    }
+
+    fn with_handover(mut self, handover: state::HandoverSlot) -> Self {
+        self.handover = handover;
+        self
     }
 
     fn with_startup_cwd(mut self, cwd: Option<StartupCwd>) -> Self {
@@ -168,6 +185,7 @@ impl AppRoot {
             },
         );
         app.update_checks = false;
+        app.finds_binaries = false;
         app.welcome = false;
         app
     }
@@ -190,6 +208,7 @@ impl AppRoot {
             },
         );
         app.update_checks = false;
+        app.finds_binaries = false;
         app.welcome = false;
         app.watch_hangup = false;
         app
@@ -230,6 +249,13 @@ impl AppRoot {
                 }
                 ctx.state.remote.startup_resume = Some((target, name));
                 return SessionStart::Picker { epoch };
+            }
+            StartupSession::Resume { handoff } => {
+                // Sessionless until the first session comes back, as a startup picker leaves it.
+                let seed = std::mem::take(ctx.state.current_mut());
+                ctx.state.launcher_seed = Some(seed);
+                ops::relaunch::begin_restore(ctx, handoff);
+                return SessionStart::Resume;
             }
             StartupSession::Picker {
                 remote,
@@ -314,6 +340,8 @@ impl Component for AppRoot {
             }
         }
         state.system_theme = self.initial_system_theme.clone();
+        state.relaunch.handover = self.handover.clone();
+        state.relaunch.finds_binaries = self.finds_binaries;
         state.control_socket_path = self
             .control_guard
             .as_ref()
@@ -821,6 +849,7 @@ mod tests {
                             allow_takeover: false,
                             read_only: false,
                             origin: Default::default(),
+                            handoff_claimed: None,
                         })
                         .unwrap();
                     assert_eq!(backend.state().session_view_revision, revision + 1);

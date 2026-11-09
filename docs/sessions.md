@@ -448,7 +448,8 @@ needs the option again here to stay unsaved. A session that isn't running is ref
 
 A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
 restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
-as [resurrection](#resurrection) restores them, while the programs in its panes end. The old server
+as [resurrection](#resurrection) restores them, while the programs in its panes end. In Sessions,
+`Ctrl+E` on such a row [upgrades](#upgrade-a-session) it, which refuses a session on a newer rozi. The old server
 saves a final snapshot as it stops; if that takes longer than about ten seconds, or on Windows,
 where the server is stopped at once, the restart uses the last snapshot it saved instead, so output
 from the final moments before the restart can be missing.
@@ -482,7 +483,8 @@ session restarts from its snapshot on the current build: its layout and terminal
 while the programs in its panes end. Like restarting, the command asks for a second press first.
 The palette offers it only for a session on an older release, and `rozi sessions upgrade` refuses a
 session on a newer one; upgrade that session from the newer rozi instead. rozi never upgrades a
-session on its own.
+session on its own: [Restart rozi](installation.md#restart-rozi-on-the-new-build) upgrades only the
+sessions the new build cannot attach to, and only once you confirm it.
 
 ## Worktrees
 

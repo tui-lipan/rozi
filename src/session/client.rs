@@ -87,6 +87,51 @@ impl ShutdownFlush {
     }
 }
 
+/// A point in the outbound queue the writer has reached, which proves everything queued before it
+/// is on the wire. Unlike [`ShutdownFlush`], a writer that stops before reaching it never raises it.
+pub(crate) struct WriteBarrier {
+    reached: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl WriteBarrier {
+    fn new() -> Self {
+        Self {
+            reached: Mutex::new(false),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn reach(&self) {
+        if let Ok(mut reached) = self.reached.lock() {
+            *reached = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let Ok(reached) = self.reached.lock() else {
+            return false;
+        };
+        self.changed
+            .wait_timeout_while(reached, timeout, |reached| !*reached)
+            .is_ok_and(|(reached, _)| *reached)
+    }
+}
+
+impl std::fmt::Debug for WriteBarrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteBarrier")
+    }
+}
+
+/// One barrier is only ever the same as itself.
+impl PartialEq for WriteBarrier {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
 /// Explicit transport lifecycle owner. When the final `SessionClient` handle for a session
 /// is dropped, `ClientTransport` shuts down the stream, signals termination to reader/writer
 /// worker threads, and closes the outbound queue.
@@ -158,6 +203,9 @@ pub struct SessionClient {
     pub(crate) ssh_connection: Option<String>,
     /// Wire generation agreed with this server.
     effective_protocol: u32,
+    /// Every generation the server speaks, oldest first. A server that predates reporting its
+    /// oldest is taken to speak no older generation than the one agreed.
+    server_protocol: std::ops::RangeInclusive<u32>,
     /// What this connection may use beyond its generation's baseline. Every feature check goes
     /// through [`Self::supports`].
     capabilities: protocol::Capabilities,
@@ -261,6 +309,11 @@ pub(crate) enum ClientOutbound {
         generation: u64,
         bytes: Vec<u8>,
     },
+    /// Close the connection once everything queued before it is written, without a word to the
+    /// server. Never written itself.
+    Hangup,
+    /// Raised once everything queued before it is written. Never written itself.
+    Barrier(Arc<WriteBarrier>),
 }
 
 impl SessionClient {
@@ -284,6 +337,7 @@ impl SessionClient {
                 ssh_connection: None,
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
+                server_protocol: PROTOCOL_VERSION..=PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
                 server_version: None,
             },
@@ -324,15 +378,21 @@ impl SessionClient {
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
-        Self::from_stream_attached_with_server_nonce(stream, session, inbound, read_only, None)
+        Self::from_stream_attached_with_proof(
+            stream,
+            session,
+            inbound,
+            read_only,
+            protocol::AttachProof::default(),
+        )
     }
 
-    pub fn from_stream_attached_with_server_nonce(
+    pub fn from_stream_attached_with_proof(
         stream: IpcConnection,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -342,7 +402,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -351,6 +411,7 @@ impl SessionClient {
         session: impl Into<String>,
         inbound: Arc<InboundMailbox>,
         read_only: bool,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         // A local endpoint puts this client on the server's own machine, so it can read whatever
         // the session's children leave in a file.
@@ -362,7 +423,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
-            None,
+            proof,
         )
     }
 
@@ -376,7 +437,7 @@ impl SessionClient {
         inbound: Arc<InboundMailbox>,
         read_only: bool,
         shares_filesystem: bool,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -386,7 +447,7 @@ impl SessionClient {
             shares_filesystem,
             HEARTBEAT_POLL,
             None,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -400,7 +461,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -412,7 +473,7 @@ impl SessionClient {
                 .min(handshake_timeout)
                 .max(Duration::from_millis(1)),
             cancel_epoch,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -424,7 +485,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let session: String = session.into();
@@ -442,12 +503,12 @@ impl SessionClient {
         }
         protocol::write_frame(
             &mut stream,
-            &protocol::attach_message_with_server_nonce(
+            &protocol::attach_message_with_proof(
                 session,
                 crate::platform::user::current_user_label(),
                 read_only,
                 shares_filesystem,
-                expected_server_nonce,
+                proof,
             ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut HandshakeReader {
@@ -464,14 +525,20 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(advice_for.as_deref(), &attached)?;
-        let (capabilities, server_version) = match &attached {
+        let (capabilities, server_version, server_protocol) = match &attached {
             ServerMessage::Attached {
                 capabilities,
                 rozi_version,
+                protocol_version,
+                protocol_min,
                 ..
             } => (
                 protocol::Capabilities::negotiated(capabilities.as_ref()),
                 rozi_version.clone(),
+                protocol_min
+                    .filter(|min| min <= protocol_version)
+                    .unwrap_or(effective_protocol)
+                    ..=(*protocol_version).max(effective_protocol),
             ),
             _ => unreachable!("validated attach reply"),
         };
@@ -510,8 +577,10 @@ impl SessionClient {
                 let ends_the_server = matches!(
                     &message,
                     ClientOutbound::Control(
-                        ClientMessage::Shutdown | ClientMessage::ShutdownForRestart
-                    )
+                        ClientMessage::Shutdown
+                            | ClientMessage::ShutdownForRestart
+                            | ClientMessage::Detach
+                    ) | ClientOutbound::Hangup
                 );
                 let result = match message {
                     ClientOutbound::Control(message) => {
@@ -544,6 +613,17 @@ impl SessionClient {
                         latency_sensitive,
                         &bytes,
                     ),
+                    // The server reads the end of the stream as the client's departure. A socket
+                    // already gone has departed all the same.
+                    ClientOutbound::Hangup => {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        writer_shutdown_flush.signal();
+                        Ok(())
+                    }
+                    ClientOutbound::Barrier(barrier) => {
+                        barrier.reach();
+                        Ok(())
+                    }
                 };
                 if result.is_err() {
                     if !writer_shutdown_signal.load(Ordering::Relaxed)
@@ -604,6 +684,7 @@ impl SessionClient {
             ssh_connection: None,
             server_pid,
             effective_protocol,
+            server_protocol,
             capabilities,
             server_version,
             cell: tui_lipan::host_cell_size(),
@@ -619,6 +700,19 @@ impl SessionClient {
     /// Negotiated wire version for this connection.
     pub fn effective_protocol(&self) -> u32 {
         self.effective_protocol
+    }
+
+    /// Every generation the server speaks, which another build could attach to it with. The
+    /// generation this connection agreed is only the newest both ends speak.
+    pub fn server_protocol(&self) -> std::ops::RangeInclusive<u32> {
+        self.server_protocol.clone()
+    }
+
+    /// Stand in for a server that speaks `protocol`.
+    #[cfg(test)]
+    pub(crate) fn set_server_protocol(&mut self, protocol: std::ops::RangeInclusive<u32>) {
+        self.effective_protocol = *protocol.end();
+        self.server_protocol = protocol;
     }
 
     pub fn capabilities(&self) -> &protocol::Capabilities {
@@ -685,6 +779,28 @@ impl SessionClient {
     /// session open in the background never makes it look occupied to the next client to attach.
     pub fn set_parked(&self, parked: bool) {
         self.send_control(ClientMessage::SetParked { parked });
+    }
+
+    /// Ask the server to reserve this client's slot for the process that replaces it. `false` when
+    /// the server cannot (see [`protocol::Capability::ClientHandoff`]); the answer arrives as
+    /// [`ServerMessage::HandoffPrepared`] carrying `request_id`. The reservation does nothing until
+    /// [`Self::commit_handoff`] commits it.
+    pub fn prepare_handoff(&self, request_id: u64, hold: Duration) -> bool {
+        self.send_control(ClientMessage::PrepareHandoff {
+            request_id,
+            hold_ms: u64::try_from(hold.as_millis()).unwrap_or(u64::MAX),
+        })
+    }
+
+    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`].
+    pub fn commit_handoff(&self, request_id: u64, token: String) -> bool {
+        self.send_control(ClientMessage::CommitHandoff { request_id, token })
+    }
+
+    /// Discard the reservation `token` names: the relaunch failed and this client stays. Answered
+    /// by [`ServerMessage::HandoffAborted`].
+    pub fn abort_handoff(&self, request_id: u64, token: String) -> bool {
+        self.send_control(ClientMessage::AbortHandoff { request_id, token })
     }
 
     /// Ask the server to list one directory on its own host.
@@ -991,8 +1107,31 @@ impl SessionClient {
         }
     }
 
+    /// Tell the server this client is leaving for good. A detach is the last thing a connection
+    /// says, so the writer stops after it.
     pub fn detach(&self) {
         self.send_control(ClientMessage::Detach);
+    }
+
+    /// [`Self::detach`], waiting briefly for it to reach the wire. For a process about to exit: a
+    /// detach still queued when it does would reach the server as a dropped connection instead.
+    pub fn detach_and_wait(&self) {
+        self.end_server(ClientMessage::Detach);
+    }
+
+    /// Wait until everything queued so far is on the wire. `false` when that did not happen within
+    /// `timeout`: the connection failed, or the server is not reading.
+    pub fn flush_within(&self, timeout: Duration) -> bool {
+        if self.transport.is_none() {
+            // A test channel: everything sent was handed over already.
+            return true;
+        }
+        if self.transport_failed.load(Ordering::Acquire) {
+            return false;
+        }
+        let barrier = Arc::new(WriteBarrier::new());
+        self.send(ClientOutbound::Barrier(Arc::clone(&barrier)));
+        barrier.wait(timeout)
     }
 
     /// Ask the server to end the session, waiting briefly for the request to reach the wire.
@@ -1011,8 +1150,25 @@ impl SessionClient {
         self.end_server(ClientMessage::ShutdownForRestart);
     }
 
+    /// End the connection for the process replacing this client. With `token`, its last word
+    /// arms the slot that token reserves, so the server holds it for the replacement; without one
+    /// the connection just ends. Unlike [`Self::detach`], neither says this client is leaving for
+    /// good.
+    pub fn end_for_handoff(&self, token: Option<String>) {
+        if let Some(token) = token {
+            self.send_control(ClientMessage::DepartForHandoff { token });
+        }
+        self.send(ClientOutbound::Hangup);
+        self.await_final_write();
+    }
+
     fn end_server(&self, message: ClientMessage) {
         self.send_control(message);
+        self.await_final_write();
+    }
+
+    /// Wait for the writer to put the last thing queued on the wire, so the process can go.
+    fn await_final_write(&self) {
         if let Some(transport) = &self.transport {
             if !self.transport_failed.load(Ordering::Acquire) {
                 transport.shutdown_requested.store(true, Ordering::Release);
@@ -1440,6 +1596,7 @@ impl ClientOutbound {
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
             }
+            Self::Hangup | Self::Barrier(_) => 0,
         }
     }
 }
@@ -1825,6 +1982,59 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::net::UnixStream;
 
+    /// A relaunch replaces the process only once every connection proved its queue is written; a
+    /// writer that never gets there must read as not flushed, however it stopped.
+    #[test]
+    fn a_write_barrier_proves_only_what_the_writer_reached() {
+        let barrier = Arc::new(WriteBarrier::new());
+        assert!(
+            !barrier.wait(Duration::from_millis(10)),
+            "nothing reached it"
+        );
+        let reached = Arc::clone(&barrier);
+        let writer = thread::spawn(move || reached.reach());
+        assert!(barrier.wait(Duration::from_secs(5)));
+        writer.join().unwrap();
+
+        // A writer that stops first drops the barrier unreached.
+        let abandoned = Arc::new(WriteBarrier::new());
+        drop(ClientOutbound::Barrier(Arc::clone(&abandoned)));
+        assert!(!abandoned.wait(Duration::from_millis(10)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_connection_whose_writer_stopped_does_not_flush() {
+        let (client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
+        let (inbound_tx, _inbound_rx) = mpsc::channel();
+        let attached = attached_message();
+        let server = thread::spawn(move || {
+            let _: ClientMessage = protocol::read_frame(&mut server_stream).expect("read attach");
+            protocol::write_frame(&mut server_stream, &attached).expect("write attached");
+            // Reads until the client leaves.
+            while let Ok(message) = protocol::read_frame::<_, ClientMessage>(&mut server_stream) {
+                if message == ClientMessage::Detach {
+                    break;
+                }
+            }
+        });
+        let (client, _) = SessionClient::from_stream_attached(
+            crate::platform::ipc::IpcConnection::from_unix(client_stream),
+            "test",
+            inbound_tx,
+            false,
+        )
+        .expect("attach");
+        assert!(client.flush_within(Duration::from_secs(5)));
+        // A detach is the last thing a connection says; its writer stops after it.
+        client.detach_and_wait();
+        server.join().unwrap();
+        assert!(
+            !client.flush_within(Duration::from_millis(200)),
+            "a writer that has stopped proves nothing"
+        );
+    }
+
     fn attached_message() -> ServerMessage {
         ServerMessage::Attached {
             capabilities: None,
@@ -1842,6 +2052,8 @@ mod tests {
             allow_takeover: false,
             origin: crate::session::origin::SessionOrigin::default(),
             rozi_version: None,
+            handoff_claimed: None,
+            protocol_min: None,
         }
     }
 
@@ -1899,7 +2111,7 @@ mod tests {
             true,
             Duration::from_secs(2),
             None,
-            None,
+            protocol::AttachProof::default(),
         )
         .unwrap();
         server.join().unwrap();
@@ -1951,7 +2163,7 @@ mod tests {
             true,
             Duration::from_secs(2),
             None,
-            None,
+            protocol::AttachProof::default(),
         )
         .unwrap();
         try_enqueue_runtime_metrics_request(&client.outbound, &client.metrics_request_pending);
@@ -2047,7 +2259,7 @@ mod tests {
             .to_string();
         assert!(
             local.contains(
-                "`rozi sessions restart dev` reopens it from its last snapshot and ends its programs"
+                "`rozi sessions upgrade dev` reopens it on this rozi from its last snapshot and ends its programs"
             ),
             "{local}"
         );
@@ -2248,6 +2460,7 @@ mod tests {
             ssh_connection: None,
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
+            server_protocol: PROTOCOL_VERSION..=PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),
             server_version: None,
             cell: tui_lipan::TerminalCellSize::default(),

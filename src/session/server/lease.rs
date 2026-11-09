@@ -433,6 +433,8 @@ impl SessionServer {
             .and_then(|client| client.label.as_deref())
             .map(|label| format!("{label} #{client_id}"))
             .unwrap_or_else(|| format!("client #{client_id}"));
+        // An evicted client does not come back through a relaunch either.
+        self.handoffs.forget_client(target);
         self.set_close_after_flush(target);
         vec![(
             Target::Client(target),
@@ -591,39 +593,60 @@ impl SessionServer {
         // The client that could not reach the filesystem may have just left, which puts naming a
         // file back on the table for the panes.
         self.sync_image_media_policy();
-        let client_name = removed.label.unwrap_or_default();
-        let count = self.client_roster().len().to_string();
-        self.record_session_event(
-            events::EventKind::ClientLeft,
-            vec![
-                ("client_id", id.to_string()),
-                ("client_name", client_name),
-                ("count", count),
-            ],
-        );
+        // A client relaunching into a new process is in transit, not gone: its lease waits for the
+        // replacement and nobody is told it left (see `handoff`).
+        let in_transit = self.hold_departing_client(id, removed.parked);
         let mut messages: Vec<ServerMessage> = self.withdraw_client_rows(id);
-        if self.controller == Some(id) {
-            self.controller = self.promotion_candidate();
-            // A promoted client no longer needs its own pending request.
-            if let Some(new_controller) = self.controller
-                && let Some(client) = self.client_mut(new_controller)
-            {
-                client.requesting_control = false;
-                client.last_request_notify = None;
+        if !in_transit {
+            let client_name = removed.label.unwrap_or_default();
+            let count = self.client_roster().len().to_string();
+            self.record_session_event(
+                events::EventKind::ClientLeft,
+                vec![
+                    ("client_id", id.to_string()),
+                    ("client_name", client_name),
+                    ("count", count),
+                ],
+            );
+            if self.controller == Some(id) {
+                messages.extend(self.release_departed_lease(promotion_reason));
+                for message in messages {
+                    self.broadcast_control(&message);
+                }
+                return;
             }
-            let reason = if promotion_reason == ControllerChangeReason::Expired {
-                ControllerChangeReason::Expired
-            } else if self.controller.is_some() {
-                promotion_reason
-            } else {
-                ControllerChangeReason::Released
-            };
-            messages.push(self.controller_changed_message(self.controller, reason));
         }
         messages.push(self.clients_changed());
         for message in messages {
             self.broadcast_control(&message);
         }
+    }
+
+    /// Move the lease off a controller that is no longer attached, to the oldest client entitled to
+    /// it, and return the controller change and the refreshed roster to broadcast.
+    pub(super) fn release_departed_lease(
+        &mut self,
+        promotion_reason: ControllerChangeReason,
+    ) -> Vec<ServerMessage> {
+        self.controller = self.promotion_candidate();
+        // A promoted client no longer needs its own pending request.
+        if let Some(new_controller) = self.controller
+            && let Some(client) = self.client_mut(new_controller)
+        {
+            client.requesting_control = false;
+            client.last_request_notify = None;
+        }
+        let reason = if promotion_reason == ControllerChangeReason::Expired {
+            ControllerChangeReason::Expired
+        } else if self.controller.is_some() {
+            promotion_reason
+        } else {
+            ControllerChangeReason::Released
+        };
+        vec![
+            self.controller_changed_message(self.controller, reason),
+            self.clients_changed(),
+        ]
     }
 
     fn clear_browse_requests(&mut self, client_id: ClientId) {
@@ -730,6 +753,7 @@ impl SessionServer {
         for id in timed_out {
             self.remove_client_with_reason(id, ControllerChangeReason::Expired);
         }
+        self.expire_handoffs();
     }
 
     pub(super) fn flush_clients(&mut self) -> bool {

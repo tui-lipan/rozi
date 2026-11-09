@@ -30,6 +30,21 @@ pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
 /// the session being switched to. Named and ephemeral sessions are both retained; parked sessions
 /// are only torn down on quit (see [`crate::ops::exit`]).
 pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
+    park_current_session_with(ctx, ParkLease::Release);
+}
+
+/// What parking does with the layout-control lease the session on screen may hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParkLease {
+    /// Tell the server the session is in the background, which hands the lease on. Every switch.
+    Release,
+    /// Say nothing to the server, so the session keeps its lease while another one attaches. Only a
+    /// relaunched client restoring its sessions does this, for the session that was on screen,
+    /// which it returns to before it is done; see [`crate::ops::relaunch`].
+    Keep,
+}
+
+pub(crate) fn park_current_session_with(ctx: &mut Context<AppRoot>, lease: ParkLease) {
     ctx.state.sidebar.invalidate_sessions();
     // The popup is bound to the current server and cannot cross the switch. The client-owned
     // scratchpad only hides while the attachment under it changes.
@@ -37,7 +52,9 @@ pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     crate::scratchpad::hide_for_session_switch(ctx);
     crate::ops::session::flush_layout_commit(ctx);
     let disposition = current_disposition(ctx);
-    mark_current_parked(ctx, true);
+    if lease == ParkLease::Release {
+        mark_current_parked(ctx, true);
+    }
     let old_epoch = ctx.state.runtime_epoch;
     ctx.state
         .park_current(old_epoch, crate::state::Attachment::new());
@@ -439,7 +456,7 @@ pub(crate) fn release_background_for_exit(ctx: &mut Context<AppRoot>, close_temp
         if crate::ops::exit::shutdown_on_exit(&attachment, close_temporary) {
             client.shutdown();
         } else {
-            client.detach();
+            client.detach_and_wait();
         }
     }
 }
@@ -761,10 +778,20 @@ fn parse_attach_remote(
     }
 }
 
-fn begin_named_attach(
+pub(crate) fn begin_named_attach(
     ctx: &mut Context<AppRoot>,
     request: crate::state::AttachRequest,
     seed: Option<crate::state::Attachment>,
+) -> Update {
+    begin_named_attach_parking(ctx, request, seed, ParkLease::Release)
+}
+
+/// [`begin_named_attach`], parking the session on screen with `lease`.
+pub(crate) fn begin_named_attach_parking(
+    ctx: &mut Context<AppRoot>,
+    request: crate::state::AttachRequest,
+    seed: Option<crate::state::Attachment>,
+    lease: ParkLease,
 ) -> Update {
     ctx.state.remote.startup_resume = None;
     // Attach-elsewhere. Retain both live and offline sessions in the background so their screens
@@ -778,7 +805,7 @@ fn begin_named_attach(
     let left =
         if retain_current {
             parked_epoch = Some(ctx.state.runtime_epoch);
-            park_current_session(ctx);
+            park_current_session_with(ctx, lease);
             None
         } else {
             let left = ctx.state.current().session_name.clone().map(|left_name| {
@@ -925,7 +952,7 @@ pub(crate) fn start_launcher_shell_in(
 /// the foreground or parked in the background, on that exact host (or locally for `None`).
 ///
 /// The name is read back off the attachment rather than recomputed from the pid, because a
-/// restarted ephemeral is salted (`eph-<pid>-<salt>`) and would not be found by name. Other
+/// restarted ephemeral is salted (`eph-<id>-<salt>`) and would not be found by name. Other
 /// clients' ephemerals are deliberately not counted — they are somebody else's scratch session, and
 /// the picker already lists them as rows.
 ///
@@ -1001,8 +1028,8 @@ pub(crate) fn attach_startup_ephemeral(
         finish_session_install(ctx);
     }
     let epoch = ctx.state.runtime_epoch;
-    // A remote scratch session lives on the far host, where a bare `eph-<pid>` could collide with
-    // another client sharing that pid on a different machine.
+    // A remote scratch session lives on the far host, among the sessions of every machine that
+    // connects there; the host-qualified name says which one it came from.
     let name = if scope.is_some() {
         crate::session::naming::remote_ephemeral_session_name()
     } else {

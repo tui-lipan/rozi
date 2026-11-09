@@ -613,7 +613,7 @@ fn session_picker_palette(ctx: &Context<AppRoot>, picker: &SessionPickerState) -
             picker.in_tab(entry) && ctx.state.matches_session_query(entry, &query)
         })
     {
-        // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
+        // Ephemeral sessions carry an ugly generated `eph-<id>` name shown as "ephemeral" (they
         // stay reattachable - activation is by row index, not this label).
         let name = if entry.ephemeral {
             vocabulary::EPHEMERAL

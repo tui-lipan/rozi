@@ -46,7 +46,10 @@
 //! - [`open_file`] - launch a local file with the platform's default application.
 //! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
 //! - [`install_source`] - which distribution channel produced the running binary, so an install
-//!   `relswap` does not own can still be told how to update itself.
+//!   `relswap` does not own can still be told how to update itself, and where each channel puts
+//!   the build that replaces it.
+//! - [`relaunch`] - replacing the client process with another rozi binary: `exec` on Unix, a waited
+//!   child on Windows, and the file identity that notices a binary changing under its path.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring
@@ -72,6 +75,7 @@ pub mod ipc;
 pub mod notifications;
 pub mod process;
 pub mod progress;
+pub mod relaunch;
 pub mod server_lifecycle;
 pub mod shell_integration;
 /// Host system-sleep guards; display sleep remains allowed.

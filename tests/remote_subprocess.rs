@@ -172,12 +172,12 @@ fn remote_subprocess_child() {
                 assert!(preamble.server_started);
                 let (tx, _rx) = std::sync::mpsc::channel();
                 let (client, attached) =
-                    rozi::session::client::SessionClient::from_stream_attached_with_server_nonce(
+                    rozi::session::client::SessionClient::from_stream_attached_with_proof(
                         connection,
                         session.clone(),
                         tx,
                         false,
-                        preamble.server_nonce,
+                        rozi::session::protocol::AttachProof::server_nonce(preamble.server_nonce),
                     )?;
                 assert!(matches!(
                     attached,

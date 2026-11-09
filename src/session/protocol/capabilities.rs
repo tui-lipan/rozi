@@ -38,12 +38,17 @@ pub enum Capability {
     /// relay a replaced image as edits of what changed. A client without it would keep the
     /// previous frame.
     GraphicsRootFrameEdits,
+    /// A client may reserve its slot for the process that replaces it
+    /// ([`super::ClientMessage::PrepareHandoff`]) and the replacement claims it on attach, keeping
+    /// the layout-control lease and parked state across a client relaunch.
+    ClientHandoff,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 4] = [
+    pub const ALL: [Capability; 5] = [
         Capability::AgentSummaries,
+        Capability::ClientHandoff,
         Capability::GraphicsRootFrameEdits,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
@@ -56,6 +61,7 @@ impl Capability {
             Capability::AgentSummaries => "agent-summaries",
             Capability::ProjectSummaries => "project-summaries",
             Capability::GraphicsRootFrameEdits => "graphics-root-frame-edits",
+            Capability::ClientHandoff => "client-handoff",
         }
     }
 
@@ -65,7 +71,8 @@ impl Capability {
             Self::RuntimeMetrics
             | Self::AgentSummaries
             | Self::ProjectSummaries
-            | Self::GraphicsRootFrameEdits => "0.0.44",
+            | Self::GraphicsRootFrameEdits
+            | Self::ClientHandoff => "0.0.44",
         }
     }
 

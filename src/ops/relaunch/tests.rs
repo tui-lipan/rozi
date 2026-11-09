@@ -632,6 +632,48 @@ fn the_dialog_names_each_session_and_what_becomes_of_it() {
     });
 }
 
+#[test]
+fn a_blocked_session_gives_its_reason_on_a_line_of_its_own() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 40,
+        });
+        {
+            let state = backend.state_mut();
+            let _ = connect(state.current_mut(), "dev", None);
+            let _ = background(state, 7, "eph-0123456789abcdef01234567", None);
+        }
+        backend.state_mut().config.animations.enabled = false;
+        // A build sharing no generation with either server: `dev` upgrades, and the temporary
+        // session, which has no snapshot to upgrade from, blocks the restart.
+        open_ready(&mut backend, PROTOCOL_VERSION + 1..=PROTOCOL_VERSION + 1);
+        backend.render();
+        let screen = backend.capture_frame().plain_text();
+        let lines: Vec<&str> = screen.lines().collect();
+        let row = |needle: &str| {
+            lines
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("missing {needle:?} in\n{screen}"))
+        };
+        assert!(
+            lines[row("● dev")].contains("Upgraded · its programs end"),
+            "{screen}"
+        );
+        let blocked = row("◐ ephemeral");
+        assert!(lines[blocked].contains("Blocked"), "{screen}");
+        assert!(
+            lines[blocked + 1].contains("needs an upgrade"),
+            "the reason goes under its session, not into the status column:\n{screen}"
+        );
+        assert!(screen.contains("Close"), "{screen}");
+    });
+}
+
 fn session(name: &str, transition: Transition, parked_seq: u64) -> HandoffSession {
     HandoffSession {
         name: name.to_string(),

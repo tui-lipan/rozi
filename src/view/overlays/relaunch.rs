@@ -3,7 +3,9 @@
 use super::confirm::{DialogButton, DialogChrome, dialog_overlay};
 use super::prompts::PromptCaption;
 use super::*;
+use crate::relaunch::plan::Transition;
 use crate::state::{RelaunchDialog, RelaunchPlan, RelaunchStage};
+use crate::view::vocabulary::{self, SessionStatusStyles};
 
 pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(dialog) = ctx.state.relaunch.dialog.as_ref() else {
@@ -13,11 +15,7 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
         Some(version) => format!("rozi v{version} installed"),
         None => "Restart rozi".to_string(),
     };
-    let rows = facts(dialog);
-    let facts: Vec<(&str, &str)> = rows
-        .iter()
-        .map(|(label, value)| (label.as_str(), value.as_str()))
-        .collect();
+    let rows = plan_rows(ctx, dialog);
     let (caption, buttons) = match &dialog.stage {
         RelaunchStage::Checking => (
             Some(PromptCaption::Note("Checking the installed rozi…")),
@@ -61,7 +59,8 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
                         affirm,
                         Msg::RelaunchConfirm,
                         Msg::RelaunchFocusAnswer(DIALOG_AFFIRM),
-                    ),
+                    )
+                    .destructive(plan.destructive()),
                 ],
             )
         }
@@ -75,7 +74,8 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
         DialogChrome {
             title: &title,
             detail,
-            facts: &facts,
+            facts: &[],
+            rows,
             highlight: None,
             caption,
             dim_behind: true,
@@ -95,8 +95,9 @@ fn cancel(label: &str) -> DialogButton<'_> {
     )
 }
 
-/// The build first, then one row per session, then what ends with this client.
-fn facts(dialog: &RelaunchDialog) -> Vec<(String, String)> {
+/// The build that would run, then one row per session and per process this client runs itself,
+/// then the release-wide note an update raised. `None` while there is no plan and no note.
+fn plan_rows(ctx: &Context<AppRoot>, dialog: &RelaunchDialog) -> Option<Element> {
     let plan: Option<&RelaunchPlan> = match &dialog.stage {
         RelaunchStage::Ready(plan) => Some(plan),
         RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) => {
@@ -106,35 +107,115 @@ fn facts(dialog: &RelaunchDialog) -> Vec<(String, String)> {
             None
         }
     };
-    let mut rows = Vec::new();
+    if plan.is_none() && dialog.note.is_none() {
+        return None;
+    }
+    let theme = &ctx.state.theme;
+    let mut rows = VStack::new().height(Length::Auto).padding((0, 1, 1, 1));
     if let Some(plan) = plan {
-        rows.push((
-            "rozi".to_string(),
-            crate::view::vocabulary::fields([
-                format!("v{}", plan.candidate.release),
-                plan.candidate.path.display().to_string(),
-            ]),
-        ));
+        rows = rows.child(build_row(theme, plan));
+        let styles = SessionStatusStyles::from_theme(theme);
         for session in &plan.sessions {
-            let host = session
-                .facts
-                .remote
-                .as_ref()
-                .map(crate::session::remote::RemoteTarget::display_label);
-            rows.push((
-                crate::view::vocabulary::session_at(&session.facts.name, host.as_deref()),
-                crate::view::vocabulary::relaunch_transition(&session.transition),
+            let target = session.facts.remote.as_ref();
+            let presence =
+                vocabulary::session_presence_for(&ctx.state, &session.facts.name, target);
+            let host = target.map(crate::session::remote::RemoteTarget::display_label);
+            let (status, reason) = vocabulary::relaunch_transition(&session.transition);
+            rows = rows.child(item_row(
+                theme,
+                Span::new(presence.marker()).style(presence.style(styles)),
+                &vocabulary::session_at(&session.facts.name, host.as_deref()),
+                Span::new(status).style(transition_style(theme, &session.transition)),
             ));
+            if let Some(reason) = reason {
+                rows = rows.child(reason_row(theme, reason));
+            }
         }
         for process in &plan.ending {
-            rows.push((
-                process.clone(),
-                crate::view::vocabulary::RELAUNCH_ENDS.to_string(),
+            rows = rows.child(item_row(
+                theme,
+                Span::new(vocabulary::CLIENT_PROCESS_MARKER).style(fg_only(&theme.muted)),
+                process,
+                Span::new(vocabulary::RELAUNCH_ENDS).style(Style::new().fg(theme.status.warning)),
             ));
         }
     }
     if let Some(note) = &dialog.note {
-        rows.push(("extensions".to_string(), note.clone()));
+        rows = rows.child(
+            HStack::new()
+                .height(Length::Auto)
+                .padding((u16::from(plan.is_some()), 0, 0, 0))
+                .child(
+                    Text::from_spans([
+                        Span::new("extensions  ").style(fg_only(&theme.muted)),
+                        Span::new(note.as_str()).style(fg_only(&theme.primary)),
+                    ])
+                    .overflow(Overflow::Wrap)
+                    .width(Length::Flex(1)),
+                ),
+        );
     }
-    rows
+    Some(rows.into())
+}
+
+/// `build  v1.2.3 · /path/to/rozi`: the release is the subject of the question, so it wears the
+/// accent; the path is only where it comes from, muted, and cut short first when it is long.
+fn build_row(theme: &Theme, plan: &RelaunchPlan) -> Element {
+    let muted = fg_only(&theme.muted);
+    HStack::new()
+        .height(Length::Auto)
+        .padding((0, 0, 1, 0))
+        .child(Text::new("build  ").style(muted))
+        .child(
+            Text::new(format!("v{}", plan.candidate.release)).style(fg_only(&theme.accent).bold()),
+        )
+        .child(Text::new(vocabulary::SEPARATOR).style(muted))
+        .child(
+            Text::new(plan.candidate.path.display().to_string())
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .style(muted),
+        )
+        .into()
+}
+
+/// One item and what becomes of it, laid out as a picker row: the marker, the name in the body
+/// colour, and the status right-aligned.
+fn item_row(theme: &Theme, marker: Span, name: &str, status: Span) -> Element {
+    HStack::new()
+        .height(Length::Px(1))
+        .child(Text::from_spans([marker, Span::new(" ")]))
+        .child(
+            Text::new(name)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .style(fg_only(&theme.primary)),
+        )
+        .child(Text::from_spans([Span::new("  "), status]))
+        .into()
+}
+
+/// Why a session is blocked, under its row and level with its name.
+fn reason_row(theme: &Theme, reason: &str) -> Element {
+    HStack::new()
+        .height(Length::Auto)
+        .padding((0, 0, 0, 2))
+        .child(
+            Text::new(reason)
+                .overflow(Overflow::Wrap)
+                .width(Length::Flex(1))
+                .style(Style::new().fg(theme.status.error).italic()),
+        )
+        .into()
+}
+
+/// Calm when the session comes through untouched, louder the more it costs: a reconnect is news,
+/// an upgrade ends programs, and a blocked session stops the restart.
+fn transition_style(theme: &Theme, transition: &Transition) -> Style {
+    match transition {
+        Transition::Carry { .. } => fg_only(&theme.muted),
+        Transition::Reconnect => Style::new().fg(theme.status.info),
+        Transition::Upgrade => Style::new().fg(theme.status.warning),
+        Transition::Blocked { .. } => Style::new().fg(theme.status.error).bold(),
+    }
 }

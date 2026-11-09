@@ -31,6 +31,12 @@ impl<'a> DialogButton<'a> {
             destructive: false,
         }
     }
+
+    /// Mark this answer as one that ends or destroys something.
+    pub(super) fn destructive(mut self, destructive: bool) -> Self {
+        self.destructive = destructive;
+        self
+    }
 }
 
 /// The answer row shared by dialogs whose question has a fixed set of answers rather than a field.
@@ -145,6 +151,9 @@ pub(super) struct DialogChrome<'a> {
     /// Labelled values between the detail and the answers, one per row: the label muted, the value
     /// in the body colour, and the first value — the subject of the question — in the accent.
     pub(super) facts: &'a [(&'a str, &'a str)],
+    /// Rows a dialog draws itself, after the facts, for a list the label and value columns do not
+    /// fit, such as one item per row with a right-aligned status.
+    pub(super) rows: Option<Element>,
     /// One string out of [`Self::detail`] repeated unbroken on its own line. See
     /// [`PromptChrome::highlight`].
     pub(super) highlight: Option<&'a str>,
@@ -172,6 +181,7 @@ pub(super) fn dialog_overlay(
         title,
         detail,
         facts,
+        rows,
         highlight,
         caption,
         dim_behind,
@@ -185,6 +195,9 @@ pub(super) fn dialog_overlay(
     }
     if !facts.is_empty() {
         body = body.child(dialog_facts(theme, facts));
+    }
+    if let Some(rows) = rows {
+        body = body.child(rows);
     }
     if let Some(highlight) = highlight {
         body = body.child(prompt_highlight_row(theme, highlight));

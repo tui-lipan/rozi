@@ -608,6 +608,7 @@ fn askpass_choice_overlay(
             title,
             detail: facts.is_none().then_some(question),
             facts: facts.as_deref().unwrap_or_default(),
+            rows: None,
             highlight: fingerprint,
             caption,
             dim_behind: true,

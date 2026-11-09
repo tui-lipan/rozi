@@ -51,16 +51,23 @@ pub(crate) const SEPARATOR: &str = " · ";
 pub(crate) const BACKGROUND_RUN: &str = "⧉";
 
 /// What happens to a session when this client is restarted on another build. Each says what the
-/// session will be afterwards, so it reads as a status, capitalized.
-pub(crate) fn relaunch_transition(transition: &crate::relaunch::plan::Transition) -> String {
+/// session will be afterwards, so it reads as a status, capitalized. A blocked session also gives
+/// its reason, which a view draws apart from the status: it can run longer than a row.
+pub(crate) fn relaunch_transition(
+    transition: &crate::relaunch::plan::Transition,
+) -> (String, Option<&str>) {
     use crate::relaunch::plan::Transition;
     match transition {
-        Transition::Carry { .. } => "Keeps running".to_string(),
-        Transition::Reconnect => "Reconnects".to_string(),
-        Transition::Upgrade => fields(["Upgraded", "its programs end"]),
-        Transition::Blocked { reason } => fields(["Blocked", reason.as_str()]),
+        Transition::Carry { .. } => ("Keeps running".to_string(), None),
+        Transition::Reconnect => ("Reconnects".to_string(), None),
+        Transition::Upgrade => (fields(["Upgraded", "its programs end"]), None),
+        Transition::Blocked { reason } => ("Blocked".to_string(), Some(reason.as_str())),
     }
 }
+
+/// Marks a process this client runs itself, which a restart ends: the quiet marker, since it is
+/// nothing of the session family.
+pub(crate) const CLIENT_PROCESS_MARKER: &str = MARKER_QUIET;
 
 /// A process that lives in the client itself, which a restart ends.
 pub(crate) const RELAUNCH_ENDS: &str = "Ends";

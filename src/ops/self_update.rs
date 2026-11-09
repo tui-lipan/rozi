@@ -46,15 +46,22 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>) -> Update {
         },
         UpdateChannel::Command(_) => UpdatePhase::Running,
     };
+    let stop = matches!(channel, UpdateChannel::Command(_))
+        .then(|| Arc::new(crate::platform::command::CommandStop::default()));
+    let running = update.running().clone();
+    let latest = update.latest.clone();
     ctx.state.self_update.run = Some(SelfUpdateRun {
         generation,
-        running: update.running().clone(),
+        running: running.clone(),
         latest: update.latest.clone(),
+        note: update.extension_note(),
         channel: channel.clone(),
         phase,
         hidden: false,
         output: Default::default(),
         downloaded: None,
+        installed: None,
+        stop: stop.clone(),
     });
     ctx.state.update_started = true;
     ctx.state.commands_dirty = true;
@@ -70,14 +77,49 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>) -> Update {
         &crate::platform::command::ShellEnv::from_process(),
     );
     Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
+        // This thread spawns a package manager's command and waits on it for as long as it runs,
+        // which is what lets Linux end the command with this process; the run's `stop` ends it
+        // when this client leaves first.
         std::thread::spawn(move || {
-            let result = match channel {
-                UpdateChannel::Managed => install_managed(generation, &link),
-                UpdateChannel::Command(command) => run_command(generation, command, &shell, &link),
+            let result = match (channel, stop) {
+                (UpdateChannel::Command(command), Some(stop)) => run_command(
+                    generation,
+                    command,
+                    (&running, &latest),
+                    &shell,
+                    stop,
+                    &link,
+                ),
+                _ => install_managed(generation, &running, &link),
             };
             link.send(Msg::SelfUpdateFinished { generation, result });
         });
     }))
+}
+
+/// This client is leaving: end a package manager's command that is still running, rather than
+/// leave it working on the install with nobody to report to. rozi's own installer runs in this
+/// process and ends with it; its install is journaled, so the next start finishes or undoes it.
+pub(crate) fn stop_for_exit(state: &mut crate::state::State) {
+    if let Some(stop) = state
+        .self_update
+        .run
+        .as_mut()
+        .filter(|run| run.phase.in_progress())
+        .and_then(|run| run.stop.take())
+    {
+        stop.stop_and_wait(Duration::from_secs(1));
+    }
+}
+
+/// Whether an update is changing the installed rozi right now. Restart rozi waits for it: the
+/// build it would start is the one being replaced.
+pub(crate) fn in_progress(state: &crate::state::State) -> bool {
+    state
+        .self_update
+        .run
+        .as_ref()
+        .is_some_and(|run| run.phase.in_progress())
 }
 
 pub(crate) fn progress(
@@ -102,13 +144,15 @@ pub(crate) fn progress(
 pub(crate) fn finished(
     ctx: &mut Context<AppRoot>,
     generation: u64,
-    result: std::result::Result<(), String>,
+    result: std::result::Result<semver::Version, String>,
 ) -> Update {
     let Some(run) = current_run(ctx, generation) else {
         return Update::none();
     };
+    run.stop = None;
     match result {
-        Ok(()) => {
+        Ok(installed) => {
+            run.installed = Some(installed);
             run.phase = UpdatePhase::Installed;
             if run.hidden {
                 return installed_in_background(ctx);
@@ -149,28 +193,31 @@ fn installed_in_background(ctx: &mut Context<AppRoot>) -> Update {
     let Some(run) = ctx.state.self_update.run.take() else {
         return Update::none();
     };
+    // Its card was what brought Update rozi back, and it is gone: the command goes too.
+    ctx.state.commands_dirty = true;
+    let version = run.release().clone();
+    let note = run.note_for(&version);
     crate::pane::pty_events::notify_update_installed(
         ctx,
-        format!("rozi v{} installed", run.latest),
-        crate::pane::pty_events::ToastBody::new(format!("v{} → v{}", run.running, run.latest))
+        format!("rozi v{version} installed"),
+        crate::pane::pty_events::ToastBody::new(format!("v{} → v{version}", run.running))
             .hint("click to restart now, or use `Restart rozi` later"),
-        Msg::SelfUpdateRestart { latest: run.latest },
+        Msg::SelfUpdateRestart { version, note },
     )
     .update()
 }
 
-/// The installed-release toast was clicked: open Restart rozi for that release, unless a restart
-/// dialog is already up.
-pub(crate) fn restart_installed(ctx: &mut Context<AppRoot>, latest: semver::Version) -> Update {
+/// The installed-release toast was clicked: open Restart rozi for exactly that release, unless a
+/// restart dialog is already up.
+pub(crate) fn restart_installed(
+    ctx: &mut Context<AppRoot>,
+    version: semver::Version,
+    note: Option<String>,
+) -> Update {
     if ctx.state.relaunch.dialog.is_some() {
         return Update::none();
     }
-    let note = ctx
-        .state
-        .available_update
-        .as_ref()
-        .and_then(crate::ops::update_check::AvailableUpdate::extension_note);
-    crate::ops::relaunch::open_after_update(ctx, latest, note).merge(Update::full())
+    crate::ops::relaunch::open_after_update(ctx, version, note).merge(Update::full())
 }
 
 /// The installed release has had its moment: the card becomes Restart rozi for it.
@@ -187,12 +234,10 @@ pub(crate) fn settled(ctx: &mut Context<AppRoot>, generation: u64) -> Update {
     let Some(run) = ctx.state.self_update.run.take() else {
         return Update::none();
     };
-    let note = ctx
-        .state
-        .available_update
-        .as_ref()
-        .and_then(crate::ops::update_check::AvailableUpdate::extension_note);
-    crate::ops::relaunch::open_after_update(ctx, run.latest, note).merge(Update::full())
+    ctx.state.commands_dirty = true;
+    let version = run.release().clone();
+    let note = run.note_for(&version);
+    crate::ops::relaunch::open_after_update(ctx, version, note).merge(Update::full())
 }
 
 /// Put the card away. An update in progress keeps going; a failed one is dismissed.
@@ -255,8 +300,14 @@ fn current_run(ctx: &mut Context<AppRoot>, generation: u64) -> Option<&mut SelfU
         .filter(|run| run.generation == generation)
 }
 
-/// rozi's own installer, in this process: download with progress, then verify and switch.
-fn install_managed(generation: u64, link: &CommandLink<Msg>) -> std::result::Result<(), String> {
+/// rozi's own installer, in this process: download with progress, then verify and switch. Returns
+/// the release it activated, which is the newest one published when it ran - not necessarily the
+/// one the check announced earlier.
+fn install_managed(
+    generation: u64,
+    running: &semver::Version,
+    link: &CommandLink<Msg>,
+) -> std::result::Result<semver::Version, String> {
     use crate::platform::install::InstallError;
     let reporter = Arc::new(DownloadReporter {
         generation,
@@ -274,7 +325,23 @@ fn install_managed(generation: u64, link: &CommandLink<Msg>) -> std::result::Res
         installation.command_path(),
         &result.version.to_string(),
     );
-    Ok(())
+    newer_than_running(result.version, running, "rozi's installer")
+}
+
+/// `installed`, when it is a release this client can move to; otherwise why the update left
+/// nothing to restart onto.
+fn newer_than_running(
+    installed: semver::Version,
+    running: &semver::Version,
+    by: &str,
+) -> std::result::Result<semver::Version, String> {
+    if installed > *running {
+        Ok(installed)
+    } else {
+        Err(format!(
+            "{by} finished, but the installed rozi is v{installed}, not newer than this one"
+        ))
+    }
 }
 
 /// Turns relswap's byte counts into card progress: only the archive, at a steady rate, and the
@@ -321,12 +388,17 @@ impl relswap::ProgressObserver for DownloadReporter {
 
 /// The package manager that owns this install, with no terminal: its input is closed, so a
 /// command that would stop to ask fails instead of waiting for an answer that cannot come.
+///
+/// Its exit status only says the command is content. Success is the rozi it left installed: found
+/// where this channel installs, asked what it is, and newer than this client.
 fn run_command(
     generation: u64,
     command: &'static str,
+    (running, latest): (&semver::Version, &semver::Version),
     shell: &crate::platform::command::ShellCommand,
+    stop: Arc<crate::platform::command::CommandStop>,
     link: &CommandLink<Msg>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<semver::Version, String> {
     let lines = Arc::new(Mutex::new(LineBuffer::default()));
     let sink = lines.clone();
     let output_link = Mutex::new(link.clone());
@@ -351,6 +423,7 @@ fn run_command(
         COMMAND_TIMEOUT,
         COMMAND_CAPTURE,
         observer,
+        stop,
     )
     .map_err(|error| format!("could not run `{command}`: {error}"))?;
     let rest = lines
@@ -368,7 +441,15 @@ fn run_command(
             "`{command}` took longer than {} minutes",
             COMMAND_TIMEOUT.as_secs() / 60
         )),
-        Some(0) => Ok(()),
+        Some(0) => {
+            // The announced release first: its path can be derived where a channel keeps each
+            // version apart (mise, Homebrew's Cellar). Then whatever the channel made current, for
+            // a newer release published since the check.
+            let installed = crate::relaunch::candidate::find(Some(latest))
+                .or_else(|_| crate::relaunch::candidate::find(None))
+                .map_err(|missing| format!("`{command}` finished, but {missing}"))?;
+            newer_than_running(installed.release, running, &format!("`{command}`"))
+        }
         Some(code) => Err(format!("`{command}` exited with {code}")),
         None => Err(format!("`{command}` was stopped")),
     }
@@ -493,7 +574,10 @@ mod tests {
             .unwrap();
     }
 
-    fn finish(backend: &mut TestBackend<AppRoot>, result: std::result::Result<(), String>) {
+    fn finish(
+        backend: &mut TestBackend<AppRoot>,
+        result: std::result::Result<semver::Version, String>,
+    ) {
         let generation = generation(backend);
         backend
             .dispatch(Msg::SelfUpdateFinished { generation, result })
@@ -503,6 +587,216 @@ mod tests {
     fn screen(backend: &mut TestBackend<AppRoot>) -> String {
         backend.render();
         backend.capture_frame().plain_text()
+    }
+
+    /// What the toast for a release installed in the background says, if one was raised.
+    fn installed_toast(backend: &TestBackend<AppRoot>) -> Option<String> {
+        backend
+            .state()
+            .replaceable_toasts
+            .values()
+            .map(|tracked| tracked.content().replace('\u{0}', " "))
+            .find(|content| content.contains(" installed"))
+    }
+
+    /// A release whose metadata raises the extension API, so it carries a release-wide note.
+    fn raising_extension_api(version: &str) -> Msg {
+        Msg::UpdateAvailable {
+            update: crate::ops::update_check::AvailableUpdate::for_test(
+                version,
+                InstallSource::Managed,
+                Some((
+                    crate::config::EXTENSION_API_VERSION + 1,
+                    crate::session::protocol::PROTOCOL_VERSION,
+                )),
+            ),
+            announce: true,
+        }
+    }
+
+    /// A client told of `version`, with `note` raised by its metadata when `warned`, that has just
+    /// run **Update rozi**.
+    fn updating_to(version: &str, warned: bool) -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.state_mut().config.animations.enabled = false;
+        let update = if warned {
+            raising_extension_api(version)
+        } else {
+            Msg::UpdateAvailable {
+                update: crate::ops::update_check::AvailableUpdate::for_test(
+                    version,
+                    InstallSource::Managed,
+                    None,
+                ),
+                announce: true,
+            }
+        };
+        backend.dispatch(update).unwrap();
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::UpdateRozi))
+            .unwrap();
+        backend
+    }
+
+    fn restart_note(backend: &TestBackend<AppRoot>) -> Option<String> {
+        let dialog = backend
+            .state()
+            .relaunch
+            .dialog
+            .as_ref()
+            .expect("Restart rozi");
+        dialog.note.clone()
+    }
+
+    /// What follows an update names the release it proved it installed, with that release's own
+    /// metadata: the announced one keeps its note, a newer one published in between does not
+    /// inherit it, and a warning announced while the update runs is not lent to it.
+    #[test]
+    fn the_release_named_after_an_update_is_the_one_it_installed() {
+        crate::test_support::on_large_stack(|| {
+            let mut announced = updating_to("9.9.9", true);
+            finish(&mut announced, Ok(semver::Version::new(9, 9, 9)));
+            assert!(
+                restart_note(&announced).is_some(),
+                "its own note travels with it"
+            );
+
+            let mut newer = updating_to("9.9.9", true);
+            finish(&mut newer, Ok(semver::Version::new(9, 9, 10)));
+            let dialog = newer.state().relaunch.dialog.as_ref().unwrap();
+            assert_eq!(dialog.expected, Some(semver::Version::new(9, 9, 10)));
+            assert_eq!(dialog.note, None, "9.9.9's note is not 9.9.10's");
+
+            let mut overtaken = updating_to("9.9.9", false);
+            overtaken.dispatch(raising_extension_api("9.9.10")).unwrap();
+            finish(&mut overtaken, Ok(semver::Version::new(9, 9, 9)));
+            assert_eq!(
+                restart_note(&overtaken),
+                None,
+                "9.9.10's warning, announced meanwhile, is not 9.9.9's"
+            );
+
+            let mut background = updating_to("9.9.9", false);
+            background.dispatch(Msg::SelfUpdateHide).unwrap();
+            background
+                .dispatch(raising_extension_api("9.9.10"))
+                .unwrap();
+            finish(&mut background, Ok(semver::Version::new(9, 9, 9)));
+            let toast = installed_toast(&background).expect("the installed toast");
+            assert!(toast.contains("rozi v9.9.9 installed"), "{toast}");
+            let notice = background
+                .state()
+                .replaceable_toasts
+                .get(&crate::pane::pty_events::ToastKey::Channel(
+                    crate::state::ToastChannel::UpdateNotice,
+                ))
+                .expect("the newer release's notice is not replaced by the older news")
+                .content()
+                .to_string();
+            assert!(notice.contains("v9.9.10"), "{notice}");
+        });
+    }
+
+    /// Restart rozi would start the very build an update is replacing, so it waits for the update,
+    /// whether its card is on screen or in the background.
+    #[test]
+    fn restart_rozi_waits_while_an_update_changes_the_install() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = updating(InstallSource::Homebrew);
+            backend.dispatch(Msg::SelfUpdateHide).unwrap();
+            assert!(!crate::commands::command_available(
+                crate::input::Action::RestartRozi,
+                backend.state()
+            ));
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::RestartRozi))
+                .unwrap();
+            assert!(backend.state().relaunch.dialog.is_none());
+
+            finish(
+                &mut backend,
+                Err("`brew upgrade rozi` exited with 1".into()),
+            );
+            assert!(crate::commands::command_available(
+                crate::input::Action::RestartRozi,
+                backend.state()
+            ));
+        });
+    }
+
+    /// The registry, not just the availability check, drops Update rozi once a background update
+    /// finishes: with nothing modal before or after, only an explicit rebuild notices. The
+    /// which-key strip lists exactly the registry's enabled entries, so it shows what a stale one
+    /// would leave behind.
+    #[test]
+    fn a_background_update_that_finishes_takes_update_rozi_off_the_keys() {
+        crate::test_support::on_large_stack(|| {
+            let app = App::new()
+                .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+                .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+                .command_chord_reveal_delay(Duration::ZERO);
+            let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.animations.enabled = false;
+                let binding = crate::config::scheme_shortcuts(&state.config.input, "y");
+                state
+                    .config
+                    .key_overrides
+                    .insert("update-rozi".to_string(), binding);
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+            }
+            backend
+                .dispatch(Msg::UpdateAvailable {
+                    update: crate::ops::update_check::AvailableUpdate::for_test(
+                        "9.9.9",
+                        InstallSource::Managed,
+                        None,
+                    ),
+                    announce: false,
+                })
+                .unwrap();
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::UpdateRozi))
+                .unwrap();
+            backend.dispatch(Msg::SelfUpdateHide).unwrap();
+
+            let prefix = KeyEvent {
+                code: KeyCode::Char('a'),
+                mods: KeyMods::CTRL,
+            };
+            let strip = |backend: &mut TestBackend<AppRoot>| {
+                backend.send_key(prefix).unwrap();
+                let shown = screen(backend);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Esc,
+                        mods: KeyMods::NONE,
+                    })
+                    .unwrap();
+                shown
+            };
+            let running = strip(&mut backend);
+            assert!(
+                running.contains("Update rozi"),
+                "a background update is brought back from the keys:\n{running}"
+            );
+
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 9)));
+            let done = strip(&mut backend);
+            assert!(
+                !done.contains("Update rozi"),
+                "nothing is left to update:\n{done}"
+            );
+        });
     }
 
     #[test]
@@ -554,7 +848,7 @@ mod tests {
             );
 
             // With animations off the card does not pause on the installed release.
-            finish(&mut backend, Ok(()));
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 9)));
             assert!(backend.state().self_update.run.is_none());
             let dialog = backend
                 .state()
@@ -600,7 +894,7 @@ mod tests {
             backend
                 .dispatch(Msg::SelfUpdateFinished {
                     generation: first,
-                    result: Ok(()),
+                    result: Ok(semver::Version::new(9, 9, 9)),
                 })
                 .unwrap();
             assert!(backend.state().relaunch.dialog.is_none());
@@ -629,21 +923,13 @@ mod tests {
             assert!(backend.state().self_update.visible());
 
             backend.dispatch(Msg::SelfUpdateHide).unwrap();
-            finish(&mut backend, Ok(()));
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 9)));
             assert!(
                 backend.state().relaunch.dialog.is_none(),
                 "nothing takes the keyboard from a user who chose to keep working"
             );
             assert!(backend.state().self_update.run.is_none());
-            let toast = backend
-                .state()
-                .replaceable_toasts
-                .get(&crate::pane::pty_events::ToastKey::Channel(
-                    crate::state::ToastChannel::UpdateNotice,
-                ))
-                .expect("a toast says the release is installed")
-                .content()
-                .to_string();
+            let toast = installed_toast(&backend).expect("a toast says the release is installed");
             for expected in [
                 "rozi v9.9.9 installed",
                 "click to restart now",
@@ -658,7 +944,8 @@ mod tests {
             // The toast's click.
             backend
                 .dispatch(Msg::SelfUpdateRestart {
-                    latest: semver::Version::new(9, 9, 9),
+                    version: semver::Version::new(9, 9, 9),
+                    note: None,
                 })
                 .unwrap();
             let dialog = backend

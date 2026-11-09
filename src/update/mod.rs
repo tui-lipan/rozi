@@ -822,8 +822,8 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::SelfUpdateSettled { generation } => crate::ops::self_update::settled(ctx, generation),
         Msg::SelfUpdateHide => crate::ops::self_update::hide(ctx),
-        Msg::SelfUpdateRestart { latest } => {
-            crate::ops::self_update::restart_installed(ctx, latest)
+        Msg::SelfUpdateRestart { version, note } => {
+            crate::ops::self_update::restart_installed(ctx, version, note)
         }
         Msg::SelfUpdateRetry => crate::ops::self_update::retry(ctx),
         Msg::SelfUpdateFocusAnswer(index) => crate::ops::self_update::focus_answer(ctx, index),

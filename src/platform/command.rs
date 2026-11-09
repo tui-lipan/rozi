@@ -123,20 +123,73 @@ where
 /// thread draining that stream. A chunk can end anywhere, including inside a line.
 pub type OutputObserver = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
 
+/// The owner's hold on a command running on another thread: asking it to stop ends the command and
+/// everything it started, and the owner can wait until that has happened.
+///
+/// The runner checks it as often as it checks the command, so a stop takes effect within one poll.
+#[derive(Debug, Default)]
+pub struct CommandStop {
+    requested: std::sync::atomic::AtomicBool,
+    finished: std::sync::Mutex<bool>,
+    done: std::sync::Condvar,
+}
+
+impl CommandStop {
+    /// Ask the command to stop, then wait up to `timeout` for it and its group to be gone.
+    pub fn stop_and_wait(&self, timeout: std::time::Duration) {
+        self.requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let finished = self
+            .finished
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let _ = self
+            .done
+            .wait_timeout_while(finished, timeout, |finished| !*finished);
+    }
+
+    fn requested(&self) -> bool {
+        self.requested.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn finish(&self) {
+        *self
+            .finished
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = true;
+        self.done.notify_all();
+    }
+}
+
 /// Run one command line through an already-resolved command shell, as
 /// [`run_bounded_shell_command`], and show `observer` every chunk of its output as it arrives
 /// rather than only when the command is done.
+///
+/// The command belongs to its caller for as long as it runs: `stop` ends it, and on Linux it also
+/// ends if this process dies without stopping it. Call this from a thread that lives as long as
+/// the command, since that is what Linux ties the guarantee to.
 pub fn run_observed_shell_command(
     shell: &ShellCommand,
     command_line: &str,
     timeout: std::time::Duration,
     capture_limit: usize,
     observer: OutputObserver,
+    stop: std::sync::Arc<CommandStop>,
 ) -> std::io::Result<CommandOutput> {
     let mut args = shell.args.clone();
     args.push(command_line.to_string());
     let mut command = bounded_command(&shell.program, &args, &[]);
-    run_observed_command(&mut command, None, timeout, capture_limit, Some(observer))
+    kill_on_supervisor_death(&mut command);
+    let output = run_observed_command(
+        &mut command,
+        None,
+        timeout,
+        capture_limit,
+        Some(observer),
+        Some(&stop),
+    );
+    stop.finish();
+    output
 }
 
 /// Run a prepared command with bounded output and a deadline, including any stdin transfer.
@@ -148,7 +201,7 @@ pub(crate) fn run_bounded_command(
     timeout: std::time::Duration,
     capture_limit: usize,
 ) -> std::io::Result<CommandOutput> {
-    run_observed_command(command, input, timeout, capture_limit, None)
+    run_observed_command(command, input, timeout, capture_limit, None, None)
 }
 
 fn run_observed_command(
@@ -157,6 +210,7 @@ fn run_observed_command(
     timeout: std::time::Duration,
     capture_limit: usize,
     observer: Option<OutputObserver>,
+    stop: Option<&CommandStop>,
 ) -> std::io::Result<CommandOutput> {
     use std::io::Read;
     use std::process::Stdio;
@@ -223,6 +277,10 @@ fn run_observed_command(
         if started.elapsed() >= timeout {
             group.terminate(&mut child);
             break (child.wait().ok(), true);
+        }
+        if stop.is_some_and(CommandStop::requested) {
+            group.terminate(&mut child);
+            break (None, false);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
@@ -1203,12 +1261,62 @@ mod tests {
             std::time::Duration::from_secs(10),
             1024,
             std::sync::Arc::new(move |chunk: &[u8]| sink.lock().unwrap().extend_from_slice(chunk)),
+            std::sync::Arc::new(CommandStop::default()),
         )
         .unwrap();
         assert_eq!(output.status, Some(3));
         let seen = String::from_utf8(seen.lock().unwrap().clone()).unwrap();
         assert!(seen.contains("one\n") && seen.contains("two\n"), "{seen:?}");
         assert_eq!(output.stdout, b"one\n", "observing keeps the capture");
+    }
+
+    /// The owner stopping a command ends it and what it started, and is told once that is done,
+    /// rather than leaving it running on a thread nobody watches.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_an_observed_command_ends_its_group_and_reports_it_gone() {
+        let root = tempfile::tempdir().unwrap();
+        let pid_file = root.path().join("descendant");
+        let stop = std::sync::Arc::new(CommandStop::default());
+        let runner = {
+            let stop = stop.clone();
+            let script = format!("sleep 30 & echo $! > {} ; wait", pid_file.display());
+            std::thread::spawn(move || {
+                run_observed_shell_command(
+                    &ShellCommand::new("/bin/sh").arg("-c"),
+                    &script,
+                    std::time::Duration::from_secs(60),
+                    1024,
+                    std::sync::Arc::new(|_: &[u8]| {}),
+                    stop,
+                )
+            })
+        };
+        let started = std::time::Instant::now();
+        while std::fs::read_to_string(&pid_file).map_or(true, |pid| pid.trim().is_empty()) {
+            assert!(started.elapsed() < std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let descendant: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+
+        let stopping = std::time::Instant::now();
+        stop.stop_and_wait(std::time::Duration::from_secs(5));
+        assert!(stopping.elapsed() < std::time::Duration::from_secs(2));
+        let output = runner.join().unwrap().unwrap();
+        assert_eq!(output.status, None, "a stopped command has no exit status");
+        assert!(!output.timed_out);
+        let gone = std::time::Instant::now();
+        while process_is_alive(descendant) {
+            assert!(
+                gone.elapsed() < std::time::Duration::from_secs(2),
+                "descendant {descendant} outlived the stop"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[cfg(unix)]

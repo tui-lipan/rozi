@@ -395,6 +395,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
         Action::UpgradeSession => can_upgrade_attached_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_offered_here(state),
+        Action::RestartRozi => !crate::ops::self_update::in_progress(state),
         Action::ShowReleaseNotes => state.release_notes.is_some(),
         Action::ScreenshotPane => state.focused_pane().is_some(),
         Action::TogglePaneRecording => {

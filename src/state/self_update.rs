@@ -34,16 +34,41 @@ pub enum UpdateChannel {
 pub struct SelfUpdateRun {
     pub generation: u64,
     pub running: Version,
+    /// The release the check announced, which the update set out to install. What it actually
+    /// installed is [`Self::installed`]: a newer release can be published in between.
     pub latest: Version,
+    /// The release-wide step [`Self::latest`]'s metadata raised, such as a new extension API.
+    /// Carried by the run rather than looked up later, so a newer release announced meanwhile
+    /// cannot lend this one its warning.
+    pub note: Option<String>,
     pub channel: UpdateChannel,
     pub phase: UpdatePhase,
     /// The card was put away while the update kept going. It comes back through **Update rozi**,
-    /// and the restart dialog still opens when the update is done.
+    /// and a toast says when the update is done.
     pub hidden: bool,
     /// The newest lines a package manager printed, for the card to show under its row.
     pub output: std::collections::VecDeque<String>,
     /// The size of the release once it has fully arrived, for the finished download row.
     pub downloaded: Option<u64>,
+    /// The release the update proved it installed: what the installer activated, or what the
+    /// package manager's rozi says it is. Set once the update succeeds.
+    pub installed: Option<Version>,
+    /// The hold on a package manager's command, which this client ends if it leaves first.
+    pub stop: Option<std::sync::Arc<crate::platform::command::CommandStop>>,
+}
+
+impl SelfUpdateRun {
+    /// The release the card names: the one installed once it is known, the announced one before.
+    pub fn release(&self) -> &Version {
+        self.installed.as_ref().unwrap_or(&self.latest)
+    }
+
+    /// The release-wide note for `version`, which only the announced release has.
+    pub fn note_for(&self, version: &Version) -> Option<String> {
+        (*version == self.latest)
+            .then(|| self.note.clone())
+            .flatten()
+    }
 }
 
 /// A step of an update, for saying which one stopped.

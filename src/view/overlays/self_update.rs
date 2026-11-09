@@ -17,7 +17,7 @@ pub(crate) fn self_update_overlay(ctx: &Context<AppRoot>) -> Element {
         return Spacer::new().into();
     };
     let title = match &run.phase {
-        UpdatePhase::Installed => format!("rozi v{} installed", run.latest),
+        UpdatePhase::Installed => format!("rozi v{} installed", run.release()),
         UpdatePhase::Failed { .. } => "rozi update failed".to_string(),
         _ => "Updating rozi".to_string(),
     };
@@ -87,7 +87,7 @@ fn rows(theme: &Theme, run: &SelfUpdateRun) -> Element {
             .child(label(VERSION))
             .child(Text::from_spans([
                 Span::new(format!("v{} → ", run.running)).style(muted),
-                Span::new(format!("v{}", run.latest)).style(fg_only(&theme.accent).bold()),
+                Span::new(format!("v{}", run.release())).style(fg_only(&theme.accent).bold()),
             ])),
     );
     let gap = HStack::new().height(Length::Px(1));

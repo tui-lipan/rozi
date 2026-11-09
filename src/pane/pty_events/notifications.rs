@@ -346,9 +346,11 @@ pub(crate) fn notify_update(
     )
 }
 
-/// The release an update in the background just installed: the next state of the update notice, in
-/// its slot, in the success colour. A click sends `on_click`, which opens the restart, and
-/// dismisses the toast.
+/// The release an update in the background just installed, in the success colour. A click sends
+/// `on_click`, which opens the restart, and dismisses the toast.
+///
+/// Keyed by what it says rather than taking the update notice's slot: a newer release can be
+/// announced while an older one installs, and its notice must not be replaced by the older news.
 pub(crate) fn notify_update_installed(
     ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
@@ -369,7 +371,7 @@ pub(crate) fn notify_update_installed(
     .on_click(callback);
     notify(
         ctx,
-        ToastKey::Channel(crate::state::ToastChannel::UpdateNotice),
+        ToastKey::Content(content_key(&content)),
         content,
         toast,
     )

@@ -50,10 +50,10 @@ pub enum Msg {
         generation: u64,
         event: crate::state::SelfUpdateEvent,
     },
-    /// **Update rozi**'s worker is done: the release is installed, or why it is not.
+    /// **Update rozi**'s worker is done: the release it proved it installed, or why it did not.
     SelfUpdateFinished {
         generation: u64,
-        result: std::result::Result<(), String>,
+        result: std::result::Result<semver::Version, String>,
     },
     /// The installed release has been on the card long enough; turn the card into Restart rozi.
     SelfUpdateSettled {
@@ -63,7 +63,9 @@ pub enum Msg {
     SelfUpdateHide,
     /// The toast for a release installed in the background was clicked: offer the restart onto it.
     SelfUpdateRestart {
-        latest: semver::Version,
+        version: semver::Version,
+        /// That release's own release-wide note, if it has one.
+        note: Option<String>,
     },
     /// Run a failed update again.
     SelfUpdateRetry,

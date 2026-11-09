@@ -596,7 +596,8 @@ command palette for as long as it runs:
    manager's upgrade command and shows the last lines it prints. The command runs without a
    terminal, so one that stops to ask a question fails instead of waiting.
 2. **Run in background** puts the dialog away while the update keeps going; choose **Update rozi**
-   again to see it.
+   again to see it. **Restart rozi** waits until the update is done, and leaving rozi stops an
+   update a package manager is still running.
 3. On success, the dialog becomes the `rozi vX.Y.Z installed` dialog, which offers to
    [restart rozi on the new build](installation.md#restart-rozi-on-the-new-build), coming back to
    the same sessions. **Later** keeps the old build running until you choose **Restart rozi**. An

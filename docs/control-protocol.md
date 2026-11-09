@@ -196,7 +196,8 @@ A `list-panes` pane object has these fields; optional values are JSON null:
   pipelines can produce more than one entry.
 - `foreground_pid` is the process group ID of the command running in the pane, which is its first
   process's ID. It is omitted when nothing runs, when the platform cannot read it, and for a remote
-  attachment, whose processes are on another machine.
+  attachment, whose processes are on another machine, unless the caller is an extension process
+  placed on that machine.
 - `agent_session` is the conversation the pane's agent last named with
   `agents report --native-session`, while that report owns the pane. It is omitted otherwise. A
   client that keeps several conversations open reports the one it shows.

@@ -683,7 +683,7 @@ mod tests {
                 attachment.session_instance = Some(
                     crate::session::protocol::SessionInstanceId::for_test(instance),
                 );
-                attachment.workspaces[0].panes.push(crate::state::Pane::new(
+                let mut pane = crate::state::Pane::new(
                     1,
                     100,
                     tui_lipan::prelude::FloatRect {
@@ -692,7 +692,9 @@ mod tests {
                         w: 20.0,
                         h: 10.0,
                     },
-                ));
+                );
+                pane.terminal.foreground_pid = Some(4242);
+                attachment.workspaces[0].panes.push(pane);
                 attachment
             };
             let other_host = HostKey::Remote(RemoteTarget::Alias("laptop".to_string()));
@@ -760,6 +762,40 @@ mod tests {
                 seen,
                 [("parked".to_string(), false), ("shown".to_string(), true)],
                 "its host's sessions, and no other host's"
+            );
+            // A worker on the PC can match the PC's processes, so it learns their pids. A caller on
+            // this client, which would match them against its own, does not.
+            assert!(
+                panes
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|pane| pane["foreground_pid"] == 4242),
+                "{panes}"
+            );
+            let (reply, response) = std::sync::mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                    request: request(ControlCommand::ListAttachedPanes),
+                    reply,
+                    worker: None,
+                    caller: None,
+                }))
+                .expect("dispatch");
+            let here = response.recv().unwrap().data.unwrap();
+            let remote_pids: Vec<_> = here
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|pane| {
+                    ["shown", "parked", "elsewhere"]
+                        .contains(&pane["reference"]["session_instance"].as_str().unwrap_or(""))
+                })
+                .map(|pane| pane["foreground_pid"].clone())
+                .collect();
+            assert!(
+                !remote_pids.is_empty() && remote_pids.iter().all(serde_json::Value::is_null),
+                "{here}"
             );
 
             // The plain listing and the typed commands stay with the session on screen.

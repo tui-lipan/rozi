@@ -72,10 +72,15 @@ pub(crate) fn handle_control_request(
     if envelope.request.command.pane_wait().is_some() {
         return crate::ops::capture_wait::start(ctx, envelope);
     }
-    let agent_report_epoch = if envelope.request.source_session.is_some()
+    // What a pane says about itself goes to its own session, on screen or held in the background.
+    // A status naming `--target` names a pane of the session on screen, as every other target
+    // does on this endpoint, so only a bare status is the caller's own.
+    let caller_epoch = if envelope.request.source_session.is_some()
         && matches!(
             envelope.request.command,
-            ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. }
+            ControlCommand::AgentReport { .. }
+                | ControlCommand::AgentRelease { .. }
+                | ControlCommand::SetStatus { target: None, .. }
         ) {
         match crate::ops::attached_control::route(&ctx.state, &envelope.request) {
             Ok(epoch) => Some(epoch),
@@ -90,8 +95,7 @@ pub(crate) fn handle_control_request(
     let extension = envelope.request.extension.clone();
     let response = match envelope.request.command {
         ControlCommand::Unknown => ControlResponse::unsupported_command(false),
-        // The scratchpad's panes are this client's own, never a placed worker's to see.
-        ControlCommand::ListPanes => list_panes(ctx, attribution.is_none()),
+        ControlCommand::ListPanes => list_panes(ctx, attribution.as_ref()),
         ControlCommand::ListAttachedPanes => list_attached_panes(ctx, attribution.as_ref()),
         ControlCommand::LayoutGet { workspace } => layout_report(ctx, workspace),
         ControlCommand::LayoutSet {
@@ -391,9 +395,14 @@ pub(crate) fn handle_control_request(
             reason,
         } => set_status(
             ctx,
-            target
-                .or(envelope.request.source_pane)
-                .or(ctx.state.focused_pane()),
+            target.or(envelope.request.source_pane).or_else(|| {
+                // The focused pane is the session on screen's, never a caller's elsewhere.
+                caller_epoch
+                    .is_none()
+                    .then(|| ctx.state.focused_pane())
+                    .flatten()
+            }),
+            caller_epoch,
             status,
             reason,
         ),
@@ -480,7 +489,7 @@ pub(crate) fn handle_control_request(
             return report_agent(
                 ctx,
                 target.or(envelope.request.source_pane),
-                agent_report_epoch,
+                caller_epoch,
                 Some(agent),
                 integration,
                 Some(state),
@@ -501,7 +510,7 @@ pub(crate) fn handle_control_request(
             return report_agent(
                 ctx,
                 target.or(envelope.request.source_pane),
-                agent_report_epoch,
+                caller_epoch,
                 None,
                 integration,
                 None,
@@ -1111,9 +1120,10 @@ fn pane_close(
     )
 }
 
-fn list_panes(ctx: &Context<AppRoot>, include_scratch: bool) -> ControlResponse {
-    let mut panes = attachment_panes(ctx.state.current(), true);
-    if include_scratch {
+fn list_panes(ctx: &Context<AppRoot>, caller: Option<&crate::state::Worker>) -> ControlResponse {
+    let mut panes = attachment_panes(ctx.state.current(), true, caller);
+    // The scratchpad's panes are this client's own, never a placed worker's to see.
+    if caller.is_none() {
         panes.extend(scratch_panes(ctx));
     }
     ControlResponse::ok(crate::control::PaneListPayload(panes))
@@ -1138,6 +1148,7 @@ fn list_attached_panes(
             panes.extend(attachment_panes(
                 attachment,
                 std::ptr::eq(attachment, current),
+                worker,
             ));
         }
     }
@@ -1147,17 +1158,29 @@ fn list_attached_panes(
     ControlResponse::ok(crate::control::PaneListPayload(panes))
 }
 
-fn attachment_panes(attachment: &crate::state::Attachment, on_screen: bool) -> Vec<PaneInfo> {
+/// `attachment`'s panes as `caller` sees them: a placed worker, or a caller on this machine.
+fn attachment_panes(
+    attachment: &crate::state::Attachment,
+    on_screen: bool,
+    caller: Option<&crate::state::Worker>,
+) -> Vec<PaneInfo> {
     let mut panes = Vec::new();
     let session = session_label(attachment);
     let session_instance = attachment.session_instance.as_ref();
+    // A pid names a process on the server's host. A caller elsewhere would match it against its
+    // own processes, so only a caller on that host learns it: anyone here for a local session, and
+    // a worker placed on the remote host for one of that host's sessions.
+    let same_host = attachment.remote_host.is_none()
+        || attachment
+            .remote_target
+            .as_ref()
+            .zip(caller)
+            .is_some_and(|(target, worker)| worker.binding.host.remote() == Some(target));
     for (workspace_index, workspace) in attachment.workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
             let mut info = PaneInfo::new(pane, workspace_index + 1, &session, session_instance);
             info.on_screen = on_screen;
-            // A pid names a process on the server's host. Through a remote attachment that is not
-            // this machine, and a caller here would match it against its own processes.
-            if attachment.remote_host.is_some() {
+            if !same_host {
                 info.foreground_pid = None;
             }
             panes.push(info);
@@ -1411,9 +1434,12 @@ fn agent_report_destination(
     })
 }
 
+/// Set a pane's reported status. A caller in a session held in the background, `origin_epoch`,
+/// sets it there: the status belongs to the caller's own session, not to the one on screen.
 fn set_status(
     ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
+    origin_epoch: Option<u64>,
     status: Option<String>,
     reason: Option<String>,
 ) -> ControlResponse {
@@ -1423,6 +1449,9 @@ fn set_status(
             "no target pane and no focused pane",
         );
     };
+    if let Some(epoch) = origin_epoch.filter(|epoch| *epoch != ctx.state.runtime_epoch) {
+        return set_background_status(&ctx.state, epoch, id, status, reason);
+    }
     let Some(pane) = crate::pane::lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
     else {
         return ControlResponse::error_with(
@@ -1432,22 +1461,10 @@ fn set_status(
     };
     let generation = pane.pty_generation;
     let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
-    let scratch = crate::scratchpad::contains(&ctx.state, id);
-    if !scratch && !ctx.state.current().session_attached {
-        return ControlResponse::error_with(
-            ControlErrorCode::SessionNotAttached,
-            format!("pane {id} session is not attached"),
-        );
-    }
-    if !scratch
-        && ctx
-            .state
-            .current()
-            .shared
-            .as_ref()
-            .is_some_and(|shared| shared.read_only)
+    if !crate::scratchpad::contains(&ctx.state, id)
+        && let Err(response) = status_writable(ctx.state.current(), id)
     {
-        return ControlResponse::error_with(ControlErrorCode::ReadOnly, "attached read-only");
+        return response;
     }
     let Some(client) = ctx.state.pty_client_for_pane(id) else {
         return ControlResponse::error_with(
@@ -1457,6 +1474,69 @@ fn set_status(
     };
     client.set_pane_status(id, generation, local, status, reason);
     ControlResponse::empty()
+}
+
+/// [`set_status`] for a pane of a session held in the background. Its panes are all shared: only
+/// the session on screen has panes of this client's own.
+fn set_background_status(
+    state: &crate::state::State,
+    epoch: u64,
+    id: PaneId,
+    status: Option<String>,
+    reason: Option<String>,
+) -> ControlResponse {
+    let Some(attachment) = state.attachment_for_epoch(epoch) else {
+        return ControlResponse::error_with(
+            ControlErrorCode::SessionNotAttached,
+            format!("pane {id} session is not attached"),
+        );
+    };
+    let Some(pane) = attachment
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == id && !pane.closing)
+    else {
+        return ControlResponse::error_with(
+            ControlErrorCode::PaneNotFound,
+            format!("pane {id} not found"),
+        );
+    };
+    if let Err(response) = status_writable(attachment, id) {
+        return response;
+    }
+    let Some(client) = attachment.session_client.as_ref() else {
+        return ControlResponse::error_with(
+            ControlErrorCode::SessionNotConnected,
+            format!("pane {id} session is not connected"),
+        );
+    };
+    client.set_pane_status(id, pane.pty_generation, false, status, reason);
+    ControlResponse::empty()
+}
+
+/// Whether this client may set a pane's status in `attachment`'s session.
+fn status_writable(
+    attachment: &crate::state::Attachment,
+    id: PaneId,
+) -> std::result::Result<(), ControlResponse> {
+    if !attachment.session_attached {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::SessionNotAttached,
+            format!("pane {id} session is not attached"),
+        ));
+    }
+    if attachment
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.read_only)
+    {
+        return Err(ControlResponse::error_with(
+            ControlErrorCode::ReadOnly,
+            "attached read-only",
+        ));
+    }
+    Ok(())
 }
 
 fn focus_target(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
@@ -2727,6 +2807,92 @@ mod tests {
             Some(Action::RunNamedCommand(0))
         );
         assert_eq!(action_from_runtime_id(&state, "not-there"), None);
+    }
+
+    /// A pane of a session held in the background sets its own status there, even while another
+    /// session on screen has a pane with the same id, and an off-screen caller never falls back on
+    /// the focused pane, which is the session on screen's. An explicit `--target` still names a
+    /// pane of the session on screen.
+    #[test]
+    fn a_pane_of_a_parked_session_sets_its_own_status() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = TestBackend::new(crate::AppRoot::default());
+            let (current_client, current_outbound) = SessionClient::test_channel();
+            let (parked_client, parked_outbound) = SessionClient::test_channel();
+            let parked_instance = crate::session::protocol::SessionInstanceId::for_test("parked");
+            {
+                let state = backend.state_mut();
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(current_client);
+                state.current_mut().session_instance = Some(
+                    crate::session::protocol::SessionInstanceId::for_test("current"),
+                );
+                state.current_mut().workspaces[0].panes[0].pty_generation = 9;
+                let mut parked = crate::state::Attachment::new();
+                parked.epoch = state.runtime_epoch + 1;
+                parked.session_attached = true;
+                parked.session_client = Some(parked_client);
+                parked.session_instance = Some(parked_instance.clone());
+                let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
+                pane.pty_generation = 5;
+                parked.workspaces[0].panes.push(pane);
+                state.background.insert(parked.epoch, parked);
+            }
+            let mut send_status = |target, source_pane| {
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::SetStatus {
+                                target,
+                                status: Some("working".into()),
+                                reason: None,
+                            },
+                            source_pane,
+                            source_session: Some(parked_instance.clone()),
+                            extension: None,
+                            caller_context: None,
+                            credential: None,
+                        },
+                        reply,
+                        worker: None,
+                        caller: None,
+                    }))
+                    .expect("dispatch parked status request");
+                response.recv().unwrap()
+            };
+
+            let status_sent = |outbound: &mpsc::Receiver<ClientOutbound>, generation| {
+                outbound.try_iter().any(|message| {
+                    matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                            pane_id: 1,
+                            local: false,
+                            generation: sent,
+                            status: Some(status),
+                            reason: None,
+                        }) if status == "working" && sent == generation
+                    )
+                })
+            };
+
+            // A bare status is the calling pane's own, in its own session.
+            assert!(send_status(None, Some(1)).ok);
+            assert!(status_sent(&parked_outbound, 5));
+            assert!(
+                !status_sent(&current_outbound, 9),
+                "the session on screen's pane 1 is another pane"
+            );
+            let response = send_status(None, None);
+            assert!(!response.ok, "an off-screen caller has no focused pane");
+            assert!(!status_sent(&current_outbound, 9));
+
+            // `--target` names a pane of the session on screen, wherever the caller runs.
+            assert!(send_status(Some(1), Some(1)).ok);
+            assert!(status_sent(&current_outbound, 9));
+            assert!(!status_sent(&parked_outbound, 5));
+        });
     }
 
     #[test]

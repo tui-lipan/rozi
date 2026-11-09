@@ -2092,9 +2092,10 @@ pub(super) fn reject_trailing_control_args(
     }
 }
 
-/// Send an agent report from a pane with no UI to name to the session server the pane runs in.
+/// Send what a pane with no UI to name says about itself to the session server the pane runs in.
 ///
-/// Applies only to `agents report`/`release` with no `--target`, `--socket`, or `--session`, from a
+/// Applies only to `agents report`/`release` and `status` with no `--target`, `--socket`, or
+/// `--session`, from a
 /// shared pane (`ROZI_PANE` and a non-empty `ROZI_SESSION_INSTANCE`) whose environment names no UI
 /// (`ui_socket_in_env` false). The pane's own id becomes the explicit target: it is meaningful here
 /// because the instance, which the server checks, proves which namespace it belongs to.
@@ -2133,6 +2134,7 @@ pub(super) fn own_session_endpoint(
     match &mut request.command {
         control::ControlCommand::AgentReport { target, .. }
         | control::ControlCommand::AgentRelease { target, .. }
+        | control::ControlCommand::SetStatus { target, .. }
             if target.is_none() =>
         {
             *target = Some(pane);
@@ -2542,7 +2544,13 @@ mod tests {
             seq: 2,
         };
 
-        for command in [report(None), release.clone()] {
+        let status = control::ControlCommand::SetStatus {
+            target: None,
+            status: Some("working".into()),
+            reason: None,
+        };
+
+        for command in [report(None), release.clone(), status] {
             let mut routed = request(command, Some(7), true);
             assert_eq!(
                 own_session_endpoint(ControlEndpoint::Ui(None), &mut routed, false),
@@ -2554,6 +2562,9 @@ mod tests {
                     target: Some(7),
                     ..
                 } | control::ControlCommand::AgentRelease {
+                    target: Some(7),
+                    ..
+                } | control::ControlCommand::SetStatus {
                     target: Some(7),
                     ..
                 }

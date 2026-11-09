@@ -322,18 +322,27 @@ pub enum ClientMessage {
         #[serde(default)]
         hold_ms: u64,
     },
-    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. Once
-    /// committed, this client's departure holds its slot until an attach presents the token or the
-    /// reservation expires: the layout-control lease is not handed on, and an ephemeral session
-    /// does not count the gap as having no client. A client leaves only after every commit it sent
-    /// was answered, so a replacement never attaches before its slot is committed.
+    /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. A
+    /// committed reservation is ready, but still holds nothing: a connection lost now is an
+    /// ordinary departure. Only [`Self::DepartForHandoff`] makes this client's departure hold its
+    /// slot.
     CommitHandoff {
         request_id: u64,
         token: String,
     },
-    /// Discard the reservation `token` names, committed or not: the relaunch it was for failed and
-    /// this client stays. Answered by [`ServerMessage::HandoffAborted`], so the client knows no
-    /// commit of its survives before it carries on as it was.
+    /// The last thing a client being replaced says before its connection ends: hold the slot
+    /// `token` reserves, committed, for the replacement. From then on the client is in transit
+    /// until an attach presents the token or the reservation expires: the layout-control lease is
+    /// not handed on, and an ephemeral session does not count the gap as having no client. Not
+    /// answered: the client has already let go. One that never arrives leaves an ordinary
+    /// departure, and the replacement attaches without the held place.
+    DepartForHandoff {
+        token: String,
+    },
+    /// Discard the reservation `token` names, whichever connection made it: the relaunch it was for
+    /// failed and the client stays. The token is the authority, so a client that had to reconnect
+    /// can still take back what it reserved. Answered by [`ServerMessage::HandoffAborted`] once no
+    /// reservation for the token remains.
     AbortHandoff {
         request_id: u64,
         token: String,
@@ -833,7 +842,8 @@ pub enum ServerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains.
+    /// Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains, whether it
+    /// was just discarded or was already gone.
     HandoffAborted {
         request_id: u64,
     },
@@ -946,6 +956,7 @@ impl ClientMessage {
             ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
             ClientMessage::PrepareHandoff { .. }
             | ClientMessage::CommitHandoff { .. }
+            | ClientMessage::DepartForHandoff { .. }
             | ClientMessage::AbortHandoff { .. } => Some(super::Capability::ClientHandoff),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");

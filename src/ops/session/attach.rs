@@ -456,7 +456,7 @@ pub(crate) fn release_background_for_exit(ctx: &mut Context<AppRoot>, close_temp
         if crate::ops::exit::shutdown_on_exit(&attachment, close_temporary) {
             client.shutdown();
         } else {
-            client.detach();
+            client.detach_and_wait();
         }
     }
 }

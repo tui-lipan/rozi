@@ -58,11 +58,26 @@ fn commit(server: &mut SessionServer, client: ClientId, token: &str) {
     );
 }
 
-/// Reserve and commit `client`'s slot, returning the token that claims it.
+/// Reserve, commit, and depart for `client`'s slot, as the outgoing client does on its way out,
+/// returning the token that claims it.
 fn hand_off(server: &mut SessionServer, client: ClientId) -> String {
     let token = prepare(server, client);
     commit(server, client, &token);
+    depart(server, client, &token);
     token
+}
+
+fn depart(server: &mut SessionServer, client: ClientId, token: &str) {
+    let replies = server.handle_message(
+        client,
+        ClientMessage::DepartForHandoff {
+            token: token.to_string(),
+        },
+    );
+    assert!(
+        replies.is_empty(),
+        "a departure is not answered: {replies:?}"
+    );
 }
 
 fn claim_with(
@@ -386,6 +401,7 @@ fn a_long_hold_outlasts_the_default_and_then_expires() {
     let (follower, _follower_stream) = attach_client(&mut server);
     let (token, _) = prepare_holding(&mut server, old, 600_000);
     commit(&mut server, old, &token);
+    depart(&mut server, old, &token);
     server.remove_client(old);
 
     server.handoffs.age_for_test(HANDOFF_HOLD * 2);
@@ -402,19 +418,73 @@ fn a_long_hold_outlasts_the_default_and_then_expires() {
 }
 
 #[test]
-fn a_commit_lapses_when_its_client_stays() {
-    use crate::session::server::handoff::COMMITTED_DEPARTURE_WINDOW;
+fn a_connection_lost_after_a_commit_is_an_ordinary_departure() {
     let mut server = SessionServer::new_named("dev");
     let (old, _old_stream) = attach_client(&mut server);
     let (follower, _follower_stream) = attach_client(&mut server);
-    hand_off(&mut server, old);
+    let token = prepare(&mut server, old);
+    commit(&mut server, old, &token);
 
-    // The relaunch stopped after its commit and the abort never arrived; the client quits later.
-    server.handoffs.age_for_test(COMMITTED_DEPARTURE_WINDOW);
+    // The link drops before the client hears its commit was accepted: it is not relaunching.
     server.remove_client(old);
 
-    assert_eq!(server.controller, Some(follower));
+    assert_eq!(
+        server.controller,
+        Some(follower),
+        "no ghost controller is kept"
+    );
     assert!(!server.handoffs.any_in_transit());
+    let (_late, _late_stream, claimed) = claim(&mut server, &token);
+    assert_eq!(claimed, Some(false));
+}
+
+#[test]
+fn a_departure_is_armed_only_by_the_client_that_committed() {
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (other, _other_stream) = attach_client(&mut server);
+    let token = prepare(&mut server, old);
+    // Not committed yet, then committed but departed for by someone else: neither arms it.
+    depart(&mut server, old, &token);
+    commit(&mut server, old, &token);
+    depart(&mut server, other, &token);
+    server.remove_client(old);
+
+    assert_eq!(server.controller, Some(other));
+    assert!(!server.handoffs.any_in_transit());
+}
+
+#[test]
+fn a_token_takes_back_a_slot_from_any_connection_even_after_its_client_departed() {
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let token = hand_off(&mut server, old);
+    server.remove_client(old);
+    assert_eq!(server.controller, Some(old), "held for the replacement");
+
+    // The relaunch failed after all; the same rozi, reconnected as a new client, takes it back.
+    let (again, _again_stream) = attach_client(&mut server);
+    let before = membership_events(&mut server).len();
+    let replies = server.handle_message(
+        again,
+        ClientMessage::AbortHandoff {
+            request_id: 5,
+            token: token.clone(),
+        },
+    );
+    assert!(matches!(
+        replies.as_slice(),
+        [(
+            Target::Sender,
+            ServerMessage::HandoffAborted { request_id: 5 }
+        )]
+    ));
+    assert_eq!(server.controller, Some(follower), "released as a departure");
+    assert!(!server.handoffs.any_in_transit());
+    let after = membership_events(&mut server);
+    assert_eq!(after.len(), before + 1);
+    assert_eq!(after.last(), Some(&crate::events::EventKind::ClientLeft));
 }
 
 /// Leaving is leaving: a client that detaches gives up a slot it committed, so a restart that was

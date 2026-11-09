@@ -499,10 +499,11 @@ pub(crate) fn answer_timeout(ctx: &mut Context<AppRoot>, attempt: u64) -> Update
                 .filter_map(|epoch| aborting.labels.get(epoch))
                 .map(|label| format!("`{label}`"))
                 .collect();
+            // Harmless: a reservation holds nothing until its client departs for a handoff, which
+            // this one is not doing.
             let unconfirmed = format!(
-                "{} did not confirm; its held place lapses within {} s",
-                silent.join(", "),
-                crate::session::server::COMMITTED_DEPARTURE_WINDOW.as_secs()
+                "{} did not confirm taking its reservation back; it holds nothing while rozi stays",
+                silent.join(", ")
             );
             let after = match *aborting.after {
                 RelaunchStage::Ready(mut plan) => {
@@ -616,6 +617,23 @@ fn hand_over(ctx: &mut Context<AppRoot>, transaction: Transaction) -> Update {
     if let Some(after) = invalidated(&ctx.state, &transaction) {
         return roll_back(ctx, transaction, after);
     }
+    // The last point anything can be taken back. Every connection writes out what it still has
+    // queued - a layout change, typed input - before any of them departs, so the process is never
+    // replaced over data that did not reach its server.
+    for session in &transaction.plan.sessions {
+        let flushed = ctx
+            .state
+            .attachment_for_epoch(session.epoch)
+            .and_then(|attachment| attachment.session_client.as_ref())
+            .is_none_or(|client| client.flush_within(ANSWER_TIMEOUT));
+        if !flushed {
+            let reason = format!(
+                "`{}` did not take what was left to send",
+                session.facts.label()
+            );
+            return fail(ctx, transaction, reason);
+        }
+    }
     let Some(handoff_id) = transaction.handoff_id else {
         unreachable!("a transaction is committed only once its handoff is written");
     };
@@ -624,7 +642,7 @@ fn hand_over(ctx: &mut Context<AppRoot>, transaction: Transaction) -> Update {
         candidate: transaction.plan.candidate,
         handoff_id,
     });
-    crate::ops::exit::leave_for_relaunch(ctx)
+    crate::ops::exit::leave_for_relaunch(ctx, &transaction.tokens)
 }
 
 /// Stop the relaunch and show why, ready to try again, once everything reserved is taken back.

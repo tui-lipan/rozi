@@ -87,6 +87,51 @@ impl ShutdownFlush {
     }
 }
 
+/// A point in the outbound queue the writer has reached, which proves everything queued before it
+/// is on the wire. Unlike [`ShutdownFlush`], a writer that stops before reaching it never raises it.
+pub(crate) struct WriteBarrier {
+    reached: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl WriteBarrier {
+    fn new() -> Self {
+        Self {
+            reached: Mutex::new(false),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub(crate) fn reach(&self) {
+        if let Ok(mut reached) = self.reached.lock() {
+            *reached = true;
+            self.changed.notify_all();
+        }
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let Ok(reached) = self.reached.lock() else {
+            return false;
+        };
+        self.changed
+            .wait_timeout_while(reached, timeout, |reached| !*reached)
+            .is_ok_and(|(reached, _)| *reached)
+    }
+}
+
+impl std::fmt::Debug for WriteBarrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteBarrier")
+    }
+}
+
+/// One barrier is only ever the same as itself.
+impl PartialEq for WriteBarrier {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
 /// Explicit transport lifecycle owner. When the final `SessionClient` handle for a session
 /// is dropped, `ClientTransport` shuts down the stream, signals termination to reader/writer
 /// worker threads, and closes the outbound queue.
@@ -267,6 +312,8 @@ pub(crate) enum ClientOutbound {
     /// Close the connection once everything queued before it is written, without a word to the
     /// server. Never written itself.
     Hangup,
+    /// Raised once everything queued before it is written. Never written itself.
+    Barrier(Arc<WriteBarrier>),
 }
 
 impl SessionClient {
@@ -530,7 +577,9 @@ impl SessionClient {
                 let ends_the_server = matches!(
                     &message,
                     ClientOutbound::Control(
-                        ClientMessage::Shutdown | ClientMessage::ShutdownForRestart
+                        ClientMessage::Shutdown
+                            | ClientMessage::ShutdownForRestart
+                            | ClientMessage::Detach
                     ) | ClientOutbound::Hangup
                 );
                 let result = match message {
@@ -569,6 +618,10 @@ impl SessionClient {
                     ClientOutbound::Hangup => {
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         writer_shutdown_flush.signal();
+                        Ok(())
+                    }
+                    ClientOutbound::Barrier(barrier) => {
+                        barrier.reach();
                         Ok(())
                     }
                 };
@@ -1054,8 +1107,31 @@ impl SessionClient {
         }
     }
 
+    /// Tell the server this client is leaving for good. A detach is the last thing a connection
+    /// says, so the writer stops after it.
     pub fn detach(&self) {
         self.send_control(ClientMessage::Detach);
+    }
+
+    /// [`Self::detach`], waiting briefly for it to reach the wire. For a process about to exit: a
+    /// detach still queued when it does would reach the server as a dropped connection instead.
+    pub fn detach_and_wait(&self) {
+        self.end_server(ClientMessage::Detach);
+    }
+
+    /// Wait until everything queued so far is on the wire. `false` when that did not happen within
+    /// `timeout`: the connection failed, or the server is not reading.
+    pub fn flush_within(&self, timeout: Duration) -> bool {
+        if self.transport.is_none() {
+            // A test channel: everything sent was handed over already.
+            return true;
+        }
+        if self.transport_failed.load(Ordering::Acquire) {
+            return false;
+        }
+        let barrier = Arc::new(WriteBarrier::new());
+        self.send(ClientOutbound::Barrier(Arc::clone(&barrier)));
+        barrier.wait(timeout)
     }
 
     /// Ask the server to end the session, waiting briefly for the request to reach the wire.
@@ -1074,11 +1150,14 @@ impl SessionClient {
         self.end_server(ClientMessage::ShutdownForRestart);
     }
 
-    /// Close the connection for the process replacing this client, after everything queued is
-    /// written, and wait briefly for that. Unlike [`Self::detach`], which tells the server this
-    /// client is leaving and so discards any slot it reserved, the connection just ends: a slot this
-    /// client committed for a replacement is held for it.
-    pub fn end_for_handoff(&self) {
+    /// End the connection for the process replacing this client. With `token`, its last word
+    /// arms the slot that token reserves, so the server holds it for the replacement; without one
+    /// the connection just ends. Unlike [`Self::detach`], neither says this client is leaving for
+    /// good.
+    pub fn end_for_handoff(&self, token: Option<String>) {
+        if let Some(token) = token {
+            self.send_control(ClientMessage::DepartForHandoff { token });
+        }
         self.send(ClientOutbound::Hangup);
         self.await_final_write();
     }
@@ -1517,7 +1596,7 @@ impl ClientOutbound {
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
             }
-            Self::Hangup => 0,
+            Self::Hangup | Self::Barrier(_) => 0,
         }
     }
 }
@@ -1902,6 +1981,59 @@ mod tests {
     use std::io::Read;
     #[cfg(unix)]
     use std::os::unix::net::UnixStream;
+
+    /// A relaunch replaces the process only once every connection proved its queue is written; a
+    /// writer that never gets there must read as not flushed, however it stopped.
+    #[test]
+    fn a_write_barrier_proves_only_what_the_writer_reached() {
+        let barrier = Arc::new(WriteBarrier::new());
+        assert!(
+            !barrier.wait(Duration::from_millis(10)),
+            "nothing reached it"
+        );
+        let reached = Arc::clone(&barrier);
+        let writer = thread::spawn(move || reached.reach());
+        assert!(barrier.wait(Duration::from_secs(5)));
+        writer.join().unwrap();
+
+        // A writer that stops first drops the barrier unreached.
+        let abandoned = Arc::new(WriteBarrier::new());
+        drop(ClientOutbound::Barrier(Arc::clone(&abandoned)));
+        assert!(!abandoned.wait(Duration::from_millis(10)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_connection_whose_writer_stopped_does_not_flush() {
+        let (client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
+        let (inbound_tx, _inbound_rx) = mpsc::channel();
+        let attached = attached_message();
+        let server = thread::spawn(move || {
+            let _: ClientMessage = protocol::read_frame(&mut server_stream).expect("read attach");
+            protocol::write_frame(&mut server_stream, &attached).expect("write attached");
+            // Reads until the client leaves.
+            while let Ok(message) = protocol::read_frame::<_, ClientMessage>(&mut server_stream) {
+                if message == ClientMessage::Detach {
+                    break;
+                }
+            }
+        });
+        let (client, _) = SessionClient::from_stream_attached(
+            crate::platform::ipc::IpcConnection::from_unix(client_stream),
+            "test",
+            inbound_tx,
+            false,
+        )
+        .expect("attach");
+        assert!(client.flush_within(Duration::from_secs(5)));
+        // A detach is the last thing a connection says; its writer stops after it.
+        client.detach_and_wait();
+        server.join().unwrap();
+        assert!(
+            !client.flush_within(Duration::from_millis(200)),
+            "a writer that has stopped proves nothing"
+        );
+    }
 
     fn attached_message() -> ServerMessage {
         ServerMessage::Attached {

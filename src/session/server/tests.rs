@@ -8882,6 +8882,10 @@ impl EventParityHarness {
                             self.server.remove_client(id);
                             continue;
                         }
+                        crate::session::client::ClientOutbound::Barrier(barrier) => {
+                            barrier.reach();
+                            continue;
+                        }
                         crate::session::client::ClientOutbound::Control(msg) => Frame::Control(msg),
                         crate::session::client::ClientOutbound::PresentationAcks(acks) => {
                             Frame::PresentationAcks(acks)

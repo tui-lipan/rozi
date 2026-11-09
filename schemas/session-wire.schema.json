@@ -1761,7 +1761,7 @@
           "type": "object"
         },
         {
-          "description": "Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. Once\ncommitted, this client's departure holds its slot until an attach presents the token or the\nreservation expires: the layout-control lease is not handed on, and an ephemeral session\ndoes not count the gap as having no client. A client leaves only after every commit it sent\nwas answered, so a replacement never attaches before its slot is committed.",
+          "description": "Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. A\ncommitted reservation is ready, but still holds nothing: a connection lost now is an\nordinary departure. Only [`Self::DepartForHandoff`] makes this client's departure hold its\nslot.",
           "properties": {
             "request_id": {
               "format": "uint64",
@@ -1784,7 +1784,24 @@
           "type": "object"
         },
         {
-          "description": "Discard the reservation `token` names, committed or not: the relaunch it was for failed and\nthis client stays. Answered by [`ServerMessage::HandoffAborted`], so the client knows no\ncommit of its survives before it carries on as it was.",
+          "description": "The last thing a client being replaced says before its connection ends: hold the slot\n`token` reserves, committed, for the replacement. From then on the client is in transit\nuntil an attach presents the token or the reservation expires: the layout-control lease is\nnot handed on, and an ephemeral session does not count the gap as having no client. Not\nanswered: the client has already let go. One that never arrives leaves an ordinary\ndeparture, and the replacement attaches without the held place.",
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "type": {
+              "const": "depart-for-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "token"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Discard the reservation `token` names, whichever connection made it: the relaunch it was for\nfailed and the client stays. The token is the authority, so a client that had to reconnect\ncan still take back what it reserved. Answered by [`ServerMessage::HandoffAborted`] once no\nreservation for the token remains.",
           "properties": {
             "request_id": {
               "format": "uint64",
@@ -6767,7 +6784,7 @@
           "type": "object"
         },
         {
-          "description": "Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains.",
+          "description": "Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains, whether it\nwas just discarded or was already gone.",
           "properties": {
             "request_id": {
               "format": "uint64",

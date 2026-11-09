@@ -250,12 +250,18 @@ fn restarting_reserves_writes_commits_and_only_then_lets_go() {
             .take()
             .expect("the runner is handed the new build");
         assert!(backend.state().relaunch.dialog.is_none());
-        for sent in [&on_screen, &parked] {
+        for (epoch, sent) in [(epoch, &on_screen), (42, &parked)] {
             let ending: Vec<ClientOutbound> = sent.try_iter().collect();
             assert!(
-                matches!(ending.as_slice(), [ClientOutbound::Hangup]),
-                "every connection just ends: a detach would give the held slot up, a shutdown \
-                 would end the session ({} messages)",
+                matches!(
+                    ending.as_slice(),
+                    [
+                        ClientOutbound::Control(ClientMessage::DepartForHandoff { token }),
+                        ClientOutbound::Hangup,
+                    ] if *token == format!("token-{epoch}")
+                ),
+                "each connection's last word arms its slot, then it just ends: a detach would \
+                 give the slot up, a shutdown would end the session ({} messages)",
                 ending.len()
             );
         }
@@ -552,7 +558,10 @@ fn a_roll_back_nobody_confirms_still_ends_and_says_so() {
             .unwrap();
         let notice = ready_plan(&backend).notice.clone().unwrap();
         assert!(notice.contains("`dev` did not confirm"), "{notice}");
-        assert!(notice.contains("lapses within 30 s"), "{notice}");
+        assert!(
+            notice.contains("it holds nothing while rozi stays"),
+            "{notice}"
+        );
     });
 }
 

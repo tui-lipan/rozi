@@ -93,7 +93,7 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
         if shutdown_current {
             client.shutdown();
         } else {
-            client.detach();
+            client.detach_and_wait();
         }
     }
     crate::ops::session::release_background_for_exit(ctx, close_temporary);
@@ -122,18 +122,22 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
 /// [`crate::ops::relaunch`]). What does end is what lives in this process alone: a popup,
 /// the scratchpad, client services, and placed extension runtimes, which the new process starts
 /// again from configuration.
-pub(crate) fn leave_for_relaunch(ctx: &mut Context<AppRoot>) -> Update {
+pub(crate) fn leave_for_relaunch(
+    ctx: &mut Context<AppRoot>,
+    tokens: &std::collections::HashMap<crate::state::AttachmentId, String>,
+) -> Update {
     crate::ops::sidebar_memory::save_for_exit(&ctx.state);
     clear_pending(ctx);
     crate::ops::pick::cancel_pick(ctx, Some("relaunched"));
     crate::ops::popup::kill_if_open(ctx);
     crate::ops::session::flush_layout_commit(ctx);
+    let current = ctx.state.runtime_epoch;
     if let Some(client) = ctx.state.current().session_client.clone() {
-        client.end_for_handoff();
+        client.end_for_handoff(tokens.get(&current).cloned());
     }
-    for attachment in std::mem::take(&mut ctx.state.background).into_values() {
+    for (epoch, attachment) in std::mem::take(&mut ctx.state.background) {
         if let Some(client) = attachment.session_client.as_ref() {
-            client.end_for_handoff();
+            client.end_for_handoff(tokens.get(&epoch).cloned());
         }
     }
     crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
@@ -220,7 +224,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::pick::cancel_pick(ctx, Some("detached"));
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
-        client.detach();
+        client.detach_and_wait();
     }
     crate::ops::session::release_background_for_exit(ctx, false);
     crate::ops::services::terminate_all(&mut ctx.state);

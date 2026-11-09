@@ -1,17 +1,23 @@
 //! Client slots held across a client relaunch.
 //!
 //! A client about to be replaced by a new process - the same UI started again on a newer build -
-//! reserves its slot in two steps, like a transaction. [`ClientMessage::PrepareHandoff`] creates an
-//! inert reservation and returns its token; nothing changes if the client then stays, or leaves,
-//! which discards it. [`ClientMessage::CommitHandoff`] commits it, and the client leaves only once
-//! every commit is answered; [`ClientMessage::AbortHandoff`] takes a commit back when the relaunch
-//! fails. A client that sends [`ClientMessage::Detach`] is leaving for good, so a detach discards
-//! its reservation, committed or not; only its connection ending after a commit means a
-//! replacement is coming. Once a committed client's connection ends, the server treats the client as in transit rather than gone: the
-//! layout-control lease stays with it instead of passing to another client, nobody is told it left,
-//! and an ephemeral session does not start counting down to its own shutdown. The process that
-//! replaces it presents the token when it attaches and takes the slot over. A reservation nobody
-//! claims expires, and the client is then treated exactly as if it had left when it detached.
+//! reserves its slot like a transaction:
+//!
+//! - [`ClientMessage::PrepareHandoff`] creates an inert reservation and returns its token.
+//! - [`ClientMessage::CommitHandoff`] marks it ready, answered so the client knows the server
+//!   accepted it. A ready reservation still holds nothing: a connection lost now is an ordinary
+//!   departure, so a relaunch that stops here, its rollback lost with the link, cannot leave a
+//!   session held for a client that is not coming back.
+//! - [`ClientMessage::DepartForHandoff`] is the client's last word before its connection ends. Only
+//!   now does its departure hold the slot.
+//! - [`ClientMessage::AbortHandoff`] discards a reservation by its token, from any connection.
+//! - [`ClientMessage::Detach`] is leaving for good and discards the client's reservation.
+//!
+//! Once a client that departed for a handoff is gone, the server treats it as in transit rather than
+//! gone: the layout-control lease stays with it instead of passing to another client, nobody is told
+//! it left, and an ephemeral session does not start counting down to its own shutdown. The process
+//! that replaces it presents the token when it attaches and takes the slot over. A reservation
+//! nobody claims expires, and the client is then treated exactly as if it had left when it went.
 
 use super::*;
 
@@ -20,14 +26,9 @@ use super::*;
 pub(super) const HANDOFF_HOLD: Duration = Duration::from_secs(120);
 
 /// The longest hold a client may ask for. The lease is held this long against every other client
-/// when a relaunch fails after its commit, so a client that needs longer - many sessions to reach
-/// over SSH, each allowed time for a password - is refused before it lets go, not trusted.
+/// when the process replacing a client never arrives, so a client that needs longer - many
+/// sessions to reach over SSH, each allowed time for a password - is refused before it lets go.
 pub(super) const MAX_HANDOFF_HOLD: Duration = Duration::from_secs(30 * 60);
-
-/// How long a committed client may stay connected. It commits as the very last thing before it
-/// leaves, so one still here is a relaunch that stopped; its commit lapses rather than turn a
-/// later, ordinary departure into a held slot.
-pub(crate) const COMMITTED_DEPARTURE_WINDOW: Duration = Duration::from_secs(30);
 
 /// One client's reserved slot.
 pub(super) struct Reservation {
@@ -37,9 +38,10 @@ pub(super) struct Reservation {
     issued: Instant,
     /// How long the replacement has to claim the slot once the client has left.
     hold: Duration,
-    /// When [`ClientMessage::CommitHandoff`] committed it. Until then the reservation holds
-    /// nothing.
+    /// When [`ClientMessage::CommitHandoff`] committed it.
     committed: Option<Instant>,
+    /// When [`ClientMessage::DepartForHandoff`] armed it. Until then the reservation holds nothing.
+    armed: Option<Instant>,
     departure: Option<Departure>,
 }
 
@@ -53,16 +55,18 @@ struct Departure {
 
 impl Reservation {
     fn expired(&self, now: Instant) -> bool {
-        let (since, lasts) = match (self.departure, self.committed) {
+        let (since, lasts) = match (self.departure, self.armed) {
             (Some(departure), _) => (departure.at, self.hold),
-            (None, Some(committed)) => (committed, COMMITTED_DEPARTURE_WINDOW),
-            (None, None) => (self.issued, HANDOFF_HOLD),
+            (None, Some(armed)) => (armed, self.hold),
+            (None, None) => (self.committed.unwrap_or(self.issued), HANDOFF_HOLD),
         };
         now.duration_since(since) >= lasts
     }
 
-    fn is_committed(&self) -> bool {
-        self.committed.is_some()
+    /// Whether the client's departure holds the slot: it said, as its last word, that a
+    /// replacement is coming.
+    fn is_armed(&self) -> bool {
+        self.armed.is_some()
     }
 }
 
@@ -142,6 +146,7 @@ impl SessionServer {
             issued: Instant::now(),
             hold,
             committed: None,
+            armed: None,
             departure: None,
         });
         vec![(
@@ -182,23 +187,42 @@ impl SessionServer {
         )]
     }
 
-    /// Discard `client`'s reservation `token`, and confirm that none remains: the relaunch failed
-    /// and the client stays. A token already gone is confirmed all the same.
+    /// Arm `client`'s committed reservation `token`: its departure now holds the slot. A token
+    /// the client does not hold, or one it never committed, arms nothing.
+    pub(super) fn arm_handoff(&mut self, client: ClientId, token: &str) {
+        let now = Instant::now();
+        if let Some(reservation) =
+            self.handoffs.held.iter_mut().find(|held| {
+                held.client == client && held.token == token && held.committed.is_some()
+            })
+        {
+            reservation.armed = Some(now);
+        }
+    }
+
+    /// Discard the reservation `token` names, whichever client made it, and confirm that none
+    /// remains. One whose client already departed is released as an ordinary departure would be:
+    /// the lease moves on and the departure is announced.
     pub(super) fn handle_abort_handoff(
         &mut self,
-        client: ClientId,
         request_id: u64,
         token: &str,
     ) -> Vec<(Target, ServerMessage)> {
-        self.handoffs
+        if let Some(index) = self
+            .handoffs
             .held
-            .retain(|held| !(held.client == client && held.token == token));
+            .iter()
+            .position(|held| held.token == token)
+        {
+            let aborted = self.handoffs.held.remove(index);
+            self.release_reservation(aborted);
+        }
         vec![(Target::Sender, ServerMessage::HandoffAborted { request_id })]
     }
 
     /// Record that a reserving client's connection went, and say whether its slot is now held. A
     /// held slot keeps the lease where it is; the caller skips promotion and the `client-left`
-    /// event. An uncommitted reservation is discarded: the client left without handing over.
+    /// event. A reservation not armed is discarded: the client left without handing over.
     pub(super) fn hold_departing_client(&mut self, client: ClientId, parked: bool) -> bool {
         let now = Instant::now();
         let held_lease = self.controller == Some(client);
@@ -206,7 +230,7 @@ impl SessionServer {
             return false;
         };
         let reservation = &mut self.handoffs.held[index];
-        if !reservation.is_committed() || reservation.expired(now) {
+        if !reservation.is_armed() || reservation.expired(now) {
             self.handoffs.held.remove(index);
             return false;
         }
@@ -222,11 +246,12 @@ impl SessionServer {
     /// leaving yet - its close is still unread - is removed first, so its slot passes over whole.
     pub(super) fn claim_handoff(&mut self, claimer: ClientId, token: &str) -> Option<Claimed> {
         let now = Instant::now();
-        // Only a committed reservation can be claimed: before the commit, the client that made it
-        // may still decide to stay.
-        let index = self.handoffs.held.iter().position(|held| {
-            held.token == token && held.client != claimer && held.is_committed()
-        })?;
+        // Only an armed reservation can be claimed: until the client said it is going, it may
+        // still stay.
+        let index =
+            self.handoffs.held.iter().position(|held| {
+                held.token == token && held.client != claimer && held.is_armed()
+            })?;
         if self.handoffs.held[index].expired(now) {
             let expired = self.handoffs.held.remove(index);
             self.release_reservation(expired);
@@ -293,6 +318,9 @@ impl Reservations {
             held.issued -= by;
             if let Some(committed) = &mut held.committed {
                 *committed -= by;
+            }
+            if let Some(armed) = &mut held.armed {
+                *armed -= by;
             }
             if let Some(departure) = &mut held.departure {
                 departure.at -= by;

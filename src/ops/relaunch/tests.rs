@@ -616,19 +616,24 @@ fn the_dialog_names_each_session_and_what_becomes_of_it() {
         open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
         backend.render();
         let screen = backend.capture_frame().plain_text();
+        let versions = format!("v{} → v9.9.9", crate::release_app::ROZI.version);
         for expected in [
             "Restart rozi",
-            "v9.9.9",
+            versions.as_str(),
             "dev",
             "api@workbox",
             "Keeps running",
-            "Restart",
+            "Restart now",
         ] {
             assert!(
                 screen.contains(expected),
                 "missing {expected:?} in\n{screen}"
             );
         }
+        assert!(
+            screen.matches("Keeps running").count() == 1,
+            "sessions that all keep running share one row:\n{screen}"
+        );
     });
 }
 
@@ -672,8 +677,8 @@ fn the_dialog_leads_with_what_blocks_then_what_it_costs() {
             "the reason goes under its session:\n{screen}"
         );
         assert!(
-            blocked < upgraded && upgraded < row("build"),
-            "what stops the restart comes first, the build last:\n{screen}"
+            row("version") < blocked && blocked < upgraded,
+            "the release first, then what stops the restart, then what it costs:\n{screen}"
         );
         assert!(screen.contains("Close"), "{screen}");
     });

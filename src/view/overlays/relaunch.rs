@@ -49,7 +49,7 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
             let affirm = if plan.destructive() {
                 "Restart anyway"
             } else {
-                "Restart"
+                "Restart now"
             };
             (
                 caption,
@@ -112,9 +112,10 @@ struct Outcome {
     cost: Option<&'static str>,
 }
 
-/// What the restart does, one row per outcome with the costliest first, so a cost is never below
-/// the fold of a list of calm rows; then the build that would run, and the release-wide note an
-/// update raised. A restart that costs nothing reads as one line: everything keeps running.
+/// The release this client moves from and to, then what the restart does, one row per outcome
+/// with the costliest first, so a cost is never below the fold of a list of calm rows; then the
+/// release-wide note an update raised. A restart that costs nothing reads as one line: everything
+/// keeps running.
 fn plan_rows(ctx: &Context<AppRoot>, dialog: &RelaunchDialog) -> Option<Element> {
     let plan: Option<&RelaunchPlan> = match &dialog.stage {
         RelaunchStage::Ready(plan) => Some(plan),
@@ -133,7 +134,7 @@ fn plan_rows(ctx: &Context<AppRoot>, dialog: &RelaunchDialog) -> Option<Element>
     let label_width = outcomes
         .iter()
         .map(|outcome| outcome.label)
-        .chain(plan.map(|_| BUILD))
+        .chain(plan.map(|_| VERSION))
         .chain(dialog.note.as_ref().map(|_| EXTENSIONS))
         .map(|label| label.chars().count())
         .max()
@@ -144,28 +145,22 @@ fn plan_rows(ctx: &Context<AppRoot>, dialog: &RelaunchDialog) -> Option<Element>
             .style(style)
     };
     let mut rows = VStack::new().height(Length::Auto).padding((0, 1, 1, 1));
-    for outcome in &outcomes {
-        rows = outcome_rows(theme, rows, outcome, &label, label_width);
-    }
     if let Some(plan) = plan {
         let muted = fg_only(&theme.muted);
         rows = rows.child(
             HStack::new()
                 .height(Length::Auto)
-                .padding((u16::from(!outcomes.is_empty()), 0, 0, 0))
-                .child(label(BUILD, muted))
-                .child(
-                    Text::new(format!("v{}", plan.candidate.release))
-                        .style(fg_only(&theme.accent).bold()),
-                )
-                .child(Text::new(vocabulary::SEPARATOR).style(muted))
-                .child(
-                    Text::new(plan.candidate.path.display().to_string())
-                        .overflow(Overflow::Ellipsis)
-                        .width(Length::Flex(1))
-                        .style(muted),
-                ),
+                .padding((0, 0, u16::from(!outcomes.is_empty()), 0))
+                .child(label(VERSION, muted))
+                .child(Text::from_spans(version_spans(
+                    theme,
+                    crate::release_app::ROZI.version,
+                    &plan.candidate.release.to_string(),
+                ))),
         );
+    }
+    for outcome in &outcomes {
+        rows = outcome_rows(theme, rows, outcome, &label, label_width);
     }
     if let Some(note) = &dialog.note {
         rows = rows.child(
@@ -183,7 +178,20 @@ fn plan_rows(ctx: &Context<AppRoot>, dialog: &RelaunchDialog) -> Option<Element>
     Some(rows.into())
 }
 
-const BUILD: &str = "build";
+const VERSION: &str = "version";
+
+/// `v1.2.2 → v1.2.3`: where this client is, muted, and where it goes, in the accent. A rebuild of
+/// the same release has nowhere to go, and shows the one release.
+fn version_spans(theme: &Theme, running: &str, next: &str) -> Vec<Span> {
+    let to = Span::new(format!("v{next}")).style(fg_only(&theme.accent).bold());
+    if running == next {
+        return vec![to];
+    }
+    vec![
+        Span::new(format!("v{running} → ")).style(fg_only(&theme.muted)),
+        to,
+    ]
+}
 const EXTENSIONS: &str = "extensions";
 
 /// The plan's sessions and client processes, grouped by what becomes of them, costliest first.

@@ -196,14 +196,14 @@ installed now and brings it back as it was:
 - The sessions themselves keep running. The programs in them are not interrupted, and a temporary
   session stays.
 
-The command opens a dialog first. It names the release that will run and what happens to each
-session:
+The command opens a dialog first. It shows the release you are on and the one that will run, then
+lists your sessions under what happens to them, starting with anything the restart costs:
 
 | Row | Meaning |
 | --- | --- |
 | `Keeps running` | The new build attaches to the session as it is. |
 | `Reconnects` | The session is offline now; the new build reconnects to it. |
-| `Upgraded · its programs end` | The session runs an older rozi that the new build cannot attach to, so the new build [upgrades the session](sessions.md#upgrade-a-session). |
+| `Upgraded · programs end` | The session runs an older rozi that the new build cannot attach to, so the new build [upgrades the session](sessions.md#upgrade-a-session). |
 | `Blocked` | The session cannot be carried over, for the reason shown, and the restart waits until you deal with it. |
 
 A session is blocked when it runs a newer rozi than the one installed, when rozi cannot tell which
@@ -212,13 +212,13 @@ upgrade (name it with **Rename session** first; a temporary session has no snaps
 lives on a remote host whose rozi would have to be replaced while `[remote] install` is `"never"`.
 
 Scratchpad shells and an open popup run in the client itself, so they end with it; the dialog lists
-them. When a restart ends programs, **Restart anyway** asks for a second press.
+them under `Ends`. When a restart ends programs, **Restart anyway** asks for a second press.
 
 The restart goes ahead only when every session it carries over has agreed to keep this client's
 place for as long as the new rozi may take to reach it, including the time to type a password for
 each host it reconnects to before that one. If one does not answer, refuses, or cannot keep the
 place that long, rozi stays as it was and the dialog says which session;
-**Restart** tries again. If your sessions change while the dialog is open, it shows what the restart
+**Restart now** tries again. If your sessions change while the dialog is open, it shows what the restart
 would do now before anything happens.
 
 The new rozi brings back every session that keeps running first, then upgrades the ones that need

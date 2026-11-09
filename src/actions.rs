@@ -221,6 +221,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
                 | Action::ApplyProfile
                 | Action::OpenSessionPicker
                 | Action::OpenAgentPicker
+                | Action::FocusNextAgentNeedingAttention
                 | Action::OpenCollaborators
                 | Action::RenameSession
                 | Action::NewTemporarySession
@@ -326,6 +327,12 @@ fn execute_action_inner(
                 Update::full()
             } else {
                 Update::none()
+            }
+        }
+        Action::FocusNextAgentNeedingAttention => {
+            match crate::ops::agents::next_agent_needing_attention(&ctx.state) {
+                Some(location) => crate::ops::agents::activate_from_sidebar(ctx, location),
+                None => Update::none(),
             }
         }
         Action::Move(direction) => {
@@ -732,6 +739,8 @@ mod tests {
             Action::KillWorkspace,
             Action::SaveProfile,
             Action::OpenSessionPicker,
+            Action::OpenAgentPicker,
+            Action::FocusNextAgentNeedingAttention,
             Action::KillSession,
         ] {
             assert!(

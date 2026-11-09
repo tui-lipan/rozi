@@ -441,6 +441,9 @@ pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
             Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
             Action::PromoteToMaster => crate::ops::focus::can_promote_focused_to_master(state),
             Action::FocusNextBlockedPane => crate::ops::focus::next_blocked_pane(state).is_some(),
+            Action::FocusNextAgentNeedingAttention => {
+                crate::ops::agents::next_agent_needing_attention(state).is_some()
+            }
             _ => true,
         }
 }

@@ -504,6 +504,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::FocusNextAgentNeedingAttention,
+        label: "Go to next agent needing attention",
+        category: "Session",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenCollaborators,
         label: "Collaborators…",
         category: "Collaboration",

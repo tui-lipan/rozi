@@ -4184,7 +4184,7 @@ command = "open"
             loaded.config.sidebar.tabs,
             vec![SidebarTab::Activity {
                 config: super::super::SidebarActivityConfig {
-                    worktrees: super::super::ActivityWorktrees::Repository,
+                    worktrees: super::super::WorktreeLayout::Repository,
                 },
             }]
         );

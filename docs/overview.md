@@ -61,8 +61,8 @@ See [Sessions](sessions.md), [Remote sessions](remote.md), [Profiles](profiles.m
 - Jump to panes that need input and show alerts in pane borders or workspace tabs.
 - See which agents want attention on a connected remote host, without attaching to a session there.
 - List every agent on every connected machine in one view, and go to any of them with one key.
-- Keep that list in the sidebar's Agents tab, so the agent that is blocked on any machine stays in
-  sight while you work.
+- Keep every agent in sight in the sidebar's Agents tab, listed under the checkout it works in on
+  each machine, and step to the next one that needs you with one key.
 - See every repository you work in, on every machine, in the sidebar's Projects tab: its checkouts
   by branch and the sessions working in each, marked with their most urgent agent.
 - Add sidebar tabs of your own that list a tree of rows from a script, or that running programs and

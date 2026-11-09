@@ -142,42 +142,74 @@ rozi ships definitions for common coding-agent CLIs. To add or override one, see
 
 ## Agents
 
-Agents lists the coding agents that need you, wherever they run: in the session on screen, in your
-other running local sessions, and on every [connected host](remote.md#connected-host-monitoring).
-An agent needs you when it is waiting for an answer, when it failed, or when it finished a run you
-have not looked at. Agents still working, idle agents, and finished runs you have seen are left
-out; Activity shows what is happening in the session on screen, and the
-[Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists every agent. With nothing
-needing you, the tab reads `No agents need attention`.
+Agents lists every coding agent you have running, wherever it runs: in the session on screen, in
+your other running local sessions, and on every [connected host](remote.md#connected-host-monitoring).
+Each agent is listed under the Git checkout it works in, so you see who is working on what:
 
 ```text
-▲ Fix SSH reconnect 3m20s      dev
-  Claude Code  Permission required
-× Migrate the schema   backend@workbox
-  Codex               Thread failed
-● Add filesystem watcher       dev
-  Claude Code                 Done
+LOCAL
+rozi                          master
+├ Claude Code                  ▲1 ⠋1
+│ ├ ▲ Fix SSH reconnect 3m20s    dev
+│ │   Permission required
+│ └ ⠋ Review the docs         review
+│     Working
+└ ○ Codex                        dev
+    Idle
+
+WORKBOX
+backend                      migrate
+└ × Migrate the schema          prod
+    Codex  Thread failed
 ```
 
-Agents waiting for you come first, then failed ones, then finished runs. A row is titled by the
-agent's task when it names one, such as the title of a session that Claude Code, Codex, or OpenCode
-lists, and by the agent's name otherwise; two rows that would read the same are numbered. The
-session it runs in is on the right, as `session@host` on a connected host. The second line names the
-agent and gives the reason for its state when it gave one, such as `Permission required`. A row
-without a task shows its state and the project and branch the agent works in instead.
+A heading names each machine once another machine has agents, `LOCAL` for this one. Beneath it,
+each checkout is a row named by its repository, with its branch on the right. A repository's
+primary checkout comes first, then its worktrees by branch, and agents outside any Git checkout
+come last, under **Elsewhere**. Checkouts are listed by name, so they stay where they are while
+their agents work, wait, and finish.
 
-Agents in the session on screen also show a time: how long a blocked state has held, or how long a
+Within a checkout, agents waiting for you come first, then failed ones, then finished runs you have
+not looked at, then agents still working, then idle ones. When an agent runs more than once in one
+checkout, its runs are listed beneath one row for the agent, which shows its most urgent run's
+state.
+
+A run is titled by the agent's task when it names one, such as the title of a session that Claude
+Code, Codex, or OpenCode lists, and by the agent's name otherwise; two runs that would read the
+same are numbered. The session it runs in is on the right. The second line names the agent, when
+the title is its task, and gives the reason for its state when it gave one, such as `Permission
+required`, or the state itself. Agents in a session this client holds, the one on screen or one in
+the background, also show a time: how long a working or blocked state has held, or how long a
 finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
 a run its program keeps in the background has an italic title and `⧉` on its second line.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
-one of several sessions in a pane, switch to that session. It then leaves the tab. Looking at an
+one of several sessions in a pane, switch to that session. It then reads as idle. Looking at an
 agent anywhere counts everywhere, whichever session or host it runs in. Runs that finished before
-rozi attached to a session or connected to a host are not listed.
+rozi attached to a session or connected to a host do not read `Done`.
 
-Activating a row goes to that agent: it focuses the pane in the session on screen, and switches to
-or attaches the session first anywhere else. Unlike Activity, Agents lists only agents, never other
-activities such as `rozi status` reports or published activity rows.
+Select a checkout, or an agent with several runs, to fold it. A folded row counts the agents it
+hides by state, idle ones included, such as `▲1 ⠋2 ○1`, and its arrow takes the colour of the most
+urgent. It stays folded until you open it, whatever its agents do.
+
+Activating a run goes to that agent: it focuses the pane in the session on screen, and switches to
+or attaches the session first anywhere else. To go to the next agent that needs you without
+looking for it, bind `focus-next-agent-needing-attention` (see
+[Commands without default keys](keybindings.md#commands-without-default-keys)). Each press goes to
+the next agent that is waiting for you, failed, or finished a run you have not looked at, after the
+one on screen, in the [Agents view](sessions.md#go-to-an-agent)'s order.
+
+If you run many worktrees of one repository, set the tab's **Worktrees** setting to
+**By repository** to name each repository once, with a row per checkout's branch and its agents
+beneath, as in [Activity](#activity). The two tabs keep their own setting:
+
+```toml
+[sidebar.settings.agents]
+worktrees = "repository"
+```
+
+Unlike Activity, Agents lists only agents, never other activities such as `rozi status` reports or
+published activity rows.
 
 ## Panes
 
@@ -459,7 +491,7 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 
 ### Tab settings
 
-Activity, Files, Git, Worktrees, and extension tabs that offer them have settings of their own. In
+Activity, Agents, Files, Git, Worktrees, and extension tabs that offer them have settings of their own. In
 **Sidebar tabs…**, highlight the tab and press `Ctrl+E` to open its settings. Each row shows a
 setting's current value:
 

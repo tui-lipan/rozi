@@ -9,10 +9,71 @@
 use crate::session::protocol::pane_status;
 use crate::state::{AgentLocation, State};
 
+/// The Git checkout an agent works in, as its session server placed it: what the Agents tab groups
+/// by and Projects counts under. Paths, not names, so two repositories that share a directory name
+/// stay apart; the host is the row's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCheckout {
+    /// The checkout's root: the primary checkout, or a linked worktree.
+    pub root: String,
+    /// The primary checkout `root` belongs to, `root` itself when it is the primary one.
+    pub repository: String,
+    /// The branch checked out at `root`, or a short commit when `HEAD` is detached.
+    pub branch: Option<String>,
+    /// How the host that owns these paths compares them. Windows shells can report one directory
+    /// in different casings, so `C:\Work\rozi` and `c:\work\rozi` are the same checkout there.
+    pub family: crate::platform::paths::PathFamily,
+}
+
+impl AgentCheckout {
+    /// A checkout at `root`, compared by the rules its path's own shape says its host uses.
+    pub(crate) fn new(root: String, repository: Option<String>, branch: Option<String>) -> Self {
+        let family = crate::platform::paths::PathFamily::of_path(&root);
+        Self {
+            repository: repository.unwrap_or_else(|| root.clone()),
+            root,
+            branch,
+            family,
+        }
+    }
+
+    fn from_summary(summary: &crate::session::protocol::ProjectSummary) -> Self {
+        Self::new(
+            summary.root.clone(),
+            Some(summary.repository_root().to_string()),
+            summary.branch.clone(),
+        )
+    }
+
+    /// Whether `root` is this checkout, by its host's rules.
+    pub fn is_at(&self, root: &str) -> bool {
+        self.family.paths_equal(&self.root, root)
+    }
+
+    /// The checkout's identity: equal for every spelling its host treats as the same directory.
+    pub fn root_key(&self) -> String {
+        self.key(&self.root)
+    }
+
+    /// The repository's identity, as [`Self::root_key`] is the checkout's.
+    pub fn repository_key(&self) -> String {
+        self.key(&self.repository)
+    }
+
+    fn key(&self, path: &str) -> String {
+        self.family.identity(path)
+    }
+}
+
 /// One row of the global Agents view: an agent, where it is running, and what it is doing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GlobalAgentRow {
     pub location: AgentLocation,
+    /// Which agent definition this is (`claude`, `codex`): what runs of one program cluster by.
+    /// Never shown; [`Self::agent`] is its name.
+    pub agent_id: String,
+    /// The checkout it works in, when it works in one.
+    pub checkout: Option<AgentCheckout>,
     /// The agent's own name (`Codex`, `Claude Code`). Several runs of one program share it.
     pub agent: String,
     /// What the agent works on, when it named its work (`Fix SSH reconnect`): what tells one run of
@@ -75,13 +136,37 @@ impl GlobalAgentRow {
     }
 
     /// Whether this agent wants the user: waiting on them, failed, or finished a run nobody has
-    /// looked at. The sidebar's Agents tab lists only these; the Agents view lists every agent.
+    /// looked at. What `focus-next-agent-needing-attention` steps through.
     pub fn needs_attention(&self) -> bool {
         self.rank() <= crate::session::protocol::ActivityState::Done.attention_rank(true)
     }
 
     pub fn is_here(&self) -> bool {
         matches!(self.location, AgentLocation::Here { .. })
+    }
+
+    /// Whether this is the agent on screen: in the focused pane of the session on screen and, for
+    /// one of several agents a program runs there, the one it shows. Focusing a pane reveals only
+    /// that one.
+    pub fn is_on_screen(&self, state: &State) -> bool {
+        let AgentLocation::Here { pane, row } = &self.location else {
+            return false;
+        };
+        state.current().focused_pane == Some(*pane)
+            && row.as_ref().is_none_or(|key| {
+                state
+                    .current()
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| &workspace.panes)
+                    .find(|candidate| candidate.id == *pane)
+                    .is_some_and(|pane| {
+                        pane.terminal
+                            .effective_rows()
+                            .iter()
+                            .any(|row| row.has_key(key) && row.active)
+                    })
+            })
     }
 
     /// What the row is called: its task when it named one, else the agent, numbered only when
@@ -182,6 +267,8 @@ fn summary_row(
             pane: agent.pane(),
             row: agent.row().cloned(),
         },
+        agent_id: agent.agent.clone(),
+        checkout: checkout.map(AgentCheckout::from_summary),
         agent: agent.label.clone(),
         task: agent
             .task
@@ -328,6 +415,10 @@ fn live_attachment_rows(
             continue;
         };
         let (project, branch) = row_project(&row);
+        let checkout = row
+            .project_root
+            .clone()
+            .map(|root| AgentCheckout::new(root, row.repository.clone(), row.branch.clone()));
         let elapsed = crate::view::sidebar::agents::elapsed(
             row.status.as_deref().unwrap_or(pane_status::IDLE),
             row.finished_unseen,
@@ -355,6 +446,8 @@ fn live_attachment_rows(
                 .task
                 .as_deref()
                 .and_then(|task| crate::view::sidebar::agents::task_title(task, &identity.label)),
+            agent_id: identity.id,
+            checkout,
             agent: identity.label,
             host: host.clone(),
             session: session.to_string(),
@@ -643,6 +736,8 @@ mod tests {
                 pane: 1,
                 row: Some(crate::session::protocol::RowKey::new("sessions", "fix")),
             },
+            agent_id: "claude".into(),
+            checkout: None,
             agent: "Claude Code".into(),
             task: Some("fix login redirect".into()),
             host: None,

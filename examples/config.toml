@@ -482,6 +482,10 @@
 # a line per checkout's branch.
 #worktrees = "separate"
 
+[sidebar.settings.agents]
+# The same choice for the Agents tab, kept apart from Activity's.
+#worktrees = "separate"
+
 [sidebar.settings.files]
 # Show the search field above the tree.
 #explorer = true

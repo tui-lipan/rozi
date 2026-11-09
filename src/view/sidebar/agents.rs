@@ -786,8 +786,8 @@ pub(super) fn agents_rows(
         return rows;
     }
     match config.worktrees {
-        crate::config::ActivityWorktrees::Separate => separate_sections(state, &groups, &mut rows),
-        crate::config::ActivityWorktrees::Repository => {
+        crate::config::WorktreeLayout::Separate => separate_sections(state, &groups, &mut rows),
+        crate::config::WorktreeLayout::Repository => {
             repository_sections(state, &groups, &mut rows);
         }
     }
@@ -1122,7 +1122,7 @@ fn subpath_budget(width: u16, name: &str, duration: Option<&str>, workspace: &st
 }
 
 /// A status glyph: the spinner while working, else the status's mark, in its color.
-fn status_icon(glyph: String, color: Color, spinner: bool) -> Element {
+pub(super) fn status_icon(glyph: String, color: Color, spinner: bool) -> Element {
     if spinner {
         Spinner::new()
             .style(Style::new().fg(color))
@@ -1238,14 +1238,25 @@ fn cluster_row(
     placed(content.badge_parts(parts))
 }
 
-/// Static glyph-and-count badges shared by Activity clusters and Projects rows.
+/// Static glyph-and-count badges shared by Activity clusters and Projects rows. Idle agents are left
+/// out: these surfaces count what is happening.
 pub(super) fn compact_status_parts<'a>(
     statuses: impl IntoIterator<Item = (&'a str, bool)>,
     theme: &Theme,
 ) -> Vec<(String, Style)> {
+    status_count_parts(statuses, false, theme)
+}
+
+/// Glyph-and-count badges, most urgent first. `count_idle` adds idle agents as `○n`, for the Agents
+/// tab, which lists every agent rather than what is happening: an idle agent still exists.
+pub(super) fn status_count_parts<'a>(
+    statuses: impl IntoIterator<Item = (&'a str, bool)>,
+    count_idle: bool,
+    theme: &Theme,
+) -> Vec<(String, Style)> {
     let mut tally: Vec<(u8, String, Color, usize)> = Vec::new();
     for (status, finished_unseen) in statuses {
-        if normalized_status(status) == pane_status::IDLE && !finished_unseen {
+        if !count_idle && normalized_status(status) == pane_status::IDLE && !finished_unseen {
             continue;
         }
         let rank = crate::session::protocol::ActivityState::from_status(status)

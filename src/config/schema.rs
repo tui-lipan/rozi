@@ -1941,9 +1941,9 @@ impl SidebarTreeConfig {
     }
 }
 
-/// How the Activity tab lays out several checkouts of one repository.
+/// How the Activity and Agents tabs lay out several checkouts of one repository.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ActivityWorktrees {
+pub enum WorktreeLayout {
     /// Each checkout is its own section, headed by the repository and its branch.
     #[default]
     Separate,
@@ -1951,7 +1951,7 @@ pub enum ActivityWorktrees {
     Repository,
 }
 
-impl ActivityWorktrees {
+impl WorktreeLayout {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "separate" => Some(Self::Separate),
@@ -1964,7 +1964,14 @@ impl ActivityWorktrees {
 /// Options for the Activity tab, from its table form in `[sidebar] tabs`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SidebarActivityConfig {
-    pub worktrees: ActivityWorktrees,
+    pub worktrees: WorktreeLayout,
+}
+
+/// Options for the Agents tab. Kept apart from Activity's, so one tab can name each repository once
+/// while the other keeps a section per checkout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SidebarAgentsConfig {
+    pub worktrees: WorktreeLayout,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1973,7 +1980,9 @@ pub enum SidebarTab {
         config: SidebarActivityConfig,
     },
     /// Every agent this client knows about, in every session and on every connected host.
-    Agents,
+    Agents {
+        config: SidebarAgentsConfig,
+    },
     /// Every checkout any session works in, on every host, by repository.
     Projects,
     Panes,
@@ -2047,7 +2056,16 @@ impl SidebarTab {
     pub const fn activity() -> Self {
         Self::Activity {
             config: SidebarActivityConfig {
-                worktrees: ActivityWorktrees::Separate,
+                worktrees: WorktreeLayout::Separate,
+            },
+        }
+    }
+
+    /// The Agents tab with its default options.
+    pub const fn agents() -> Self {
+        Self::Agents {
+            config: SidebarAgentsConfig {
+                worktrees: WorktreeLayout::Separate,
             },
         }
     }
@@ -2055,7 +2073,7 @@ impl SidebarTab {
     pub fn id(&self) -> SidebarTabId {
         match self {
             Self::Activity { .. } => SidebarTabId::new("activity"),
-            Self::Agents => SidebarTabId::new("agents"),
+            Self::Agents { .. } => SidebarTabId::new("agents"),
             Self::Projects => SidebarTabId::new("projects"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
@@ -2070,7 +2088,7 @@ impl SidebarTab {
     pub fn label(&self) -> &str {
         match self {
             Self::Activity { .. } => "Activity",
-            Self::Agents => "Agents",
+            Self::Agents { .. } => "Agents",
             Self::Projects => "Projects",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
@@ -2374,12 +2392,12 @@ pub struct SidebarConfig {
 
 impl Default for SidebarConfig {
     fn default() -> Self {
-        // Two panels out of the box: the session's own state and what needs the user on top, the
+        // Two panels out of the box: the session's own state and every agent on top, the
         // repository below. The trees cost nothing until their tab is the active one, so carrying
         // them by default only spends sidebar rows, not work.
         let mut tabs = vec![
             SidebarTab::activity(),
-            SidebarTab::Agents,
+            SidebarTab::agents(),
             SidebarTab::Panes,
             SidebarTab::Sessions,
             SidebarTab::tree(SidebarTreeView::Files),

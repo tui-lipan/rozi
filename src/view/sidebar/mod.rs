@@ -388,7 +388,7 @@ pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
             .any(|panel| {
                 matches!(
                     active_tab_in_state(state, panel),
-                    Some(SidebarTab::Activity { .. } | SidebarTab::Agents)
+                    Some(SidebarTab::Activity { .. } | SidebarTab::Agents { .. })
                 )
             })
     {
@@ -436,7 +436,7 @@ pub(crate) fn rows(state: &State, tab: &SidebarTab) -> Vec<row::SidebarRow> {
     match tab {
         SidebarTab::Panes => panes::panes_rows(state),
         SidebarTab::Activity { config } => agents::agents_rows(state, config),
-        SidebarTab::Agents => global_agents::global_agents_rows(state),
+        SidebarTab::Agents { config } => global_agents::global_agents_rows(state, config),
         SidebarTab::Sessions => sessions::sessions_rows(state),
         SidebarTab::Worktrees => worktrees::worktrees_rows(state),
         SidebarTab::Launcher { name, entries, .. } => {
@@ -466,7 +466,7 @@ fn empty_text<'a>(ctx: &'a Context<AppRoot>, tab: &SidebarTab) -> &'a str {
     match tab {
         SidebarTab::Panes => "No panes",
         SidebarTab::Activity { .. } => "No activity",
-        SidebarTab::Agents => "No agents need attention",
+        SidebarTab::Agents { .. } => "No agents",
         SidebarTab::Projects => "No sessions in Git",
         SidebarTab::Sessions => "No sessions discovered",
         // No repository to list: same one-cell inset `placeholder` uses on every other empty tab.

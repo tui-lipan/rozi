@@ -448,7 +448,7 @@ Terminal contents, scrollback, working directories, and layout need an attached 
 The [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists these alongside local
 agents, most urgent first, placed in the project and branch the host's
 [project summaries](#projects-on-a-machine-you-are-not-in) report. The sidebar's
-[Agents tab](sidebar.md#agents) lists the ones that need you. `Enter` on a remote row attaches to that session and focuses the agent's
+[Agents tab](sidebar.md#agents) lists them under the checkouts they work in. `Enter` on a remote row attaches to that session and focuses the agent's
 pane in one step.
 
 ### Projects on a machine you are not in

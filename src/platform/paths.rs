@@ -708,12 +708,37 @@ impl PathFamily {
         }
     }
 
+    /// The rules that apply to an absolute `path` reported by some host, read from its shape:
+    /// only a Windows path has a drive or UNC prefix. For paths a session server resolved, such as
+    /// a checkout root, whose host's platform the caller may not know.
+    pub(crate) fn of_path(path: &str) -> Self {
+        if is_windows_path_shape(path) {
+            Self::Windows
+        } else {
+            Self::Posix
+        }
+    }
+
     pub(crate) fn paths_equal(self, a: &str, b: &str) -> bool {
         match self {
             Self::Windows => a.eq_ignore_ascii_case(b),
             Self::Posix => a == b,
         }
     }
+
+    /// A key that is equal for exactly the paths [`Self::paths_equal`] treats as one, for grouping
+    /// and for identities that must survive a change of spelling.
+    pub(crate) fn identity(self, path: &str) -> String {
+        match self {
+            Self::Windows => path.to_ascii_lowercase(),
+            Self::Posix => path.to_string(),
+        }
+    }
+}
+
+/// [`PathFamily::identity`] under the rules [`PathFamily::of_path`] reads from the path itself.
+pub(crate) fn path_identity(path: &str) -> String {
+    PathFamily::of_path(path).identity(path)
 }
 
 /// Whether two local paths name the same directory. Case-sensitive on Unix, case-insensitive on

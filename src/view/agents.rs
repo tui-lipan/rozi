@@ -26,14 +26,9 @@ pub(crate) struct AgentCheckout {
 }
 
 impl AgentCheckout {
-    /// A checkout at `root`. The family follows the path's own shape, which is enough for the
-    /// absolute paths session servers resolve: only a Windows path has a drive or UNC prefix.
+    /// A checkout at `root`, compared by the rules its path's own shape says its host uses.
     pub(crate) fn new(root: String, repository: Option<String>, branch: Option<String>) -> Self {
-        let family = if crate::platform::paths::is_windows_path_shape(&root) {
-            crate::platform::paths::PathFamily::Windows
-        } else {
-            crate::platform::paths::PathFamily::Posix
-        };
+        let family = crate::platform::paths::PathFamily::of_path(&root);
         Self {
             repository: repository.unwrap_or_else(|| root.clone()),
             root,
@@ -66,10 +61,7 @@ impl AgentCheckout {
     }
 
     fn key(&self, path: &str) -> String {
-        match self.family {
-            crate::platform::paths::PathFamily::Windows => path.to_ascii_lowercase(),
-            crate::platform::paths::PathFamily::Posix => path.to_string(),
-        }
+        self.family.identity(path)
     }
 }
 

@@ -15,6 +15,7 @@
 //! summaries, so nothing here runs Git or contacts a machine. Each level carries the state of the
 //! most urgent agent below it.
 
+use crate::platform::paths::path_identity;
 use crate::session::protocol::{ProjectRowRef, ProjectSummary};
 use crate::session::remote::RemoteTarget;
 use crate::state::{
@@ -216,7 +217,10 @@ fn checkout_index(
     repository: Option<&String>,
     branch: Option<&String>,
 ) -> usize {
-    if let Some(index) = summaries.iter().position(|summary| summary.root == root) {
+    if let Some(index) = summaries
+        .iter()
+        .position(|summary| path_identity(&summary.root) == path_identity(root))
+    {
         return index;
     }
     summaries.push(ProjectSummary {
@@ -329,7 +333,7 @@ fn host_rows(
                     .filter(|summary| here(summary))
                     .find(|summary| summary.rows.iter().any(|row| row.pane == pane))
             })
-            .map(|summary| summary.root.as_str())
+            .map(|summary| path_identity(&summary.root))
     });
     let agents_of = |summary: &ProjectSummary| -> Vec<&GlobalAgentRow> {
         agents
@@ -338,39 +342,47 @@ fn host_rows(
             .collect()
     };
 
-    let mut repositories: Vec<&str> = work
-        .iter()
-        .map(|item| item.summary.repository_root())
-        .collect();
+    // Repositories and checkouts are told apart by their host's path rules, so sessions that spell
+    // one Windows directory in two casings share its rows. Each keeps the first spelling seen.
+    let mut repositories: Vec<(String, &str)> = Vec::new();
+    for item in work {
+        let path = item.summary.repository_root();
+        let key = path_identity(path);
+        if !repositories.iter().any(|(known, _)| *known == key) {
+            repositories.push((key, path));
+        }
+    }
     repositories.sort_unstable();
-    repositories.dedup();
-    let labels = repository_labels(&repositories);
+    let paths: Vec<&str> = repositories.iter().map(|(_, path)| *path).collect();
+    let labels = repository_labels(&paths);
     let mut order: Vec<usize> = (0..repositories.len()).collect();
     order.sort_by(|a, b| labels[*a].to_lowercase().cmp(&labels[*b].to_lowercase()));
 
     let mut rows = Vec::new();
     for index in order {
-        let repository = repositories[index];
+        let repository = repositories[index].0.as_str();
         let repo_id = format!("repo:{repository}");
         let in_repo: Vec<&&Work<'_>> = work
             .iter()
-            .filter(|item| item.summary.repository_root() == repository)
+            .filter(|item| path_identity(item.summary.repository_root()) == repository)
             .collect();
-        let mut checkouts: Vec<&str> = in_repo
-            .iter()
-            .map(|item| item.summary.root.as_str())
-            .collect();
-        checkouts.sort_unstable();
-        checkouts.dedup();
+        let mut checkouts: Vec<(String, &str)> = Vec::new();
+        for item in &in_repo {
+            let key = path_identity(&item.summary.root);
+            if !checkouts.iter().any(|(known, _)| *known == key) {
+                checkouts.push((key, item.summary.root.as_str()));
+            }
+        }
         // The primary checkout leads; linked worktrees follow by branch.
-        checkouts.sort_by_key(|root| {
+        checkouts.sort_by_cached_key(|(key, root)| {
             let branch = in_repo
                 .iter()
-                .find(|item| item.summary.root == *root)
+                .find(|item| path_identity(&item.summary.root) == *key)
                 .and_then(|item| item.summary.branch.clone());
             (
-                *root != repository,
+                key != repository,
                 branch.unwrap_or_else(|| path_name(root)),
+                key.clone(),
             )
         });
 
@@ -388,11 +400,11 @@ fn host_rows(
             expanded: None,
         });
         let mut repo_leads = Vec::new();
-        for root in checkouts {
-            let checkout_id = format!("checkout:{root}");
+        for (key, root) in checkouts {
+            let checkout_id = format!("checkout:{key}");
             let sessions: Vec<&ProjectSummary> = in_repo
                 .iter()
-                .filter(|item| item.summary.root == root)
+                .filter(|item| path_identity(&item.summary.root) == key)
                 .map(|item| item.summary)
                 .collect();
             let branch = sessions.iter().find_map(|summary| summary.branch.clone());
@@ -426,7 +438,7 @@ fn host_rows(
                     .activity_statuses
                     .extend(statuses.iter().cloned());
                 rows[repo_index].content.activity_statuses.extend(statuses);
-                let active = here(summary) && focused_checkout == Some(summary.root.as_str());
+                let active = here(summary) && focused_checkout.as_deref() == Some(key.as_str());
                 rows.push(project_session_row(
                     state,
                     host,
@@ -483,8 +495,12 @@ fn project_session_row(
     };
     let label = crate::view::vocabulary::session_name(&summary.session).to_string();
     TreeRow {
-        id: format!("session:{}:{}", summary.root, summary.session),
-        parent: Some(format!("checkout:{}", summary.root)),
+        id: format!(
+            "session:{}:{}",
+            path_identity(&summary.root),
+            summary.session
+        ),
+        parent: Some(format!("checkout:{}", path_identity(&summary.root))),
         content: RowContent {
             label,
             description: project_description(state, host, summary, agents),
@@ -597,6 +613,31 @@ mod tests {
 
     /// Two sessions in two checkouts of one repository, one of them with a blocked agent: the
     /// repository and the checkout both roll up to blocked, and the primary checkout leads.
+    /// Windows shells can report one directory in different casings. Sessions that spell a
+    /// repository two ways share its rows - one repository, one checkout, both sessions beneath -
+    /// and each session's agent is counted there.
+    #[test]
+    fn one_windows_repository_spelled_two_ways_is_one_repository() {
+        let mut state = state();
+        state.local_agent_snapshot = Some(crate::session::discovery::LocalAgentSnapshot {
+            sessions: Vec::new(),
+            agents: vec![agent("one", 1, "working"), agent("two", 2, "blocked")],
+            projects: vec![
+                summary("one", "C:\\Work\\rozi", None, "master", &[1]),
+                summary("two", "c:\\work\\rozi", None, "master", &[2]),
+            ],
+        });
+        assert_eq!(
+            outline(&state.project_sections()),
+            [
+                "rozi Blocked",
+                "  master Blocked",
+                "    one Working",
+                "    two Blocked",
+            ]
+        );
+    }
+
     #[test]
     fn checkouts_group_under_their_repository_with_agent_state_rolled_up() {
         let mut state = state();

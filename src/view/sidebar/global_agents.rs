@@ -1,105 +1,476 @@
-//! The Agents tab: every agent this client knows about, the ones that want attention first.
+//! The Agents tab: every agent this client knows about, in every session and on every connected
+//! host, arranged by the checkout each one works in.
 //!
-//! The Activity tab answers "what is happening in this session"; this one answers "what needs me,
-//! wherever it is". So it lists only agents that do - waiting on the user, failed, or finished
-//! with a result nobody has read - and leaves agents still working, idle, or already read to
-//! Activity and the Agents view. It stays flat and ordered by attention rather than grouped by
-//! place: a blocked agent on another host belongs at the top, not under a heading that may be
-//! scrolled away. Each row leads
-//! with the work rather than the program, because twenty rows that all start with `Claude Code`
-//! say nothing at a glance. The rows are [`crate::view::agents::global_agent_rows`], the
-//! projection the Agents view lists, so the two surfaces can never disagree about what exists or
-//! what order it comes in.
+//! Activity answers "what is happening in this session"; this tab answers "what are my agents
+//! doing, wherever they run". It lists every agent, idle ones too, so a row stays where it is while
+//! its agent works, waits, and finishes: the layout is something to learn, not a queue that empties.
+//! Places are ordered by name, never by state, and expansion is the user's alone, so nothing moves
+//! a folded checkout. Urgency shows through each row's glyph, the order of agents within a
+//! checkout, and the counts a folded row keeps. Going to what needs you is the job of the
+//! `focus-next-agent-needing-attention` action and the Agents view.
+//!
+//! ```text
+//! host → checkout → agent cluster → run
+//! ```
+//!
+//! A host heading appears only once another machine has agents, and an agent becomes a row of its
+//! own only where it runs more than once in one checkout. The session a run lives in rides on its
+//! row: it is where activating the row goes, not how the work is organized. The rows come from
+//! [`crate::view::agents::global_agent_rows`], the projection the Agents view lists, so the two
+//! surfaces never disagree about what exists, and a checkout is the one Projects counts the agent
+//! under.
 
 use tui_lipan::prelude::*;
 
-use super::row::{Row, RowTarget, Shape, SidebarRow};
-use crate::state::State;
+use super::row::{Priority, Row, RowTarget, Shape, SidebarRow};
+use crate::config::{SidebarAgentsConfig, SidebarTabId, WorktreeLayout};
+use crate::session::protocol::pane_status;
+use crate::session::remote::RemoteTarget;
+use crate::state::{AgentLocation, State, TreeExpansionKey};
 use crate::view::agents::GlobalAgentRow;
 
-pub(super) fn global_agents_rows(state: &State) -> Vec<SidebarRow> {
-    crate::view::agents::global_agent_rows(state)
-        .into_iter()
-        .filter(GlobalAgentRow::needs_attention)
-        .map(|row| {
-            let target = RowTarget::Agent(row.location.clone());
-            let key = format!("agent:{:?}", row.location);
-            // Ordered by attention, not grouped by place: every row is top-level.
-            SidebarRow::item(agent_row(state, row), target)
-                .shape(Shape::Flush)
-                .keyed(key)
-        })
-        .collect()
+fn tab_id() -> SidebarTabId {
+    SidebarTabId::new("agents")
 }
 
-/// Where a row's agent runs, as the badge says it: the session, `@host` when it is not this
-/// machine. The session on screen is named too — on this tab every row is somewhere, and "here" is
-/// only a fact about the current moment.
-fn place_badge(row: &GlobalAgentRow) -> String {
-    crate::view::vocabulary::session_at(&row.session, row.host.as_deref())
+/// One checkout's agents on one host, in the projection's order: most urgent first.
+struct Checkout<'a> {
+    /// `None` for the agents outside any Git checkout, listed last as `Elsewhere`.
+    root: Option<&'a str>,
+    repository: Option<&'a str>,
+    branch: Option<&'a str>,
+    /// The repository's name, disambiguated against the host's other repositories.
+    label: String,
+    agents: Vec<&'a GlobalAgentRow>,
 }
 
-/// A two-line row: status glyph, what the agent works on and where it runs, then who it is and why
-/// it is in its state.
-///
-/// An agent that named its work is titled by it, with its own name leading the second line. One
-/// that did not is titled by its name, and the second line says where it works instead, which is
-/// what tells two untitled runs of one program apart.
-fn agent_row(state: &State, row: GlobalAgentRow) -> Row {
-    let theme = &state.theme;
-    let (glyph, color, spinner) = super::agents::row_glyph(&row.status, row.finished_unseen, theme);
-    let glyph: Element = if spinner {
-        Spinner::new()
-            .style(Style::new().fg(color))
-            .height(Length::Px(1))
-            .into()
-    } else {
-        Text::new(glyph)
-            .style(Style::new().fg(color))
-            .height(Length::Px(1))
-            .into()
-    };
-    let active = match &row.location {
-        crate::state::AgentLocation::Here { pane, row: slot } => {
-            state.current().focused_pane == Some(*pane)
-                && slot
-                    .as_ref()
-                    .is_none_or(|key| published_row_active(state, *pane, key))
+impl Checkout<'_> {
+    /// Where its open or folded state is kept: the checkout's path, never a label two can share.
+    fn row_id(&self) -> String {
+        self.root.map_or_else(
+            || "elsewhere".to_string(),
+            |root| format!("checkout:{root}"),
+        )
+    }
+
+    /// What names the checkout beside its repository: the branch, or its directory when detached
+    /// commits and plain directories have none.
+    fn branch_label(&self) -> Option<String> {
+        self.branch
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.root.map(crate::state::projects::path_name))
+    }
+}
+
+/// The host a row's agent runs on, `None` for this machine.
+fn host_of<'a>(state: &'a State, row: &'a GlobalAgentRow) -> Option<&'a RemoteTarget> {
+    match &row.location {
+        AgentLocation::Here { .. } => state.current().remote_target.as_ref(),
+        AgentLocation::OtherSession { target, .. } => target.as_ref(),
+    }
+}
+
+pub(super) fn global_agents_rows(state: &State, config: &SidebarAgentsConfig) -> Vec<SidebarRow> {
+    let agents = crate::view::agents::global_agent_rows(state);
+    let mut hosts: Vec<Option<&RemoteTarget>> =
+        agents.iter().map(|row| host_of(state, row)).collect();
+    // This machine first, then hosts by name: an order that never depends on what agents do.
+    hosts.sort_by_key(|host| host.map(|target| state.remote_target_label(target)));
+    hosts.dedup();
+    let headed = hosts.iter().any(Option::is_some);
+    let mut rows = Vec::new();
+    for host in hosts {
+        let section = host.map_or_else(|| "local".to_string(), RemoteTarget::to_spec);
+        if headed {
+            let label = host.map_or_else(
+                || "LOCAL".to_string(),
+                |target| state.remote_target_label(target).to_uppercase(),
+            );
+            rows.push(
+                SidebarRow::header(super::row::header(state, label, false))
+                    .shape(Shape::Heading)
+                    .apart()
+                    .keyed(format!("host:{section}")),
+            );
         }
-        crate::state::AgentLocation::OtherSession { .. } => false,
-    };
-    let muted = super::super::fg_only(&theme.muted).dim();
-    let mut content = Row::new(row.title())
-        .active(active)
-        .glyph(glyph)
-        .title_style(if row.background {
-            super::super::fg_only(&theme.primary).italic()
+        let on_host: Vec<&GlobalAgentRow> = agents
+            .iter()
+            .filter(|row| host_of(state, row) == host)
+            .collect();
+        let layout = Layout {
+            state,
+            section,
+            width: state.sidebar_tab_width(&tab_id()),
+        };
+        let checkouts = checkouts(&on_host);
+        let first = rows.len();
+        match config.worktrees {
+            WorktreeLayout::Separate => {
+                for checkout in &checkouts {
+                    let shared = shares_label(&checkouts, checkout);
+                    layout.checkout(checkout, shared, &mut rows);
+                }
+            }
+            WorktreeLayout::Repository => layout.by_repository(&checkouts, &mut rows),
+        }
+        // Checkouts stand apart from one another; the first sits right under its host's heading.
+        if headed && let Some(row) = rows.get_mut(first) {
+            row.gap_before = 0;
+        }
+    }
+    rows
+}
+
+/// A host's agents by checkout: repositories by name, each one's primary checkout first and its
+/// worktrees by branch, then `Elsewhere`.
+fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
+    let mut checkouts: Vec<Checkout<'a>> = Vec::new();
+    for agent in agents {
+        let root = agent
+            .checkout
+            .as_ref()
+            .map(|checkout| checkout.root.as_str());
+        match checkouts.iter_mut().find(|known| known.root == root) {
+            Some(known) => known.agents.push(agent),
+            None => {
+                let checkout = agent.checkout.as_ref();
+                checkouts.push(Checkout {
+                    root,
+                    repository: checkout.map(|checkout| checkout.repository.as_str()),
+                    branch: checkout.and_then(|checkout| checkout.branch.as_deref()),
+                    label: String::new(),
+                    agents: vec![agent],
+                });
+            }
+        }
+    }
+    let mut repositories: Vec<&str> = checkouts.iter().filter_map(|c| c.repository).collect();
+    repositories.sort_unstable();
+    repositories.dedup();
+    let labels = crate::state::projects::repository_labels(&repositories);
+    for checkout in &mut checkouts {
+        checkout.label = match checkout.repository {
+            Some(repository) => repositories
+                .iter()
+                .position(|known| *known == repository)
+                .map(|index| labels[index].clone())
+                .unwrap_or_default(),
+            None => "Elsewhere".to_string(),
+        };
+    }
+    checkouts.sort_by_cached_key(|checkout| {
+        (
+            checkout.root.is_none(),
+            checkout.label.to_lowercase(),
+            checkout.repository.map(str::to_string),
+            checkout.root != checkout.repository,
+            checkout.branch_label(),
+        )
+    });
+    checkouts
+}
+
+/// Several checkouts of one repository read alike but for the branch, which then keeps its width.
+fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
+    checkout.repository.is_some()
+        && checkouts
+            .iter()
+            .filter(|other| other.repository == checkout.repository)
+            .count()
+            > 1
+}
+
+/// What every row on one host needs to place itself.
+struct Layout<'a> {
+    state: &'a State,
+    /// Namespaces expansion state by host, so `rozi` here and on another machine fold apart.
+    section: String,
+    width: u16,
+}
+
+impl Layout<'_> {
+    fn key(&self, row: String) -> TreeExpansionKey {
+        TreeExpansionKey {
+            tab: tab_id(),
+            section: self.section.clone(),
+            row,
+        }
+    }
+
+    fn expanded(&self, key: &TreeExpansionKey) -> bool {
+        self.state
+            .sidebar
+            .tree_rows_expanded
+            .get(key)
+            .copied()
+            .unwrap_or(true)
+    }
+
+    /// One checkout as a top-level row named by its repository, with its branch on the right.
+    fn checkout(&self, checkout: &Checkout<'_>, shared: bool, rows: &mut Vec<SidebarRow>) {
+        let key = self.key(checkout.row_id());
+        let expanded = self.expanded(&key);
+        let priority = if shared {
+            Priority::Distinguishing
+        } else {
+            Priority::Label
+        };
+        rows.push(
+            self.group_row(
+                checkout.label.clone(),
+                checkout.repository.and(checkout.branch_label()),
+                checkout.root.is_none(),
+                &checkout.agents,
+                key,
+                expanded,
+                priority,
+            )
+            .apart(),
+        );
+        if expanded {
+            self.agent_rows(checkout, 1, rows);
+        }
+    }
+
+    /// One row per repository, its checkouts as branch lines beneath it. A repository with one
+    /// checkout, and the agents in none, read as they would laid out separately.
+    fn by_repository(&self, checkouts: &[Checkout<'_>], rows: &mut Vec<SidebarRow>) {
+        let mut placed: Vec<&str> = Vec::new();
+        for checkout in checkouts {
+            let Some(repository) = checkout.repository else {
+                self.checkout(checkout, false, rows);
+                continue;
+            };
+            if placed.contains(&repository) {
+                continue;
+            }
+            placed.push(repository);
+            let siblings: Vec<&Checkout<'_>> = checkouts
+                .iter()
+                .filter(|other| other.repository == Some(repository))
+                .collect();
+            if let [only] = siblings.as_slice() {
+                self.checkout(only, false, rows);
+                continue;
+            }
+            let key = self.key(format!("repository:{repository}"));
+            let expanded = self.expanded(&key);
+            let agents: Vec<&GlobalAgentRow> = siblings
+                .iter()
+                .flat_map(|sibling| sibling.agents.iter().copied())
+                .collect();
+            rows.push(
+                self.group_row(
+                    checkout.label.clone(),
+                    None,
+                    false,
+                    &agents,
+                    key,
+                    expanded,
+                    Priority::Label,
+                )
+                .apart(),
+            );
+            if !expanded {
+                continue;
+            }
+            for sibling in siblings {
+                let key = self.key(sibling.row_id());
+                let expanded = self.expanded(&key);
+                // A long branch keeps its end, where the line of work is named. The budget is the
+                // tab less the gutter, the guide, the arrow, and the divider and scrollbar columns.
+                let branch = sibling.branch_label().unwrap_or_default();
+                let branch = super::row::truncate_start(
+                    &branch,
+                    usize::from(self.width).saturating_sub(9).max(8),
+                );
+                rows.push(
+                    self.group_row(
+                        branch,
+                        None,
+                        false,
+                        &sibling.agents,
+                        key,
+                        expanded,
+                        Priority::Label,
+                    )
+                    .at(1),
+                );
+                if expanded {
+                    self.agent_rows(sibling, 2, rows);
+                }
+            }
+        }
+    }
+
+    /// A row that folds what is beneath it. Folded, it counts its agents by state - idle ones too,
+    /// since this tab lists every agent - and its arrow takes the most urgent one's color.
+    #[allow(clippy::too_many_arguments)]
+    fn group_row(
+        &self,
+        label: String,
+        note: Option<String>,
+        muted: bool,
+        agents: &[&GlobalAgentRow],
+        key: TreeExpansionKey,
+        expanded: bool,
+        priority: Priority,
+    ) -> SidebarRow {
+        let theme = &self.state.theme;
+        let dim = super::super::fg_only(&theme.muted).dim();
+        let title_style = if muted {
+            super::super::fg_only(&theme.muted)
         } else {
             super::super::fg_only(&theme.primary)
-        })
-        .badge_text(place_badge(&row), muted);
-    if row.background {
-        content = content.detail_badge(crate::view::vocabulary::BACKGROUND_RUN, muted);
+        };
+        let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
+        if !expanded {
+            let counts = status_counts(agents, theme);
+            if !parts.is_empty() && !counts.is_empty() {
+                parts.push(("·".into(), dim));
+            }
+            parts.extend(counts);
+        }
+        let content = Row::new(label)
+            .active(!expanded && agents.iter().any(|agent| is_active(self.state, agent)))
+            .title_style(title_style)
+            .priority(priority)
+            .badge_parts(parts);
+        let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
+            .keyed(format!("{}:{}", key.section, key.row))
+            .collapsible(key, expanded);
+        match agents.first().filter(|_| !expanded) {
+            // The projection lists the most urgent agent first.
+            Some(lead) => {
+                let (_, color, _) =
+                    super::agents::row_glyph(status(lead), lead.finished_unseen, theme);
+                row.arrow_style(Style::new().fg(color))
+            }
+            None => row,
+        }
     }
-    if let Some(elapsed) = row.elapsed {
-        content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
+
+    /// A checkout's agents at `depth`: a row each, and a cluster wherever one agent runs more than
+    /// once there. The cluster takes the place of its most urgent run.
+    fn agent_rows(&self, checkout: &Checkout<'_>, depth: usize, rows: &mut Vec<SidebarRow>) {
+        let mut placed: Vec<&str> = Vec::new();
+        for agent in &checkout.agents {
+            let members: Vec<&GlobalAgentRow> = checkout
+                .agents
+                .iter()
+                .copied()
+                .filter(|other| other.agent_id == agent.agent_id)
+                .collect();
+            if members.len() < 2 {
+                rows.push(self.run_row(agent, false).at(depth));
+                continue;
+            }
+            if placed.contains(&agent.agent_id.as_str()) {
+                continue;
+            }
+            placed.push(&agent.agent_id);
+            let key = self.key(format!("cluster:{}|{}", checkout.row_id(), agent.agent_id));
+            let expanded = self.expanded(&key);
+            rows.push(self.cluster_row(&members, key, expanded).at(depth));
+            if expanded {
+                rows.extend(
+                    members
+                        .iter()
+                        .map(|member| self.run_row(member, true).at(depth + 1)),
+                );
+            }
+        }
     }
-    let budget = super::agents::activity_budget(
-        state.sidebar_tab_width(&crate::config::SidebarTabId::new("agents")),
-    );
-    if row.task.is_some() {
-        content = content.detail(super::row::truncate(&row.agent, budget), muted);
+
+    /// An agent that runs more than once in one checkout: its name and its most urgent run's glyph.
+    /// Folded, it counts its runs by state, idle ones included.
+    fn cluster_row(
+        &self,
+        members: &[&GlobalAgentRow],
+        key: TreeExpansionKey,
+        expanded: bool,
+    ) -> SidebarRow {
+        let theme = &self.state.theme;
+        let lead = members[0];
+        let (glyph, color, spinner) =
+            super::agents::row_glyph(status(lead), lead.finished_unseen, theme);
+        let mut content = Row::new(lead.agent.clone())
+            .active(!expanded && members.iter().any(|member| is_active(self.state, member)))
+            .title_style(super::super::fg_only(&theme.primary))
+            .glyph(super::agents::status_icon(glyph, color, spinner));
+        if !expanded {
+            content = content.badge_parts(status_counts(members, theme));
+        }
+        let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
+            .keyed(format!("{}:{}", key.section, key.row))
+            .collapsible(key, expanded);
+        if expanded {
+            row
+        } else {
+            row.arrow_style(Style::new().fg(color))
+        }
     }
-    content = content.detail(
-        super::row::truncate(&state_text(&row), budget),
-        Style::new().fg(color),
-    );
-    if row.task.is_none()
-        && let Some(place) = row.place()
-    {
-        content = content.detail(super::row::truncate(&place, budget), muted);
+
+    /// One agent run: what it works on and the session it is in, then why it is in its state.
+    ///
+    /// On its own, a run that named its work leads its second line with the agent's name. Beneath a
+    /// cluster, which already names the agent, the second line is its state alone.
+    fn run_row(&self, row: &GlobalAgentRow, in_cluster: bool) -> SidebarRow {
+        let theme = &self.state.theme;
+        let (glyph, color, spinner) =
+            super::agents::row_glyph(status(row), row.finished_unseen, theme);
+        let muted = super::super::fg_only(&theme.muted).dim();
+        let title_style = super::super::fg_only(&theme.primary);
+        let mut content = Row::new(row.title())
+            .active(is_active(self.state, row))
+            .glyph(super::agents::status_icon(glyph, color, spinner))
+            .title_style(if row.background {
+                title_style.italic()
+            } else {
+                title_style
+            })
+            .badge_text(
+                crate::view::vocabulary::session_name(&row.session).to_string(),
+                muted,
+            );
+        if row.background {
+            content = content.detail_badge(crate::view::vocabulary::BACKGROUND_RUN, muted);
+        }
+        if let Some(elapsed) = row.elapsed {
+            content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
+        }
+        let budget = super::agents::activity_budget(self.width);
+        if !in_cluster && row.task.is_some() {
+            content = content.detail(super::row::truncate(&row.agent, budget), muted);
+        }
+        content = content.detail(
+            super::row::truncate(&state_text(row), budget),
+            Style::new().fg(color),
+        );
+        SidebarRow::item(content, RowTarget::Agent(row.location.clone()))
+            .keyed(format!("agent:{:?}", row.location))
     }
-    content
+}
+
+/// The row's status, an agent that reported none reading as idle.
+fn status(row: &GlobalAgentRow) -> &str {
+    if row.status.trim().is_empty() {
+        pane_status::IDLE
+    } else {
+        &row.status
+    }
+}
+
+fn status_counts(agents: &[&GlobalAgentRow], theme: &Theme) -> Vec<(String, Style)> {
+    super::agents::status_count_parts(
+        agents
+            .iter()
+            .map(|agent| (status(agent), agent.finished_unseen)),
+        true,
+        theme,
+    )
 }
 
 /// Why the agent is in its state when it said, else the state itself. A finished run nobody has
@@ -107,48 +478,33 @@ fn agent_row(state: &State, row: GlobalAgentRow) -> Row {
 fn state_text(row: &GlobalAgentRow) -> String {
     match row.reason.as_deref() {
         Some(reason) if !row.finished_unseen => reason.to_string(),
-        _ => row.status_label(),
+        _ => super::agents::row_status_label(status(row), row.finished_unseen),
     }
 }
 
-/// Whether the program in `pane` currently shows the published row `key`. Focusing a pane reveals
-/// only the row its program has on screen, so only that one reads as the active agent.
-fn published_row_active(
-    state: &State,
-    pane: crate::pane::id::PaneId,
-    key: &crate::session::protocol::RowKey,
-) -> bool {
-    state
-        .current()
-        .workspaces
-        .iter()
-        .flat_map(|workspace| &workspace.panes)
-        .find(|candidate| candidate.id == pane)
-        .is_some_and(|pane| {
-            pane.terminal
-                .effective_rows()
-                .iter()
-                .any(|row| row.has_key(key) && row.active)
-        })
+fn is_active(state: &State, row: &GlobalAgentRow) -> bool {
+    row.is_on_screen(state)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn row(host: Option<&str>, session: &str) -> GlobalAgentRow {
+    fn row(status: &str) -> GlobalAgentRow {
         GlobalAgentRow {
-            location: crate::state::AgentLocation::OtherSession {
+            location: AgentLocation::OtherSession {
                 target: None,
-                session: session.into(),
+                session: "dev".into(),
                 pane: 1,
                 row: None,
             },
+            agent_id: "codex".into(),
+            checkout: None,
             agent: "Codex".into(),
             task: None,
-            host: host.map(str::to_string),
-            session: session.into(),
-            status: "blocked".into(),
+            host: None,
+            session: "dev".into(),
+            status: status.into(),
             reason: None,
             finished_unseen: false,
             elapsed: None,
@@ -159,35 +515,18 @@ mod tests {
         }
     }
 
-    /// A row says which machine it is on before it says anything else: on a list that spans every
-    /// host, "Codex" alone names nothing.
-    #[test]
-    fn the_badge_names_host_and_session() {
-        assert_eq!(
-            place_badge(&row(Some("workbox"), "backend")),
-            "backend@workbox"
-        );
-        assert_eq!(place_badge(&row(None, "dev")), "dev");
-    }
-
     /// A blocked agent says why; a finished run nobody has read says it is done, whatever the agent
-    /// last gave as a reason.
+    /// last gave as a reason; one that reported nothing is idle.
     #[test]
     fn the_state_line_prefers_the_reason_until_a_run_is_unread() {
-        let mut row = row(None, "dev");
+        let mut row = row("blocked");
         assert_eq!(state_text(&row), "Blocked");
         row.reason = Some("Permission required".into());
         assert_eq!(state_text(&row), "Permission required");
         row.status = "idle".into();
         row.finished_unseen = true;
         assert_eq!(state_text(&row), "Done");
-    }
-
-    /// Temporary sessions have generated names; the badge spells them the way every other surface
-    /// does rather than leaking the generated id.
-    #[test]
-    fn a_temporary_session_reads_as_ephemeral() {
-        let name = crate::session::naming::ephemeral_session_name();
-        assert_eq!(place_badge(&row(None, &name)), "ephemeral");
+        let quiet = super::tests::row("");
+        assert_eq!(state_text(&quiet), "Idle");
     }
 }

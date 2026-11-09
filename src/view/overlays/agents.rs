@@ -267,6 +267,8 @@ mod tests {
     fn row(task: &str) -> GlobalAgentRow {
         GlobalAgentRow {
             location: AgentLocation::Here { pane: 1, row: None },
+            agent_id: "codex".into(),
+            checkout: None,
             agent: "Codex".into(),
             task: Some(task.into()),
             host: Some("workbox".into()),

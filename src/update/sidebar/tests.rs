@@ -2581,85 +2581,333 @@ fn monitored_agent(
     }
 }
 
-/// The Agents tab lists every agent this client knows about with the one that wants an answer on
-/// top, wherever it runs, and Enter lands on an agent in the session on screen.
+/// A local Claude Code agent in `rozi` on `master` that finished a run nobody has looked at, and a
+/// Codex agent blocked in `api` on the host `workbox`. Returns the local agent's pane.
+fn agents_across_hosts(backend: &mut TestBackend<AppRoot>) -> crate::pane::id::PaneId {
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 30,
+    });
+    let state = backend.state_mut();
+    let pane = &mut state.current_mut().workspaces[0].panes[0];
+    pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+        agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
+        state: crate::session::protocol::DetectedAgentState::Idle,
+    });
+    pane.terminal.cwd = Some("/x/rozi".into());
+    pane.terminal.project_root = Some("/x/rozi".into());
+    pane.terminal.git_branch = Some("master".into());
+    let id = pane.id;
+    pane.agents = vec![
+        crate::session::protocol::AgentRef {
+            pane: crate::session::protocol::PaneRef {
+                session_instance: crate::session::protocol::SessionInstanceId::generate(),
+                pane_id: id,
+                generation: 0,
+            },
+            slot: None,
+            incarnation: 1,
+        }
+        .into(),
+    ];
+    let reference = pane.agents[0].reference.clone();
+    pane.agents[0].completions = 1;
+    state
+        .agent_attention
+        .observe(&reference, 0, crate::state::FirstSighting::Baseline);
+    state.config.sidebar.layout.left.panel_count = 1;
+    state.sidebar.apply_configured_panels(&state.config.sidebar);
+    state.sidebar.panels[0].active_tab = Some(SidebarTab::agents().id());
+    let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+    state.remote.agents.insert(
+        workbox.clone(),
+        vec![monitored_agent("backend", 4, "blocked")],
+    );
+    state.remote.projects.insert(
+        workbox,
+        vec![project("backend", "/srv/api", None, "main", &[4])],
+    );
+    id
+}
+
+fn agents_tab_lines(backend: &mut TestBackend<AppRoot>) -> Vec<String> {
+    backend.render();
+    backend.capture_frame().to_fixed_grid_lines()
+}
+
+/// The first line below the tab bar that contains `needle`; the bar names the session's
+/// directory too.
+fn line_of(lines: &[String], needle: &str) -> usize {
+    lines
+        .iter()
+        .skip(1)
+        .position(|line| line.contains(needle))
+        .map(|index| index + 1)
+        .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", lines.join("\n")))
+}
+
+/// Whether `needles` appear in this order, each on a later line than the one before.
+fn in_order(lines: &[String], needles: &[&str]) -> bool {
+    let mut from = 1;
+    needles.iter().all(
+        |needle| match lines[from..].iter().position(|line| line.contains(needle)) {
+            Some(index) => {
+                from += index + 1;
+                true
+            }
+            None => false,
+        },
+    )
+}
+
+/// Activate the Agents tab row whose expansion state is kept under `row`, folding or opening it.
+fn toggle_agents_row(backend: &mut TestBackend<AppRoot>, row: &str) {
+    let index = backend
+        .state()
+        .sidebar_rows(&SidebarTab::agents())
+        .iter()
+        .position(|item| item.expansion.as_ref().is_some_and(|key| key.row == row))
+        .unwrap_or_else(|| panic!("a foldable row {row:?}"));
+    backend
+        .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index })
+        .unwrap();
+}
+
+/// The Agents tab lists every agent, on every host, under the checkout it works in. Hosts keep
+/// their order whatever their agents do - the blocked remote agent stays under its heading rather
+/// than jumping above this machine's - and an agent stays listed after its news has been read.
 #[test]
-fn the_agents_tab_lists_what_needs_attention_across_hosts_and_focuses_a_local_agent() {
+fn the_agents_tab_lists_every_agent_by_checkout_on_each_host() {
     crate::test_support::on_large_stack(|| {
-        let mut backend = focused_sidebar_backend(vec![SidebarTab::Agents]);
-        let pane = {
-            let state = backend.state_mut();
-            let pane = &mut state.current_mut().workspaces[0].panes[0];
-            pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
-                agent: crate::session::protocol::AgentIdentity::new("claude", "Claude Code").into(),
-                state: crate::session::protocol::DetectedAgentState::Idle,
-            });
-            let id = pane.id;
-            pane.agents = vec![
-                crate::session::protocol::AgentRef {
-                    pane: crate::session::protocol::PaneRef {
-                        session_instance: crate::session::protocol::SessionInstanceId::generate(),
-                        pane_id: id,
-                        generation: 0,
-                    },
-                    slot: None,
-                    incarnation: 1,
-                }
-                .into(),
-            ];
-            // It finished a run nobody has looked at yet: what puts it in the inbox.
-            let reference = pane.agents[0].reference.clone();
-            pane.agents[0].completions = 1;
-            state
-                .agent_attention
-                .observe(&reference, 0, crate::state::FirstSighting::Baseline);
-            state.config.sidebar.layout.left.panel_count = 1;
-            state.sidebar.apply_configured_panels(&state.config.sidebar);
-            state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
-            state.remote.agents.insert(
-                crate::session::remote::RemoteTarget::Alias("workbox".into()),
-                vec![monitored_agent("backend", 4, "blocked")],
-            );
-            id
-        };
-        backend.render();
-        let lines = backend.capture_frame().to_fixed_grid_lines();
-        let line = |needle: &str| {
-            lines
-                .iter()
-                .position(|line| line.contains(needle))
-                .unwrap_or_else(|| panic!("the sidebar shows {needle:?}:\n{}", lines.join("\n")))
-        };
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        let pane = agents_across_hosts(&mut backend);
+        let lines = agents_tab_lines(&mut backend);
         assert!(
-            line("backend@workbox") < line("Claude Code"),
-            "the blocked remote agent leads"
+            in_order(
+                &lines,
+                &["LOCAL", "rozi", "Claude Code", "WORKBOX", "api", "Codex"]
+            ),
+            "host, checkout, then agent, this machine first:\n{}",
+            lines.join("\n")
         );
+        let checkout = &lines[line_of(&lines, "master")];
+        assert!(checkout.contains("rozi"), "{}", lines.join("\n"));
+        let checkout = &lines[line_of(&lines, "main")];
+        assert!(checkout.contains("api"), "{}", lines.join("\n"));
 
-        let targets: Vec<_> = backend
+        let index = backend
             .state()
-            .sidebar_rows(&SidebarTab::Agents)
-            .into_iter()
-            .map(|item| item.target)
-            .collect();
-        assert_eq!(targets.len(), 2);
-        assert!(matches!(
-            &targets[1],
-            crate::state::RowTarget::Agent(crate::state::AgentLocation::Here { pane: here, .. })
-                if *here == pane
-        ));
-
+            .sidebar_rows(&SidebarTab::agents())
+            .iter()
+            .position(|item| {
+                matches!(
+                    &item.target,
+                    crate::state::RowTarget::Agent(crate::state::AgentLocation::Here {
+                        pane: here,
+                        ..
+                    }) if *here == pane
+                )
+            })
+            .expect("the local agent's row");
         backend.state_mut().current_mut().focused_pane = None;
-        send_sidebar_key(&mut backend, KeyCode::Char('j'), KeyMods::NONE);
-        send_sidebar_key(&mut backend, KeyCode::Enter, KeyMods::NONE);
+        backend
+            .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index })
+            .unwrap();
         assert_eq!(backend.state().current().focused_pane, Some(pane));
 
-        // Looked at, the finish is no longer news, and the agent leaves the inbox.
+        // Looked at, the finish is no longer news; the agent is still there, idle.
         crate::ops::focus::acknowledge_pane_input(backend.state_mut(), pane);
-        assert_eq!(
-            backend.state().sidebar_rows(&SidebarTab::Agents).len(),
-            1,
-            "only the blocked remote agent still needs attention"
+        let lines = agents_tab_lines(&mut backend);
+        assert!(
+            lines[line_of(&lines, "Claude Code")..]
+                .iter()
+                .take(2)
+                .any(|line| line.contains("Idle")),
+            "{}",
+            lines.join("\n")
         );
+    });
+}
+
+/// A folded checkout keeps counting the agents it hides, idle ones too: the tab lists every agent,
+/// and an idle one has not gone anywhere. Folding is the user's: the checkout stays folded when its
+/// agent's state changes.
+#[test]
+fn a_folded_checkout_counts_every_agent_it_hides() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        let pane = agents_across_hosts(&mut backend);
+        agents_tab_lines(&mut backend);
+        toggle_agents_row(&mut backend, "checkout:/x/rozi");
+        let lines = agents_tab_lines(&mut backend);
+        assert!(
+            !lines.iter().any(|line| line.contains("Claude Code")),
+            "folded:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines[line_of(&lines, "master")].contains("●1"),
+            "{}",
+            lines.join("\n")
+        );
+
+        crate::ops::focus::acknowledge_pane_input(backend.state_mut(), pane);
+        let lines = agents_tab_lines(&mut backend);
+        assert!(
+            lines[line_of(&lines, "master")].contains("○1"),
+            "still folded, counting the idle agent:\n{}",
+            lines.join("\n")
+        );
+    });
+}
+
+/// One agent running more than once in a checkout is a row of its own with its runs beneath it,
+/// titled by what each works on. Folded, it counts them by state.
+#[test]
+fn several_runs_of_one_agent_in_a_checkout_cluster_under_it() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let mut blocked = monitored_agent("backend", 4, "blocked");
+        blocked.task = Some("Fix SSH reconnect".into());
+        let mut idle = monitored_agent("backend", 5, "idle");
+        idle.task = Some("Review the graphics PR".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![idle, blocked],
+                projects: vec![project("backend", "/x/rozi", None, "master", &[4, 5])],
+            });
+        let lines = agents_tab_lines(&mut backend);
+        assert!(
+            in_order(
+                &lines,
+                &[
+                    "master",
+                    "Codex",
+                    "Fix SSH reconnect",
+                    "Review the graphics PR"
+                ]
+            ),
+            "the cluster, then its runs most urgent first:\n{}",
+            lines.join("\n")
+        );
+        assert_eq!(
+            backend.state().sidebar_rows(&SidebarTab::agents()).len(),
+            4,
+            "checkout, cluster, and two runs"
+        );
+
+        toggle_agents_row(&mut backend, "cluster:checkout:/x/rozi|codex");
+        let lines = agents_tab_lines(&mut backend);
+        assert!(!lines.iter().any(|line| line.contains("Fix SSH reconnect")));
+        let cluster = &lines[line_of(&lines, "Codex")];
+        assert!(
+            cluster.contains("▲1") && cluster.contains("○1"),
+            "{}",
+            lines.join("\n")
+        );
+    });
+}
+
+/// With `worktrees = "repository"` the Agents tab names a repository once, with a line per checkout
+/// and that checkout's agents beneath it.
+#[test]
+fn the_agents_tab_can_name_each_repository_once() {
+    crate::test_support::on_large_stack(|| {
+        let tab = SidebarTab::Agents {
+            config: crate::config::SidebarAgentsConfig {
+                worktrees: crate::config::WorktreeLayout::Repository,
+            },
+        };
+        let mut backend = focused_sidebar_backend(vec![tab.clone()]);
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let mut primary = monitored_agent("backend", 4, "working");
+        primary.task = Some("Tidy the docs".into());
+        let mut worktree = monitored_agent("review", 5, "blocked");
+        worktree.task = Some("Fix SSH reconnect".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![worktree, primary],
+                projects: vec![
+                    project("backend", "/x/rozi", None, "master", &[4]),
+                    project("review", "/x/rozi-ssh", Some("/x/rozi"), "fix/ssh", &[5]),
+                ],
+            });
+        let lines = agents_tab_lines(&mut backend);
+        assert!(
+            in_order(
+                &lines,
+                &[
+                    "rozi",
+                    "master",
+                    "Tidy the docs",
+                    "fix/ssh",
+                    "Fix SSH reconnect"
+                ]
+            ),
+            "the primary checkout first, then worktrees by branch:\n{}",
+            lines.join("\n")
+        );
+        let sidebar: Vec<&str> = lines
+            .iter()
+            .skip(1)
+            .map(|line| line.split('│').next().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            sidebar.iter().filter(|line| line.contains("rozi")).count(),
+            1,
+            "{}",
+            lines.join("\n")
+        );
+    });
+}
+
+/// `focus-next-agent-needing-attention` steps past the agent on screen to the next one that needs
+/// the user, wrapping round, and has nothing to offer when the agent on screen is the only one.
+#[test]
+fn the_next_agent_needing_attention_steps_past_the_one_on_screen() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        let blocked = |id: crate::pane::id::PaneId, rect| {
+            let mut pane = Pane::new(id, 100, rect);
+            pane.opening = false;
+            pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                agent: crate::session::protocol::AgentIdentity::new("codex", "Codex").into(),
+                state: crate::session::protocol::DetectedAgentState::Blocked,
+            });
+            pane
+        };
+        {
+            let state = backend.state_mut();
+            let rect = state.current().workspaces[0].panes[0].floating_rect;
+            state.current_mut().workspaces[0].panes = vec![blocked(1, rect), blocked(2, rect)];
+            state.current_mut().focused_pane = Some(1);
+        }
+        let next = crate::input::Action::FocusNextAgentNeedingAttention;
+        for expected in [2, 1] {
+            backend.dispatch(crate::Msg::RunAction(next)).unwrap();
+            assert_eq!(backend.state().current().focused_pane, Some(expected));
+        }
+
+        backend.state_mut().current_mut().workspaces[0].panes[1]
+            .terminal
+            .detected_agent = None;
+        assert!(crate::ops::agents::next_agent_needing_attention(backend.state()).is_none());
+        assert!(!crate::commands::palette_visible(next, backend.state()));
     });
 }
 

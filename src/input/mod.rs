@@ -23,6 +23,9 @@ pub enum Action {
     /// `Ctrl-h/j/k/l` to it. Lets one binding navigate rozi panes and editor-managed splits.
     SmartFocus(Direction),
     FocusNextBlockedPane,
+    /// Go to the next agent that needs the user - blocked, failed, or finished unseen - in any
+    /// session or on any connected host, switching sessions when it is elsewhere.
+    FocusNextAgentNeedingAttention,
     Move(Direction),
     SwitchWorkspace(usize),
     MoveToWorkspace(usize),
@@ -177,6 +180,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::SmartFocus(Direction::Up),
     Action::SmartFocus(Direction::Right),
     Action::FocusNextBlockedPane,
+    Action::FocusNextAgentNeedingAttention,
     Action::Move(Direction::Left),
     Action::Move(Direction::Down),
     Action::Move(Direction::Up),
@@ -311,6 +315,7 @@ impl Action {
             Action::SmartFocus(Up) => "smart-focus-up",
             Action::SmartFocus(Right) => "smart-focus-right",
             Action::FocusNextBlockedPane => "focus-next-blocked-pane",
+            Action::FocusNextAgentNeedingAttention => "focus-next-agent-needing-attention",
             Action::Move(Left) => "move-left",
             Action::Move(Down) => "move-down",
             Action::Move(Up) => "move-up",
@@ -483,6 +488,7 @@ impl Action {
             | Action::ApplyProfile
             | Action::OpenSessionPicker
             | Action::OpenAgentPicker
+            | Action::FocusNextAgentNeedingAttention
             | Action::OpenCollaborators
             | Action::RenameSession
             | Action::NewTemporarySession

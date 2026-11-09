@@ -336,7 +336,7 @@ fn the_repository_layout_names_a_repository_once_with_a_line_per_checkout() {
             agents_fill_the_sidebar(state);
             state.config.sidebar.tabs = vec![SidebarTab::Activity {
                 config: rozi::config::SidebarActivityConfig {
-                    worktrees: rozi::config::ActivityWorktrees::Repository,
+                    worktrees: rozi::config::WorktreeLayout::Repository,
                 },
             }];
             state.config.sidebar.layout.left.width = 28;

@@ -3,10 +3,9 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    ActivityWorktrees, SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS,
-    SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarActivityConfig, SidebarConfig,
-    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
-    SidebarTreeRoot, SidebarTreeView,
+    SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_SPLIT_RATIO,
+    SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
+    SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView, WorktreeLayout,
 };
 use super::setting_schema::{SettingSpec, SettingValue, SettingsGroup, SettingsOwner};
 
@@ -36,7 +35,7 @@ fn tree_view(name: &str) -> Option<SidebarTreeView> {
 fn builtin_tab(name: &str) -> Option<SidebarTab> {
     Some(match name {
         "activity" => SidebarTab::activity(),
-        "agents" => SidebarTab::Agents,
+        "agents" => SidebarTab::agents(),
         "panes" => SidebarTab::Panes,
         "sessions" => SidebarTab::Sessions,
         "worktrees" => SidebarTab::Worktrees,
@@ -86,7 +85,7 @@ pub fn builtin_tab_settings(id: &str) -> Vec<SettingSpec> {
         specs
     };
     match id {
-        "activity" => vec![SettingSpec::choice(
+        "activity" | "agents" => vec![SettingSpec::choice(
             "worktrees",
             "Worktrees",
             "separate",
@@ -190,16 +189,13 @@ fn builtin_group(
     (group, on_click)
 }
 
-fn activity_config(group: &SettingsGroup) -> SidebarActivityConfig {
-    let mut config = SidebarActivityConfig::default();
-    if let Some(worktrees) = group
+/// The `worktrees` choice the Activity and Agents tabs each take.
+fn worktree_layout(group: &SettingsGroup) -> WorktreeLayout {
+    group
         .value("worktrees")
         .and_then(SettingValue::as_str)
-        .and_then(ActivityWorktrees::parse)
-    {
-        config.worktrees = worktrees;
-    }
-    config
+        .and_then(WorktreeLayout::parse)
+        .unwrap_or_default()
 }
 
 fn tree_config(
@@ -262,7 +258,8 @@ pub(crate) fn apply_builtin_settings(
         }
         let (group, on_click) = builtin_group(&id, specs, raw.get(&id), warnings);
         match tab {
-            SidebarTab::Activity { config } => *config = activity_config(&group),
+            SidebarTab::Activity { config } => config.worktrees = worktree_layout(&group),
+            SidebarTab::Agents { config } => config.worktrees = worktree_layout(&group),
             SidebarTab::Tree { view, config } => {
                 *config = tree_config(*view, &group, on_click, warnings);
             }
@@ -839,7 +836,7 @@ mod tests {
             config.tabs,
             vec![SidebarTab::Activity {
                 config: crate::config::SidebarActivityConfig {
-                    worktrees: crate::config::ActivityWorktrees::Repository,
+                    worktrees: crate::config::WorktreeLayout::Repository,
                 },
             }]
         );
@@ -850,13 +847,30 @@ mod tests {
         );
         assert!(group.overridden.contains("worktrees"));
 
+        // The Agents tab takes the same choice on its own: setting one leaves the other alone.
+        let (config, warnings) = parse(
+            "tabs = [\"activity\", \"agents\"]\n[settings.agents]\nworktrees = \"repository\"\n",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            config.tabs,
+            vec![
+                SidebarTab::activity(),
+                SidebarTab::Agents {
+                    config: crate::config::SidebarAgentsConfig {
+                        worktrees: crate::config::WorktreeLayout::Repository,
+                    },
+                },
+            ]
+        );
+
         // The default tab list still reads its settings.
         let (config, _) = parse("[settings.activity]\nworktrees = \"repository\"\n");
         assert!(matches!(
             config.tabs[0],
             SidebarTab::Activity {
                 config: crate::config::SidebarActivityConfig {
-                    worktrees: crate::config::ActivityWorktrees::Repository,
+                    worktrees: crate::config::WorktreeLayout::Repository,
                 },
             }
         ));
@@ -929,7 +943,7 @@ mod tests {
     fn builtin_groups_exist_at_their_defaults() {
         let config = SidebarConfig::default();
         let keys: Vec<_> = config.tab_settings.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["activity", "files", "git", "worktrees"]);
+        assert_eq!(keys, ["activity", "agents", "files", "git", "worktrees"]);
         let git = &config.tab_settings["git"];
         assert!(git.overridden.is_empty());
         assert_eq!(git.values["diff_stats"], SettingValue::Bool(true));

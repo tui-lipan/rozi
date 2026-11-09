@@ -23,7 +23,7 @@ mod keybindings;
 mod mode;
 mod pane;
 mod pickers;
-mod projects;
+pub(crate) mod projects;
 mod relaunch;
 mod remote;
 mod search;

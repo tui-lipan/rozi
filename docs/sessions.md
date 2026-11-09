@@ -215,8 +215,10 @@ Only agents in the session on screen have a time. What an agent's terminal shows
 [Activity tab](sidebar.md#activity) reads it, needs an attached session; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
-To keep the agents that need you on screen while you work, show the sidebar's
-[Agents tab](sidebar.md#agents).
+To keep every agent in sight while you work, listed under the checkout it works in, show the
+sidebar's [Agents tab](sidebar.md#agents). To go to the next agent that needs you without opening
+Agents, bind `focus-next-agent-needing-attention`; each press goes to the next one after the agent
+on screen, in this list's order.
 
 ## Name or rename a session
 

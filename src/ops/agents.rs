@@ -180,6 +180,28 @@ pub(crate) fn activate_from_sidebar(ctx: &mut Context<AppRoot>, location: AgentL
     }
 }
 
+/// The agent `focus-next-agent-needing-attention` goes to: the one after the agent on screen
+/// among those that need the user, in the Agents view's order - blocked, then failed, then
+/// finished runs nobody has looked at - wrapping to the first. `None` when no other agent needs
+/// the user.
+///
+/// Stepping past the agent on screen rather than restarting from the top is what moves the user
+/// on: a blocked agent stays blocked after they look at it, and would otherwise be chosen again.
+pub(crate) fn next_agent_needing_attention(state: &crate::state::State) -> Option<AgentLocation> {
+    let waiting: Vec<_> = crate::view::agents::global_agent_rows(state)
+        .into_iter()
+        .filter(crate::view::agents::GlobalAgentRow::needs_attention)
+        .collect();
+    let start = waiting
+        .iter()
+        .position(|row| row.is_on_screen(state))
+        .map_or(0, |index| index + 1);
+    (0..waiting.len())
+        .map(|offset| &waiting[(start + offset) % waiting.len()])
+        .find(|row| !row.is_on_screen(state))
+        .map(|row| row.location.clone())
+}
+
 /// Every agent this client knows about, in the Agents tab's order, for `agents-overview`.
 pub(crate) fn overview(state: &crate::state::State) -> Vec<crate::control::GlobalAgentInfo> {
     crate::view::agents::global_agent_rows(state)
@@ -601,7 +623,7 @@ mod tests {
                             let tab = if entry_point == "projects" {
                                 crate::config::SidebarTab::Projects
                             } else {
-                                crate::config::SidebarTab::Agents
+                                crate::config::SidebarTab::agents()
                             };
                             let state = backend.state_mut();
                             state.config.sidebar.tabs = vec![tab.clone()];

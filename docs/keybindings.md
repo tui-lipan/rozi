@@ -133,6 +133,8 @@ These actions are available in the command palette, and you can bind them under 
 - `toggle-pane-logging`
 - `respawn-pane`
 - `focus-next-blocked-pane`
+- `focus-next-agent-needing-attention`, which goes to the next agent waiting for you, failed, or
+  finished unseen, in any session or on any connected host; see [Agents](sidebar.md#agents)
 - `smart-focus-left`, `smart-focus-down`, `smart-focus-up`, `smart-focus-right`
 - `settings`
 - `extensions`

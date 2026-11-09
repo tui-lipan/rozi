@@ -1441,9 +1441,9 @@ fn sidebar_activity() {
     write_png(&mut backend, "sidebar-activity-folded");
 }
 
-/// The Agents tab as an inbox: a blocked session that named its work and said why, a failed run in
-/// another session, and a finished run nobody has read. The agents still working - one here, one in
-/// the other session - are Activity's and the Agents view's, so the tab leaves them out.
+/// The Agents tab: every agent under the checkout it works in. Claude Code runs twice in `rozi`, a
+/// blocked session that named its work and said why and a finished run nobody has read, so it
+/// clusters; Codex works alone in `tui-lipan`; another session works in `api`, one run failed.
 fn sidebar_agents() {
     use rozi::session::protocol::{
         AgentIdentity, AgentRecord, AgentRef, AgentState, AgentSummary, DetectedAgent,
@@ -1468,10 +1468,10 @@ fn sidebar_agents() {
         let state = backend.state_mut();
         state.config.animations.enabled = false;
         state.sidebar.shown = [true, false];
-        state.config.sidebar.tabs = vec![SidebarTab::Agents];
+        state.config.sidebar.tabs = vec![SidebarTab::agents()];
         state.config.sidebar.layout.left.panel_count = 1;
         state.sidebar.apply_configured_panels(&state.config.sidebar);
-        state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+        state.sidebar.panels[0].active_tab = Some(SidebarTab::agents().id());
         state.current_mut().session_name = Some("dev".into());
 
         let mut claude = live_pane(10);
@@ -1648,7 +1648,7 @@ fn sidebar_activity_worktrees() {
     }
     backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Activity {
         config: rozi::config::SidebarActivityConfig {
-            worktrees: rozi::config::ActivityWorktrees::Repository,
+            worktrees: rozi::config::WorktreeLayout::Repository,
         },
     }];
     for width in [28, 32, 44] {

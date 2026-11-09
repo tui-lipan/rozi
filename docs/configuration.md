@@ -795,7 +795,7 @@ An extension can add the same kinds of tab from its manifest; see
 
 ### Built-in tab settings
 
-Built-in tabs are listed in `tabs` by name only. Activity, Files, and Git take settings in a table
+Built-in tabs are listed in `tabs` by name only. Activity, Agents, Files, and Git take settings in a table
 of their own, `[sidebar.settings.<tab>]`. **Sidebar tabs…** edits the same tables; see
 [Tab settings](sidebar.md#tab-settings).
 
@@ -811,6 +811,7 @@ show_hidden = false
 | Tab | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- | --- |
 | `activity` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. See [Activity](sidebar.md#activity). |
+| `agents` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`, independent of Activity's. See [Agents](sidebar.md#agents). |
 | `files`, `git` | `explorer` | bool | `true` for files, `false` for git | Shows a search field above the tree. |
 | `files`, `git` | `show_hidden` | bool | `true` | Lists entries whose names start with a dot. |
 | `files`, `git` | `root` | string | `"cwd"` for files, `"repo"` for git | `"cwd"` for the focused pane's directory, `"repo"` for the repository containing it. |

@@ -231,14 +231,14 @@ fn checkout_index(
 }
 
 /// The last segment of a path, the name a directory goes by.
-fn path_name(path: &str) -> String {
+pub(crate) fn path_name(path: &str) -> String {
     crate::platform::paths::path_segments(path)
         .last()
         .map_or_else(|| path.to_string(), |name| (*name).to_string())
 }
 
 /// `rozi`, or `work/rozi` when another repository on the same host is also called `rozi`.
-fn repository_labels(repositories: &[&str]) -> Vec<String> {
+pub(crate) fn repository_labels(repositories: &[&str]) -> Vec<String> {
     repositories
         .iter()
         .map(|repository| {
@@ -261,32 +261,24 @@ fn repository_labels(repositories: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// Whether an agent row runs in `session` on `host`, in the checkout `summary` describes.
+/// Whether an agent row runs in `session` on `host`, in the checkout `summary` describes. The
+/// checkout is the one the agent projection placed it in, which the Agents tab groups by too.
 fn agent_in(
     state: &State,
     agent: &GlobalAgentRow,
     host: Option<&RemoteTarget>,
     summary: &ProjectSummary,
-    summaries: &[ProjectSummary],
 ) -> bool {
-    let (agent_host, session, pane, row) = match &agent.location {
-        AgentLocation::Here { pane, row } => (
-            state.current().remote_target.as_ref(),
-            agent.session.as_str(),
-            *pane,
-            row.as_ref(),
-        ),
-        AgentLocation::OtherSession {
-            target,
-            session,
-            pane,
-            row,
-        } => (target.as_ref(), session.as_str(), *pane, row.as_ref()),
+    let agent_host = match &agent.location {
+        AgentLocation::Here { .. } => state.current().remote_target.as_ref(),
+        AgentLocation::OtherSession { target, .. } => target.as_ref(),
     };
     agent_host == host
-        && session == summary.session
-        && crate::session::protocol::checkout_of(summaries, session, pane, row)
-            .is_some_and(|found| found.root == summary.root)
+        && agent.session == summary.session
+        && agent
+            .checkout
+            .as_ref()
+            .is_some_and(|checkout| checkout.root == summary.root)
 }
 
 fn agent_tone(agent: &GlobalAgentRow) -> SidebarTone {
@@ -342,7 +334,7 @@ fn host_rows(
     let agents_of = |summary: &ProjectSummary| -> Vec<&GlobalAgentRow> {
         agents
             .iter()
-            .filter(|agent| agent_in(state, agent, host, summary, &summaries))
+            .filter(|agent| agent_in(state, agent, host, summary))
             .collect()
     };
 

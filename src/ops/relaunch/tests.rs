@@ -633,7 +633,7 @@ fn the_dialog_names_each_session_and_what_becomes_of_it() {
 }
 
 #[test]
-fn a_blocked_session_gives_its_reason_on_a_line_of_its_own() {
+fn the_dialog_leads_with_what_blocks_then_what_it_costs() {
     crate::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(tui_lipan::prelude::Rect {
@@ -660,15 +660,20 @@ fn a_blocked_session_gives_its_reason_on_a_line_of_its_own() {
                 .position(|line| line.contains(needle))
                 .unwrap_or_else(|| panic!("missing {needle:?} in\n{screen}"))
         };
+        let upgraded = row("● dev");
         assert!(
-            lines[row("● dev")].contains("Upgraded · its programs end"),
+            lines[upgraded].contains("Upgraded") && lines[upgraded].contains("programs end"),
             "{screen}"
         );
         let blocked = row("◐ ephemeral");
         assert!(lines[blocked].contains("Blocked"), "{screen}");
         assert!(
             lines[blocked + 1].contains("needs an upgrade"),
-            "the reason goes under its session, not into the status column:\n{screen}"
+            "the reason goes under its session:\n{screen}"
+        );
+        assert!(
+            blocked < upgraded && upgraded < row("build"),
+            "what stops the restart comes first, the build last:\n{screen}"
         );
         assert!(screen.contains("Close"), "{screen}");
     });

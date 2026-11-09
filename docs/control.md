@@ -152,11 +152,11 @@ Discovery fails if the runtime directory contains no live endpoints, or more tha
 them is the only UI showing the calling pane's session. Pass `--socket` when several UIs are
 running. Put `--socket PATH` before the command.
 
-`agents report` and `agents release` are the exception. Run from a pane with no `ROZI_SOCKET` — a
-remote pane, or one in a session with no window attached — and without `--target`, they go to the
-session server the pane runs in, which `ROZI_SESSION_INSTANCE` identifies. The session keeps the
-latest report, so every window attached to it shows the state, including one on another machine and
-one that attaches later.
+`status`, `agents report`, and `agents release` are the exception. Run from a pane with no
+`ROZI_SOCKET` — a remote pane, or one in a session with no window attached — and without
+`--target`, they go to the session server the pane runs in, which `ROZI_SESSION_INSTANCE`
+identifies. The session keeps the latest state, so every window attached to it shows it, including
+one on another machine and one that attaches later.
 
 | Platform | Endpoint named by `ROZI_SOCKET` |
 | --- | --- |
@@ -174,15 +174,17 @@ server it runs in, so a UI holding several sessions can tell whose pane is askin
 a scratch or popup pane. Remote panes do not receive the local client's `ROZI_SOCKET` or `ROZI_BIN`, and
 neither does a pane opened by `rozi --session <NAME> split` or restored after a restart, because
 there is no UI for them to name. Commands from such a pane reach the UI showing its session once one
-attaches, its agent reports reach the session without one, and `rozi --here` reaches the session
-either way.
+attaches, its statuses and agent reports reach the session without one, and `rozi --here` reaches
+the session either way.
 
 ## Target selection
 
 Commands that accept `--target` use it first.
 
 Against a **UI endpoint**, the CLI otherwise sends the calling pane's `ROZI_PANE`, and rozi falls
-back to the focused pane.
+back to the focused pane. `status`, `agents report`, and `agents release` from a pane of a session
+the UI keeps in the background apply to that pane in its own session, while another session is on
+screen.
 
 Against a **session endpoint**, `ROZI_PANE` is ignored. A pane id does not say which session it
 belongs to, so a script in pane 3 of `work` running `rozi --session dev send-text …` would

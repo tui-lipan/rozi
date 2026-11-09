@@ -51,6 +51,33 @@ pub fn from_process_with_progress(
     from_platform_env_with_progress(&PlatformEnv::from_process(), observer)
 }
 
+/// Phrases a failed download carries when the machine simply is not online. `relswap` reports
+/// every download failure as one string, so this is the only way to tell "offline" from a bad
+/// response.
+const OFFLINE_MARKERS: &[&str] = &[
+    "name resolution",
+    "lookup address",
+    "failed to lookup",
+    "network is unreachable",
+    "connection refused",
+    "connection reset",
+    "timed out",
+    "no route to host",
+];
+
+/// What went wrong, for a person: being offline reads as an instruction instead of a stack of
+/// nested library errors; anything else keeps its detail.
+pub fn describe_error(error: &InstallError) -> String {
+    if let InstallError::Release(relswap::ReleaseError::Download(detail)) = error {
+        let detail = detail.to_ascii_lowercase();
+        if OFFLINE_MARKERS.iter().any(|marker| detail.contains(marker)) {
+            return "could not reach the release server - check your internet connection and try again"
+                .to_string();
+        }
+    }
+    error.to_string()
+}
+
 pub use relswap::{
     ActivationBoundary, ActivationResult, CheckResult, FaultInjector, FaultPoint, InstallError,
     InstallState, LauncherMetadata, LauncherOwnership, Manager, PendingActivation, VersionState,

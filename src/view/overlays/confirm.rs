@@ -166,6 +166,13 @@ pub(super) struct DialogChrome<'a> {
     pub(super) parent_reserve_percent: Option<u16>,
     /// How many cards stack between that list overlay and this dialog, counting the dialog.
     pub(super) layers: u16,
+    /// The modal's identity, when it must outlive a change of title: two dialogs that share a key
+    /// are one card whose content changes, rather than one card closing as another opens. `None`
+    /// keys the dialog by its title.
+    pub(super) key: Option<&'a str>,
+    /// A status colour for the frame and title, for a dialog that reports an outcome rather than
+    /// asks a question. An armed caption still wins with the error colour.
+    pub(super) tone: Option<Color>,
 }
 
 /// Shared chrome for the dialogs answered by choosing rather than typing: the palette modal every
@@ -187,6 +194,8 @@ pub(super) fn dialog_overlay(
         dim_behind,
         parent_reserve_percent,
         layers,
+        key,
+        tone,
     } = chrome;
     let theme = &ctx.state.theme;
     let mut body = VStack::new().height(Length::Auto).padding((1, 0, 0, 0));
@@ -224,6 +233,8 @@ pub(super) fn dialog_overlay(
     }
     if caption.is_some_and(PromptCaption::arms_chrome) {
         modal = crate::view::error_modal_chrome(theme, modal);
+    } else if let Some(color) = tone {
+        modal = crate::view::status_modal_chrome(theme, modal, color);
     }
-    modal.key(format!("rozi-confirm-{title}"))
+    modal.key(key.map_or_else(|| format!("rozi-confirm-{title}"), str::to_string))
 }

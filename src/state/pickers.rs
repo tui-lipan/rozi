@@ -1024,6 +1024,9 @@ pub(crate) enum ToastChannel {
     PreferenceSave,
     /// Session attach/reconnect outcomes, so repeated lifecycle failures replace one another.
     SessionLifecycle,
+    /// The newer release this client offers, so a newer one replaces it and starting the update
+    /// puts it away.
+    UpdateNotice,
 }
 
 impl SessionPickerState {

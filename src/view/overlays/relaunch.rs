@@ -81,6 +81,12 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
             dim_behind: true,
             parent_reserve_percent: None,
             layers: 1,
+            // Opened by a finished update, this is the update's card going on to its next step.
+            key: dialog
+                .expected
+                .is_some()
+                .then_some(super::self_update::CARD_KEY),
+            tone: None,
         },
         Msg::RelaunchCancel,
         &buttons,

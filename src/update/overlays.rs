@@ -1057,16 +1057,21 @@ mod tests {
                 backend.state()
             ));
             assert_eq!(
-                crate::ops::update_check::update_command_here(backend.state()),
-                Some("rozi update")
+                backend
+                    .state()
+                    .available_update
+                    .as_ref()
+                    .and_then(crate::ops::update_check::AvailableUpdate::channel),
+                Some(crate::state::UpdateChannel::Managed)
             );
         });
     }
 
-    /// The popup runs on the session's server, so a remote session in front would update the host.
-    /// Once run, the same release is not offered again; a newer one is.
+    /// The update runs in this client, so it installs the rozi this client was started from, and a
+    /// remote session in front changes nothing. Once run, the same release is not offered again; a
+    /// newer one is.
     #[test]
-    fn update_rozi_is_withheld_on_a_remote_session_and_after_it_ran() {
+    fn update_rozi_is_offered_on_a_remote_session_and_withheld_after_it_ran() {
         crate::test_support::on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             backend.dispatch(update_to("9.9.9", None)).unwrap();
@@ -1074,7 +1079,7 @@ mod tests {
             backend.state_mut().current_mut().remote_target = Some(
                 crate::session::remote::RemoteTarget::Alias("workbox".into()),
             );
-            assert!(!crate::commands::command_available(
+            assert!(crate::commands::command_available(
                 Action::UpdateRozi,
                 backend.state()
             ));
@@ -1083,7 +1088,7 @@ mod tests {
                 backend.dispatch(update_to("9.9.10", None)).unwrap();
                 last_toast(&backend)
             };
-            assert!(!toast_on_remote.contains("Commands"), "{toast_on_remote}");
+            assert!(toast_on_remote.contains("Update rozi"), "{toast_on_remote}");
             backend.state_mut().current_mut().remote_target = None;
 
             backend.state_mut().update_started = true;

@@ -3515,67 +3515,6 @@ fn attached_agent_acknowledgement_rejects_another_epoch_body() {
     assert!(response.recv().expect("pending reply").ok);
 }
 
-/// The update popup runs the updater and stays open. Success leaves the old build running, so it
-/// opens Restart rozi for the release just installed; failure brings **Update rozi** back to retry.
-#[test]
-fn the_update_popup_exit_reports_what_is_left() {
-    fn exit_update_popup(code: i32) -> TestBackend<crate::AppRoot> {
-        let mut backend = TestBackend::new(crate::AppRoot::default());
-        let generation = {
-            let state = backend.state_mut();
-            state.available_update = Some(crate::ops::update_check::AvailableUpdate::for_test(
-                "9.9.9",
-                crate::platform::install_source::InstallSource::Managed,
-                None,
-            ));
-            state.update_started = true;
-            let mut pane = crate::state::Pane::new(
-                crate::pane::id::POPUP_PANE_ID,
-                100,
-                tui_lipan::prelude::FloatRect::default(),
-            );
-            pane.opening = false;
-            pane.identity.keep_open = true;
-            pane.identity.launch = Some(crate::pane::launch::PaneLaunch::shell("rozi update"));
-            let generation = pane.pty_generation;
-            state.popup = Some(pane);
-            generation
-        };
-        backend.render();
-        let epoch = backend.state().runtime_epoch;
-        backend
-            .dispatch(Msg::SessionExited {
-                epoch,
-                pane_id: crate::pane::id::POPUP_PANE_ID,
-                local: true,
-                generation,
-                code,
-            })
-            .expect("update popup exits");
-        backend
-    }
-
-    crate::test_support::on_large_stack(|| {
-        let installed = exit_update_popup(0);
-        let dialog = installed
-            .state()
-            .relaunch
-            .dialog
-            .as_ref()
-            .expect("a successful update offers to restart onto it");
-        assert_eq!(dialog.expected, Some(semver::Version::new(9, 9, 9)));
-        assert!(installed.state().popup.is_some(), "the popup stays open");
-        assert!(installed.state().update_started);
-
-        let failed = exit_update_popup(1);
-        assert!(failed.state().relaunch.dialog.is_none());
-        assert!(
-            !failed.state().update_started,
-            "a failed update is offered again"
-        );
-    });
-}
-
 /// Attaching adopts panes that are already live, so no open/activate timer ever runs to hand one
 /// the keyboard - and the framework's `OnDemand` focus policy has no first-widget fallback. Without
 /// an explicit request the session draws its focused pane as focused while input goes nowhere until

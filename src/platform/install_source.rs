@@ -161,7 +161,8 @@ impl InstallSource {
             Self::WinGet => entries.extend(
                 ancestor_before(running, "Packages").map(|winget| winget.join("Links").join(name)),
             ),
-            Self::Mise | Self::SystemPackage | Self::Unknown => {}
+            Self::Mise => entries.extend(mise_latest(running, env)),
+            Self::SystemPackage | Self::Unknown => {}
         }
         entries
     }
@@ -207,6 +208,29 @@ fn mise_installs(env: &SourceEnv) -> Option<PathBuf> {
         .clone()
         .or_else(|| Some(env.home.as_ref()?.join(".local").join("share").join("mise")))
         .map(|data| data.join("installs"))
+}
+
+/// `running` with its version directory replaced by mise's `latest` link, which mise points at the
+/// newest version of the tool it has installed: `installs/<tool>/<version>/…` becomes
+/// `installs/<tool>/latest/…`. `None` for a path outside mise's installs.
+fn mise_latest(running: &Path, env: &SourceEnv) -> Option<PathBuf> {
+    let installs = mise_installs(env)
+        .filter(|installs| running.starts_with(installs))
+        .or_else(|| {
+            // A mise data directory elsewhere: the path names it as `mise/installs`.
+            let components: Vec<_> = running.components().collect();
+            let index = components.windows(2).position(|pair| {
+                pair[0].as_os_str().eq_ignore_ascii_case("mise")
+                    && pair[1].as_os_str().eq_ignore_ascii_case("installs")
+            })?;
+            Some(components[..=index + 1].iter().collect())
+        })?;
+    let mut rest = running.strip_prefix(&installs).ok()?.components();
+    let tool = rest.next()?;
+    rest.next()?;
+    let mut latest = installs.join(tool).join("latest");
+    latest.push(rest.as_path());
+    Some(latest)
 }
 
 fn scoop_apps(env: &SourceEnv) -> Option<PathBuf> {
@@ -335,7 +359,17 @@ mod tests {
             (
                 InstallSource::Mise,
                 "/home/dev/.local/share/mise/installs/rozi/0.1.0/rozi",
-                vec![],
+                vec![PathBuf::from(
+                    "/home/dev/.local/share/mise/installs/rozi/latest/rozi",
+                )],
+            ),
+            // A data directory of its own still names itself in the path.
+            (
+                InstallSource::Mise,
+                "/srv/mise/installs/cargo-rozi/0.1.0/bin/rozi",
+                vec![PathBuf::from(
+                    "/srv/mise/installs/cargo-rozi/latest/bin/rozi",
+                )],
             ),
             (InstallSource::SystemPackage, "/usr/bin/rozi", vec![]),
         ];

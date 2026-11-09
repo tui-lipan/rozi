@@ -45,6 +45,32 @@ pub enum Msg {
         attempt: u64,
         result: std::result::Result<(), String>,
     },
+    /// **Update rozi**'s worker reports progress. Fenced by the run's generation.
+    SelfUpdateProgress {
+        generation: u64,
+        event: crate::state::SelfUpdateEvent,
+    },
+    /// **Update rozi**'s worker is done: the release it proved it installed, or why it did not.
+    SelfUpdateFinished {
+        generation: u64,
+        result: std::result::Result<semver::Version, String>,
+    },
+    /// The installed release has been on the card long enough; turn the card into Restart rozi.
+    SelfUpdateSettled {
+        generation: u64,
+    },
+    /// Put the update card away while the update keeps going.
+    SelfUpdateHide,
+    /// The toast for a release installed in the background was clicked: offer the restart onto it.
+    SelfUpdateRestart {
+        version: semver::Version,
+        /// That release's own release-wide note, if it has one.
+        note: Option<String>,
+    },
+    /// Run a failed update again.
+    SelfUpdateRetry,
+    /// Move focus to one of the update card's answers.
+    SelfUpdateFocusAnswer(usize),
     /// This install is about to join the anonymous weekly usage count for the first time, and this
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.

@@ -606,6 +606,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_release_notes {
         root = root.child(overlays::release_notes_overlay(ctx));
     }
+    // Side by side: the update's card becomes the relaunch dialog under one key.
+    if ctx.state.self_update.visible() {
+        root = root.child(overlays::self_update_overlay(ctx));
+    }
     if ctx.state.relaunch.dialog.is_some() {
         root = root.child(overlays::relaunch_overlay(ctx));
     }
@@ -1151,13 +1155,17 @@ pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> M
 /// failure or an armed action. The modal captures focus when it opens, so `focus_style` repeats
 /// the accent or the theme focus role repaints the border.
 pub(crate) fn error_modal_chrome(theme: &Theme, modal: Modal) -> Modal {
-    let frame = Style::new()
-        .bg(theme.surface.element)
-        .fg(theme.status.error);
+    status_modal_chrome(theme, modal, theme.status.error)
+}
+
+/// A modal whose frame and title wear a status colour, whether or not anything in it has focus:
+/// the card itself is the news, such as an update that just finished.
+pub(crate) fn status_modal_chrome(theme: &Theme, modal: Modal, color: Color) -> Modal {
+    let frame = Style::new().bg(theme.surface.element).fg(color);
     modal
         .frame_style(frame)
         .focus_style(frame)
-        .title_style(Style::new().fg(theme.status.error).bold())
+        .title_style(Style::new().fg(color).bold())
 }
 
 /// Shared cap for command-palette-shaped overlays (`OverlayPalette`, theme picker, install

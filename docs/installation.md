@@ -242,7 +242,7 @@ running sessions: they keep working, or sessions on the current protocol generat
 [Upgrade session](sessions.md#upgrade-a-session). If the release raises the extension API or
 starts a new generation, the toast uses warning colors. Each
 release is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
-Commands, which runs the update in a popup (see
+Commands, which runs the update in a dialog that shows its progress (see
 [Update notices](configuration.md#update-notices)).
 
 The same check also adds the install to the anonymous weekly [usage count](usage-count.md).

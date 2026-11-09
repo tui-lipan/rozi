@@ -10,7 +10,7 @@ mod managed;
 #[cfg(windows)]
 mod windows;
 
-pub use managed::{forget_install, install_managed, refresh_managed};
+pub use managed::{forget_install, install_managed, refresh_after_update};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillPaths {

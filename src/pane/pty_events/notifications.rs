@@ -340,10 +340,49 @@ pub(crate) fn notify_update(
     .duration(ANNOUNCEMENT_TOAST_SECS);
     notify(
         ctx,
+        ToastKey::Channel(crate::state::ToastChannel::UpdateNotice),
+        content,
+        toast,
+    )
+}
+
+/// The release an update in the background just installed, in the success colour. A click sends
+/// `on_click`, which opens the restart, and dismisses the toast.
+///
+/// Keyed by what it says rather than taking the update notice's slot: a newer release can be
+/// announced while an older one installs, and its notice must not be replaced by the older news.
+pub(crate) fn notify_update_installed(
+    ctx: &mut Context<AppRoot>,
+    title: impl Into<String>,
+    message: impl Into<ToastBody>,
+    on_click: crate::Msg,
+) -> Notified {
+    let (title, message) = (title.into(), message.into());
+    let content = toast_content(Some(&title), &message.source());
+    let callback = ctx.link().callback(move |_| on_click.clone());
+    let toast = titled_toast(
+        &ctx.state.theme,
+        ctx.state.theme.status.success,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        message,
+    )
+    .duration(ANNOUNCEMENT_TOAST_SECS)
+    .on_click(callback);
+    notify(
+        ctx,
         ToastKey::Content(content_key(&content)),
         content,
         toast,
     )
+}
+
+/// Put the newer-release toast away: the update it offered has started, and its card says more.
+pub(crate) fn dismiss_update_notice(ctx: &mut Context<AppRoot>) {
+    let key = ToastKey::Channel(crate::state::ToastChannel::UpdateNotice);
+    if let Some(tracked) = ctx.state.replaceable_toasts.remove(&key) {
+        ctx.toast().dismiss(tracked.id);
+    }
 }
 
 /// A once-only info announcement whose details live on a page: a click sends `on_click` (which

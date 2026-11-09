@@ -36,11 +36,20 @@ pub(crate) fn self_update_overlay(ctx: &Context<AppRoot>) -> Element {
         ],
         // Nothing to answer: the card is about to become the restart dialog.
         UpdatePhase::Installed => Vec::new(),
+        // Says that the update goes on: "Hide" alone reads as if it might stop it.
         _ => vec![DialogButton::new(
-            "Hide",
+            "Run in background",
             Msg::SelfUpdateHide,
             Msg::SelfUpdateFocusAnswer(DIALOG_REFUSE),
         )],
+    };
+    // A settled card reports its outcome in its frame; with no answer to focus, it would otherwise
+    // fall back to the resting border while it waits to become the restart dialog.
+    let theme = &ctx.state.theme;
+    let tone = match &run.phase {
+        UpdatePhase::Installed => Some(theme.status.success),
+        UpdatePhase::Failed { .. } => Some(theme.status.error),
+        _ => None,
     };
     dialog_overlay(
         ctx,
@@ -55,6 +64,7 @@ pub(crate) fn self_update_overlay(ctx: &Context<AppRoot>) -> Element {
             parent_reserve_percent: None,
             layers: 1,
             key: Some(CARD_KEY),
+            tone,
         },
         Msg::SelfUpdateHide,
         &buttons,

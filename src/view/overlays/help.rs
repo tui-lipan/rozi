@@ -1337,6 +1337,7 @@ fn keybinding_reset_all_overlay(ctx: &Context<AppRoot>) -> Element {
             parent_reserve_percent: Some(HELP_MAX_HEIGHT_PERCENT),
             layers: 1,
             key: None,
+            tone: None,
         },
         Msg::KeybindingConfirmResetAll(false),
         &buttons,

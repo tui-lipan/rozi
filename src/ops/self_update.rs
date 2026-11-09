@@ -197,7 +197,7 @@ pub(crate) fn focus_answer(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     Update::full()
 }
 
-/// The answer the card opens on: **Hide** while working, **Try again** once failed.
+/// The answer the card opens on: **Run in background** while working, **Try again** once failed.
 fn focus_default(ctx: &mut Context<AppRoot>) {
     let failed = ctx
         .state
@@ -486,7 +486,7 @@ mod tests {
                 versions.as_str(),
                 "Download",
                 "Install",
-                "Hide",
+                "Run in background",
             ] {
                 assert!(
                     opening.contains(expected),

@@ -86,6 +86,7 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
                 .expected
                 .is_some()
                 .then_some(super::self_update::CARD_KEY),
+            tone: None,
         },
         Msg::RelaunchCancel,
         &buttons,

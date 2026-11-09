@@ -271,11 +271,51 @@ impl SettingsAction {
         }
     }
 
-    pub fn disabled_reason_for_state(self, state: &super::State) -> Option<&'static str> {
+    pub fn associated_action(self) -> Option<crate::input::Action> {
+        use crate::input::Action;
+        if let super::SettingControl::ActionToggle { action, .. } = self.spec().control {
+            return Some(action);
+        }
+        match self {
+            Self::Theme => Some(Action::OpenThemePicker),
+            Self::ChooseTitlebar => Some(Action::CycleTitlebar),
+            Self::CycleTitleStyle => Some(Action::CycleTitleStyle),
+            Self::ChooseWorkbar => Some(Action::ToggleWorkbar),
+            Self::CycleWorkbarStyle => Some(Action::CycleWorkbarStyle),
+            Self::CycleWorkbarBadgeStyle => Some(Action::CycleWorkbarBadgeStyle),
+            Self::CycleWorkbarTabStyle => Some(Action::CycleWorkbarTabStyle),
+            Self::CycleBorderMode => Some(Action::CycleBorderMode),
+            Self::CycleBorderStyle => Some(Action::CycleBorderStyle),
+            Self::CycleFloatBorderStyle => Some(Action::CycleFloatBorderStyle),
+            Self::CycleScratchBorderStyle => Some(Action::CycleScratchBorderStyle),
+            Self::CycleFullscreenBorderStyle => Some(Action::CycleFullscreenBorderStyle),
+            Self::CyclePickerBorderStyle => Some(Action::CyclePickerBorderStyle),
+            Self::CyclePickerTabStyle => Some(Action::CyclePickerTabStyle),
+            Self::CyclePickerSelectionStyle => Some(Action::CyclePickerSelectionStyle),
+            Self::SidebarTabs => Some(Action::SidebarTabs),
+            Self::CycleSidebarTabStyle => Some(Action::CycleSidebarTabStyle),
+            Self::CycleAlertBorder => Some(Action::CycleAlertBorder),
+            Self::CycleWorkbarAlert => Some(Action::CycleWorkbarAlert),
+            Self::CycleWorkbarAlertPaint => Some(Action::CycleWorkbarAlertPaint),
+            _ => None,
+        }
+    }
+
+    pub fn disabled_reason_for_state(
+        self,
+        state: &super::State,
+    ) -> Option<std::borrow::Cow<'static, str>> {
+        if let Some(reason) = self
+            .associated_action()
+            .and_then(|action| crate::commands::action_disabled_reason(action, state))
+        {
+            return Some(std::borrow::Cow::Owned(reason));
+        }
         if self == Self::ToggleKeepAwakeWhileAgentsWork && state.current().remote_target.is_some() {
-            Some("Configure on remote host")
+            Some(std::borrow::Cow::Borrowed("Configure on remote host"))
         } else {
             self.disabled_reason(&state.config)
+                .map(std::borrow::Cow::Borrowed)
         }
     }
 

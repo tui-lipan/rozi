@@ -1,0 +1,12 @@
+{
+  "changes": [
+    {
+      "path": "example",
+      "staged": false,
+      "state": "added"
+    }
+  ],
+  "error": "example",
+  "root": "example",
+  "type": "change-listing"
+}

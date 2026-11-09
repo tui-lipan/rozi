@@ -12,6 +12,8 @@ const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
 /// be the pane's own, and its report is then lost. Every server is asked at once, so this bounds
 /// the whole lookup, which has to leave room in a hook's budget for the report itself.
 const INSTANCE_QUERY_TIMEOUT: Duration = Duration::from_millis(400);
+/// How long a command about one named session waits for it to answer.
+const SINGLE_SESSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiscoveredSessionStatus {
@@ -19,6 +21,8 @@ pub enum DiscoveredSessionStatus {
         panes: usize,
         clients: u32,
         has_layout: bool,
+        effective_protocol: Option<u32>,
+        rozi_version: Option<String>,
     },
     /// No server is running, but a resurrection snapshot can seed one under this name.
     Restorable,
@@ -51,6 +55,24 @@ pub struct DiscoveredSession {
     /// Exact remote endpoint used for discovery. Kept separately from the short display label so
     /// user/port distinctions survive activation and retained-attachment lookup.
     pub remote_target: Option<crate::session::remote::RemoteTarget>,
+}
+
+impl DiscoveredSession {
+    pub fn effective_protocol(&self) -> Option<u32> {
+        match &self.status {
+            DiscoveredSessionStatus::Running {
+                effective_protocol, ..
+            } => *effective_protocol,
+            _ => None,
+        }
+    }
+
+    pub fn rozi_version(&self) -> Option<&str> {
+        match &self.status {
+            DiscoveredSessionStatus::Running { rozi_version, .. } => rozi_version.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// One local metadata sweep. Session rows and agent summaries must travel together so an Agents
@@ -213,11 +235,15 @@ pub(crate) struct SessionDiagnosticCounts {
     pub incompatible: usize,
     pub restorable: usize,
     pub unknown: usize,
+    pub running_versions: Vec<(Option<String>, Option<u32>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum DiagnosticSessionStatus {
-    Running,
+    Running {
+        rozi_version: Option<String>,
+        effective_protocol: Option<u32>,
+    },
     Incompatible,
     Unknown,
 }
@@ -244,11 +270,20 @@ pub(crate) fn diagnostic_counts() -> std::io::Result<SessionDiagnosticCounts> {
         };
         live_names.insert(name);
         match status {
-            DiagnosticSessionStatus::Running => counts.running += 1,
+            DiagnosticSessionStatus::Running {
+                rozi_version,
+                effective_protocol,
+            } => {
+                counts.running += 1;
+                counts
+                    .running_versions
+                    .push((rozi_version, effective_protocol));
+            }
             DiagnosticSessionStatus::Incompatible => counts.incompatible += 1,
             DiagnosticSessionStatus::Unknown => counts.unknown += 1,
         }
     }
+    counts.running_versions.sort();
     counts.restorable = crate::session::server::list_snapshot_summaries_by_recency()
         .iter()
         .filter(|snapshot| !live_names.contains(&snapshot.session))
@@ -270,9 +305,18 @@ fn diagnostic_session_status(
         Ok(answer) if answer.refusal.as_deref() == Some("protocol-mismatch") => {
             Some(DiagnosticSessionStatus::Incompatible)
         }
-        Ok(answer) if matches!(answer.status, DiscoveredSessionStatus::Running { .. }) => {
-            Some(DiagnosticSessionStatus::Running)
-        }
+        Ok(QueryAnswer {
+            status:
+                DiscoveredSessionStatus::Running {
+                    rozi_version,
+                    effective_protocol,
+                    ..
+                },
+            ..
+        }) => Some(DiagnosticSessionStatus::Running {
+            rozi_version,
+            effective_protocol,
+        }),
         Err(err) if peer_hung_up(err.kind()) => None,
         _ => Some(DiagnosticSessionStatus::Unknown),
     }
@@ -282,6 +326,118 @@ fn diagnostic_session_status(
 pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>> {
     let endpoint = crate::session::server::session_endpoint(name)?;
     Ok(query_session_endpoint(name, &endpoint))
+}
+
+/// How a session's release compares with this build's, by semantic version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleaseOrder {
+    /// The session runs an older release: upgrading moves it onto this build.
+    Older,
+    Same,
+    /// The session runs a newer release. Restarting it on this build would downgrade it, and
+    /// this build may not read the snapshot that release wrote.
+    Newer,
+}
+
+/// Compare a session's reported release with this build. `None` when either is not a version.
+pub(crate) fn release_order(session_version: &str) -> Option<ReleaseOrder> {
+    let session = semver::Version::parse(session_version).ok()?;
+    let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
+    Some(match session.cmp(&this) {
+        std::cmp::Ordering::Less => ReleaseOrder::Older,
+        std::cmp::Ordering::Equal => ReleaseOrder::Same,
+        std::cmp::Ordering::Greater => ReleaseOrder::Newer,
+    })
+}
+
+/// What one named session says about the release it runs, asked once with time to answer. A
+/// discovery sweep gives up on a slow server quickly and lists it busy; a command about this one
+/// session can wait.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SessionRelease {
+    /// It answered; the release is `None` only from a server that predates reporting it.
+    Running(Option<String>),
+    /// It refused this build's generation. `None` from a server before generation 52, which never
+    /// said who it was and is therefore older than any build that asks.
+    Incompatible(Option<crate::session::protocol::PeerRelease>),
+    /// Nothing accepted the connection: no server runs under the name.
+    NotRunning,
+    /// A server accepted the connection but gave no answer this build could read: it timed out,
+    /// sent something malformed, or refused for another reason.
+    Unknown,
+}
+
+/// Whether an upgrade may stop a session's server and replace it with this build.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UpgradeDisposition {
+    /// The server is known to be older than this build, or this build exactly, or not running.
+    Replace,
+    /// The server runs this newer release or generation; replacing it would downgrade it.
+    RefuseNewer(String),
+    /// Nothing proves the server is safe to replace.
+    RefuseUnverified,
+}
+
+pub(crate) fn session_release(name: &str) -> SessionRelease {
+    session_release_and_server(name).0
+}
+
+/// [`session_release`], with the process id of the server that answered, so a caller about to act
+/// on the answer can make sure it acts on that same server.
+pub(crate) fn session_release_and_server(name: &str) -> (SessionRelease, Option<u32>) {
+    let Some(mut stream) = crate::session::server::session_endpoint(name)
+        .ok()
+        .and_then(|endpoint| endpoint.connect().ok())
+    else {
+        return (SessionRelease::NotRunning, None);
+    };
+    let server = stream.peer_pid();
+    let release = match query_status_within(name, &mut stream, None, SINGLE_SESSION_QUERY_TIMEOUT) {
+        Ok(QueryAnswer {
+            status: DiscoveredSessionStatus::Running { rozi_version, .. },
+            ..
+        }) => SessionRelease::Running(rozi_version),
+        Ok(answer)
+            if answer.refusal.as_deref()
+                == Some(crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE) =>
+        {
+            SessionRelease::Incompatible(answer.refused_by)
+        }
+        _ => SessionRelease::Unknown,
+    };
+    (release, server)
+}
+
+impl SessionRelease {
+    /// Whether an upgrade may replace this server. It fails closed: only positive evidence that the
+    /// server is no newer than this build allows it.
+    pub(crate) fn upgrade_disposition(&self) -> UpgradeDisposition {
+        use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
+        match self {
+            Self::NotRunning => UpgradeDisposition::Replace,
+            Self::Running(Some(version)) => match release_order(version) {
+                Some(ReleaseOrder::Older | ReleaseOrder::Same) => UpgradeDisposition::Replace,
+                Some(ReleaseOrder::Newer) => UpgradeDisposition::RefuseNewer(version.clone()),
+                None => UpgradeDisposition::RefuseUnverified,
+            },
+            // Only a server before generation 52 refuses without saying who it is.
+            Self::Incompatible(None) => UpgradeDisposition::Replace,
+            Self::Incompatible(Some(peer)) => {
+                let order = release_order(&peer.rozi_version);
+                if order == Some(ReleaseOrder::Newer) || peer.protocol_min > PROTOCOL_VERSION {
+                    UpgradeDisposition::RefuseNewer(peer.rozi_version.clone())
+                } else if order == Some(ReleaseOrder::Older)
+                    && peer.protocol_min <= peer.protocol_max
+                    && peer.protocol_max < MIN_SUPPORTED_PROTOCOL
+                {
+                    UpgradeDisposition::Replace
+                } else {
+                    UpgradeDisposition::RefuseUnverified
+                }
+            }
+            Self::Running(None) | Self::Unknown => UpgradeDisposition::RefuseUnverified,
+        }
+    }
 }
 
 pub fn discover_sessions_excluding(
@@ -421,6 +577,8 @@ struct QueryAnswer {
     instance: Option<crate::session::protocol::SessionInstanceId>,
     /// The error code a server answered with instead, such as `protocol-mismatch`.
     refusal: Option<String>,
+    /// The refusing server's release and window, when it said.
+    refused_by: Option<crate::session::protocol::PeerRelease>,
 }
 
 impl QueryAnswer {
@@ -436,6 +594,7 @@ impl QueryAnswer {
             projects: Vec::new(),
             instance: None,
             refusal: None,
+            refused_by: None,
         }
     }
 }
@@ -475,6 +634,8 @@ fn query_status_within(
             panes,
             clients,
             has_layout,
+            effective_protocol,
+            rozi_version,
             origin,
             agents,
             projects,
@@ -485,15 +646,20 @@ fn query_status_within(
                 panes,
                 clients,
                 has_layout,
+                effective_protocol: Some(effective_protocol),
+                rozi_version: rozi_version
+                    .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
             },
             origin,
             agents,
             projects,
             instance,
             refusal: None,
+            refused_by: None,
         }),
-        ServerMessage::Error { code, .. } => Ok(QueryAnswer {
+        ServerMessage::Error { code, peer, .. } => Ok(QueryAnswer {
             refusal: Some(code),
+            refused_by: peer,
             ..QueryAnswer::unknown()
         }),
         _ => Ok(QueryAnswer::unknown()),
@@ -994,6 +1160,10 @@ pub fn parse_remote_list_json(
         #[serde(default)]
         layout: Option<bool>,
         #[serde(default)]
+        effective_protocol: Option<u32>,
+        #[serde(default)]
+        rozi_version: Option<String>,
+        #[serde(default)]
         origin: crate::session::origin::SessionOrigin,
         #[serde(default)]
         ephemeral: bool,
@@ -1007,6 +1177,10 @@ pub fn parse_remote_list_json(
                     panes: row.panes.unwrap_or(0),
                     clients: row.clients.unwrap_or(0),
                     has_layout: row.layout.unwrap_or(false),
+                    effective_protocol: row.effective_protocol,
+                    rozi_version: row
+                        .rozi_version
+                        .filter(|v| !v.is_empty() && !v.chars().any(char::is_control)),
                 },
                 "restorable" => DiscoveredSessionStatus::Restorable,
                 "unreadable" => DiscoveredSessionStatus::Unreadable,
@@ -1045,11 +1219,19 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
                     panes,
                     clients,
                     has_layout,
+                    effective_protocol,
+                    rozi_version,
                 } => {
                     obj["status"] = serde_json::json!("running");
                     obj["panes"] = serde_json::json!(panes);
                     obj["clients"] = serde_json::json!(clients);
                     obj["layout"] = serde_json::json!(has_layout);
+                    if let Some(protocol) = effective_protocol {
+                        obj["effective_protocol"] = serde_json::json!(protocol);
+                    }
+                    if let Some(version) = rozi_version {
+                        obj["rozi_version"] = serde_json::json!(version);
+                    }
                 }
                 // The CLI probes live and never reads the client's host cache, so this does not
                 // occur today. Serialized honestly anyway: `panes` is a remembered count, and a
@@ -1084,6 +1266,68 @@ mod tests {
     }
 
     use super::*;
+
+    /// An upgrade replaces a server only on positive evidence that it is no newer than this build.
+    /// A newer release or generation is refused by name, and an answer that proves nothing - a
+    /// timeout, a malformed or missing version - is refused too.
+    #[test]
+    fn an_upgrade_replaces_only_a_server_proven_no_newer() {
+        use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, PeerRelease};
+        use UpgradeDisposition::{RefuseNewer, RefuseUnverified, Replace};
+        let this = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        let newer = semver::Version::new(this.major, this.minor, this.patch + 1).to_string();
+        let peer = |version: &str, min: u32, max: u32| {
+            SessionRelease::Incompatible(Some(PeerRelease {
+                rozi_version: version.to_string(),
+                protocol_min: min,
+                protocol_max: max,
+            }))
+        };
+        let cases = [
+            (SessionRelease::Running(Some("0.0.1".into())), Replace),
+            (SessionRelease::Running(Some(this.to_string())), Replace),
+            (
+                SessionRelease::Running(Some(newer.clone())),
+                RefuseNewer(newer.clone()),
+            ),
+            (
+                SessionRelease::Running(Some("not a version".into())),
+                RefuseUnverified,
+            ),
+            (SessionRelease::Running(None), RefuseUnverified),
+            // A refusal that names no release comes from a server before generation 52.
+            (SessionRelease::Incompatible(None), Replace),
+            (
+                peer(
+                    "0.0.1",
+                    MIN_SUPPORTED_PROTOCOL - 1,
+                    MIN_SUPPORTED_PROTOCOL - 1,
+                ),
+                Replace,
+            ),
+            (
+                peer(&newer, PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1),
+                RefuseNewer(newer.clone()),
+            ),
+            // An older release that claims a newer generation is still a newer generation.
+            (
+                peer("0.0.1", PROTOCOL_VERSION + 1, PROTOCOL_VERSION + 1),
+                RefuseNewer("0.0.1".into()),
+            ),
+            // Older by release but its range overlaps ours, or is nonsense: not proven older.
+            (
+                peer("0.0.1", PROTOCOL_VERSION, PROTOCOL_VERSION),
+                RefuseUnverified,
+            ),
+            (peer("0.0.1", 9, 3), RefuseUnverified),
+            (peer("garbage", 1, 1), RefuseUnverified),
+            (SessionRelease::Unknown, RefuseUnverified),
+            (SessionRelease::NotRunning, Replace),
+        ];
+        for (release, expected) in cases {
+            assert_eq!(release.upgrade_disposition(), expected, "{release:?}");
+        }
+    }
 
     /// A remote row's server runs the host's install, so its hint must not offer this machine's
     /// rollback, whatever kind of install this one is.
@@ -1292,6 +1536,7 @@ mod tests {
                     &ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: "speaks another version".to_string(),
+                        peer: None,
                     },
                 )
                 .expect("error reply");
@@ -1412,6 +1657,8 @@ mod tests {
                     panes: 2,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: Some(52),
+                    rozi_version: Some("0.0.41".into()),
                 },
             },
             DiscoveredSession {
@@ -1436,6 +1683,8 @@ mod tests {
         assert_eq!(parsed[0].name, "dev");
         assert_eq!(parsed[0].host.as_deref(), Some("workbox"));
         assert_eq!(parsed[0].origin, rows[0].origin);
+        assert_eq!(parsed[0].effective_protocol(), Some(52));
+        assert_eq!(parsed[0].rozi_version(), Some("0.0.41"));
         assert!(matches!(
             parsed[0].status,
             DiscoveredSessionStatus::Running { panes: 2, .. }

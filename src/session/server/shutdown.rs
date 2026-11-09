@@ -25,13 +25,22 @@ enum Ending {
     /// but the protocol leaves a snapshot for that start to discard, or to restore when the server
     /// was [incompatible](StoppedForRestart::Incompatible).
     Restart,
+    /// Restart the session on this build from its own final snapshot, keeping its deployments.
+    ///
+    /// No protocol message asks a server of any release to stop and keep a fresh snapshot:
+    /// `ShutdownForRestart` discards it. The stop signal does, on every release, so an upgrade
+    /// always stops the server by its process, exactly as a restart stops an incompatible one.
+    Upgrade,
 }
 
 impl Ending {
-    fn message(self) -> ClientMessage {
+    /// The message that asks the server to stop, or `None` when this ending stops it by its
+    /// process instead.
+    fn message(self) -> Option<ClientMessage> {
         match self {
-            Self::Delete => ClientMessage::Shutdown,
-            Self::Restart => ClientMessage::ShutdownForRestart,
+            Self::Delete => Some(ClientMessage::Shutdown),
+            Self::Restart => Some(ClientMessage::ShutdownForRestart),
+            Self::Upgrade => None,
         }
     }
 
@@ -40,7 +49,7 @@ impl Ending {
     fn forget_session(self, name: &str) -> Option<io::Error> {
         match self {
             Self::Delete => super::delete_snapshot(name).err(),
-            Self::Restart => None,
+            Self::Restart | Self::Upgrade => None,
         }
     }
 }
@@ -78,7 +87,7 @@ pub(crate) fn shutdown_named_session_if_present(name: &str) -> io::Result<bool> 
         return Ok(false);
     }
 
-    shutdown_existing_named_session(&endpoint, name, Ending::Delete)?;
+    shutdown_existing_named_session(&endpoint, name, Ending::Delete, None)?;
     Ok(true)
 }
 
@@ -107,7 +116,47 @@ pub(crate) fn stop_named_session_for_restart(name: &str) -> io::Result<Option<St
     if !path_entry_exists(endpoint.path())? {
         return Ok(None);
     }
-    shutdown_existing_named_session(&endpoint, name, Ending::Restart).map(Some)
+    shutdown_existing_named_session(&endpoint, name, Ending::Restart, None).map(Some)
+}
+
+/// Stop a named session's server by signal so it saves its snapshot before exiting, keeping both
+/// its snapshot and its deployments for the replacement server to restore.
+///
+/// A session on a newer release is refused, whether it answers this build or turns it away as
+/// incompatible: replacing it would downgrade it, and this build may not read its snapshot.
+pub(crate) fn stop_named_session_for_upgrade(name: &str) -> io::Result<bool> {
+    let endpoint = super::session_endpoint(name)?;
+    if !path_entry_exists(endpoint.path())? {
+        return Ok(false);
+    }
+    let (release, checked_server) = crate::session::discovery::session_release_and_server(name);
+    // A name with no server behind it has nothing to stop. Its stale endpoint is replaced when the
+    // session starts again, and that start fails if a server has taken the name in the meantime,
+    // so no server is stopped that was not checked.
+    if release == crate::session::discovery::SessionRelease::NotRunning {
+        return Ok(true);
+    }
+    match release.upgrade_disposition() {
+        crate::session::discovery::UpgradeDisposition::Replace => {}
+        crate::session::discovery::UpgradeDisposition::RefuseNewer(newer) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Session `{name}` runs rozi {newer}, newer than this rozi {}. Upgrade it with \
+                     rozi {newer} or newer instead.",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ));
+        }
+        crate::session::discovery::UpgradeDisposition::RefuseUnverified => {
+            return Err(io::Error::other(format!(
+                "Session `{name}` did not say which rozi it runs, so it was not stopped. Try again \
+                 once it answers."
+            )));
+        }
+    }
+    // Stop only the server that was just checked. Another one may have taken the name since.
+    shutdown_existing_named_session(&endpoint, name, Ending::Upgrade, checked_server).map(|_| true)
 }
 
 /// Whether a refused shutdown handshake was a protocol-version refusal.
@@ -126,10 +175,13 @@ impl From<io::Error> for GracefulFailure {
     }
 }
 
+/// `expected_server`, when given, is the process the caller already checked: a different server
+/// behind the endpoint is left alone and the stop fails.
 fn shutdown_existing_named_session(
     endpoint: &IpcEndpoint,
     name: &str,
     ending: Ending,
+    expected_server: Option<u32>,
 ) -> io::Result<StoppedForRestart> {
     let mut stream = match endpoint.connect() {
         Ok(stream) => stream,
@@ -140,11 +192,27 @@ fn shutdown_existing_named_session(
     };
 
     let server_pid = stream.peer_pid();
-    let graceful = (|| -> Result<(), GracefulFailure> {
-        stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
-        stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
-        graceful_shutdown(&mut stream, name, ending)
-    })();
+    if let Some(expected) = expected_server
+        && server_pid != Some(expected)
+    {
+        return Err(io::Error::other(format!(
+            "Session `{name}` was replaced by another server while it was being checked; nothing \
+             was stopped. Run the command again."
+        )));
+    }
+    let graceful = match ending.message() {
+        // Take the same path as a server this build cannot talk to: stop it by its process, which
+        // saves a final snapshot the replacement restores.
+        None => Err(GracefulFailure {
+            error: io::Error::other("stopped by its process so it saves a final snapshot"),
+            incompatible: true,
+        }),
+        Some(message) => (|| -> Result<(), GracefulFailure> {
+            stream.set_read_timeout(Some(SHUTDOWN_TIMEOUT))?;
+            stream.set_write_timeout(Some(SHUTDOWN_TIMEOUT))?;
+            graceful_shutdown(&mut stream, name, &message)
+        })(),
+    };
 
     let graceful_error = match graceful {
         Ok(()) => {
@@ -336,7 +404,7 @@ fn retirement_timeout_error(name: &str) -> io::Error {
 fn graceful_shutdown(
     stream: &mut IpcConnection,
     name: &str,
-    ending: Ending,
+    message: &ClientMessage,
 ) -> Result<(), GracefulFailure> {
     protocol::write_frame(
         stream,
@@ -349,7 +417,7 @@ fn graceful_shutdown(
     )?;
     match protocol::read_frame::<_, ServerMessage>(stream)? {
         ServerMessage::Attached { .. } => {
-            protocol::write_frame(stream, &ending.message())?;
+            protocol::write_frame(stream, message)?;
             Ok(stream.flush()?)
         }
         other => Err(GracefulFailure {
@@ -370,6 +438,45 @@ mod tests {
     use super::*;
     use crate::platform::ipc::PipedConnection;
 
+    /// An upgrade checks a session's server and then stops it over a second connection. When a
+    /// different server answers that second connection, the one that was checked is gone and the
+    /// replacement - possibly a newer release - must be left running, untouched.
+    #[cfg(unix)]
+    #[test]
+    fn an_upgrade_never_stops_a_server_it_did_not_check() {
+        use std::io::Read;
+        let dir = tempfile::Builder::new()
+            .prefix("rz")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let endpoint = IpcEndpoint::at_path(dir.path().join("s.sock"));
+        let bound = endpoint
+            .bind()
+            .expect("bind the replacement server's endpoint");
+        // The server behind the endpoint is this test process; the checked one was another.
+        let replacement = std::process::id();
+        let checked = replacement.wrapping_add(1);
+        let server = std::thread::spawn(move || {
+            let mut conn = bound.listener().accept().expect("accept");
+            // macOS refuses the option, with EINVAL, once the peer has already hung up - which is
+            // what a refusing client does.
+            let _ = conn.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut received = Vec::new();
+            let _ = conn.read_to_end(&mut received);
+            received
+        });
+
+        let err = shutdown_existing_named_session(&endpoint, "dev", Ending::Upgrade, Some(checked))
+            .expect_err("a server other than the checked one is refused");
+
+        assert!(err.to_string().contains("replaced"), "{err}");
+        assert!(
+            server.join().expect("server thread").is_empty(),
+            "nothing is sent to the replacement"
+        );
+        assert!(endpoint.path().exists(), "its endpoint is left in place");
+    }
+
     /// Run the shutdown handshake against a scripted server that answers the attach with `reply`.
     fn handshake_against(reply: ServerMessage) -> Result<(), GracefulFailure> {
         let (server_reader, client_writer) = std::io::pipe().expect("client->server pipe");
@@ -384,7 +491,7 @@ mod tests {
             client_writer,
             client_reader,
         ));
-        let result = graceful_shutdown(&mut client, "skew", Ending::Restart);
+        let result = graceful_shutdown(&mut client, "skew", &ClientMessage::ShutdownForRestart);
         server.join().expect("scripted server");
         result
     }
@@ -396,6 +503,7 @@ mod tests {
         let refusal = handshake_against(ServerMessage::Error {
             code: protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
             message: "server supports 41-41".to_string(),
+            peer: None,
         })
         .expect_err("a refused handshake cannot shut the server down");
         assert!(refusal.incompatible, "{:?}", refusal.error);
@@ -403,6 +511,7 @@ mod tests {
         let other = handshake_against(ServerMessage::Error {
             code: "auth".to_string(),
             message: "refused".to_string(),
+            peer: None,
         })
         .expect_err("a refused handshake cannot shut the server down");
         assert!(!other.incompatible, "{:?}", other.error);

@@ -52,8 +52,19 @@ repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-P
 1. Choose a semantic version and update `package.version` in `Cargo.toml`.
 2. Let Cargo update `Cargo.lock`, and confirm both files describe the same dependency graph.
 3. Update user documentation for any release behavior that changed.
-4. Confirm the release commit is on `master` and every commit has a DCO sign-off.
-5. Run the repository checks:
+4. Capture the golden wire corpus for this release, so later builds keep decoding what it sends
+   (see [Session wire compatibility](wire-compatibility.md)):
+
+   ```bash
+   release=0.0.44   # the version from step 1
+   cp -r tests/fixtures/wire/current "tests/fixtures/wire/$release"
+   generation=$(cargo run -q -- api describe | jq .session_protocol)
+   printf '{"generation": %s}\n' "$generation" > "tests/fixtures/wire/$release/manifest.json"
+   ```
+
+   Delete corpus directories whose generation has left the support window.
+5. Confirm the release commit is on `master` and every commit has a DCO sign-off.
+6. Run the repository checks:
 
    ```bash
    cargo fmt --all -- --check
@@ -67,7 +78,7 @@ repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-P
    cargo audit
    ```
 
-6. If documentation changed, build the site:
+7. If documentation changed, build the site:
 
    ```bash
    cd docs
@@ -75,7 +86,7 @@ repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-P
    npm run docs:build
    ```
 
-7. Push the release commit straight to `master` and wait for the normal CI matrix to pass on Linux,
+8. Push the release commit straight to `master` and wait for the normal CI matrix to pass on Linux,
    macOS, and Windows. A pull request for the version bump only adds runs: a squash merge makes a
    new commit, and the release is gated on master CI for the exact tagged commit, not on PR CI.
 
@@ -188,7 +199,7 @@ rozi-compatibility.json
 | --- | --- |
 | `rozi-release.json` | Signed manifest (schema version 2) |
 | `rozi-release.signatures.json` | Ed25519 signature envelope for the manifest |
-| `rozi-compatibility.json` | Extension API and session protocol of the release |
+| `rozi-compatibility.json` | Extension API and session protocol window of the release |
 | `<archive>.sha256` | Corruption check for the install scripts |
 
 `rozi-release.json` records the version, publication and expiry times, archive names, SHA-256
@@ -196,9 +207,10 @@ values, byte sizes, payload metadata, and Windows launcher metadata. `relswap si
 manifest bytes, so never reformat or reserialize the manifest after signing. `relswap verify`
 requires a trusted signature and rechecks the archives and their adjacent checksums.
 
-The workflow derives `rozi-compatibility.json` from the packaged Linux binary's `--version` output.
-Clients use it only to choose between an informational update toast and a compatibility warning;
-installation still relies on the signed manifest and archive hashes.
+The workflow derives `rozi-compatibility.json` (schema 2) from the packaged Linux binary's
+`--version` output: the extension API, and the session protocol window as `session_protocol_min`
+and `session_protocol_max`. Clients use it only to say what an update means for extensions and
+running sessions; installation still relies on the signed manifest and archive hashes.
 
 The `.sha256` files come from the same release location as the archives, so they detect corruption
 but are not an independent authenticity check. Managed updates verify the signed manifest against

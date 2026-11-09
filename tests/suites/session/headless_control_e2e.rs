@@ -1363,6 +1363,7 @@ fn a_server_that_does_not_name_its_instance_is_reported_and_never_chosen() {
                             effective_protocol: rozi::session::protocol::PROTOCOL_VERSION,
                             origin: Default::default(),
                             instance: None,
+                            rozi_version: None,
                         },
                     );
                 }
@@ -1413,6 +1414,7 @@ fn a_server_on_another_version_is_reported_and_never_chosen() {
                         &ServerMessage::Error {
                             code: "protocol-mismatch".to_string(),
                             message: "speaks another version".to_string(),
+                            peer: None,
                         },
                     );
                 }

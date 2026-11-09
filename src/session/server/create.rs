@@ -129,6 +129,31 @@ pub(crate) fn restart_named_session(name: &str, resurrect: bool) -> io::Result<(
     start_detached_session(name, resurrect, !restore)
 }
 
+/// Stop a running named session so it saves its snapshot, then start it on this binary and restore
+/// that snapshot, keeping its deployments.
+pub(crate) fn upgrade_named_session(name: &str) -> io::Result<()> {
+    if !crate::session::discovery::valid_session_name(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session name",
+        ));
+    }
+    if !std::env::current_exe()?.exists() {
+        return Err(io::Error::other(
+            "rozi was updated on disk; run the new binary to upgrade sessions",
+        ));
+    }
+    if !super::stop_named_session_for_upgrade(name)? {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Session `{name}` is not running. Start it with: rozi sessions new {name} --detach"
+            ),
+        ));
+    }
+    start_detached_session(name, true, false)
+}
+
 fn already_running(name: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::AlreadyExists,

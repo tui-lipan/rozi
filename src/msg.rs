@@ -868,6 +868,8 @@ pub enum Msg {
     SessionRuntimeMetrics {
         epoch: u64,
     },
+    /// A server message this build does not know. The session stays attached and nothing changes.
+    SessionIgnored,
     /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).
     FlushPaneResizes {
         epoch: u64,

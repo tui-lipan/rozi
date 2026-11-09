@@ -23,8 +23,8 @@ const REQUIRED_CAPABILITIES: &[&str] = &["session-list", "health-check"];
 const CAPABILITIES: &[&str] = &[
     "session-list",
     "health-check",
-    crate::session::protocol::AGENT_SUMMARIES,
-    crate::session::protocol::PROJECT_SUMMARIES,
+    crate::session::protocol::Capability::AgentSummaries.as_str(),
+    crate::session::protocol::Capability::ProjectSummaries.as_str(),
 ];
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,10 +113,12 @@ pub(crate) fn serve(reader: &mut impl Read, writer: &mut impl Write) -> io::Resu
     // Optional, so an older client that cannot deserialize summaries is served without them
     // rather than refused. Building them means one query per running session on this host, which
     // is work worth skipping for a peer that would only discard it.
-    let include_agents = hello.supports(crate::session::protocol::AGENT_SUMMARIES);
+    let include_agents =
+        hello.supports(crate::session::protocol::Capability::AgentSummaries.as_str());
     // Asked for alongside the agents, so a peer that wants only one pays for one probe each either
     // way; one that wants neither keeps the cheaper sweep.
-    let include_projects = hello.supports(crate::session::protocol::PROJECT_SUMMARIES);
+    let include_projects =
+        hello.supports(crate::session::protocol::Capability::ProjectSummaries.as_str());
     write_message(writer, &Hello::current())?;
     loop {
         let mut request = [0];
@@ -424,9 +426,9 @@ mod tests {
         let mut hello = Hello::current();
         hello
             .capabilities
-            .retain(|value| value != crate::session::protocol::AGENT_SUMMARIES);
+            .retain(|value| value != crate::session::protocol::Capability::AgentSummaries.as_str());
         hello.validate().unwrap();
-        assert!(!hello.supports(crate::session::protocol::AGENT_SUMMARIES));
+        assert!(!hello.supports(crate::session::protocol::Capability::AgentSummaries.as_str()));
 
         let mut request = Vec::new();
         write_message(&mut request, &hello).unwrap();

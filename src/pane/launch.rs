@@ -10,6 +10,7 @@ pub(crate) const REPLAY_PROMPT_WAIT: std::time::Duration = std::time::Duration::
 /// quotes its arguments into a command line, so spaces, Unicode, and shell metacharacters retain
 /// their literal process-argument meaning on every platform.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PaneLaunch {
     Shell { command: String },

@@ -53,9 +53,9 @@ An update installs the new build for the next launch and restarts nothing. The c
 from, and every running session server, keep the old build.
 
 1. Quit rozi and start it again to run the new client.
-2. Restart each session that should use the new build: in Sessions (`Ctrl+A`, then `s`), press
-   `Ctrl+E` twice on it, run the `restart-session` action, or run `rozi sessions restart <NAME>`.
-   Restarting ends the programs in its panes.
+2. Upgrade each session that should use the new build: run the **Upgrade session** command while
+   attached to it, or `rozi sessions upgrade <NAME>`. It reopens from its snapshot with its layout
+   and terminal history, and the programs in its panes end.
 3. On Windows, run the install script again if the update needs to replace the launcher.
 
 Until you restart a session, nothing from its panes on the new build reaches it. Agents in those
@@ -122,9 +122,10 @@ running under the new name. See
 
 ### `runs an incompatible rozi version`
 
-The session server was started by a rozi build whose session protocol differs from the client's,
-usually after an update. Sessions shows `Attach failed` with `` `dev` runs an incompatible
-version ``, and the Sessions sidebar marks the row `incompatible or unavailable`.
+The session server was started by a rozi build on an older session protocol generation than the
+client's, usually after an update to a release that starts a new generation. Sessions shows
+`Attach failed` with `` `dev` runs an incompatible version ``, and the Sessions sidebar marks the
+row `incompatible or unavailable`.
 
 Restarting the session ends the programs running in its panes, so finish any work in them first:
 
@@ -136,13 +137,13 @@ Restarting the session ends the programs running in its panes, so finish any wor
 3. Update to the current version again: run `rozi update` on an install made by the install
    scripts, or use your package manager.
 
-Then restart the session: press `Ctrl+E` twice on its row in Sessions, or run
-`rozi sessions restart dev`. It reopens from its snapshot with its layout and terminal history, as
+Then upgrade the session: run `rozi sessions upgrade dev`, or press `Ctrl+E` twice on its row in
+Sessions. It reopens from its snapshot with its layout and terminal history, as
 [resurrection](sessions.md#resurrection) restores a session. To delete the session instead, press
 `Ctrl+K` twice on the row.
 
-For a session on a remote host, these steps apply to the rozi installed on that host. To attach
-from this machine again afterwards, update rozi on both ends. See
+For a session on a remote host, these steps apply to the rozi installed on that host; upgrade it
+with `rozi sessions upgrade dev --remote <HOST>`. See
 [Version compatibility](remote.md#version-compatibility).
 
 ### A restored session re-ran a command I did not want

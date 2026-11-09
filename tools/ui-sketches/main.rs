@@ -25,7 +25,12 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
 
-const SCENARIOS: [(&str, &str, fn()); 21] = [
+const SCENARIOS: [(&str, &str, fn()); 22] = [
+    (
+        "session-compatibility",
+        "in-window version badge, Upgrade session, and capability-disabled actions",
+        session_compatibility,
+    ),
     (
         "welcome",
         "the first-install welcome card, with and without its logo",
@@ -228,6 +233,8 @@ fn profile_picker() {
             panes: 2,
             clients: 0,
             has_layout: true,
+            effective_protocol: None,
+            rozi_version: None,
         },
     );
     let mut background = rozi::state::Attachment::new();
@@ -694,7 +701,7 @@ fn worktree_picker() {
 
 fn floating_title_caps() {
     use rozi::layout::tiling::build_dwindle_tree;
-    use rozi::state::PaneTitlebarMode;
+    use rozi::pane::chrome::PaneTitlebarMode;
     use tui_lipan::prelude::CapStyle;
 
     for (width, height) in [(48, 12), (80, 24)] {
@@ -930,6 +937,8 @@ fn session_picker_cached_hosts() {
                 panes: 1,
                 clients: 0,
                 has_layout: false,
+                effective_protocol: None,
+                rozi_version: None,
             };
     }
     for connected in [false, true] {
@@ -944,6 +953,8 @@ fn session_picker_cached_hosts() {
                 panes: 2,
                 clients: 0,
                 has_layout: true,
+                effective_protocol: None,
+                rozi_version: None,
             }
         } else {
             DiscoveredSessionStatus::LastSeen { panes: 2 }
@@ -1000,6 +1011,8 @@ fn session_picker() {
                     panes: 3,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             })
             .collect(),
@@ -1708,6 +1721,8 @@ fn sidebar_sessions() {
                         panes: 2,
                         clients: 0,
                         has_layout: true,
+                        effective_protocol: None,
+                        rozi_version: None,
                     }
                 },
                 ephemeral: false,
@@ -2071,4 +2086,131 @@ fn sidebar_files() {
         write_png(&mut backend, &format!("sidebar-files-{}", preset.id()));
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+fn session_compatibility() {
+    use std::io::pipe;
+    use std::sync::mpsc;
+
+    use rozi::input::Action;
+    use rozi::platform::ipc::{IpcConnection, PipedConnection};
+    use rozi::session::client::SessionClient;
+    use rozi::session::protocol::{
+        self, Capabilities, ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInstanceId,
+    };
+    use rozi::state::SessionPickerState;
+
+    let (server_reader, client_writer) = pipe().expect("client->server pipe");
+    let (client_reader, server_writer) = pipe().expect("server->client pipe");
+    let server = std::thread::spawn(move || {
+        let mut conn = PipedConnection::from_reader_writer(server_writer, server_reader);
+        let _attach: ClientMessage = protocol::read_frame(&mut conn).expect("read client attach");
+        protocol::write_frame(
+            &mut conn,
+            &ServerMessage::Attached {
+                capabilities: Some(Capabilities::default()),
+                session_instance: SessionInstanceId::generate(),
+                protocol_version: PROTOCOL_VERSION,
+                effective_protocol: PROTOCOL_VERSION,
+                session: "legacy-work".into(),
+                client_id: 1,
+                panes: Vec::new(),
+                layout_rev: 0,
+                layout: None,
+                controller: Some(1),
+                clients: Vec::new(),
+                input_locked: false,
+                allow_takeover: true,
+                origin: Default::default(),
+                rozi_version: Some("0.0.41".into()),
+            },
+        )
+        .expect("send Attached");
+        while protocol::read_frame::<_, ClientMessage>(&mut conn).is_ok() {}
+    });
+    let client_conn = IpcConnection::from_piped(PipedConnection::from_reader_writer(
+        client_writer,
+        client_reader,
+    ));
+    let (tx, _rx) = mpsc::channel();
+    let (client, _) = SessionClient::from_stream_attached(client_conn, "legacy-work", tx, false)
+        .expect("attach client");
+
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(viewport(104, 28));
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.current_mut().session_name = Some("legacy-work".into());
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
+        state.session_picker = Some(SessionPickerState::new(vec![
+            DiscoveredSession {
+                name: "legacy-work".into(),
+                origin: Default::default(),
+                status: DiscoveredSessionStatus::Running {
+                    panes: 3,
+                    clients: 1,
+                    has_layout: true,
+                    effective_protocol: Some(PROTOCOL_VERSION),
+                    rozi_version: Some("0.0.41".into()),
+                },
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+            DiscoveredSession {
+                name: "current-dev".into(),
+                origin: Default::default(),
+                status: DiscoveredSessionStatus::Running {
+                    panes: 2,
+                    clients: 0,
+                    has_layout: true,
+                    effective_protocol: Some(PROTOCOL_VERSION),
+                    rozi_version: Some(env!("CARGO_PKG_VERSION").into()),
+                },
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+            DiscoveredSession {
+                name: "ancient-server".into(),
+                origin: Default::default(),
+                status: DiscoveredSessionStatus::Unknown,
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+            DiscoveredSession {
+                name: "saved-feature".into(),
+                origin: Default::default(),
+                status: DiscoveredSessionStatus::Restorable,
+                ephemeral: false,
+                host: None,
+                remote_target: None,
+            },
+        ]));
+        state.show_session_picker = true;
+    }
+    backend.render();
+    write_png(&mut backend, "session-picker-version-badge");
+
+    backend.state_mut().show_session_picker = false;
+    backend
+        .dispatch(Msg::RunAction(Action::TogglePalette))
+        .unwrap();
+    for ch in "session".chars() {
+        backend
+            .send_key(tui_lipan::prelude::KeyEvent {
+                code: tui_lipan::prelude::KeyCode::Char(ch),
+                mods: KeyMods::NONE,
+            })
+            .unwrap();
+    }
+    backend.render();
+    write_png(&mut backend, "command-palette-upgrade-session");
+    backend.dispatch(Msg::ClosePalette).unwrap();
+
+    backend.state_mut().current_mut().session_client = None;
+    server.join().expect("server thread");
 }

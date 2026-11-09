@@ -311,49 +311,13 @@ fn pane_meta_from_older_peer_defaults_original_user() {
     assert_eq!(decoded.original_user, None);
 }
 #[test]
-fn a_session_server_that_would_drop_a_pane_size_is_refused_before_it_spawns() {
+fn peers_negotiate_any_generation_inside_both_windows() {
     const {
-        assert!(MIN_SUPPORTED_PROTOCOL >= PANE_SIZE_PROTOCOL);
+        assert!(MIN_SUPPORTED_PROTOCOL <= PROTOCOL_VERSION);
+        // Generation 52 is the first with the send gate and tolerant decoding. A peer before it
+        // closes the connection on a message it does not know, so it must stay outside the window.
+        assert!(MIN_SUPPORTED_PROTOCOL >= 52);
     }
-    // A server from before `size` deserializes a sized `new-pane` without it and reports success
-    // for a pane at its default size. Refusing it at the handshake turns `split --size` against a
-    // stale persistent server into an error instead.
-    assert!(
-        negotiate_protocol(
-            PROTOCOL_VERSION,
-            MIN_SUPPORTED_PROTOCOL,
-            PANE_SIZE_PROTOCOL - 1,
-            PANE_SIZE_PROTOCOL - 1,
-        )
-        .is_err(),
-        "a server that ignores `size` must not accept this build's control requests"
-    );
-}
-
-#[test]
-fn only_the_exact_version_negotiates() {
-    const {
-        assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION);
-        assert!(PROTOCOL_VERSION > 10);
-    }
-    // Protocol 10 encoded worktree session references as strings. Accepting that peer would
-    // deserialize its next worktree listing as an error and start a reconnect loop.
-    assert!(
-        negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 10, 10).is_err(),
-        "a server with the old worktree reply shape is rejected at attach"
-    );
-
-    assert!(
-        negotiate_protocol(
-            PROTOCOL_VERSION,
-            MIN_SUPPORTED_PROTOCOL,
-            PROTOCOL_VERSION - 1,
-            PROTOCOL_VERSION - 1,
-        )
-        .is_err(),
-        "previous protocol version must be rejected without a shim"
-    );
-
     assert_eq!(
         negotiate_protocol(
             PROTOCOL_VERSION,
@@ -361,8 +325,51 @@ fn only_the_exact_version_negotiates() {
             PROTOCOL_VERSION,
             MIN_SUPPORTED_PROTOCOL,
         )
-        .expect("same-version peers negotiate"),
+        .expect("same-generation peers negotiate"),
         PROTOCOL_VERSION
+    );
+    // A newer peer whose window still reaches back to this generation talks this generation.
+    assert_eq!(
+        negotiate_protocol(
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL,
+            PROTOCOL_VERSION + 1,
+            PROTOCOL_VERSION,
+        )
+        .expect("a newer peer with this generation in its window negotiates down"),
+        PROTOCOL_VERSION
+    );
+    assert_eq!(
+        negotiate_protocol(
+            PROTOCOL_VERSION + 1,
+            PROTOCOL_VERSION,
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL,
+        )
+        .expect("a newer client talks to an older in-window server"),
+        PROTOCOL_VERSION
+    );
+    // Out of either window: refused at the handshake, never shimmed.
+    assert!(
+        negotiate_protocol(
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL,
+            MIN_SUPPORTED_PROTOCOL - 1,
+            MIN_SUPPORTED_PROTOCOL - 1,
+        )
+        .is_err(),
+        "a generation older than the window is rejected"
+    );
+    // A pre-negotiation peer sends no minimum at all; it is still just an old generation.
+    assert!(
+        negotiate_protocol(
+            MIN_SUPPORTED_PROTOCOL - 1,
+            0,
+            PROTOCOL_VERSION,
+            MIN_SUPPORTED_PROTOCOL
+        )
+        .is_err(),
+        "a pre-negotiation client is rejected"
     );
     assert!(
         negotiate_protocol(
@@ -694,6 +701,7 @@ fn golden_session_info_json_shape() {
                 ..Default::default()
             },
             instance: Some(super::SessionInstanceId::for_test("abc123")),
+            rozi_version: None,
         })
         .unwrap(),
         serde_json::json!({
@@ -775,6 +783,60 @@ fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
     assert_eq!(decoder.next_frame::<ClientMessage>().unwrap(), None);
 }
 
+/// A frame of `kind` exactly as a newer peer would put it on the wire.
+fn raw_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = ((payload.len() + 1) as u32).to_be_bytes().to_vec();
+    frame.push(kind);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+/// A kind this build has never heard of, with and without the ignorable bit.
+const FUTURE_KIND: u8 = 0x3f;
+
+#[test]
+fn an_unknown_ignorable_frame_is_skipped_by_the_incremental_decoder() {
+    let mut encoded = raw_frame(FUTURE_KIND | 0x80, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+    encoded.extend(raw_frame(FUTURE_KIND | 0x80, b""));
+
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut &encoded[..]).unwrap();
+    assert_eq!(
+        decoder.next_frame::<ClientMessage>().unwrap(),
+        Some(Frame::Control(ClientMessage::Detach))
+    );
+    assert_eq!(decoder.next_frame::<ClientMessage>().unwrap(), None);
+}
+
+#[test]
+fn an_unknown_critical_frame_stays_fatal() {
+    let mut encoded = raw_frame(FUTURE_KIND, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+
+    let mut decoder = FrameDecoder::default();
+    decoder.read_from_status(&mut &encoded[..]).unwrap();
+    let error = decoder.next_frame::<ClientMessage>().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        error.to_string().contains("unknown frame kind 63"),
+        "{error}"
+    );
+
+    let error = read_frame::<_, ClientMessage>(&mut &encoded[..]).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn the_blocking_reader_skips_ignorable_frames_before_the_control_frame() {
+    let mut encoded = raw_frame(FUTURE_KIND | 0x80, b"future payload");
+    write_frame(&mut encoded, &ClientMessage::Detach).unwrap();
+    assert_eq!(
+        read_frame::<_, ClientMessage>(&mut &encoded[..]).unwrap(),
+        ClientMessage::Detach
+    );
+}
+
 #[test]
 fn golden_client_spawn_json_shape() {
     let palette = WirePalette {
@@ -827,7 +889,8 @@ fn golden_server_messages_json_shape() {
     assert_eq!(
         serde_json::to_value(ServerMessage::Error {
             code: "bad".into(),
-            message: "no".into()
+            message: "no".into(),
+            peer: None,
         })
         .unwrap(),
         serde_json::json!({"type":"error","code":"bad","message":"no"})
@@ -1251,4 +1314,166 @@ fn immutable_media_and_acquisition_acks_round_trip() {
         decoder.next_frame::<serde_json::Value>().unwrap(),
         Some(Frame::AcquisitionAcks(acks))
     );
+}
+
+#[test]
+fn a_message_type_from_a_newer_peer_decodes_as_unknown_instead_of_failing() {
+    let request: ClientMessage =
+        serde_json::from_str(r#"{"type":"teleport-pane","pane_id":3,"to":"mars"}"#).unwrap();
+    assert_eq!(request, ClientMessage::Unknown);
+    let event: ServerMessage =
+        serde_json::from_str(r#"{"type":"pane-teleported","pane_id":3}"#).unwrap();
+    assert_eq!(event, ServerMessage::Unknown);
+
+    // Through real framing too: the frame decodes and the next one still arrives.
+    let mut buf = Vec::new();
+    write_frame(
+        &mut buf,
+        &serde_json::json!({"type": "pane-teleported", "pane_id": 3}),
+    )
+    .unwrap();
+    write_frame(&mut buf, &ServerMessage::Ping { seq: 4 }).unwrap();
+    let mut reader = &buf[..];
+    assert_eq!(
+        read_frame::<_, ServerMessage>(&mut reader).unwrap(),
+        ServerMessage::Unknown
+    );
+    assert_eq!(
+        read_frame::<_, ServerMessage>(&mut reader).unwrap(),
+        ServerMessage::Ping { seq: 4 }
+    );
+}
+
+#[test]
+fn generation_baseline_messages_need_no_capability() {
+    assert_eq!(ClientMessage::Detach.required_capability(), None);
+    assert_eq!(
+        ClientMessage::ShutdownForRestart.required_capability(),
+        None
+    );
+    assert_eq!(ServerMessage::Ping { seq: 1 }.required_capability(), None);
+    assert_eq!(ServerMessage::ControlDeclined.required_capability(), None);
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "never sent")]
+fn asking_what_unknown_needs_is_a_bug() {
+    let _ = ServerMessage::Unknown.required_capability();
+}
+
+/// Re-encode `value` with the JSON at `field` replaced by a value from a newer peer, and decode it.
+fn decode_with<T>(value: &T, field: &str, newer: serde_json::Value) -> T
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    let mut json = serde_json::to_value(value).unwrap();
+    json[field] = newer;
+    serde_json::from_value(json).expect("a newer value still decodes")
+}
+
+/// A value a newer peer added to a closed vocabulary decodes instead of failing the whole message,
+/// which would drop the connection.
+#[test]
+fn a_vocabulary_value_from_a_newer_peer_decodes_as_unknown() {
+    let newer = || serde_json::json!("teleporting");
+    assert_eq!(
+        serde_json::from_value::<WireChangeState>(newer()).unwrap(),
+        WireChangeState::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<ControllerChangeReason>(newer()).unwrap(),
+        ControllerChangeReason::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<PaneCwdSource>(newer()).unwrap(),
+        PaneCwdSource::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<EventKind>(newer()).unwrap(),
+        EventKind::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<PaneCommandPhase>(r#"{"phase":"suspended","since":3}"#).unwrap(),
+        PaneCommandPhase::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<WorktreeRequest>(r#"{"kind":"rebase","cwd":"/src"}"#).unwrap(),
+        WorktreeRequest::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<WorktreeResult>(r#"{"kind":"rebased","path":"/src"}"#).unwrap(),
+        WorktreeResult::Unknown
+    );
+    assert_eq!(
+        serde_json::from_str::<AttachmentOperation>(r#"{"step":"resume","offset":9}"#).unwrap(),
+        AttachmentOperation::Unknown
+    );
+
+    // Inside a whole message, which is what actually crosses the wire.
+    let changed = ServerMessage::ControllerChanged {
+        controller: Some(2),
+        reason: ControllerChangeReason::Granted,
+    };
+    assert_eq!(
+        decode_with(&changed, "reason", newer()),
+        ServerMessage::ControllerChanged {
+            controller: Some(2),
+            reason: ControllerChangeReason::Unknown,
+        }
+    );
+}
+
+/// Vocabularies that are also part of the public control API, or that the server only ever
+/// produces itself, stay closed; the session wire fields carrying them decode a newer value as
+/// the type's neutral reading instead.
+#[test]
+fn a_closed_vocabulary_on_the_wire_reads_a_newer_value_neutrally() {
+    let identity = AgentIdentity::new("claude", "Claude Code");
+    let runtime = AgentRuntime {
+        reference: AgentRef::for_test(1, 0, None),
+        identity: identity.clone(),
+        label: "Claude Code".into(),
+        state: AgentState::Idle,
+        reason: None,
+        task: None,
+        completions: 0,
+        source: AgentAuthority::Reported,
+    };
+    let newer = decode_with(&runtime, "state", serde_json::json!("compacting"));
+    // A state Rozi has no word for is a run still going, as a custom status is.
+    assert_eq!(newer.state, AgentState::Working);
+    let newer = decode_with(&runtime, "source", serde_json::json!("inferred"));
+    assert_eq!(newer.source, AgentAuthority::Detected);
+    // A value it knows still decodes as itself.
+    assert_eq!(
+        decode_with(&runtime, "state", serde_json::json!("blocked")).state,
+        AgentState::Blocked
+    );
+
+    let detected = DetectedAgent {
+        agent: std::sync::Arc::new(identity),
+        state: DetectedAgentState::Idle,
+    };
+    assert_eq!(
+        decode_with(&detected, "state", serde_json::json!("compacting")).state,
+        DetectedAgentState::Working
+    );
+
+    let row: PublishedRow = serde_json::from_value(serde_json::json!({
+        "id": "build",
+        "kind": "daemon",
+        "title": "Build",
+        "status": "working",
+    }))
+    .unwrap();
+    assert_eq!(row.kind, PublisherKind::Activity);
+}
+
+/// The values a peer can receive but never sends stay out of everything this build offers or
+/// lists, so it cannot pick one by accident.
+#[test]
+fn unknown_vocabulary_values_are_never_offered() {
+    assert!(!EventKind::ALL.contains(&EventKind::Unknown));
+    assert_eq!(EventKind::parse("unknown"), None);
 }

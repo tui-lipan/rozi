@@ -147,6 +147,7 @@ These actions are available in the command palette, and you can bind them under 
 - `kill-workspace`
 - `kill-session`
 - `restart-session`
+- `upgrade-session` (listed when the attached session runs another rozi release)
 - `edit-scrollback`
 - `copy-last-output`
 - `screenshot-pane` (listed only when a pane has focus)

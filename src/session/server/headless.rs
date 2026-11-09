@@ -91,6 +91,7 @@ fn validate_prompt_capture(
 /// message has to say that rather than suggest the session is broken.
 pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static str> {
     match command {
+        ControlCommand::Unknown => Some(control::unsupported_command_reason(true)),
         ControlCommand::Invoke { .. }
         | ControlCommand::InvocationList
         | ControlCommand::InvocationCancel { .. }
@@ -195,6 +196,10 @@ pub fn attached_control_refusal(
     read_only: bool,
 ) -> Option<(ControlErrorCode, &'static str)> {
     match command {
+        ControlCommand::Unknown => Some((
+            ControlErrorCode::Unsupported,
+            control::unsupported_command_reason(true),
+        )),
         ControlCommand::InvocationList | ControlCommand::ActionsList => None,
         ControlCommand::Invoke { .. } | ControlCommand::InvocationCancel { .. } => read_only
             .then_some((
@@ -370,6 +375,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(crate::session::protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -383,6 +389,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -400,6 +407,7 @@ impl SessionServer {
                         "the request comes from a pane of another server than {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -4750,3 +4758,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod compat_tests;

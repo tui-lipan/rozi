@@ -15,6 +15,12 @@ mod no_sleeping_pool_tasks;
 mod install_script;
 #[path = "suites/contracts/pick_stream.rs"]
 mod pick_stream;
+// The session wire's evolution rules against each generation's frozen schema.
+#[path = "suites/contracts/wire_compat.rs"]
+mod wire_compat;
+// One example of every session message, decoded and validated across the support window.
+#[path = "suites/contracts/wire_corpus.rs"]
+mod wire_corpus;
 // Shared source reading for the contracts that scan crate sources.
 #[path = "suites/contracts/source_scan.rs"]
 mod source_scan;

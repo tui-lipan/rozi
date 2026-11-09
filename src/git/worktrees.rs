@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use super::command::{self, WORKTREE_LIST_TIMEOUT, WORKTREE_MUTATION_TIMEOUT};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeInfo {
     pub path: String,
     pub branch: Option<String>,
@@ -20,6 +21,7 @@ pub struct WorktreeInfo {
 
 /// A checkout Git has locked against removal and pruning.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeLock {
     /// Git's lock reason, empty when the lock gave none.
     pub reason: String,
@@ -64,6 +66,7 @@ pub fn list(cwd: &Path) -> Result<Vec<WorktreeInfo>, String> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeBranch {
     pub name: String,
     pub checkout: Option<String>,
@@ -193,6 +196,7 @@ pub fn create(cwd: &Path, branch: &str, base: &str, path: &Path) -> Result<Workt
 
 /// Which copies of a removed checkout's branch to delete. Both off keeps the branch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct BranchDeletion {
     /// The local branch, if fully merged.
     pub local: bool,
@@ -226,6 +230,7 @@ impl BranchDeletion {
 
 /// Which copy of a branch an outcome is about.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum BranchCopy {
     Local,
@@ -238,6 +243,7 @@ pub enum BranchCopy {
 
 /// What happened to one copy of a removed checkout's branch.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "outcome", rename_all = "kebab-case")]
 pub enum BranchOutcome {
     Deleted {

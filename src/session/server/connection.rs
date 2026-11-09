@@ -369,6 +369,7 @@ impl SessionServer {
             ServerMessage::Error {
                 code: "attach-required".to_string(),
                 message: "first client message must be attach".to_string(),
+                peer: None,
             },
         );
         self.set_close_after_flush(id);
@@ -556,12 +557,15 @@ impl SessionServer {
                 session,
                 protocol_version,
                 min_protocol_version,
-            } => self.handle_query(
-                session,
-                protocol_version,
-                min_protocol_version,
-                capabilities,
-            ),
+            } => {
+                self.record_capabilities(client_id, capabilities.as_ref());
+                self.handle_query(
+                    session,
+                    protocol_version,
+                    min_protocol_version,
+                    capabilities,
+                )
+            }
             ClientMessage::SessionControl {
                 capabilities,
                 session,
@@ -569,6 +573,7 @@ impl SessionServer {
                 min_protocol_version,
                 request,
             } => {
+                self.record_capabilities(client_id, capabilities.as_ref());
                 self.reload_config_for(&request.command);
                 self.handle_session_control(
                     client_id,
@@ -643,6 +648,7 @@ impl SessionServer {
                         ServerMessage::Error {
                             code: code.to_string(),
                             message,
+                            peer: None,
                         },
                     )],
                 }
@@ -774,6 +780,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: code.to_string(),
                         message,
+                        peer: None,
                     },
                 )],
             },
@@ -1087,23 +1094,27 @@ impl SessionServer {
                 .request_worktree(client_id, request_id, request)
                 .map(|message| vec![(Target::Client(client_id), message)])
                 .unwrap_or_default(),
-            ClientMessage::RequestRuntimeMetrics => {
-                let known = self.clients.iter().any(|client| {
-                    client.id == client_id
-                        && client.capabilities.supports(protocol::RUNTIME_METRICS)
-                });
-                if known {
-                    vec![(
-                        Target::Client(client_id),
-                        ServerMessage::RuntimeMetrics {
-                            metrics: Box::new(self.runtime_metrics()),
-                        },
-                    )]
-                } else {
-                    Vec::new()
-                }
-            }
+            // The send gate refuses the reply to a client that did not negotiate metrics.
+            ClientMessage::RequestRuntimeMetrics => vec![(
+                Target::Sender,
+                ServerMessage::RuntimeMetrics {
+                    metrics: Box::new(self.runtime_metrics()),
+                },
+            )],
             ClientMessage::Detach => Vec::new(),
+            // A newer client's request that skipped its send gate. Refuse that one request and keep
+            // the connection: everything else the client does still works.
+            ClientMessage::Unknown => vec![(
+                Target::Sender,
+                ServerMessage::Error {
+                    code: protocol::UNSUPPORTED_MESSAGE_ERROR_CODE.to_string(),
+                    message: format!(
+                        "this session runs rozi {}, which does not support that request",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    peer: None,
+                },
+            )],
             message @ (ClientMessage::Shutdown | ClientMessage::ShutdownForRestart) => {
                 if !self.client_attached(client_id) || self.client_read_only(client_id) {
                     return Vec::new();
@@ -1200,6 +1211,7 @@ impl SessionServer {
             return Some(ServerMessage::Error {
                 code: "browse-path-too-long".to_string(),
                 message: "browse path exceeds the server limit".to_string(),
+                peer: None,
             });
         }
 
@@ -1328,6 +1340,7 @@ impl SessionServer {
             _ => ServerMessage::Error {
                 code: "browse-result-encode-failed".to_string(),
                 message: "browse result could not be encoded".to_string(),
+                peer: None,
             },
         };
         if encode_control(&fallback).is_some() {
@@ -1339,6 +1352,7 @@ impl SessionServer {
                 ServerMessage::Error {
                     code: "browse-result-encode-failed".to_string(),
                     message: "browse result could not be encoded".to_string(),
+                    peer: None,
                 },
             );
         }
@@ -1372,6 +1386,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -1385,6 +1400,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -1396,6 +1412,7 @@ impl SessionServer {
                 ServerMessage::Error {
                     code: "server-identity-mismatch".to_string(),
                     message: "the session endpoint belongs to a different server".to_string(),
+                    peer: None,
                 },
             )];
         }
@@ -1447,6 +1464,7 @@ impl SessionServer {
             input_locked: self.input_locked,
             allow_takeover: self.allow_takeover,
             origin: self.origin.clone(),
+            rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         self.enqueue(client_id, Target::Sender, attached);
         if !self.notifications.is_empty() {
@@ -1490,6 +1508,18 @@ impl SessionServer {
         responses
     }
 
+    /// Remember what a one-shot connection negotiated, so the send gate applies to its replies and
+    /// to any stream it opens (`session subscribe`) as it does to an attached client.
+    fn record_capabilities(
+        &mut self,
+        client_id: ClientId,
+        offered: Option<&protocol::Capabilities>,
+    ) {
+        if let Some(client) = self.client_mut(client_id) {
+            client.capabilities = protocol::Capabilities::negotiated(offered);
+        }
+    }
+
     pub(super) fn handle_query(
         &mut self,
         session: String,
@@ -1510,6 +1540,7 @@ impl SessionServer {
                     ServerMessage::Error {
                         code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                         message: mismatch.message(),
+                        peer: Some(protocol::PeerRelease::current()),
                     },
                 )];
             }
@@ -1523,6 +1554,7 @@ impl SessionServer {
                         "client requested session {session:?}, but this server owns {:?}",
                         self.session_name
                     ),
+                    peer: None,
                 },
             )];
         }
@@ -1532,12 +1564,12 @@ impl SessionServer {
             .filter(|pane| pane.exited.is_none())
             .count();
         let capabilities = protocol::Capabilities::negotiated(capabilities.as_ref());
-        let agents = if capabilities.supports(protocol::AGENT_SUMMARIES) {
+        let agents = if capabilities.supports(protocol::Capability::AgentSummaries) {
             self.agent_summaries()
         } else {
             Vec::new()
         };
-        let projects = if capabilities.supports(protocol::PROJECT_SUMMARIES) {
+        let projects = if capabilities.supports(protocol::Capability::ProjectSummaries) {
             self.project_summaries()
         } else {
             Vec::new()
@@ -1555,6 +1587,7 @@ impl SessionServer {
                 effective_protocol: effective,
                 origin: self.origin.clone(),
                 instance: Some(self.instance_id.clone()),
+                rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             },
         )]
     }

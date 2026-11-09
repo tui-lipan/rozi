@@ -19,6 +19,11 @@ breaks and how to migrate. It goes in the PR Summary, or in the commit body when
 `!` title without it fails the `PR description` check, and release notes list the section under
 Compatibility.
 
+Raising the session wire generation (`PROTOCOL_VERSION`) or the oldest generation a build speaks
+(`MIN_SUPPORTED_PROTOCOL`) is always a breaking change: running sessions on an older generation need
+Upgrade session. An additive wire change behind a capability is not. See
+`dev/wire-compatibility.md`.
+
 Every commit needs a `Signed-off-by` trailer matching its author identity. The tracked
 `.githooks/prepare-commit-msg` hook adds that trailer automatically from your own `user.name` and
 `user.email`, and refuses the commit when either is unset. The

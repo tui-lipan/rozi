@@ -183,6 +183,10 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Restart a running session, ending its programs",
             ),
             row(
+                "sessions upgrade <NAME> [--remote <HOST>]",
+                "Restart a session on this rozi from its snapshot",
+            ),
+            row(
                 "sessions kill <NAME> [--remote <HOST>]",
                 "Stop a session and all of its panes",
             ),

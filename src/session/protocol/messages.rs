@@ -14,6 +14,7 @@ pub fn wire_cell(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize>
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ClientInfo {
     pub id: ClientId,
     pub label: String,
@@ -33,6 +34,7 @@ pub struct ClientInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMessage {
     Attach {
@@ -41,8 +43,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
         label: String,
@@ -83,8 +84,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
         request: crate::control::ControlRequest,
@@ -97,8 +97,7 @@ pub enum ClientMessage {
         session: String,
         /// Client's maximum supported protocol version.
         protocol_version: u32,
-        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
-        /// default of `0` as "exactly `protocol_version`".
+        /// Client's minimum supported protocol version.
         #[serde(default)]
         min_protocol_version: u32,
     },
@@ -362,9 +361,16 @@ pub enum ClientMessage {
     /// End the session's panes and discard its snapshot, leaving its deployments for whatever
     /// starts under this name next.
     ShutdownForRestart,
+    /// Any `type` this build does not know: a request from a newer peer that skipped the send gate.
+    ///
+    /// Decoded so the connection survives, answered with
+    /// [`super::UNSUPPORTED_MESSAGE_ERROR_CODE`], and never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeRequest {
     Branches {
@@ -408,10 +414,14 @@ pub enum WorktreeRequest {
         cwd: String,
         directory: String,
     },
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A session that records a checkout as its origin.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeSession {
     pub name: String,
     /// Its server is running. Otherwise it is a snapshot that can be restored.
@@ -420,6 +430,7 @@ pub struct WorktreeSession {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum WorktreeResult {
     Branches {
@@ -462,10 +473,14 @@ pub enum WorktreeResult {
     Failed {
         message: String,
     },
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One child entry in a [`ServerMessage::DirectoryListing`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WireDirEntry {
     /// Name relative to the listed directory, never a path.
     pub name: String,
@@ -488,6 +503,7 @@ pub struct WireDirEntry {
 
 /// Serde-stable mirror of the framework's git change states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum WireChangeState {
     Added,
@@ -496,10 +512,14 @@ pub enum WireChangeState {
     Renamed,
     Untracked,
     Conflicted,
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One changed path in a [`ServerMessage::ChangeListing`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WireChange {
     /// Path relative to the scanned root.
     pub path: String,
@@ -510,6 +530,7 @@ pub struct WireChange {
 
 /// Why the layout-control lease moved. Carried by [`ServerMessage::ControllerChanged`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum ControllerChangeReason {
     /// The controller detached or dropped cleanly.
@@ -519,9 +540,13 @@ pub enum ControllerChangeReason {
     /// The lease was granted: the first attacher, promotion of the oldest survivor, a controller's
     /// explicit grant, or an auto-grant to a requester when no controller held the lease.
     Granted,
+    /// A value from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ServerMessage {
     /// Sent before a new pane's layout or output, including to the spawning client.
@@ -539,6 +564,12 @@ pub enum ServerMessage {
     Error {
         code: String,
         message: String,
+        /// Who refused, on a `protocol-mismatch`: the release and generation window of the server.
+        /// Every build from generation 52 on sends it, so a refusal without it comes from an older
+        /// server. A client uses it to tell an older server, which an upgrade replaces, from a
+        /// newer one, which this build must not replace.
+        #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+        peer: Option<PeerRelease>,
     },
     Attached {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -546,7 +577,7 @@ pub enum ServerMessage {
         session_instance: super::SessionInstanceId,
         /// Server's maximum supported protocol version.
         protocol_version: u32,
-        /// Negotiated wire version for this connection. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this connection.
         #[serde(default)]
         effective_protocol: u32,
         session: String,
@@ -560,6 +591,9 @@ pub enum ServerMessage {
         #[serde(default)]
         allow_takeover: bool,
         origin: SessionOrigin,
+        /// The server's release (`CARGO_PKG_VERSION`), so a client can name what a session runs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rozi_version: Option<String>,
     },
     /// Retained inbox delivered immediately after attach, before live notification events.
     SessionNotifications {
@@ -584,7 +618,7 @@ pub enum ServerMessage {
         panes: usize,
         clients: u32,
         has_layout: bool,
-        /// Negotiated wire version for this probe. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this probe.
         #[serde(default)]
         effective_protocol: u32,
         origin: SessionOrigin,
@@ -593,6 +627,9 @@ pub enum ServerMessage {
         /// Missing on servers that predate it, which a caller must treat as "not mine".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instance: Option<super::SessionInstanceId>,
+        /// The server's release (`CARGO_PKG_VERSION`). See [`ServerMessage::Attached`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rozi_version: Option<String>,
     },
     /// Reply to a [`ClientMessage::SessionControl`] request.
     ///
@@ -601,7 +638,7 @@ pub enum ServerMessage {
     SessionControlResult {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capabilities: Option<super::Capabilities>,
-        /// Negotiated wire version for this request. Missing (`0`) on pre-negotiation peers.
+        /// Negotiated wire generation for this request.
         #[serde(default)]
         effective_protocol: u32,
         response: crate::control::ControlResponse,
@@ -676,6 +713,8 @@ pub enum ServerMessage {
         generation: u64,
         /// Initial attach baseline, applied without attention or historical notifications.
         initial: bool,
+        /// A framework type, opaque to the schema; the golden wire corpus pins its JSON shape.
+        #[cfg_attr(feature = "schema-gen", schemars(with = "serde_json::Value"))]
         snapshot: tui_lipan::ProgramStatusSnapshot,
     },
     /// A pane's [`PaneRuntimeState`] changed: broadcast after raw
@@ -785,10 +824,145 @@ pub enum ServerMessage {
     SessionSubscribeRecord {
         record: crate::session::protocol::SessionSubscribeRecord,
     },
+    /// Any `type` this build does not know: a message from a newer server that skipped the send
+    /// gate. Decoded so the connection survives, logged once, ignored, and never sent.
+    #[serde(other)]
+    Unknown,
+}
+
+impl ClientMessage {
+    /// The capability a peer must have negotiated before this message may be sent to it.
+    ///
+    /// `None` is the baseline of the wire generation: every peer in the window understands it.
+    /// The match is exhaustive on purpose. A new variant does not compile until its author decides,
+    /// and anything added within a generation needs a [`super::Capability`] (see
+    /// `dev/wire-compatibility.md`); the schema classifier rejects a new variant that answers
+    /// `None`.
+    pub fn required_capability(&self) -> Option<super::Capability> {
+        match self {
+            ClientMessage::Attach { .. }
+            | ClientMessage::SetSessionOrigin { .. }
+            | ClientMessage::SessionControl { .. }
+            | ClientMessage::Query { .. }
+            | ClientMessage::SpawnPane { .. }
+            | ClientMessage::Resize { .. }
+            | ClientMessage::Kill { .. }
+            | ClientMessage::SetPalette { .. }
+            | ClientMessage::ConfigurePane { .. }
+            | ClientMessage::SetPaneLogging { .. }
+            | ClientMessage::SetPaneStatus { .. }
+            | ClientMessage::ReportAgent { .. }
+            | ClientMessage::AttachedControl { .. }
+            | ClientMessage::CancelAttachedControl { .. }
+            | ClientMessage::ReportPaneRows { .. }
+            | ClientMessage::ReloadAgents
+            | ClientMessage::ReloadSpawnPolicy
+            | ClientMessage::ReloadSleepPolicy
+            | ClientMessage::CommitLayout { .. }
+            | ClientMessage::DragUpdate { .. }
+            | ClientMessage::DragEnd
+            | ClientMessage::RequestControl
+            | ClientMessage::SetControlTakeover { .. }
+            | ClientMessage::SetParked { .. }
+            | ClientMessage::GrantControl { .. }
+            | ClientMessage::DeclineControl { .. }
+            | ClientMessage::EvictClient { .. }
+            | ClientMessage::SetInputLock { .. }
+            | ClientMessage::Pong { .. }
+            | ClientMessage::MarkedInput { .. }
+            | ClientMessage::Attachment { .. }
+            | ClientMessage::Rename { .. }
+            | ClientMessage::ListDirectory { .. }
+            | ClientMessage::ListChanges { .. }
+            | ClientMessage::Worktree { .. }
+            | ClientMessage::Detach
+            | ClientMessage::Shutdown
+            | ClientMessage::ShutdownForRestart => None,
+            ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
+            ClientMessage::Unknown => {
+                debug_assert!(false, "ClientMessage::Unknown is never sent");
+                None
+            }
+        }
+    }
+}
+
+impl ServerMessage {
+    /// The capability a peer must have negotiated before this message may be sent to it.
+    ///
+    /// `None` is the baseline of the wire generation: every peer in the window understands it.
+    /// The match is exhaustive on purpose. A new variant does not compile until its author decides,
+    /// and anything added within a generation needs a [`super::Capability`] (see
+    /// `dev/wire-compatibility.md`); the schema classifier rejects a new variant that answers
+    /// `None`.
+    pub fn required_capability(&self) -> Option<super::Capability> {
+        match self {
+            ServerMessage::PaneMetadata { .. }
+            | ServerMessage::AttachmentAck { .. }
+            | ServerMessage::Error { .. }
+            | ServerMessage::Attached { .. }
+            | ServerMessage::SessionNotifications { .. }
+            | ServerMessage::SessionActions { .. }
+            | ServerMessage::SessionInfo { .. }
+            | ServerMessage::SessionControlResult { .. }
+            | ServerMessage::AgentReportResult { .. }
+            | ServerMessage::AttachedControlResult { .. }
+            | ServerMessage::SessionOriginSet { .. }
+            | ServerMessage::Resized { .. }
+            | ServerMessage::PaneReset { .. }
+            | ServerMessage::Exited { .. }
+            | ServerMessage::SpawnResult { .. }
+            | ServerMessage::PaneLoggingChanged { .. }
+            | ServerMessage::ProgramStatusChanged { .. }
+            | ServerMessage::PaneRuntimeChanged { .. }
+            | ServerMessage::Renamed { .. }
+            | ServerMessage::LayoutCommitted { .. }
+            | ServerMessage::LayoutRejected { .. }
+            | ServerMessage::DragChanged { .. }
+            | ServerMessage::ControllerChanged { .. }
+            | ServerMessage::ControlRequested { .. }
+            | ServerMessage::ControlDeclined
+            | ServerMessage::ClientsChanged { .. }
+            | ServerMessage::Ping { .. }
+            | ServerMessage::InputMarked { .. }
+            | ServerMessage::DirectoryListing { .. }
+            | ServerMessage::ChangeListing { .. }
+            | ServerMessage::WorktreeResult { .. }
+            | ServerMessage::RecordingEnded { .. }
+            | ServerMessage::SessionEvent { .. }
+            | ServerMessage::SessionSubscribeRecord { .. } => None,
+            ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
+            ServerMessage::Unknown => {
+                debug_assert!(false, "ServerMessage::Unknown is never sent");
+                None
+            }
+        }
+    }
+}
+
+/// A peer's release and the session wire generations it speaks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PeerRelease {
+    pub rozi_version: String,
+    pub protocol_min: u32,
+    pub protocol_max: u32,
+}
+
+impl PeerRelease {
+    /// This build.
+    pub fn current() -> Self {
+        Self {
+            rozi_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_min: super::MIN_SUPPORTED_PROTOCOL,
+            protocol_max: super::PROTOCOL_VERSION,
+        }
+    }
 }
 
 /// One acknowledged step of a bounded attachment upload.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum AttachmentOperation {
     Begin {
@@ -803,10 +977,14 @@ pub enum AttachmentOperation {
     },
     Finish,
     Cancel,
+    /// A step from a newer peer this build does not know. Never sent.
+    #[serde(other)]
+    Unknown,
 }
 
 /// An optimistic document publication committed atomically with a shared pane spawn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SpawnPlacementCommit {
     pub base_rev: u64,
     pub layout: crate::layout::shared::SharedLayout,

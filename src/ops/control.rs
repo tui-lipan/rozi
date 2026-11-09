@@ -89,6 +89,7 @@ pub(crate) fn handle_control_request(
     };
     let extension = envelope.request.extension.clone();
     let response = match envelope.request.command {
+        ControlCommand::Unknown => ControlResponse::unsupported_command(false),
         // The scratchpad's panes are this client's own, never a placed worker's to see.
         ControlCommand::ListPanes => list_panes(ctx, attribution.is_none()),
         ControlCommand::ListAttachedPanes => list_attached_panes(ctx, attribution.as_ref()),

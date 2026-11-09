@@ -18,6 +18,8 @@ fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> Discov
             panes,
             clients,
             has_layout: true,
+            effective_protocol: None,
+            rozi_version: None,
         },
         ephemeral: false,
         host: host.map(str::to_string),

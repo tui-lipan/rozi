@@ -208,6 +208,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
                 effective_protocol: rozi::session::protocol::PROTOCOL_VERSION,
                 origin: Default::default(),
                 instance: None,
+                rozi_version: Some("0.0.41".into()),
             },
         ),
         (
@@ -215,6 +216,7 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
             ServerMessage::Error {
                 code: "protocol-mismatch".into(),
                 message: "private-token".into(),
+                peer: None,
             },
         ),
     ] {
@@ -290,6 +292,13 @@ fn doctor_counts_session_replies_and_snapshots_and_keeps_stale_entries() {
         worker.join().unwrap();
     }
     assert_eq!(fields["sessions_running"], "1");
+    assert_eq!(
+        fields["sessions_versions"],
+        format!(
+            "0.0.41 (protocol {})",
+            rozi::session::protocol::PROTOCOL_VERSION
+        )
+    );
     assert_eq!(fields["sessions_incompatible"], "1");
     assert_eq!(fields["sessions_restorable"], "1");
     assert_eq!(std::fs::read(&stale).unwrap(), b"stale");

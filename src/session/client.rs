@@ -156,10 +156,13 @@ pub struct SessionClient {
     pub(crate) path_family: crate::platform::paths::PathFamily,
     /// `SSH_CONNECTION` announced by the remote proxy; `None` for local IPC.
     pub(crate) ssh_connection: Option<String>,
-    /// Wire version agreed with this server. Gates messages added after the minimum supported
-    /// version so an older server never receives a variant it cannot deserialize.
+    /// Wire generation agreed with this server.
     effective_protocol: u32,
+    /// What this connection may use beyond its generation's baseline. Every feature check goes
+    /// through [`Self::supports`].
     capabilities: protocol::Capabilities,
+    /// The server's release, when it said. See [`ServerMessage::Attached`].
+    server_version: Option<String>,
     /// This client's host cell size in pixels, sent with the canonical PTY size so the server's
     /// PTYs report pixel dimensions the child can size images against. Read once: it is a
     /// property of the terminal this process is attached to, not of any one pane.
@@ -282,6 +285,7 @@ impl SessionClient {
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
                 capabilities: protocol::Capabilities::current(),
+                server_version: None,
             },
             test_rx,
         )
@@ -460,13 +464,18 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(advice_for.as_deref(), &attached)?;
-        let capabilities = match &attached {
-            ServerMessage::Attached { capabilities, .. } => {
-                protocol::Capabilities::negotiated(capabilities.as_ref())
-            }
+        let (capabilities, server_version) = match &attached {
+            ServerMessage::Attached {
+                capabilities,
+                rozi_version,
+                ..
+            } => (
+                protocol::Capabilities::negotiated(capabilities.as_ref()),
+                rozi_version.clone(),
+            ),
             _ => unreachable!("validated attach reply"),
         };
-        let metrics_enabled = capabilities.supports(protocol::RUNTIME_METRICS);
+        let metrics_enabled = capabilities.supports(protocol::Capability::RuntimeMetrics);
         let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
         let shutdown_signal = Arc::new(AtomicBool::new(false));
         // The worker threads may be blocked in platform I/O. Do not construct a transport without
@@ -486,10 +495,17 @@ impl SessionClient {
         let writer_inbound = client_inbound.clone();
         let writer_shutdown_signal = Arc::clone(&shutdown_signal);
         let writer_shutdown_flush = Arc::clone(&shutdown_flush);
+        let writer_capabilities = capabilities.clone();
         thread::spawn(move || {
             while let Some(message) = writer_outbound.pop_blocking() {
                 if writer_shutdown_signal.load(Ordering::Relaxed) {
                     break;
+                }
+                // The same gate as `send_control`, for requests queued on the transport directly.
+                if let ClientOutbound::Control(control) = &message
+                    && !admits(&writer_capabilities, control)
+                {
+                    continue;
                 }
                 let ends_the_server = matches!(
                     &message,
@@ -589,6 +605,7 @@ impl SessionClient {
             server_pid,
             effective_protocol,
             capabilities,
+            server_version,
             cell: tui_lipan::host_cell_size(),
         };
         client.request_runtime_metrics();
@@ -608,8 +625,27 @@ impl SessionClient {
         &self.capabilities
     }
 
+    /// Whether this connection negotiated `capability`. The only feature check UI code uses.
+    pub fn supports(&self, capability: protocol::Capability) -> bool {
+        self.capabilities.supports(capability)
+    }
+
+    /// The release the server runs, when it reported one.
+    pub fn server_version(&self) -> Option<&str> {
+        self.server_version.as_deref()
+    }
+
+    /// Stand in for a server that reported `version` on attach.
+    #[cfg(test)]
+    pub(crate) fn set_server_version(&mut self, version: &str) {
+        self.server_version = Some(version.to_string());
+    }
+
     pub fn request_runtime_metrics(&self) {
-        if !self.capabilities.supports(protocol::RUNTIME_METRICS) {
+        if !self
+            .capabilities
+            .supports(protocol::Capability::RuntimeMetrics)
+        {
             return;
         }
         try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
@@ -985,8 +1021,15 @@ impl SessionClient {
         }
     }
 
-    fn send_control(&self, message: ClientMessage) {
+    /// Queue a request, through the send gate: a request the server did not negotiate is not
+    /// sent, and the answer is `false`. UI code asks [`Self::supports`] before offering the
+    /// feature, so this only catches a caller that forgot to.
+    fn send_control(&self, message: ClientMessage) -> bool {
+        if !admits(&self.capabilities, &message) {
+            return false;
+        }
         self.send(ClientOutbound::Control(message));
+        true
     }
 
     fn send(&self, message: ClientOutbound) {
@@ -1408,7 +1451,7 @@ fn validate_attached(local_session: Option<&str>, attached: &ServerMessage) -> i
         Some(name) => crate::session::discovery::incompatible_session_advice(name),
         None => "update rozi on both ends, or restart the session on its host".to_string(),
     };
-    if let ServerMessage::Error { code, message } = attached {
+    if let ServerMessage::Error { code, message, .. } = attached {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
         let detail = if code == crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE {
@@ -1754,6 +1797,13 @@ fn forward_inbound_trusted<R: std::io::Read>(
     inbound.disconnected();
 }
 
+/// The client's send gate: whether the server negotiated what `message` needs.
+fn admits(capabilities: &protocol::Capabilities, message: &ClientMessage) -> bool {
+    message
+        .required_capability()
+        .is_none_or(|capability| capabilities.supports(capability))
+}
+
 fn try_enqueue_runtime_metrics_request(outbound: &ByteQueue<ClientOutbound>, pending: &AtomicBool) {
     if pending.swap(true, Ordering::AcqRel) {
         return;
@@ -1791,6 +1841,7 @@ mod tests {
             input_locked: false,
             allow_takeover: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            rozi_version: None,
         }
     }
 
@@ -1854,6 +1905,65 @@ mod tests {
         server.join().unwrap();
     }
 
+    /// The client's send gate: a request the server did not negotiate is refused locally and
+    /// never queued.
+    #[test]
+    fn a_request_the_server_did_not_negotiate_is_not_sent() {
+        let (mut client, outbound) = SessionClient::test_channel();
+        assert!(client.send_control(ClientMessage::RequestRuntimeMetrics));
+        assert_eq!(
+            outbound.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::RequestRuntimeMetrics)
+        );
+
+        client.capabilities =
+            protocol::Capabilities::current().without(protocol::Capability::RuntimeMetrics);
+        assert!(!client.send_control(ClientMessage::RequestRuntimeMetrics));
+        assert!(client.send_control(ClientMessage::Pong { seq: 1 }));
+        assert_eq!(
+            outbound.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::Pong { seq: 1 })
+        );
+        assert!(outbound.try_recv().is_err());
+    }
+
+    /// The writer applies the gate too, to requests queued on the transport without going through
+    /// `send_control`: against a server that negotiated nothing, the metrics request never reaches
+    /// the wire, and the request queued after it still does.
+    #[test]
+    #[cfg(unix)]
+    fn the_writer_never_writes_a_gated_request() {
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        server_stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let server = std::thread::spawn(move || {
+            let _: ClientMessage = protocol::read_frame(&mut server_stream).unwrap();
+            protocol::write_frame(&mut server_stream, &attached_message()).unwrap();
+            protocol::read_frame::<_, ClientMessage>(&mut server_stream).unwrap()
+        });
+        let (tx, _rx) = mpsc::channel();
+        let (client, _) = SessionClient::from_stream_attached_target(
+            IpcConnection::from_unix(client_stream),
+            "test",
+            InboundTarget::Channel(tx),
+            false,
+            true,
+            Duration::from_secs(2),
+            None,
+            None,
+        )
+        .unwrap();
+        try_enqueue_runtime_metrics_request(&client.outbound, &client.metrics_request_pending);
+        client.rename("renamed".to_string());
+        assert_eq!(
+            server.join().unwrap(),
+            ClientMessage::Rename {
+                name: "renamed".to_string()
+            }
+        );
+    }
+
     #[test]
     #[cfg(unix)]
     fn attached_stream_decodes_control_and_pane_frames() {
@@ -1913,6 +2023,7 @@ mod tests {
             &ServerMessage::Error {
                 code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
                 message: "server uses protocol 2".to_string(),
+                peer: None,
             },
         )
         .expect_err("attach must fail");
@@ -1929,6 +2040,7 @@ mod tests {
         let refusal = || ServerMessage::Error {
             code: crate::session::protocol::PROTOCOL_MISMATCH_ERROR_CODE.to_string(),
             message: "server uses protocol 2".to_string(),
+            peer: None,
         };
         let local = validate_attached(Some("dev"), &refusal())
             .expect_err("attach must fail")
@@ -2137,6 +2249,7 @@ mod tests {
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
             capabilities: protocol::Capabilities::current(),
+            server_version: None,
             cell: tui_lipan::TerminalCellSize::default(),
         };
 

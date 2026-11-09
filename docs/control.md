@@ -305,14 +305,15 @@ the configuration for `split`; other control commands reject it. Select a sessio
 
 ### Check the installed API
 
-`rozi api describe` prints the control API version, [schema](#json-schema) version, session
-protocol version, and capabilities of the installed binary. It does not connect to a UI or session:
+`rozi api describe` prints the control API version, [schema](#json-schema) version, the range
+of session protocol generations, and capabilities of the installed binary. It does not connect to a UI or session:
 
 ```json
 {
   "api": 1,
   "schema": 4,
   "session_protocol": 52,
+  "session_protocol_min": 52,
   "capabilities": [
     "agent-prompt-results",
     "agent-responses",
@@ -356,7 +357,9 @@ protocol version, and capabilities of the installed binary. It does not connect 
 ```
 
 `schema` is the version of the JSON schema and changes independently of `session_protocol`, which
-only concerns how two rozi binaries talk to each other.
+only concerns how two rozi binaries talk to each other. Two binaries can share a session when each
+one's `session_protocol` falls inside the other's range, from `session_protocol_min` to
+`session_protocol`.
 
 `detached-session-create` means `rozi sessions new <NAME> --detach` starts a session in the
 background without opening a UI. An older binary refuses `--detach`.
@@ -1298,15 +1301,18 @@ rozi sessions new scratch --detach
 rozi sessions new tests --detach --no-resurrect
 rozi sessions list
 rozi sessions restart dev
+rozi sessions upgrade dev
 rozi sessions kill dev
 ```
 
-`sessions list`, `sessions new --detach`, `sessions restart`, and `sessions kill` also take `--remote`:
+`sessions list`, `sessions new --detach`, `sessions restart`, `sessions upgrade`, and `sessions kill`
+also take `--remote`:
 
 ```sh
 rozi sessions list --remote workbox
 rozi sessions new scratch --detach --remote workbox
 rozi sessions restart dev --remote workbox
+rozi sessions upgrade dev --remote workbox
 rozi sessions kill dev --remote workbox
 ```
 

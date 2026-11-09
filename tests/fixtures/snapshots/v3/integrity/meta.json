@@ -1,0 +1,118 @@
+{
+  "version": 3,
+  "session": "integrity",
+  "saved_at": 1700000000,
+  "layout_rev": 0,
+  "panes": [
+    {
+      "scrollback": 100,
+      "pane_id": 1,
+      "generation": 1,
+      "launch": null,
+      "foreground": "example",
+      "cwd": null,
+      "keep_open": false,
+      "title": null,
+      "palette": {
+        "foreground": null,
+        "background": null,
+        "ansi": [
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black"
+        ]
+      },
+      "cols": 40,
+      "rows": 5
+    },
+    {
+      "scrollback": 100,
+      "pane_id": 2,
+      "generation": 1,
+      "launch": {
+        "kind": "shell",
+        "command": "printf '%s' 'hello world'"
+      },
+      "cwd": null,
+      "keep_open": false,
+      "title": null,
+      "palette": {
+        "foreground": null,
+        "background": null,
+        "ansi": [
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black"
+        ]
+      },
+      "cols": 40,
+      "rows": 5
+    },
+    {
+      "scrollback": 100,
+      "pane_id": 3,
+      "generation": 1,
+      "launch": {
+        "kind": "direct",
+        "argv": [
+          "example",
+          "two words",
+          "$literal"
+        ]
+      },
+      "cwd": null,
+      "keep_open": false,
+      "title": null,
+      "palette": {
+        "foreground": null,
+        "background": null,
+        "ansi": [
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black",
+          "Black"
+        ]
+      },
+      "cols": 40,
+      "rows": 5
+    }
+  ]
+}

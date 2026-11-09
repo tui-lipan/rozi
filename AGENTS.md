@@ -55,6 +55,7 @@ does not repeat, and violating one is usually invisible until review or CI.
 | Build, run, benchmark, or CI | [.agents/instructions/development.md](.agents/instructions/development.md) |
 | User documentation or the docs website | [.agents/instructions/documentation.md](.agents/instructions/documentation.md) |
 | Runtime architecture, panes, layouts, or sessions | [.agents/instructions/architecture.md](.agents/instructions/architecture.md) |
+| Session wire protocol or snapshot format | [dev/wire-compatibility.md](dev/wire-compatibility.md) |
 | Platform, IPC, shell integration, clipboard, or security | [.agents/instructions/platform-security.md](.agents/instructions/platform-security.md) |
 | Actions, commands, config keys, hooks, or environment contracts | [.agents/instructions/config-actions.md](.agents/instructions/config-actions.md) |
 | Overlays, prompts, palettes, toasts, or animation | [.agents/instructions/ui.md](.agents/instructions/ui.md) |

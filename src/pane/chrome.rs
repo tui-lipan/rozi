@@ -6,6 +6,7 @@
 /// inside the frame, on the first interior row beneath the top border. Visibility is controlled
 /// independently by `pane.show_titles`, so toggling it never loses the selected layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PaneTitlebarMode {
     Bar,
@@ -81,6 +82,7 @@ impl PaneTitlebarMode {
 /// Structural presentation of pane borders. Glyph shape remains independently controlled by
 /// `PaneBorderStyle`; this mode decides whether pane frames or internal split dividers are drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PaneBorderMode {
     Separate,

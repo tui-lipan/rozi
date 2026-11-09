@@ -427,12 +427,33 @@ pub(crate) fn merge_current_session_row(
     rows: &mut Vec<DiscoveredSession>,
     current: DiscoveredSession,
 ) {
-    let already = rows
-        .iter()
-        .any(|row| row.name == current.name && row.remote_target == current.remote_target);
-    if !already {
-        rows.push(current);
+    if let Some(existing) = rows
+        .iter_mut()
+        .find(|row| row.name == current.name && row.remote_target == current.remote_target)
+    {
+        if let (
+            crate::session::discovery::DiscoveredSessionStatus::Running {
+                effective_protocol,
+                rozi_version,
+                ..
+            },
+            crate::session::discovery::DiscoveredSessionStatus::Running {
+                effective_protocol: current_protocol,
+                rozi_version: current_version,
+                ..
+            },
+        ) = (&mut existing.status, &current.status)
+        {
+            if effective_protocol.is_none() {
+                *effective_protocol = *current_protocol;
+            }
+            if rozi_version.is_none() {
+                *rozi_version = current_version.clone();
+            }
+        }
+        return;
     }
+    rows.push(current);
 }
 
 /// Swap the row listed under `previous` for `renamed` in the open session picker and the sidebar's
@@ -590,6 +611,14 @@ pub(crate) fn attachment_session_row(
             panes: attachment.workspaces.iter().map(|w| w.panes.len()).sum(),
             has_layout: true,
             clients: attachment.attached_client_count(),
+            effective_protocol: attachment
+                .session_client
+                .as_ref()
+                .map(|client| client.effective_protocol()),
+            rozi_version: attachment
+                .session_client
+                .as_ref()
+                .and_then(|client| client.server_version().map(str::to_owned)),
         },
     })
 }

@@ -30,5 +30,7 @@ mod session_scrollback;
 #[cfg(unix)]
 #[path = "suites/session/session_subscribe_e2e.rs"]
 mod session_subscribe_e2e;
+#[path = "suites/session/session_wire_tolerance.rs"]
+mod session_wire_tolerance;
 #[path = "suites/session/session_worktree.rs"]
 mod session_worktree;

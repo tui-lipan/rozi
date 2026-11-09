@@ -1,9 +1,9 @@
-//! This build speaks exactly one wire version, so any peer advertising a range that does not
-//! contain it must fail negotiation rather than half-attach.
+//! A peer whose generation window does not overlap this build's must fail negotiation rather than
+//! half-attach.
 //!
-//! The scripted server is pinned one above the ceiling. Below the floor is unavailable now that
-//! the floor is 1, and above tests the same property: ranges that do not overlap are rejected.
-//! Pinning relative to [`PROTOCOL_VERSION`] also keeps this honest across future bumps.
+//! The scripted server is pinned one above the ceiling and speaks only that generation, so the
+//! ranges do not overlap. Pinning relative to [`PROTOCOL_VERSION`] keeps this honest across future
+//! bumps.
 
 use std::io::pipe;
 use std::sync::mpsc;
@@ -18,10 +18,6 @@ use rozi::session::protocol::{
 
 const PINNED_SERVER_PROTOCOL: u32 = PROTOCOL_VERSION + 1;
 
-const _: () = assert!(
-    MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION,
-    "this build intentionally speaks one version"
-);
 const _: () = assert!(
     PINNED_SERVER_PROTOCOL > PROTOCOL_VERSION,
     "the pinned server must sit outside this build's range"
@@ -70,6 +66,7 @@ fn a_server_outside_this_builds_range_cannot_negotiate() {
             &ServerMessage::Error {
                 code: "protocol".into(),
                 message: "incompatible protocol".into(),
+                peer: None,
             },
         )
         .expect("send Error");

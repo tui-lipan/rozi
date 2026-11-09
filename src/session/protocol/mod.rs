@@ -25,6 +25,10 @@ pub mod messages;
 pub mod negotiation;
 pub mod pane_runtime;
 pub mod project_summary;
+pub mod tolerant;
+/// Session wire schema generation. Only compiled for the generator.
+#[cfg(feature = "schema-gen")]
+pub mod wire_schema;
 
 pub use agent_runtime::*;
 pub use agent_summary::*;

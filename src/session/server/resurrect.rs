@@ -14,6 +14,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// string.
 const SNAPSHOT_VERSION: u32 = 3;
 
+/// Every format in this inclusive window has a migration to the current format.
+const OLDEST_READABLE_SNAPSHOT_VERSION: u32 = 2;
+
+mod migrate;
+
+fn readable_snapshot_version(version: u32) -> bool {
+    (OLDEST_READABLE_SNAPSHOT_VERSION..=SNAPSHOT_VERSION).contains(&version)
+}
+
 /// How long shutdown waits for an in-flight durable write before abandoning it.
 pub(super) const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
@@ -1116,7 +1125,7 @@ struct Backup {
 /// Every backup directory in `parent` whose snapshot this build can restore, by session.
 ///
 /// A backup counts only when its `meta.json` names the session its directory name does and has
-/// this build's snapshot version, the same test a published snapshot passes.
+/// a format in this build's support window, the same test a published snapshot passes.
 fn valid_backups(parent: &Path) -> Vec<(String, Backup)> {
     let Ok(entries) = fs::read_dir(parent) else {
         return Vec::new();
@@ -1134,7 +1143,7 @@ fn valid_backups(parent: &Path) -> Vec<(String, Backup)> {
                 .split_once('.')
                 .and_then(|(_, nanos)| nanos.parse().ok())
                 .unwrap_or(0);
-            (meta.version == SNAPSHOT_VERSION && meta.session == session).then(|| {
+            (readable_snapshot_version(meta.version) && meta.session == session).then(|| {
                 (
                     session.to_string(),
                     Backup {
@@ -1254,7 +1263,7 @@ impl std::fmt::Display for Unrestorable {
         match self {
             Self::Format(found) => write!(
                 f,
-                "its snapshot is in format {found}, and this rozi reads format {SNAPSHOT_VERSION}"
+                "its snapshot is in format {found}, and this rozi reads formats {OLDEST_READABLE_SNAPSHOT_VERSION} through {SNAPSHOT_VERSION}"
             ),
             Self::Damaged => f.write_str("its snapshot is damaged"),
             Self::OtherSession(session) => {
@@ -1281,13 +1290,16 @@ fn read_restorable_meta(dir: &Path, session_name: &str) -> io::Result<SnapshotMe
     let bytes = fs::read(dir.join("meta.json")).map_err(|_| refuse(Unrestorable::Damaged))?;
     let header: SnapshotHeader =
         serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))?;
-    if header.version != SNAPSHOT_VERSION {
+    if !readable_snapshot_version(header.version) {
         return Err(refuse(Unrestorable::Format(header.version)));
     }
     if header.session != session_name {
         return Err(refuse(Unrestorable::OtherSession(header.session)));
     }
-    serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))
+    let mut document = serde_json::from_slice(&bytes).map_err(|_| refuse(Unrestorable::Damaged))?;
+    migrate::to_current(&mut document, header.version)
+        .map_err(|_| refuse(Unrestorable::Damaged))?;
+    serde_json::from_value(document).map_err(|_| refuse(Unrestorable::Damaged))
 }
 
 fn update_restored_layout_generation(
@@ -1702,6 +1714,148 @@ pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_compatibility_snapshot(root: &Path) {
+        let mut server = integrity_server(root);
+        for (id, launch) in [
+            (1, None),
+            (
+                2,
+                Some(crate::pane::launch::PaneLaunch::shell(
+                    "printf '%s' 'hello world'",
+                )),
+            ),
+            (
+                3,
+                Some(
+                    crate::pane::launch::PaneLaunch::direct(vec![
+                        "example".into(),
+                        "two words".into(),
+                        "$literal".into(),
+                    ])
+                    .unwrap(),
+                ),
+            ),
+        ] {
+            let mut pane = running("example", &[], protocol::PaneCommandPhase::Executing);
+            pane.launch = launch;
+            server.panes.insert(id, pane);
+        }
+        let mut job = server.capture_snapshot(Instant::now()).unwrap();
+        job.meta.saved_at = 1_700_000_000;
+        write_snapshot_job(job).unwrap();
+    }
+
+    /// Run explicitly to refresh the scrubbed corpus through the production capture and writer.
+    #[test]
+    #[ignore = "writes the checked-in snapshot fixture"]
+    fn generate_snapshot_v3_fixture() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/snapshots/v3");
+        write_compatibility_snapshot(&root);
+    }
+
+    #[test]
+    fn current_writer_matches_snapshot_fixture() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("snapshots");
+        write_compatibility_snapshot(&root);
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/snapshots/v3/integrity");
+        let actual = root.join("integrity");
+        for relative in [
+            "meta.json",
+            "panes/1.replay",
+            "panes/2.replay",
+            "panes/3.replay",
+        ] {
+            assert_eq!(
+                fs::read(actual.join(relative)).unwrap(),
+                fs::read(fixture.join(relative)).unwrap(),
+                "{relative}"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_fixtures_read_migrate_and_list_without_changing_files() {
+        for version in OLDEST_READABLE_SNAPSHOT_VERSION..=SNAPSHOT_VERSION {
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("tests/fixtures/snapshots/v{version}/integrity"));
+            let before = snapshot_tree(&fixture);
+            let meta = complete_snapshot(&fixture, "integrity").unwrap();
+            assert_eq!(meta.version, SNAPSHOT_VERSION);
+            assert_eq!(meta.panes.len(), 3);
+            assert_eq!(
+                meta.panes[0].foreground.as_deref(),
+                (version == 3).then_some("example")
+            );
+            assert!(meta.panes[1..].iter().all(|pane| pane.foreground.is_none()));
+            assert_eq!(meta.panes[0].launch, None);
+            assert_eq!(
+                meta.panes[1].launch,
+                Some(crate::pane::launch::PaneLaunch::shell(
+                    "printf '%s' 'hello world'"
+                ))
+            );
+            assert_eq!(
+                meta.panes[2].launch,
+                Some(
+                    crate::pane::launch::PaneLaunch::direct(vec![
+                        "example".into(),
+                        "two words".into(),
+                        "$literal".into()
+                    ])
+                    .unwrap()
+                )
+            );
+            let summary = snapshot_summary(&fixture, "integrity".into()).unwrap();
+            assert!(summary.readable);
+            assert_eq!(summary.panes, 3);
+            assert_eq!(snapshot_tree(&fixture), before);
+
+            // A backup in the oldest format must also be offered and recovered by the owner.
+            let temp = tempfile::tempdir().unwrap();
+            let backup = temp.path().join(".integrity.old-1.1");
+            copy_snapshot_files(&fixture, &backup).unwrap();
+            assert_eq!(valid_backups(temp.path()).len(), 1);
+            let server = integrity_server(temp.path());
+            server.recover_interrupted_snapshot().unwrap();
+            assert!(!backup.exists());
+            let recovered = temp.path().join("integrity");
+            assert_eq!(
+                fs::read(recovered.join("meta.json")).unwrap(),
+                fs::read(fixture.join("meta.json")).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_window_refusals_preserve_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("integrity");
+        for version in [OLDEST_READABLE_SNAPSHOT_VERSION - 1, SNAPSHOT_VERSION + 1] {
+            write_meta(&dir, "integrity", version, 1);
+            let before = snapshot_tree(&dir);
+            let err = read_restorable_meta(&dir, "integrity").err().unwrap();
+            assert_eq!(Unrestorable::of(&err), Some(&Unrestorable::Format(version)));
+            assert!(err.to_string().contains("reads formats 2 through 3"));
+            assert_eq!(snapshot_tree(&dir), before);
+        }
+        for document in [
+            serde_json::json!({"version": 2, "session": "integrity", "panes": [42]}),
+            serde_json::json!({"version": 2, "session": "integrity", "panes": {}}),
+        ] {
+            fs::write(
+                dir.join("meta.json"),
+                serde_json::to_vec(&document).unwrap(),
+            )
+            .unwrap();
+            let before = snapshot_tree(&dir);
+            let err = read_restorable_meta(&dir, "integrity").err().unwrap();
+            assert_eq!(Unrestorable::of(&err), Some(&Unrestorable::Damaged));
+            assert_eq!(snapshot_tree(&dir), before);
+        }
+    }
 
     #[cfg(unix)]
     #[test]

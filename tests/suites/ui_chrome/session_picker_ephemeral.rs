@@ -25,6 +25,8 @@ fn session_row(name: &str) -> DiscoveredSession {
             panes: 1,
             has_layout: true,
             clients: 1,
+            effective_protocol: None,
+            rozi_version: None,
         },
     }
 }
@@ -259,6 +261,8 @@ fn padded_selection_insets_the_current_marker() {
                     panes: 1,
                     has_layout: true,
                     clients: 1,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
             }]));
         }

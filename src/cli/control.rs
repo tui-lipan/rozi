@@ -302,6 +302,10 @@ fn run_remote_subscribe_cli(
         }
     };
     let config = crate::config::load_config().config.remote;
+    if let Err(error) = require_remote_command_capability(&parsed, session, &request, &config) {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
     use crate::session::remote::control::{RemoteStream, forward_control_stream};
     let mut stdout = std::io::stdout().lock();
     let outcome = forward_control_stream(&parsed, session, &request, &config, &mut stdout);
@@ -751,6 +755,10 @@ fn ask_remote_endpoint(
         }
     };
     let config = crate::config::load_config().config.remote;
+    if let Err(error) = require_remote_command_capability(&parsed, session, &request, &config) {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
     match crate::session::remote::control::forward_control(&parsed, session, &request, &config) {
         Ok(response) => Ok(serde_json::to_value(response).unwrap_or_default()),
         Err(err) => {
@@ -758,6 +766,30 @@ fn ask_remote_endpoint(
             std::process::exit(2);
         }
     }
+}
+
+/// Only optional commands pay for a Query through the existing-session SSH proxy.
+fn require_remote_command_capability(
+    target: &crate::session::remote::RemoteTarget,
+    session: &str,
+    request: &control::ControlRequest,
+    config: &crate::config::RemoteConfig,
+) -> std::result::Result<(), String> {
+    let Some(capability) = request.command.required_session_capability() else {
+        return Ok(());
+    };
+    let (mut stream, _) = crate::session::remote::connect_remote_within(
+        target,
+        session,
+        config,
+        Some(std::time::Duration::from_secs(5)),
+        None,
+        true,
+        false,
+    )
+    .map_err(|error| error.to_string())?;
+    crate::session::headless::require_session_capability_over(session, &mut stream, capability)
+        .map_err(|error| error.to_string())
 }
 
 /// Where `capture-pane` or `capture-ui` writes the capture itself, rather than a report about it.

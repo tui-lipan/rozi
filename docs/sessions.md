@@ -41,6 +41,7 @@ rozi sessions new tests --detach --no-resurrect  # ... and never restore it
 rozi sessions new scratch --detach --remote workbox  # ... on another machine
 rozi sessions list
 rozi sessions restart dev             # restart a running session, ending its programs
+rozi sessions upgrade dev             # restart it on this release from its snapshot
 rozi sessions kill dev
 ```
 
@@ -68,9 +69,10 @@ session command.
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
 named `attach`, use `rozi --session attach`.
 
-`rozi sessions list --format json` includes an `origin` object for a session created from a profile
-or a Git worktree. A worktree origin holds the checkout path on the session host. Restorable
-sessions keep their origin.
+`rozi sessions list` shows the rozi release and protocol generation each running session runs on;
+`--format json` reports them as `rozi_version` and `effective_protocol`. The JSON also includes an
+`origin` object for a session created from a profile or a Git worktree. A worktree origin holds the
+checkout path on the session host. Restorable sessions keep their origin.
 
 Remote hosts use the same session commands. See [Remote sessions](remote.md).
 
@@ -468,6 +470,20 @@ workspace switching, toasts, pickers, actions, and event subscriptions — are r
 See [Control CLI](control.md#two-endpoints) for the full list and
 [Automation recipes](recipes.md) for examples.
 
+## Upgrade a session
+
+A session keeps running on the rozi release that started it, and a newer client attaches to it
+normally. The sessions picker shows the release on the row when it differs from yours, and a
+feature the session's release does not have is shown but disabled with the release it needs.
+
+To move a session to your current release, run **Upgrade session** from the command palette, or
+`rozi sessions upgrade <NAME>` (add `--remote <HOST>` for a session on another machine). The
+session restarts from its snapshot on the current build: its layout and terminal history come back,
+while the programs in its panes end. Like restarting, the command asks for a second press first.
+The palette offers it only for a session on an older release, and `rozi sessions upgrade` refuses a
+session on a newer one; upgrade that session from the newer rozi instead. rozi never upgrades a
+session on its own.
+
 ## Worktrees
 
 rozi can open each Git worktree of a repository in its own named session, and create or remove
@@ -492,8 +508,10 @@ and removing collaborators.
 - If a remote session's connection drops or stops answering, a reconnecting overlay retries for up
   to two minutes; `Esc` cancels it. rozi never silently replaces a remote session that is gone. See
   [Reconnection and switching](remote.md#reconnection-and-switching).
-- A session server and client must be compatible. After upgrading rozi, restart an incompatible
-  named session, which reopens it from its snapshot, or update the other end.
+- A client works with a session started by another release while both share a session protocol
+  generation; the release notes say when a release starts a new one. A session on an older
+  generation is listed as incompatible: [upgrade it](#upgrade-a-session), which reopens it from its
+  snapshot, or update the other end.
 - Restarting a session kills its processes and keeps its deployed extensions. A compatible session
   starts with fresh panes; an incompatible one restores its snapshot. It is not the same as
   detaching and reattaching.

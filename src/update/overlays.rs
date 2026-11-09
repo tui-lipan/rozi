@@ -1022,7 +1022,9 @@ mod tests {
             // "Compatibility change in v9.9.9" and never say an update existed.
             assert!(toast.starts_with("rozi v9.9.10 available"), "{toast}");
             assert!(
-                toast.contains("restart sessions to attach · ends their programs"),
+                toast.contains(&format!(
+                    "sessions on generation {protocol} need Upgrade session · ends their programs"
+                )),
                 "{toast}"
             );
             assert!(toast.contains("run `rozi update`"), "{toast}");

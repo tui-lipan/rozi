@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// One agent's state, as reported by the session server that owns it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct AgentSummary {
     pub session: String,
     /// Which agent this is: its pane, that pane's spawn generation, the published row for a pane
@@ -27,6 +28,8 @@ pub struct AgentSummary {
     /// The agent's display name (`Claude Code`). Several agents of one pane share it; [`Self::task`]
     /// is what tells them apart.
     pub label: String,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "super::AgentState"))]
     pub state: super::AgentState,
     /// Why the agent is in its state, as it said (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

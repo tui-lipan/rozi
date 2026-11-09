@@ -42,8 +42,8 @@ pub enum SessionControlError {
     NoSuchSession(String),
     /// The endpoint was reached, but the exchange failed.
     Transport(String),
-    /// The server answered with a protocol-level refusal (`protocol-mismatch`,
-    /// `session-mismatch`), which is a wrong or mismatched peer rather than a rejected command.
+    /// A handshake refusal (`protocol-mismatch`, `session-mismatch`), or a local refusal
+    /// because the negotiated session lacks a command's required capability.
     Refused {
         session: String,
         code: String,
@@ -77,6 +77,189 @@ impl std::fmt::Display for SessionControlError {
 
 impl std::error::Error for SessionControlError {}
 
+/// A headless session-control connection. Each exchange opens its own stream because a
+/// headless reply closes it. Baseline commands avoid the optional capability probe.
+pub struct SessionControlConnection {
+    name: String,
+    endpoint: crate::platform::ipc::IpcEndpoint,
+    offered: protocol::Capabilities,
+    capabilities: Option<protocol::Capabilities>,
+    rozi_version: Option<String>,
+}
+
+impl SessionControlConnection {
+    pub fn new(name: &str) -> Result<Self, SessionControlError> {
+        Self::with_capabilities(name, protocol::Capabilities::current())
+    }
+
+    pub fn with_capabilities(
+        name: &str,
+        offered: protocol::Capabilities,
+    ) -> Result<Self, SessionControlError> {
+        if !crate::session::discovery::valid_attach_target(name) {
+            return Err(SessionControlError::Transport(
+                "invalid session name".into(),
+            ));
+        }
+        let endpoint = crate::session::server::session_endpoint(name)
+            .map_err(|err| SessionControlError::Transport(err.to_string()))?;
+        if !endpoint.is_live() {
+            return Err(SessionControlError::NoSuchSession(name.into()));
+        }
+        Ok(Self {
+            name: name.into(),
+            endpoint,
+            offered,
+            capabilities: None,
+            rozi_version: None,
+        })
+    }
+
+    pub fn supports(&self, capability: protocol::Capability) -> bool {
+        self.capabilities
+            .as_ref()
+            .is_some_and(|caps| caps.supports(capability))
+    }
+
+    fn connect(&self) -> Result<IpcConnection, SessionControlError> {
+        connect_patiently(&self.endpoint).map_err(|err| {
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            ) {
+                SessionControlError::NoSuchSession(self.name.clone())
+            } else {
+                SessionControlError::Transport(format!(
+                    "could not reach session `{}`: {err}",
+                    self.name
+                ))
+            }
+        })
+    }
+
+    /// Negotiate the capability set and learn the server's release without attaching.
+    pub fn probe(&mut self) -> Result<(), SessionControlError> {
+        let mut stream = self.connect()?;
+        let (capabilities, rozi_version) =
+            query_capabilities(&self.name, &mut stream, &self.offered)?;
+        self.capabilities = Some(capabilities);
+        self.rozi_version = rozi_version;
+        Ok(())
+    }
+
+    /// Refuse before sending an optional command when the negotiated peer cannot serve it.
+    pub fn require_capability(
+        &mut self,
+        capability: protocol::Capability,
+    ) -> Result<(), SessionControlError> {
+        if self.rozi_version.is_none() {
+            self.probe()?;
+        }
+        capability_requirement(
+            &self.name,
+            self.capabilities
+                .as_ref()
+                .expect("probe negotiated capabilities"),
+            self.rozi_version.as_deref(),
+            capability,
+        )
+    }
+
+    fn check_request(&mut self, request: &ControlRequest) -> Result<(), SessionControlError> {
+        if matches!(request.command, crate::control::ControlCommand::Unknown) {
+            return Err(SessionControlError::Transport(
+                "an unknown control command must never be sent".into(),
+            ));
+        }
+        if let Some(capability) = request.command.required_session_capability() {
+            self.require_capability(capability)?;
+        }
+        Ok(())
+    }
+
+    pub fn run(&mut self, request: ControlRequest) -> Result<ControlResponse, SessionControlError> {
+        self.check_request(&request)?;
+        let mut stream = self.connect()?;
+        let (response, capabilities) = exchange(&self.name, &mut stream, request, &self.offered)?;
+        self.capabilities = Some(capabilities);
+        Ok(response)
+    }
+}
+
+fn query_capabilities(
+    name: &str,
+    stream: &mut IpcConnection,
+    offered: &protocol::Capabilities,
+) -> Result<(protocol::Capabilities, Option<String>), SessionControlError> {
+    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+    protocol::write_frame(
+        stream,
+        &ClientMessage::Query {
+            capabilities: Some(offered.clone()),
+            session: name.to_owned(),
+            protocol_version: protocol::PROTOCOL_VERSION,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+        },
+    )
+    .map_err(|err| SessionControlError::Transport(format!("could not probe session: {err}")))?;
+    match protocol::read_frame::<_, ServerMessage>(stream).map_err(|err| {
+        SessionControlError::Transport(format!("no answer from `{}`: {err}", name))
+    })? {
+        ServerMessage::SessionInfo {
+            capabilities,
+            rozi_version,
+            ..
+        } => Ok((
+            protocol::Capabilities::negotiated(capabilities.as_ref()),
+            rozi_version,
+        )),
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
+            session: name.to_owned(),
+            code,
+            message,
+        }),
+        other => Err(SessionControlError::Transport(format!(
+            "session `{}` answered with an unexpected {} message",
+            name,
+            message_kind(&other)
+        ))),
+    }
+}
+
+/// Check an optional command through a remote session's existing-session byte proxy.
+/// The probe never attaches or starts a session.
+pub fn require_session_capability_over(
+    name: &str,
+    stream: &mut IpcConnection,
+    capability: protocol::Capability,
+) -> Result<(), SessionControlError> {
+    let (capabilities, version) =
+        query_capabilities(name, stream, &protocol::Capabilities::current())?;
+    capability_requirement(name, &capabilities, version.as_deref(), capability)
+}
+
+fn capability_requirement(
+    name: &str,
+    capabilities: &protocol::Capabilities,
+    version: Option<&str>,
+    capability: protocol::Capability,
+) -> Result<(), SessionControlError> {
+    if capabilities.supports(capability) {
+        return Ok(());
+    }
+    Err(SessionControlError::Refused {
+        session: name.into(),
+        code: "unsupported".into(),
+        message: format!(
+            "needs this session on rozi ≥ {} (missing {}; session runs rozi {})",
+            capability.introduced_in(),
+            capability,
+            version.unwrap_or("unknown")
+        ),
+    })
+}
+
 /// Run one control command against the named session server and return its response.
 ///
 /// A successful return means the server answered, not that the command succeeded — a refused
@@ -86,29 +269,8 @@ pub fn run_session_control(
     name: &str,
     request: ControlRequest,
 ) -> std::result::Result<ControlResponse, SessionControlError> {
-    if !crate::session::discovery::valid_attach_target(name) {
-        return Err(SessionControlError::Transport(
-            "invalid session name".to_string(),
-        ));
-    }
-    let endpoint = crate::session::server::session_endpoint(name)
-        .map_err(|err| SessionControlError::Transport(err.to_string()))?;
-    if !endpoint.is_live() {
-        return Err(SessionControlError::NoSuchSession(name.to_string()));
-    }
-    let mut stream = connect_patiently(&endpoint).map_err(|err| {
-        // An endpoint file whose server is gone answers here rather than at `is_live`, and the
-        // useful thing to say is that the session is not running, not that a connect failed.
-        if matches!(
-            err.kind(),
-            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
-        ) {
-            SessionControlError::NoSuchSession(name.to_string())
-        } else {
-            SessionControlError::Transport(format!("could not reach session `{name}`: {err}"))
-        }
-    })?;
-    exchange(name, &mut stream, request)
+    let mut connection = SessionControlConnection::new(name)?;
+    connection.run(request)
 }
 
 /// Open a subscription against the named session server and return the open connection and initial response.
@@ -116,26 +278,9 @@ pub fn run_session_subscribe(
     name: &str,
     request: ControlRequest,
 ) -> std::result::Result<(IpcConnection, ControlResponse), SessionControlError> {
-    if !crate::session::discovery::valid_attach_target(name) {
-        return Err(SessionControlError::Transport(
-            "invalid session name".to_string(),
-        ));
-    }
-    let endpoint = crate::session::server::session_endpoint(name)
-        .map_err(|err| SessionControlError::Transport(err.to_string()))?;
-    if !endpoint.is_live() {
-        return Err(SessionControlError::NoSuchSession(name.to_string()));
-    }
-    let mut stream = connect_patiently(&endpoint).map_err(|err| {
-        if matches!(
-            err.kind(),
-            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
-        ) {
-            SessionControlError::NoSuchSession(name.to_string())
-        } else {
-            SessionControlError::Transport(format!("could not reach session `{name}`: {err}"))
-        }
-    })?;
+    let mut connection = SessionControlConnection::new(name)?;
+    connection.check_request(&request)?;
+    let mut stream = connection.connect()?;
     let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
     let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
     protocol::write_frame(
@@ -157,7 +302,7 @@ pub fn run_session_subscribe(
             let _ = stream.set_read_timeout(None);
             Ok((stream, response))
         }
-        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
             session: name.to_string(),
             code,
             message,
@@ -227,7 +372,9 @@ pub fn pump_session_records(
                     return Ok(end);
                 }
             }
-            Ok(ServerMessage::Error { code, message }) => return Err(format!("{code}: {message}")),
+            Ok(ServerMessage::Error { code, message, .. }) => {
+                return Err(format!("{code}: {message}"));
+            }
             Ok(_) => {}
             Err(err)
                 if matches!(
@@ -307,13 +454,14 @@ fn exchange(
     name: &str,
     stream: &mut IpcConnection,
     request: ControlRequest,
-) -> std::result::Result<ControlResponse, SessionControlError> {
+    offered: &protocol::Capabilities,
+) -> std::result::Result<(ControlResponse, protocol::Capabilities), SessionControlError> {
     let _ = stream.set_read_timeout(reply_timeout(&request.command));
     let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
     protocol::write_frame(
         stream,
         &ClientMessage::SessionControl {
-            capabilities: Some(protocol::Capabilities::current()),
+            capabilities: Some(offered.clone()),
             session: name.to_string(),
             protocol_version: protocol::PROTOCOL_VERSION,
             min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
@@ -324,8 +472,15 @@ fn exchange(
     match protocol::read_frame::<_, ServerMessage>(stream)
         .map_err(|err| SessionControlError::Transport(format!("no answer from `{name}`: {err}")))?
     {
-        ServerMessage::SessionControlResult { response, .. } => Ok(response),
-        ServerMessage::Error { code, message } => Err(SessionControlError::Refused {
+        ServerMessage::SessionControlResult {
+            response,
+            capabilities,
+            ..
+        } => Ok((
+            response,
+            protocol::Capabilities::negotiated(capabilities.as_ref()),
+        )),
+        ServerMessage::Error { code, message, .. } => Err(SessionControlError::Refused {
             session: name.to_string(),
             code,
             message,

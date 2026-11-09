@@ -1,0 +1,9 @@
+{
+  "capabilities": [
+    "example"
+  ],
+  "min_protocol_version": 1,
+  "protocol_version": 1,
+  "session": "example",
+  "type": "query"
+}

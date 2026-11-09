@@ -69,6 +69,10 @@ pub(crate) fn execute(request: WorktreeRequest, directory: Option<&Path>) -> Wor
             worktrees::exclude_directory(Path::new(&cwd), &directory)
                 .map(|()| WorktreeResult::Excluded { directory })
         }
+        WorktreeRequest::Unknown => Err(format!(
+            "this session runs rozi {}, which does not support that worktree request",
+            env!("CARGO_PKG_VERSION")
+        )),
     };
     result.unwrap_or_else(|message| WorktreeResult::Failed { message })
 }

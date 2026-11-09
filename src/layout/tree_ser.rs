@@ -6,6 +6,7 @@ use crate::pane::id::PaneId;
 
 /// Serde-stable tree shared by profile TOML and the session layout document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SerializedTree<L> {
     Leaf {
@@ -26,6 +27,7 @@ impl<L: Default> Default for SerializedTree<L> {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum SerializedLayoutKind {
     #[default]
@@ -67,6 +69,7 @@ impl From<SerializedLayoutKind> for LayoutKind {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum SerializedSplitAxis {
     #[default]

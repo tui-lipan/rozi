@@ -181,6 +181,8 @@ pub struct AgentRuntime {
     pub reference: AgentRef,
     pub identity: AgentIdentity,
     pub label: String,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "AgentState"))]
     pub state: AgentState,
     /// Why the agent is in its state, as the agent said it (`Permission required`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -192,6 +194,8 @@ pub struct AgentRuntime {
     /// Runs this agent has finished. See [`AgentRecord::completions`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
+    #[serde(deserialize_with = "super::tolerant::deserialize")]
+    #[cfg_attr(feature = "schema-gen", schemars(with = "AgentAuthority"))]
     pub source: AgentAuthority,
 }
 

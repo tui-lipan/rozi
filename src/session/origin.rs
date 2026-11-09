@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct SessionOrigin {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
@@ -17,6 +18,7 @@ impl SessionOrigin {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct WorktreeOrigin {
     /// Absolute checkout path on the session server's host; remote clients keep it opaque.
     pub path: String,

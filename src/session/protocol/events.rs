@@ -17,9 +17,10 @@ use crate::session::protocol::{
 /// An event's fields, as they are built before going onto the wire.
 pub type EventFields = Vec<(&'static str, String)>;
 
+/// The schema is written by hand from [`EventKind::ALL`]: the public control API lists the closed
+/// set of event names, and [`EventKind::Unknown`] is not one of them.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub enum EventKind {
     PaneSpawned,
     PaneExited,
@@ -44,6 +45,22 @@ pub enum EventKind {
     ProfileApplied,
     ProfileSaved,
     ConfigReloaded,
+    /// An event a newer session server raised that this build does not know. Received only: it is
+    /// not in [`Self::ALL`], so nothing here raises, subscribes to, or hooks it.
+    #[serde(other)]
+    Unknown,
+}
+
+#[cfg(feature = "schema-gen")]
+impl schemars::JsonSchema for EventKind {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "EventKind".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let names: Vec<&str> = Self::ALL.iter().map(|kind| kind.id()).collect();
+        schemars::json_schema!({ "type": "string", "enum": names })
+    }
 }
 
 impl EventKind {
@@ -98,6 +115,7 @@ impl EventKind {
             Self::ProfileApplied => "profile-applied",
             Self::ProfileSaved => "profile-saved",
             Self::ConfigReloaded => "config-reloaded",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -130,7 +148,8 @@ impl EventKind {
             | Self::ProfileLoaded
             | Self::ProfileApplied
             | Self::ProfileSaved
-            | Self::ConfigReloaded => false,
+            | Self::ConfigReloaded
+            | Self::Unknown => false,
         }
     }
 }

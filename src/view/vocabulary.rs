@@ -458,16 +458,24 @@ pub(crate) fn session_facts(
         | DiscoveredSessionStatus::Unknown => None,
     };
     let shared = (others > 0).then(|| format!("shared with {}", count(others as usize, "other")));
+    let version = session_version_badge(entry);
     let profile = entry
         .origin
         .profile
         .as_ref()
         .map(|profile| format!("from {profile}"));
     fields(
-        [panes, agents.map(str::to_string), shared, profile]
+        [panes, agents.map(str::to_string), shared, version, profile]
             .into_iter()
             .flatten(),
     )
+}
+
+/// A quiet version badge (`"rozi 0.0.41"`) when a running session's server release differs from
+/// this binary's. Same-version sessions stay unbadged.
+pub(crate) fn session_version_badge(entry: &DiscoveredSession) -> Option<String> {
+    let version = entry.rozi_version()?;
+    (version != env!("CARGO_PKG_VERSION")).then(|| format!("rozi {version}"))
 }
 
 /// How many clients other than this one are attached to a running session.
@@ -808,6 +816,8 @@ mod tests {
                 panes: 1,
                 clients: 0,
                 has_layout: false,
+                effective_protocol: None,
+                rozi_version: None,
             },
         }
     }
@@ -821,6 +831,30 @@ mod tests {
         assert_eq!(
             session_facts(&entry, Some("Codex blocked"), 2),
             "1 pane · Codex blocked · shared with 2 others · from web"
+        );
+        entry.status = DiscoveredSessionStatus::Running {
+            panes: 1,
+            clients: 0,
+            has_layout: false,
+            effective_protocol: Some(52),
+            rozi_version: Some(env!("CARGO_PKG_VERSION").into()),
+        };
+        assert_eq!(
+            session_facts(&entry, None, 0),
+            "1 pane · from web",
+            "same-version session stays unbadged"
+        );
+        entry.status = DiscoveredSessionStatus::Running {
+            panes: 1,
+            clients: 0,
+            has_layout: false,
+            effective_protocol: Some(52),
+            rozi_version: Some("0.0.41".into()),
+        };
+        assert_eq!(
+            session_facts(&entry, None, 0),
+            "1 pane · rozi 0.0.41 · from web",
+            "older in-window session shows a quiet version badge"
         );
         entry.status = DiscoveredSessionStatus::Restorable;
         assert_eq!(session_facts(&entry, None, 0), "from web");

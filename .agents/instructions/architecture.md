@@ -100,6 +100,10 @@ claiming a new domain, so say why in the change that introduces it.
   repeated PTY resize and SIGWINCH reflow.
 - Split direction follows the focused tile's aspect ratio and
   `layout.split_width_multiplier`.
+- Builds from different releases share sessions. A wire message, frame kind, vocabulary value, or
+  new meaning added within a wire generation is gated on a negotiated `Capability`, and UI or CLI
+  code checks `supports` before relying on it. Read `dev/wire-compatibility.md` before changing
+  `session/protocol/`, the shared layout document, or the snapshot format.
 
 ## Data flow
 

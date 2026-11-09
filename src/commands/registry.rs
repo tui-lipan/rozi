@@ -393,6 +393,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::GrantControl => shared
             .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         Action::ApplyProfile => crate::ops::profile::can_replace_session(state),
+        Action::UpgradeSession => can_upgrade_attached_session(state),
         Action::UpdateRozi => crate::ops::update_check::update_command_here(state).is_some(),
         Action::ShowReleaseNotes => state.release_notes.is_some(),
         Action::ScreenshotPane => state.focused_pane().is_some(),
@@ -404,6 +405,30 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::MarkUiRecording => crate::ops::ui_recording::is_recording(state),
         _ => true,
     }
+}
+
+pub(crate) fn can_upgrade_attached_session(state: &State) -> bool {
+    state.current().session_attached
+        && !state.is_ephemeral_session()
+        && state
+            .current()
+            .session_client
+            .as_ref()
+            .and_then(|client| client.server_version())
+            .and_then(crate::session::discovery::release_order)
+            == Some(crate::session::discovery::ReleaseOrder::Older)
+}
+
+/// Why `action` is disabled on the currently attached session, or `None` when the session supports
+/// it (or no session is attached).
+pub(crate) fn action_disabled_reason(action: Action, state: &State) -> Option<String> {
+    action.disabled_reason_for_capabilities(
+        state
+            .current()
+            .session_client
+            .as_ref()
+            .map(|client| client.capabilities()),
+    )
 }
 
 /// Whether the command palette lists `action` right now. Stricter than [`command_available`]: a
@@ -1786,5 +1811,133 @@ mod tests {
         assert!(commands_active(&state));
         state.current_mut().connection = crate::state::ConnectionState::Reconnecting;
         assert!(!commands_active(&state));
+    }
+
+    fn attach_scripted_session(
+        capabilities: Option<crate::session::protocol::Capabilities>,
+        rozi_version: Option<&str>,
+    ) -> (
+        crate::session::client::SessionClient,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::pipe;
+        use std::sync::mpsc;
+
+        use crate::platform::ipc::{IpcConnection, PipedConnection};
+        use crate::session::client::SessionClient;
+        use crate::session::protocol::{
+            self, ClientMessage, PROTOCOL_VERSION, ServerMessage, SessionInstanceId,
+        };
+
+        let (server_reader, client_writer) = pipe().expect("client->server pipe");
+        let (client_reader, server_writer) = pipe().expect("server->client pipe");
+        let rozi_version = rozi_version.map(str::to_string);
+        let server = std::thread::spawn(move || {
+            let mut conn = PipedConnection::from_reader_writer(server_writer, server_reader);
+            let _attach: ClientMessage =
+                protocol::read_frame(&mut conn).expect("read client attach");
+            protocol::write_frame(
+                &mut conn,
+                &ServerMessage::Attached {
+                    capabilities,
+                    session_instance: SessionInstanceId::generate(),
+                    protocol_version: PROTOCOL_VERSION,
+                    effective_protocol: PROTOCOL_VERSION,
+                    session: "dev".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 0,
+                    layout: None,
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    allow_takeover: true,
+                    origin: Default::default(),
+                    rozi_version,
+                },
+            )
+            .expect("send Attached");
+            while protocol::read_frame::<_, ClientMessage>(&mut conn).is_ok() {}
+        });
+        let client_conn = IpcConnection::from_piped(PipedConnection::from_reader_writer(
+            client_writer,
+            client_reader,
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let (client, _) =
+            SessionClient::from_stream_attached(client_conn, "dev", tx, false).expect("attach");
+        (client, server)
+    }
+
+    #[test]
+    fn upgrade_session_is_visible_only_when_attached_session_differs_in_version() {
+        use crate::session::protocol::Capabilities;
+
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+
+        let (same_client, same_server) = attach_scripted_session(
+            Some(Capabilities::current()),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(same_client);
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+        state.current_mut().session_client = None;
+        same_server.join().expect("server thread");
+
+        let (older_client, older_server) =
+            attach_scripted_session(Some(Capabilities::default()), Some("0.0.41"));
+        state.current_mut().session_client = Some(older_client);
+        assert!(can_upgrade_attached_session(&state));
+        assert!(palette_visible(Action::UpgradeSession, &state));
+
+        state.current_mut().session_name = Some("eph-1".into());
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+
+        state.current_mut().session_client = None;
+        older_server.join().expect("server thread");
+
+        // An older client attached to a newer server must not offer to move the session onto
+        // itself: that is a downgrade, and the newer release's snapshot may be unreadable here.
+        let newer = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .map(|v| semver::Version::new(v.major, v.minor, v.patch + 1).to_string())
+            .unwrap();
+        let (newer_client, newer_server) =
+            attach_scripted_session(Some(Capabilities::current()), Some(&newer));
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_client = Some(newer_client);
+        assert!(!can_upgrade_attached_session(&state));
+        assert!(!palette_visible(Action::UpgradeSession, &state));
+        state.current_mut().session_client = None;
+        newer_server.join().expect("server thread");
+    }
+
+    #[test]
+    fn a_capability_the_session_lacks_disables_with_the_release_it_needs() {
+        use crate::input::capability_disabled_reason;
+        use crate::session::protocol::{Capabilities, Capability};
+
+        let required = Some(Capability::RuntimeMetrics);
+        let without = Capabilities::current().without(Capability::RuntimeMetrics);
+        assert_eq!(
+            capability_disabled_reason(required, Some(&without)).as_deref(),
+            Some("needs this session on rozi ≥ 0.0.44")
+        );
+        assert_eq!(
+            capability_disabled_reason(required, Some(&Capabilities::current())),
+            None
+        );
+        // No session attached, or nothing required: nothing to disable.
+        assert_eq!(capability_disabled_reason(required, None), None);
+        assert_eq!(capability_disabled_reason(None, Some(&without)), None);
+        // Every built-in action is baseline of this wire generation.
+        for command in crate::commands::BUILTIN_COMMANDS {
+            assert_eq!(command.action.required_capability(), None);
+        }
     }
 }

@@ -620,6 +620,46 @@ pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     attach_session_by_name(ctx, name, remote_host, remote_target, true)
 }
 
+/// Stop an older attached session so it saves its snapshot, then recreate it on this binary and
+/// re-attach to the restored session.
+pub(crate) fn upgrade_current_session(ctx: &mut Context<AppRoot>) -> Update {
+    if !crate::commands::can_upgrade_attached_session(&ctx.state) {
+        return Update::full();
+    }
+    let Some(name) = ctx.state.current().session_name.clone() else {
+        crate::pane::pty_events::notify_info(ctx, "Not attached to a session");
+        return Update::full();
+    };
+    let remote_host = ctx.state.current().remote_host.clone();
+    let remote_target = ctx.state.current().remote_target.clone();
+    crate::ops::session::flush_layout_commit(ctx);
+    crate::ops::exit::mark_session_detached(ctx, None);
+    if let Some(client) = ctx.state.current().session_client.clone() {
+        client.detach();
+    }
+    let failure = if let Some(target) = remote_target.as_ref() {
+        let config = ctx.state.config.remote.clone();
+        match crate::session::remote::upgrade_remote_session(target, &name, &config) {
+            Ok(_) => {
+                crate::ops::session::lifecycle::remove_cached_remote_session(ctx, &name, target);
+                None
+            }
+            Err(err) => Some(err),
+        }
+    } else {
+        crate::session::server::stop_named_session_for_upgrade(&name)
+            .err()
+            .map(|err| err.to_string())
+    };
+    if let Some(err) = failure {
+        // The session may well still be running - a refused upgrade, a dropped ssh connection -
+        // so go back to it rather than leave this client detached. Never start it afresh here.
+        crate::pane::pty_events::notify_error(ctx, "Upgrade failed", err);
+        return attach_session_by_name(ctx, name, remote_host, remote_target, false);
+    }
+    attach_session_by_name(ctx, name, remote_host, remote_target, true)
+}
+
 /// Land after the active session is taken away rather than left — killed, disconnected, or
 /// evicted. Never auto-attaches: open the session picker when another meaningful choice exists,
 /// otherwise the sessionless launcher. The caller has already torn the outgoing session down.

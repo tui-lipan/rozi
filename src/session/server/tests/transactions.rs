@@ -702,6 +702,8 @@ fn a_parked_failed_spawn_is_removed_and_repairs_scrollable_focus_on_return() {
                     panes: 1,
                     clients: 1,
                     has_layout: true,
+                    effective_protocol: None,
+                    rozi_version: None,
                 },
                 origin: Default::default(),
                 ephemeral: false,

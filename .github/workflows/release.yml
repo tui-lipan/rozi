@@ -714,12 +714,16 @@ jobs:
           version, binary = sys.argv[1:]
           lines = subprocess.check_output([binary, "--version"], text=True).splitlines()
           fields = dict(line.split("=", 1) for line in lines[1:])
+          # The session protocol window this release speaks: a running session started on any
+          # generation inside it keeps working once a client updates.
           document = {
-              "schema_version": 1,
+              "schema_version": 2,
               "version": version,
               "extension_api": int(fields["extension_api"]),
-              "session_protocol": int(fields["protocol_max"]),
+              "session_protocol_min": int(fields["protocol_min"]),
+              "session_protocol_max": int(fields["protocol_max"]),
           }
+          assert document["session_protocol_min"] <= document["session_protocol_max"], document
           with open("dist/rozi-compatibility.json", "w", encoding="utf-8") as output:
               json.dump(document, output, separators=(",", ":"))
               output.write("\n")

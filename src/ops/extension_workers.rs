@@ -132,6 +132,7 @@ pub(crate) enum Gate {
 
 pub(crate) fn gate(command: &ControlCommand) -> Gate {
     match command {
+        ControlCommand::Unknown => Gate::Ui,
         // Which tabs a worker may publish to is decided when its stream opens: only its own
         // extension's.
         ControlCommand::Pick { .. }

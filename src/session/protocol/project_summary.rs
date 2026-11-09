@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// One checkout a session works in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ProjectSummary {
     pub session: String,
     /// The checkout's root on the session's host: the primary checkout, or a linked worktree.
@@ -67,6 +68,7 @@ pub fn checkout_of<'a>(
 
 /// A published row, by the pane that publishes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct ProjectRowRef {
     pub pane: crate::pane::id::PaneId,
     pub row: super::RowKey,

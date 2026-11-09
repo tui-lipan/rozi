@@ -126,6 +126,9 @@ fn disk_step(
             drop(file.file);
             Ok(Some(file.staged))
         }
+        AttachmentOperation::Unknown => Err(io::Error::other(
+            "this session's rozi does not support that attachment step",
+        )),
         AttachmentOperation::Cancel => {
             writing.remove(&key);
             Ok(None)

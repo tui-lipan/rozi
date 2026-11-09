@@ -880,6 +880,9 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             }
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
+            // A newer server's message that skipped its send gate. Ignoring it keeps the session
+            // attached; acting on it is impossible and treating it as an error would reconnect.
+            ServerMessage::Unknown => Msg::SessionIgnored,
             ServerMessage::InputMarked { token } => Msg::SessionInputMarked { epoch, token },
             ServerMessage::RuntimeMetrics { .. } => Msg::SessionRuntimeMetrics { epoch },
             ServerMessage::RecordingEnded { stopped } => {
@@ -973,7 +976,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             // An eviction arrives as an error with a reserved code, immediately before the server
             // closes the connection. It has to be told apart from a dropped link here: the generic
             // path reconnects, which would walk straight back into the session we were removed from.
-            ServerMessage::Error { code, message }
+            ServerMessage::Error { code, message, .. }
                 if code == crate::session::protocol::EVICTED_ERROR_CODE =>
             {
                 Msg::SessionEvicted { epoch, message }
@@ -1035,6 +1038,12 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 session,
                 notifications,
             },
+            // An event kind from a newer server: nothing here can act on it or name it to a hook.
+            ServerMessage::SessionEvent { event }
+                if event.kind == crate::session::protocol::EventKind::Unknown =>
+            {
+                Msg::SessionIgnored
+            }
             ServerMessage::SessionEvent { event } => Msg::SessionEvent { epoch, event },
             ServerMessage::SessionActions { actions } => Msg::SessionActions { epoch, actions },
         },
@@ -1044,6 +1053,33 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a newer server sends that this client cannot read leaves the session as it is: no
+    /// error, no reconnect, no hook fired for an event nobody here can name.
+    #[test]
+    fn newer_server_messages_and_event_kinds_are_ignored() {
+        let unknown: ServerMessage =
+            serde_json::from_str(r#"{"type":"pane-teleported","pane_id":3}"#).unwrap();
+        assert!(matches!(
+            server_message_to_msg(1, Frame::Control(unknown)),
+            Msg::SessionIgnored
+        ));
+
+        let event: ServerMessage = serde_json::from_value(serde_json::json!({
+            "type": "session-event",
+            "event": {
+                "session_instance": "dev",
+                "seq": 4,
+                "kind": "pane-teleported",
+                "data": {},
+            },
+        }))
+        .unwrap();
+        assert!(matches!(
+            server_message_to_msg(1, Frame::Control(event)),
+            Msg::SessionIgnored
+        ));
+    }
 
     #[test]
     fn existing_only_attach_rejects_missing_or_autostarted_servers() {

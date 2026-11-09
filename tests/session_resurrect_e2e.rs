@@ -44,6 +44,15 @@ const REPLAY_MARKER: &[u8] = b"rozi-resurrect-replay-marker";
 
 #[test]
 fn subprocess_restart_restores_layout_and_pane_replay() {
+    restart_restores_layout_and_pane_replay(false);
+}
+
+#[test]
+fn subprocess_restart_migrates_v2_layout_and_pane_replay() {
+    restart_restores_layout_and_pane_replay(true);
+}
+
+fn restart_restores_layout_and_pane_replay(migrate_v2: bool) {
     let session = unique_session_name();
     let test_root = private_temp_dir();
     let runtime_base = test_root.join("runtime");
@@ -160,6 +169,16 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     assert!(before_restart.total_scrollback_rows() > 3);
 
     server.kill_for_restart();
+    if migrate_v2 {
+        let path = snapshot.join("meta.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        document["version"] = 2.into();
+        for pane in document["panes"].as_array_mut().unwrap() {
+            pane.as_object_mut().unwrap().remove("foreground");
+        }
+        fs::write(path, serde_json::to_vec(&document).unwrap()).unwrap();
+    }
     fs::write(
         &config_path,
         "scrollback = 3\n\n[session]\nresurrect = true\n",

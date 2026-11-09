@@ -169,13 +169,15 @@ old ones automatically.
 An update installs the new build for the next launch; it restarts nothing that is running:
 
 - The client you updated from keeps the old build until you quit and start rozi again.
-- Each session server keeps its old build until you restart that session with `restart-session`,
-  by pressing `Ctrl+E` twice in Sessions, or with `rozi sessions restart <NAME>`. Restarting a
-  session ends the programs running in its panes.
-- A new client attaches to an old server normally while the session protocol is unchanged. When a
-  release changes the protocol, the old server refuses the new client. Restarting such a session
-  reopens it from its snapshot, with its layout and terminal history. To finish work in it first,
-  run `rozi update --rollback`, attach and finish, then update again and restart it. See
+- Each session server keeps its old build until you [upgrade the session](sessions.md#upgrade-a-session)
+  with the **Upgrade session** command or `rozi sessions upgrade <NAME>`. The session reopens from
+  its snapshot on the new build, with its layout and terminal history; the programs running in its
+  panes end.
+- A new client attaches to an old server normally while both share a session protocol generation,
+  and a feature the old server lacks is shown as disabled with the release it needs. The update
+  notice says when a release starts a new generation. An old server on an older generation refuses
+  the new client; upgrade it the same way. To finish work in it first, run
+  `rozi update --rollback`, attach and finish, then update again and upgrade it. See
   [`runs an incompatible rozi version`](troubleshooting.md#runs-an-incompatible-rozi-version).
 - Updating a local client does not change sessions on a remote host.
 
@@ -189,8 +191,10 @@ open. The check never installs anything, and it stays silent when rozi is curren
 unavailable.
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available`, with the version
-step and the update command for your install channel. If the release raises the extension API or
-needs running sessions restarted, the toast uses warning colors and adds a row saying so. Each
+step and the update command for your install channel, and a row saying what the update means for
+running sessions: they keep working, or sessions on the current protocol generation need
+[Upgrade session](sessions.md#upgrade-a-session). If the release raises the extension API or
+starts a new generation, the toast uses warning colors. Each
 release is announced once, not again in every window. Until you update, **Update rozi to vX.Y.Z** stays in
 Commands, which runs the update in a popup (see
 [Update notices](configuration.md#update-notices)).

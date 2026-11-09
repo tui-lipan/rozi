@@ -182,9 +182,9 @@ the session either way.
 Commands that accept `--target` use it first.
 
 Against a **UI endpoint**, the CLI otherwise sends the calling pane's `ROZI_PANE`, and rozi falls
-back to the focused pane. `status`, `agents report`, and `agents release` from a pane of a session
-the UI keeps in the background apply to that pane in its own session, while another session is on
-screen.
+back to the focused pane. Without `--target`, `status`, `agents report`, and `agents release` from
+a pane of a session the UI keeps in the background apply to the calling pane in its own session,
+while another session is on screen. `status --target` names a pane of the session on screen.
 
 Against a **session endpoint**, `ROZI_PANE` is ignored. A pane id does not say which session it
 belongs to, so a script in pane 3 of `work` running `rozi --session dev send-text …` would

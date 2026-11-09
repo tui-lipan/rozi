@@ -73,12 +73,14 @@ pub(crate) fn handle_control_request(
         return crate::ops::capture_wait::start(ctx, envelope);
     }
     // What a pane says about itself goes to its own session, on screen or held in the background.
+    // A status naming `--target` names a pane of the session on screen, as every other target
+    // does on this endpoint, so only a bare status is the caller's own.
     let caller_epoch = if envelope.request.source_session.is_some()
         && matches!(
             envelope.request.command,
             ControlCommand::AgentReport { .. }
                 | ControlCommand::AgentRelease { .. }
-                | ControlCommand::SetStatus { .. }
+                | ControlCommand::SetStatus { target: None, .. }
         ) {
         match crate::ops::attached_control::route(&ctx.state, &envelope.request) {
             Ok(epoch) => Some(epoch),
@@ -2809,7 +2811,8 @@ mod tests {
 
     /// A pane of a session held in the background sets its own status there, even while another
     /// session on screen has a pane with the same id, and an off-screen caller never falls back on
-    /// the focused pane, which is the session on screen's.
+    /// the focused pane, which is the session on screen's. An explicit `--target` still names a
+    /// pane of the session on screen.
     #[test]
     fn a_pane_of_a_parked_session_sets_its_own_status() {
         crate::test_support::on_large_stack(|| {
@@ -2835,13 +2838,13 @@ mod tests {
                 parked.workspaces[0].panes.push(pane);
                 state.background.insert(parked.epoch, parked);
             }
-            let mut send_status = |source_pane| {
+            let mut send_status = |target, source_pane| {
                 let (reply, response) = mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
                         request: ControlRequest {
                             command: ControlCommand::SetStatus {
-                                target: None,
+                                target,
                                 status: Some("working".into()),
                                 reason: None,
                             },
@@ -2859,26 +2862,36 @@ mod tests {
                 response.recv().unwrap()
             };
 
-            assert!(send_status(Some(1)).ok);
-            assert!(parked_outbound.try_iter().any(|message| matches!(
-                message,
-                ClientOutbound::Control(ClientMessage::SetPaneStatus {
-                    pane_id: 1,
-                    local: false,
-                    generation: 5,
-                    status: Some(status),
-                    reason: None,
-                }) if status == "working"
-            )));
-            let response = send_status(None);
-            assert!(!response.ok, "an off-screen caller has no focused pane");
+            let status_sent = |outbound: &mpsc::Receiver<ClientOutbound>, generation| {
+                outbound.try_iter().any(|message| {
+                    matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                            pane_id: 1,
+                            local: false,
+                            generation: sent,
+                            status: Some(status),
+                            reason: None,
+                        }) if status == "working" && sent == generation
+                    )
+                })
+            };
+
+            // A bare status is the calling pane's own, in its own session.
+            assert!(send_status(None, Some(1)).ok);
+            assert!(status_sent(&parked_outbound, 5));
             assert!(
-                !current_outbound.try_iter().any(|message| matches!(
-                    message,
-                    ClientOutbound::Control(ClientMessage::SetPaneStatus { .. })
-                )),
+                !status_sent(&current_outbound, 9),
                 "the session on screen's pane 1 is another pane"
             );
+            let response = send_status(None, None);
+            assert!(!response.ok, "an off-screen caller has no focused pane");
+            assert!(!status_sent(&current_outbound, 9));
+
+            // `--target` names a pane of the session on screen, wherever the caller runs.
+            assert!(send_status(Some(1), Some(1)).ok);
+            assert!(status_sent(&current_outbound, 9));
+            assert!(!status_sent(&parked_outbound, 5));
         });
     }
 

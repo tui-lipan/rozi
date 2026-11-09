@@ -530,7 +530,7 @@ mod tests {
         );
         assert!(
             mismatch.contains(
-                "`rozi sessions restart dev` reopens it from its last snapshot and ends its programs"
+                "`rozi sessions upgrade dev` reopens it on this rozi from its last snapshot and ends its programs"
             ),
             "{mismatch}"
         );

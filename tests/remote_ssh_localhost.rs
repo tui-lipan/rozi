@@ -112,12 +112,12 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
 
     // A real attach over the pipe: the session protocol does not know it is not a local socket.
     let (tx, _rx) = mpsc::channel();
-    let attached = SessionClient::from_stream_attached_with_server_nonce(
+    let attached = SessionClient::from_stream_attached_with_proof(
         stream,
         session.clone(),
         tx,
         false,
-        preamble.server_nonce,
+        rozi::session::protocol::AttachProof::server_nonce(preamble.server_nonce),
     );
     let (client, attached) = match attached {
         Ok(pair) => pair,
@@ -236,12 +236,14 @@ fn remote_serve_proxies_a_session_over_pipes() {
         rozi::session::remote::read_preamble(&mut raced).expect("read raced preamble");
     assert!(!raced_preamble.server_started);
     let (raced_tx, _raced_rx) = mpsc::channel();
-    let raced_attach = SessionClient::from_stream_attached_with_server_nonce(
+    let raced_attach = SessionClient::from_stream_attached_with_proof(
         raced,
         session.clone(),
         raced_tx,
         false,
-        Some("00000000000000000000000000000000".to_string()),
+        rozi::session::protocol::AttachProof::server_nonce(Some(
+            "00000000000000000000000000000000".to_string(),
+        )),
     );
     let raced_error = match raced_attach {
         Err(error) => error,
@@ -251,12 +253,12 @@ fn remote_serve_proxies_a_session_over_pipes() {
 
     // The session protocol runs over the pipe exactly as it would over a socket.
     let (tx, _rx) = mpsc::channel();
-    let (client, attached) = SessionClient::from_stream_attached_with_server_nonce(
+    let (client, attached) = SessionClient::from_stream_attached_with_proof(
         first,
         session.clone(),
         tx,
         false,
-        preamble.server_nonce,
+        rozi::session::protocol::AttachProof::server_nonce(preamble.server_nonce),
     )
     .expect("attach over the proxy pipe");
     match &attached {

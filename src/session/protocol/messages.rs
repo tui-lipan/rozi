@@ -60,6 +60,13 @@ pub enum ClientMessage {
         /// it; when present, a same-name server with a different startup nonce must reject attach.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_server_nonce: Option<String>,
+        /// Claim the client slot a departing client reserved with
+        /// [`ClientMessage::PrepareHandoff`]: its layout-control lease and parked state pass to this
+        /// connection. A token the server does not hold - expired, spent, or never issued - is
+        /// ignored and the attach proceeds as an ordinary one. Sent only to a server that
+        /// negotiated [`super::Capability::ClientHandoff`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_token: Option<String>,
     },
     /// Record the provenance that supplied this session's initial panes. Sent only after the seed
     /// requests have been queued successfully.
@@ -303,6 +310,14 @@ pub enum ClientMessage {
     /// connection; the session itself and every other client keep running.
     EvictClient {
         target: ClientId,
+    },
+    /// Reserve this client's slot for the process that replaces it, such as the same client
+    /// relaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a
+    /// one-time token. Once this connection goes, the slot is held until the token is claimed by an
+    /// attach that presents it or the reservation expires: the layout-control lease is not handed
+    /// on, and an ephemeral session does not count the gap as having no client.
+    PrepareHandoff {
+        request_id: u64,
     },
     SetInputLock {
         locked: bool,
@@ -594,6 +609,10 @@ pub enum ServerMessage {
         /// The server's release (`CARGO_PKG_VERSION`), so a client can name what a session runs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rozi_version: Option<String>,
+        /// Whether the attach's `handoff_token` claimed a reserved slot. Present only when the
+        /// attach presented one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_claimed: Option<bool>,
     },
     /// Retained inbox delivered immediately after attach, before live notification events.
     SessionNotifications {
@@ -772,6 +791,18 @@ pub enum ServerMessage {
     },
     /// Sent only to a requester whose pending control request the controller declined.
     ControlDeclined,
+    /// Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how
+    /// long the slot is held once the client has gone. `error` is set, and `token` empty, when the
+    /// server refused.
+    HandoffPrepared {
+        request_id: u64,
+        #[serde(default)]
+        token: String,
+        #[serde(default)]
+        expires_in_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     ClientsChanged {
         clients: Vec<ClientInfo>,
         input_locked: bool,
@@ -879,6 +910,7 @@ impl ClientMessage {
             | ClientMessage::Shutdown
             | ClientMessage::ShutdownForRestart => None,
             ClientMessage::RequestRuntimeMetrics => Some(super::Capability::RuntimeMetrics),
+            ClientMessage::PrepareHandoff { .. } => Some(super::Capability::ClientHandoff),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -932,6 +964,7 @@ impl ServerMessage {
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
             ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
+            ServerMessage::HandoffPrepared { .. } => Some(super::Capability::ClientHandoff),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

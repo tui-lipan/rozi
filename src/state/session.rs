@@ -71,6 +71,9 @@ pub struct AttachRequest {
     /// What an empty server is seeded with, and what origin it records.
     pub intent: AttachIntent,
     pub prompting: AttachPrompting,
+    /// The claim on the slot the previous client process reserved for this one, carried by a
+    /// [`AttachMode::Resume`] attach after a relaunch.
+    pub handoff_token: Option<String>,
 }
 
 impl AttachRequest {
@@ -83,6 +86,7 @@ impl AttachRequest {
             access: AttachAccess::WRITABLE,
             intent: AttachIntent::Plain,
             prompting: AttachPrompting::Allowed,
+            handoff_token: None,
         }
     }
 
@@ -106,6 +110,11 @@ impl AttachRequest {
         self
     }
 
+    pub fn with_handoff_token(mut self, token: Option<String>) -> Self {
+        self.handoff_token = token;
+        self
+    }
+
     /// Whether this attempt restores the retained attachment rather than bringing a new one.
     pub fn is_reconnect(&self) -> bool {
         matches!(self.mode, AttachMode::Reconnect | AttachMode::Recreate)
@@ -125,7 +134,7 @@ impl AttachRequest {
         &self,
         configured: crate::config::SessionOnAttach,
     ) -> Option<crate::config::SessionOnAttach> {
-        if self.is_reconnect() {
+        if self.is_reconnect() || self.mode == AttachMode::Resume {
             return None;
         }
         match self.access {
@@ -148,6 +157,10 @@ pub enum AttachMode {
     Reconnect,
     /// Seed a replacement remote server from the retained attachment after the original is gone.
     Recreate,
+    /// Return a relaunched client to a session the previous client process was attached to. The
+    /// server must be running, nothing is installed on a remote host, and the client keeps the role
+    /// it had rather than applying `[session] on_attach`.
+    Resume,
 }
 
 /// What an attach may do in the session, and how a writable one joins a session another client
@@ -207,7 +220,7 @@ pub struct PendingSessionAttach {
     pub left: Option<LeftSession>,
     /// The id of a session parked in the background to start this attach, restored if the attach
     /// fails. Without this, a failed remote connect would fall back to a fresh local ephemeral that
-    /// re-attaches to this process's own `eph-<pid>` server — the one the parked client still
+    /// re-attaches to this process's own `eph-<id>` server — the one the parked client still
     /// controls — and join as a follower of itself. `None` when nothing was parked (a reconnect, or
     /// an attach that released rather than parked the previous session).
     pub parked_epoch: Option<super::AttachmentId>,

@@ -330,6 +330,7 @@ pub fn run() -> Result<()> {
         std::process::exit(1);
     }
 
+    let mut resume = None;
     let cli = match parsed {
         cli::ParsedCli::Server {
             name,
@@ -415,6 +416,10 @@ pub fn run() -> Result<()> {
             }
         },
         cli::ParsedCli::Run(args) => args,
+        cli::ParsedCli::ResumeHandoff(id) => {
+            resume = Some(id);
+            cli::CliArgs::default()
+        }
         cli::ParsedCli::Control(_)
         | cli::ParsedCli::Publish(_)
         | cli::ParsedCli::Subscribe(_)
@@ -449,6 +454,9 @@ pub fn run() -> Result<()> {
     apply_config_path(cli.config_path.clone());
 
     let mut plan = StartupPlan::resolve(&cli, config::load_config());
+    if let Some(id) = resume {
+        plan.session = super::relaunch::resume_session(&id, &plan.config, &mut plan.messages);
+    }
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(ops::theme::system_theme_from_host_colors);
@@ -518,6 +526,7 @@ pub fn run() -> Result<()> {
     // broker to carry it, is refused rather than drawn over the UI.
     crate::session::remote::askpass::claim_terminal();
 
+    let handover = crate::state::HandoverSlot::default();
     let outcome = app
         .mount(
             AppRoot::new(
@@ -530,7 +539,8 @@ pub fn run() -> Result<()> {
                 control_guard,
                 plan.session,
             )
-            .with_startup_cwd(plan.cwd),
+            .with_startup_cwd(plan.cwd)
+            .with_handover(handover.clone()),
         )
         .exit_view(crate::view::exit::exit_view)
         .run();
@@ -539,6 +549,13 @@ pub fn run() -> Result<()> {
     // The control socket has a guard the app owns; the askpass endpoint is reached from worker
     // threads with no such owner, so it is retired here.
     crate::session::remote::askpass::shutdown();
+    // The UI has torn down and given the terminal back, which is the only moment it can pass to
+    // the build a relaunch chose.
+    if outcome.is_ok()
+        && let Some(handover) = handover.take()
+    {
+        super::relaunch::hand_over(handover);
+    }
     if outcome.is_err() && tui_lipan::style::host_renders_utf8() == Some(false) {
         // Refused before the session started, so there is nothing to clean up and nothing more
         // useful to say than why.

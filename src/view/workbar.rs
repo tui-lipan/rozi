@@ -1258,6 +1258,35 @@ pub(crate) fn connecting_workspace_panel(
         .into()
 }
 
+/// Placeholder shown while a relaunched client brings its sessions back, until the one that was on
+/// screen arrives.
+pub(crate) fn restoring_workspace_panel(done: usize, total: usize, theme: &Theme) -> Element {
+    Frame::new()
+        .header_left("Session")
+        .header_padding(1)
+        .border(true)
+        .border_style(BorderStyle::Rounded)
+        .style(
+            Style::new()
+                .fg(theme.surface.menu)
+                .bg(theme.surface.backdrop),
+        )
+        .padding(1)
+        .child(
+            VStack::new()
+                .gap(1)
+                .child(
+                    Spinner::new()
+                        .spinner_style(SpinnerStyle::Dots)
+                        .label("Restoring sessions…")
+                        .style(Style::new().fg(theme.status.info))
+                        .label_style(super::fg_only(&theme.primary)),
+                )
+                .child(Text::new(format!("{done} of {total}")).style(super::fg_only(&theme.muted))),
+        )
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

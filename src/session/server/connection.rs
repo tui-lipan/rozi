@@ -12,6 +12,7 @@ pub(super) struct AttachRequest {
     pub read_only: bool,
     pub shares_filesystem: bool,
     pub expected_server_nonce: Option<String>,
+    pub handoff_token: Option<String>,
 }
 
 fn valid_origin(origin: &SessionOrigin) -> bool {
@@ -518,6 +519,7 @@ impl SessionServer {
                 read_only,
                 shares_filesystem,
                 expected_server_nonce,
+                handoff_token,
             } => self.handle_attach(
                 client_id,
                 AttachRequest {
@@ -529,8 +531,12 @@ impl SessionServer {
                     read_only,
                     shares_filesystem,
                     expected_server_nonce,
+                    handoff_token,
                 },
             ),
+            ClientMessage::PrepareHandoff { request_id } => {
+                self.handle_prepare_handoff(client_id, request_id)
+            }
             ClientMessage::SetSessionOrigin { origin } => {
                 if self.origin.is_empty()
                     && self.origin_seed_client == Some(client_id)
@@ -1372,6 +1378,7 @@ impl SessionServer {
             read_only,
             shares_filesystem,
             expected_server_nonce,
+            handoff_token,
         } = request;
         let effective = match protocol::negotiate_protocol(
             protocol_version,
@@ -1440,8 +1447,29 @@ impl SessionServer {
             }
         }
         self.sync_image_media_policy();
+        // A relaunched client takes over the slot its previous process reserved: the lease, if that
+        // process held it, and its parked state. A token that claims nothing is an ordinary attach.
+        let claimed = handoff_token
+            .as_deref()
+            .filter(|_| capabilities.supports(protocol::Capability::ClientHandoff))
+            .and_then(|token| self.claim_handoff(client_id, token));
+        let handoff_claimed = handoff_token.as_ref().map(|_| claimed.is_some());
+        let mut lease_passed = false;
+        if let Some(claimed) = &claimed {
+            if let Some(client) = self.client_mut(client_id) {
+                client.parked = claimed.parked;
+            }
+            lease_passed = claimed.held_lease && self.controller == Some(client_id);
+            // The new process is the same client: nobody saw it leave, so nobody sees it join.
+            joined_label = None;
+        }
         // First attacher is auto-granted the layout-control lease.
-        let granted = if self.controller.is_none() && !read_only {
+        let granted = if lease_passed {
+            true
+        } else if self.controller.is_none()
+            && !read_only
+            && claimed.as_ref().is_none_or(|claimed| !claimed.parked)
+        {
             self.controller = Some(client_id);
             true
         } else {
@@ -1465,6 +1493,7 @@ impl SessionServer {
             allow_takeover: self.allow_takeover,
             origin: self.origin.clone(),
             rozi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            handoff_claimed,
         };
         self.enqueue(client_id, Target::Sender, attached);
         if !self.notifications.is_empty() {

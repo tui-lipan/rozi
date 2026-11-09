@@ -187,15 +187,16 @@ fn rollback_available() -> bool {
 
 /// What to do about local session `name` when its server runs a build this one cannot attach to,
 /// phrased to follow a semicolon: finish its work on the build that started it where a rollback can
-/// reach that build, then restart it, which reopens it from its snapshot but ends its programs.
+/// reach that build, then upgrade it, which reopens it on this build from its snapshot but ends its
+/// programs.
 pub(crate) fn incompatible_session_advice(name: &str) -> String {
-    let restart = format!(
-        "`rozi sessions restart {name}` reopens it from its last snapshot and ends its programs"
+    let upgrade = format!(
+        "`rozi sessions upgrade {name}` reopens it on this rozi from its last snapshot and ends its programs"
     );
     if rollback_available() {
-        format!("to finish its work first, run `rozi update --rollback` and attach; then {restart}")
+        format!("to finish its work first, run `rozi update --rollback` and attach; then {upgrade}")
     } else {
-        restart
+        upgrade
     }
 }
 
@@ -204,12 +205,12 @@ pub(crate) fn incompatible_session_advice(name: &str) -> String {
 /// behavior applies to it.
 pub(crate) fn incompatible_session_hint(remote_host: Option<&str>) -> String {
     match remote_host {
-        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E restarts it"),
+        Some(host) => format!("roll back rozi on `{host}` to finish its work · Ctrl+E upgrades it"),
         None if rollback_available() => {
-            "`rozi update --rollback` to finish its work · Ctrl+E restarts it from its snapshot"
+            "`rozi update --rollback` to finish its work · Ctrl+E upgrades it from its snapshot"
                 .to_string()
         }
-        None => "Ctrl+E restarts it from its snapshot".to_string(),
+        None => "Ctrl+E upgrades it from its snapshot".to_string(),
     }
 }
 
@@ -1336,7 +1337,7 @@ mod tests {
         let hint = incompatible_session_hint(Some("devbox"));
         assert!(hint.contains("on `devbox`"), "{hint}");
         assert!(!hint.contains("rozi update --rollback"), "{hint}");
-        assert!(incompatible_session_hint(None).contains("restarts it from its snapshot"));
+        assert!(incompatible_session_hint(None).contains("upgrades it from its snapshot"));
     }
 
     #[test]

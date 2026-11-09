@@ -112,6 +112,37 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
     Update::none()
 }
 
+/// Let go of every session for the build replacing this client, and quit.
+///
+/// Not a way of leaving: the user is staying, in a new process. So nothing is closed whatever its
+/// disposition says - an untouched temporary session included, which the new process comes back to
+/// by name - and nobody is asked anything. Each server holds this client's slot when it was asked
+/// to (see [`crate::ops::relaunch`]). What does end is what lives in this process alone: a popup,
+/// the scratchpad, client services, and placed extension runtimes, which the new process starts
+/// again from configuration.
+pub(crate) fn leave_for_relaunch(ctx: &mut Context<AppRoot>) -> Update {
+    crate::ops::sidebar_memory::save_for_exit(&ctx.state);
+    clear_pending(ctx);
+    crate::ops::pick::cancel_pick(ctx, Some("relaunched"));
+    crate::ops::popup::kill_if_open(ctx);
+    crate::ops::session::flush_layout_commit(ctx);
+    if let Some(client) = ctx.state.current().session_client.clone() {
+        client.detach();
+    }
+    for attachment in std::mem::take(&mut ctx.state.background).into_values() {
+        if let Some(client) = attachment.session_client.as_ref() {
+            client.detach();
+        }
+    }
+    crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
+    crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::placement::shutdown_all(&mut ctx.state);
+    crate::ops::ui_recording::finish_for_exit(&mut ctx.state);
+    profiles::persist_session_if_enabled(&ctx.state);
+    ctx.quit();
+    Update::none()
+}
+
 /// Whether leaving closes this session's server rather than detaching from it: what the session's
 /// own [disposition](crate::state::Attachment::disposition) says, plus the user's answer for the
 /// sessions the leave prompt asked about.

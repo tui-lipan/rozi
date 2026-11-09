@@ -143,7 +143,7 @@ pub(crate) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: Str
         // Creating/switching parked a live session to move away from it. If the new attach failed,
         // restore that session rather than strand the user on the broken empty attachment — for a
         // remote connect this also avoids the ephemeral fallback re-attaching to this process's own
-        // `eph-<pid>` server (still controlled by the parked client) and joining as a follower.
+        // `eph-<id>` server (still controlled by the parked client) and joining as a follower.
         if let Some(parked_id) = parked_epoch
             && ctx.state.background.contains_key(&parked_id)
         {

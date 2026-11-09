@@ -26,6 +26,7 @@ pub(crate) mod preferences;
 pub(crate) mod profile;
 pub(crate) mod published_rows;
 pub(crate) mod recording;
+pub(crate) mod relaunch;
 pub(crate) mod release_notes;
 pub(crate) mod resize_move;
 pub(crate) mod screenshot;

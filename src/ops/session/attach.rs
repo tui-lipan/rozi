@@ -761,7 +761,7 @@ fn parse_attach_remote(
     }
 }
 
-fn begin_named_attach(
+pub(crate) fn begin_named_attach(
     ctx: &mut Context<AppRoot>,
     request: crate::state::AttachRequest,
     seed: Option<crate::state::Attachment>,
@@ -925,7 +925,7 @@ pub(crate) fn start_launcher_shell_in(
 /// the foreground or parked in the background, on that exact host (or locally for `None`).
 ///
 /// The name is read back off the attachment rather than recomputed from the pid, because a
-/// restarted ephemeral is salted (`eph-<pid>-<salt>`) and would not be found by name. Other
+/// restarted ephemeral is salted (`eph-<id>-<salt>`) and would not be found by name. Other
 /// clients' ephemerals are deliberately not counted — they are somebody else's scratch session, and
 /// the picker already lists them as rows.
 ///
@@ -1001,8 +1001,8 @@ pub(crate) fn attach_startup_ephemeral(
         finish_session_install(ctx);
     }
     let epoch = ctx.state.runtime_epoch;
-    // A remote scratch session lives on the far host, where a bare `eph-<pid>` could collide with
-    // another client sharing that pid on a different machine.
+    // A remote scratch session lives on the far host, among the sessions of every machine that
+    // connects there; the host-qualified name says which one it came from.
     let name = if scope.is_some() {
         crate::session::naming::remote_ephemeral_session_name()
     } else {

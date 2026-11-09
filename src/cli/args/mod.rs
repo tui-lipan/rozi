@@ -258,6 +258,9 @@ pub(crate) enum ParsedCli {
     Install,
     Update(UpdateCommand),
     Run(CliArgs),
+    /// `--resume-handoff <ID>`: come back as the client that relaunched into this build. Only a
+    /// relaunch passes it, and always alone.
+    ResumeHandoff(String),
     Control(ControlCli),
     Publish(PublishCli),
     Subscribe(SubscribeCli),
@@ -442,6 +445,12 @@ pub(crate) fn usage_hint(args: &[String]) -> String {
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
+    if args.first().is_some_and(|arg| arg == "--resume-handoff") {
+        return match &args[1..] {
+            [id] => Ok(ParsedCli::ResumeHandoff(id.clone())),
+            _ => Err("--resume-handoff takes one handoff id and nothing else".to_string()),
+        };
+    }
     if args.first().is_some_and(|arg| arg == "--skill") {
         return if args.len() == 1 {
             Ok(ParsedCli::Skill(SkillCommand::Print))

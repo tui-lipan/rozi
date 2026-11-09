@@ -45,6 +45,8 @@ pub(crate) enum SessionStart {
     RemotePicker {
         target: crate::session::remote::RemoteTarget,
     },
+    /// Bring back the sessions a relaunched client held, one after another.
+    Resume,
 }
 
 /// Whether any *named* (non-ephemeral) session is currently discoverable. Used to gate the startup
@@ -83,6 +85,8 @@ pub(crate) fn run_attach(
 
     let read_only = request.access.is_read_only();
     let name = request.name;
+    let proof =
+        crate::session::protocol::AttachProof::default().with_handoff_token(request.handoff_token);
     if let Some(target) = request.remote {
         attach_remote(
             epoch,
@@ -91,12 +95,13 @@ pub(crate) fn run_attach(
             RemoteAttachPolicy::new(request.mode, request.prompting),
             target,
             request.prompting.remote_config(remote_config),
+            proof,
             link,
         );
         return;
     }
     let (autostart, create_only, reconnect) = match request.mode {
-        AttachMode::Join => (false, false, false),
+        AttachMode::Join | AttachMode::Resume => (false, false, false),
         AttachMode::JoinOrStart => (true, false, false),
         AttachMode::Create => (true, true, false),
         AttachMode::Reconnect | AttachMode::Recreate => (
@@ -108,12 +113,23 @@ pub(crate) fn run_attach(
     attach_local(
         epoch,
         name,
-        autostart,
-        read_only,
-        create_only,
-        reconnect,
+        LocalAttachPolicy {
+            autostart,
+            read_only,
+            create_only,
+            reconnect,
+        },
+        proof,
         link,
     );
+}
+
+#[derive(Clone, Copy)]
+struct LocalAttachPolicy {
+    autostart: bool,
+    read_only: bool,
+    create_only: bool,
+    reconnect: bool,
 }
 
 /// How long a local reconnect keeps retrying a server that is alive but did not answer the
@@ -137,27 +153,52 @@ impl RemoteAttachPolicy {
         use crate::state::AttachMode;
 
         Self {
-            existing_only: matches!(mode, AttachMode::Join | AttachMode::Reconnect),
+            existing_only: matches!(
+                mode,
+                AttachMode::Join | AttachMode::Reconnect | AttachMode::Resume
+            ),
             create_only: matches!(mode, AttachMode::Create | AttachMode::Recreate),
             reconnect: matches!(mode, AttachMode::Reconnect | AttachMode::Recreate),
-            may_install: prompting == crate::state::AttachPrompting::Allowed,
+            // A resumed client finds the session where the previous process left it; installing
+            // rozi on the host is a decision made before the relaunch, never during it.
+            may_install: prompting == crate::state::AttachPrompting::Allowed
+                && mode != AttachMode::Resume,
         }
+    }
+}
+
+/// Deliver the attach reply, then - for an attach that presented a handoff token - whether it took
+/// over the slot the previous client process reserved.
+fn send_attached(link: &CommandLink<Msg>, epoch: u64, attached: ServerMessage) {
+    let claimed = match &attached {
+        ServerMessage::Attached {
+            handoff_claimed, ..
+        } => *handoff_claimed,
+        _ => None,
+    };
+    link.send(server_message_to_msg(epoch, Frame::Control(attached)));
+    if let Some(claimed) = claimed {
+        link.send(Msg::SessionHandoffClaimed { epoch, claimed });
     }
 }
 
 /// `reconnect` re-drives an established link that dropped: a busy server is retried until
 /// [`LOCAL_RECONNECT_BUSY_DEADLINE`] before the reconnect is abandoned.
-#[allow(clippy::too_many_arguments)]
 fn attach_local(
     epoch: u64,
     name: String,
-    autostart: bool,
-    read_only: bool,
-    create_only: bool,
-    reconnect: bool,
+    policy: LocalAttachPolicy,
+    proof: crate::session::protocol::AttachProof,
     link: CommandLink<Msg>,
 ) {
     use std::time::{Duration, Instant};
+
+    let LocalAttachPolicy {
+        autostart,
+        read_only,
+        create_only,
+        reconnect,
+    } = policy;
 
     let Ok(path) = super::server::session_socket_path(&name) else {
         link.send(Msg::SessionAttachFailed {
@@ -178,6 +219,7 @@ fn attach_local(
             name.clone(),
             std::sync::Arc::clone(&mailbox),
             read_only,
+            proof.clone(),
         ) {
             Ok((client, attached)) => {
                 if create_only && !spawned {
@@ -204,7 +246,7 @@ fn attach_local(
                     name: name.clone(),
                     client,
                 });
-                link.send(server_message_to_msg(epoch, Frame::Control(attached)));
+                send_attached(&link, epoch, attached);
                 mailbox.activate();
                 return;
             }
@@ -332,6 +374,7 @@ const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from
 const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
 
+#[allow(clippy::too_many_arguments)]
 fn attach_remote(
     epoch: u64,
     name: String,
@@ -339,6 +382,7 @@ fn attach_remote(
     policy: RemoteAttachPolicy,
     target: super::remote::RemoteTarget,
     remote_config: crate::config::RemoteConfig,
+    proof: crate::session::protocol::AttachProof,
     link: CommandLink<Msg>,
 ) {
     use std::time::Instant;
@@ -388,6 +432,7 @@ fn attach_remote(
             &remote_config,
             budget,
             policy.reconnect.then_some(epoch),
+            proof.handoff_token.clone(),
             &link,
         );
         if remote_attach_cancelled(epoch) {
@@ -527,6 +572,7 @@ fn attach_remote_after_skew(
                 remote_config,
                 None,
                 None,
+                None,
                 link,
             ) {
                 AttachRemoteOutcome::Done => {}
@@ -575,6 +621,7 @@ fn try_attach_remote(
     remote_config: &crate::config::RemoteConfig,
     budget: Option<std::time::Duration>,
     cancel_epoch: Option<u64>,
+    handoff_token: Option<String>,
     link: &CommandLink<Msg>,
 ) -> AttachRemoteOutcome {
     let attempt_started = std::time::Instant::now();
@@ -640,7 +687,8 @@ fn try_attach_remote(
                         false,
                         timeout,
                         cancel_epoch,
-                        preamble.server_nonce,
+                        crate::session::protocol::AttachProof::server_nonce(preamble.server_nonce)
+                            .with_handoff_token(handoff_token),
                     )
                 }
                 None => super::client::SessionClient::from_stream_attached_mailbox(
@@ -649,7 +697,8 @@ fn try_attach_remote(
                     std::sync::Arc::clone(&mailbox),
                     read_only,
                     false,
-                    preamble.server_nonce,
+                    crate::session::protocol::AttachProof::server_nonce(preamble.server_nonce)
+                        .with_handoff_token(handoff_token),
                 ),
             };
             match attached {
@@ -662,7 +711,7 @@ fn try_attach_remote(
                         name: name.to_string(),
                         client,
                     });
-                    link.send(server_message_to_msg(epoch, Frame::Control(attached)));
+                    send_attached(link, epoch, attached);
                     mailbox.activate();
                     AttachRemoteOutcome::Done
                 }
@@ -879,6 +928,17 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 Msg::SessionControlRequested { epoch, from }
             }
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
+            ServerMessage::HandoffPrepared {
+                request_id,
+                token,
+                error,
+                ..
+            } => Msg::SessionHandoffPrepared {
+                epoch,
+                request_id,
+                token,
+                error,
+            },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             // A newer server's message that skipped its send gate. Ignoring it keeps the session
             // attached; acting on it is impossible and treating it as an error would reconnect.

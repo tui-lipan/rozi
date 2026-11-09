@@ -544,6 +544,10 @@
           },
           "type": "array"
         },
+        "release": {
+          "description": "The rozi release this binary is (`CARGO_PKG_VERSION`).",
+          "type": "string"
+        },
         "schema": {
           "description": "Version of the JSON Schema this binary's API is described by, published at\n`docs/schema/rozi-control-v1.schema.json`.",
           "format": "uint32",
@@ -564,6 +568,7 @@
         }
       },
       "required": [
+        "release",
         "api",
         "schema",
         "session_protocol",

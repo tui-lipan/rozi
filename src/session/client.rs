@@ -324,15 +324,21 @@ impl SessionClient {
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
-        Self::from_stream_attached_with_server_nonce(stream, session, inbound, read_only, None)
+        Self::from_stream_attached_with_proof(
+            stream,
+            session,
+            inbound,
+            read_only,
+            protocol::AttachProof::default(),
+        )
     }
 
-    pub fn from_stream_attached_with_server_nonce(
+    pub fn from_stream_attached_with_proof(
         stream: IpcConnection,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -342,7 +348,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -351,6 +357,7 @@ impl SessionClient {
         session: impl Into<String>,
         inbound: Arc<InboundMailbox>,
         read_only: bool,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         // A local endpoint puts this client on the server's own machine, so it can read whatever
         // the session's children leave in a file.
@@ -362,7 +369,7 @@ impl SessionClient {
             true,
             HEARTBEAT_POLL,
             None,
-            None,
+            proof,
         )
     }
 
@@ -376,7 +383,7 @@ impl SessionClient {
         inbound: Arc<InboundMailbox>,
         read_only: bool,
         shares_filesystem: bool,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -386,7 +393,7 @@ impl SessionClient {
             shares_filesystem,
             HEARTBEAT_POLL,
             None,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -400,7 +407,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         Self::from_stream_attached_target(
             stream,
@@ -412,7 +419,7 @@ impl SessionClient {
                 .min(handshake_timeout)
                 .max(Duration::from_millis(1)),
             cancel_epoch,
-            expected_server_nonce,
+            proof,
         )
     }
 
@@ -424,7 +431,7 @@ impl SessionClient {
         shares_filesystem: bool,
         handshake_timeout: Duration,
         cancel_epoch: Option<u64>,
-        expected_server_nonce: Option<String>,
+        proof: protocol::AttachProof,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let session: String = session.into();
@@ -442,12 +449,12 @@ impl SessionClient {
         }
         protocol::write_frame(
             &mut stream,
-            &protocol::attach_message_with_server_nonce(
+            &protocol::attach_message_with_proof(
                 session,
                 crate::platform::user::current_user_label(),
                 read_only,
                 shares_filesystem,
-                expected_server_nonce,
+                proof,
             ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut HandshakeReader {
@@ -685,6 +692,13 @@ impl SessionClient {
     /// session open in the background never makes it look occupied to the next client to attach.
     pub fn set_parked(&self, parked: bool) {
         self.send_control(ClientMessage::SetParked { parked });
+    }
+
+    /// Ask the server to hold this client's slot for the process that replaces it. `false` when
+    /// the server cannot (see [`protocol::Capability::ClientHandoff`]); the answer arrives as
+    /// [`ServerMessage::HandoffPrepared`] carrying `request_id`.
+    pub fn prepare_handoff(&self, request_id: u64) -> bool {
+        self.send_control(ClientMessage::PrepareHandoff { request_id })
     }
 
     /// Ask the server to list one directory on its own host.
@@ -1842,6 +1856,7 @@ mod tests {
             allow_takeover: false,
             origin: crate::session::origin::SessionOrigin::default(),
             rozi_version: None,
+            handoff_claimed: None,
         }
     }
 
@@ -1899,7 +1914,7 @@ mod tests {
             true,
             Duration::from_secs(2),
             None,
-            None,
+            protocol::AttachProof::default(),
         )
         .unwrap();
         server.join().unwrap();
@@ -1951,7 +1966,7 @@ mod tests {
             true,
             Duration::from_secs(2),
             None,
-            None,
+            protocol::AttachProof::default(),
         )
         .unwrap();
         try_enqueue_runtime_metrics_request(&client.outbound, &client.metrics_request_pending);
@@ -2047,7 +2062,7 @@ mod tests {
             .to_string();
         assert!(
             local.contains(
-                "`rozi sessions restart dev` reopens it from its last snapshot and ends its programs"
+                "`rozi sessions upgrade dev` reopens it on this rozi from its last snapshot and ends its programs"
             ),
             "{local}"
         );

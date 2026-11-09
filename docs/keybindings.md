@@ -137,6 +137,7 @@ These actions are available in the command palette, and you can bind them under 
 - `settings`
 - `extensions`
 - `update-rozi` (listed only when a newer release is known)
+- `restart-rozi`
 - `release-notes` (listed only in builds from a release archive)
 - `open-config`
 - `apply-profile`
@@ -253,7 +254,7 @@ In Worktrees, they open the checkout as a pane rather than a session, or the rev
 | `Ctrl+N` | Create a named session on the active tab's host |
 | `Ctrl+T` | Open the temporary shell on the active tab's host |
 | `Ctrl+K` twice | Kill a live session, or forget a snapshot or last-seen cache entry |
-| `Ctrl+E` twice | Restart a live session |
+| `Ctrl+E` twice | Restart a live session, or upgrade one on an incompatible rozi version |
 | `Ctrl+W` | Disconnect a background attachment |
 | `Ctrl+X` | Disconnect the active tab's remote host |
 | `Tab` / `Shift+Tab`, `→` / `←` | Show the next or previous host's tab |

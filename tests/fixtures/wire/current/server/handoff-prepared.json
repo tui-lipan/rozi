@@ -1,0 +1,6 @@
+{
+  "expires_in_ms": 120000,
+  "request_id": 1,
+  "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "type": "handoff-prepared"
+}

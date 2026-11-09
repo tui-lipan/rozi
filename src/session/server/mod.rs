@@ -36,6 +36,7 @@ mod deployments;
 mod events;
 mod graphics;
 mod graphics_pacer;
+mod handoff;
 mod headless;
 mod invocations;
 mod media;
@@ -190,6 +191,9 @@ pub struct SessionServer {
     origin: SessionOrigin,
     origin_seed_client: Option<ClientId>,
     controller: Option<ClientId>,
+    /// Slots held for clients being replaced by a relaunched process. While one is in transit,
+    /// `controller` may name a client that is no longer connected.
+    handoffs: handoff::Reservations,
     input_locked: bool,
     allow_takeover: bool,
     clients: Vec<ClientConn>,
@@ -1786,6 +1790,7 @@ impl SessionServer {
             origin: SessionOrigin::default(),
             origin_seed_client: None,
             controller: None,
+            handoffs: handoff::Reservations::default(),
             input_locked: false,
             allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
@@ -1918,7 +1923,8 @@ impl SessionServer {
     }
 
     fn update_ephemeral_lifetime(&mut self, no_client_since: &mut Option<Instant>) {
-        if self.attached_count() != 0 {
+        // A client in transit is coming back; the gap while it relaunches is not an absence.
+        if self.attached_count() != 0 || self.handoffs.any_in_transit() {
             *no_client_since = None;
             return;
         }

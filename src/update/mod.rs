@@ -727,6 +727,15 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             name,
             client,
         } => session::connected(ctx, epoch, name, client),
+        Msg::SessionHandoffPrepared {
+            epoch,
+            request_id,
+            token,
+            error,
+        } => crate::ops::relaunch::handoff_prepared(ctx, epoch, request_id, token, error),
+        Msg::SessionHandoffClaimed { epoch, claimed } => {
+            crate::ops::relaunch::handoff_claimed(ctx, epoch, claimed)
+        }
         Msg::ScratchRuntimeFailed(message) => crate::scratchpad::runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::RetrySessionReconnect => {
@@ -743,9 +752,23 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         Msg::DrainSessionFrames { epoch, mailbox } => {
             drain_session_frames(_app, ctx, epoch, mailbox).update
         }
-        Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
+        Msg::SessionAttachFailed { epoch, message } => {
+            let failure = message.clone();
+            session::attach_failed(ctx, epoch, message).merge(crate::ops::relaunch::attach_settled(
+                ctx,
+                epoch,
+                Some(&failure),
+            ))
+        }
         Msg::ConnectHoldElapsed(epoch) => crate::ops::session::connect_hold_elapsed(ctx, epoch),
-        Msg::SessionLost { epoch, message } => session::lost(ctx, epoch, message),
+        Msg::SessionLost { epoch, message } => {
+            let failure = message.clone();
+            session::lost(ctx, epoch, message).merge(crate::ops::relaunch::attach_settled(
+                ctx,
+                epoch,
+                Some(&failure),
+            ))
+        }
         Msg::SessionAttached {
             epoch,
             session_instance,
@@ -775,7 +798,18 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             allow_takeover,
             read_only,
             origin,
-        ),
+        )
+        .merge(crate::ops::relaunch::attach_settled(ctx, epoch, None)),
+        Msg::RelaunchCandidate { generation, result } => {
+            crate::ops::relaunch::candidate_found(ctx, generation, result)
+        }
+        Msg::RelaunchConfirm => crate::ops::relaunch::confirm(ctx),
+        Msg::RelaunchCancel => crate::ops::relaunch::close(ctx),
+        Msg::RelaunchFocusAnswer(index) => crate::ops::relaunch::focus_answer(ctx, index),
+        Msg::RelaunchPrepareTimeout { generation } => {
+            crate::ops::relaunch::prepare_timeout(ctx, generation)
+        }
+        Msg::RelaunchRestoreNext => crate::ops::relaunch::restore_next(ctx),
         Msg::SessionOriginSet { epoch, origin } => session::origin_set(ctx, epoch, origin),
         Msg::SessionPaneMetadata {
             epoch,

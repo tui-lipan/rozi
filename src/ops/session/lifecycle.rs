@@ -1124,6 +1124,11 @@ fn stop_discovered_session_for_restart(
     if entry.ephemeral {
         return shutdown_discovered_session(entry, remote_config);
     }
+    // A server this build cannot speak to is upgraded rather than restarted: the same restart from
+    // its snapshot, except that a session on a *newer* rozi is refused instead of downgraded.
+    if entry.status == crate::session::discovery::DiscoveredSessionStatus::Unknown {
+        return upgrade_discovered_session(entry, remote_config);
+    }
     if let Some(target) = &entry.remote_target {
         return crate::session::remote::restart_remote_session(
             target,
@@ -1148,6 +1153,27 @@ fn stop_discovered_session_for_restart(
         }
         // Restored on purpose: the work in an incompatible server survives only in its snapshot.
         Some(crate::session::server::StoppedForRestart::Incompatible) => Ok(()),
+    }
+}
+
+/// Stop an incompatible session's server so the attach that follows reopens it on this build from
+/// its snapshot. A remote one is upgraded by its host's rozi, which then runs it again itself.
+fn upgrade_discovered_session(
+    entry: &DiscoveredSession,
+    remote_config: &crate::config::RemoteConfig,
+) -> std::io::Result<()> {
+    if let Some(target) = &entry.remote_target {
+        return crate::session::remote::upgrade_remote_session(target, &entry.name, remote_config)
+            .map(|_| ())
+            .map_err(std::io::Error::other);
+    }
+    if crate::session::server::stop_named_session_for_upgrade(&entry.name)? {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Session `{}` is not running", entry.name),
+        ))
     }
 }
 

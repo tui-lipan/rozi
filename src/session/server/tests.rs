@@ -158,6 +158,7 @@ pub(super) fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     assert!(matches!(
@@ -198,6 +199,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
             read_only: true,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     (id, stream)
@@ -293,6 +295,7 @@ fn a_client_that_cannot_reach_the_filesystem_switches_panes_to_inline_relay() {
             read_only: false,
             shares_filesystem: false,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     assert_eq!(
@@ -325,6 +328,7 @@ fn inline_relay_sends_edits_only_while_every_client_applies_them() {
                 read_only: false,
                 shares_filesystem: false,
                 expected_server_nonce: None,
+                handoff_token: None,
             },
         );
         (client, stream)
@@ -354,6 +358,7 @@ fn attach_remote_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
             read_only: false,
             shares_filesystem: false,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     (remote, stream)
@@ -1576,6 +1581,7 @@ fn attach_offering(
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     assert!(server.client_attached(id));
@@ -1612,6 +1618,7 @@ fn runtime_metrics_request_serves_peers_that_negotiated_it() {
             read_only: true,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     assert!(
@@ -1752,6 +1759,7 @@ fn attach_negotiates_capabilities_and_serves_only_the_agreed_ones() {
         read_only: false,
         shares_filesystem: true,
         expected_server_nonce: None,
+        handoff_token: None,
     };
     let agreed =
         |server: &SessionServer, client_id: ClientId| match attached_reply(server, client_id) {
@@ -2635,6 +2643,7 @@ fn attach_reports_protocol_mismatch() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     assert!(
@@ -2663,6 +2672,7 @@ fn attach_requires_the_just_started_servers_nonce() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: Some("proxy-b".to_string()),
+            handoff_token: None,
         },
     );
     assert!(matches!(
@@ -2683,6 +2693,7 @@ fn attach_requires_the_just_started_servers_nonce() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: Some("proxy-a".to_string()),
+            handoff_token: None,
         },
     );
     assert!(matches!(
@@ -5014,6 +5025,7 @@ fn attach_streams_full_osc_stores_under_frame_and_backlog_limits() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         }),
     );
     let controls = decode_outbox_controls(server.client_mut(client).unwrap());
@@ -5150,6 +5162,7 @@ fn attach_reports_layout_and_panes() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     );
     let ServerMessage::Attached {
@@ -8103,6 +8116,7 @@ fn every_pane_child_is_marked_as_running_in_a_rozi_terminal() {
     assert!(output.contains("[1]"), "child output: {output:?}");
 }
 
+mod handoff;
 mod transactions;
 
 fn media_test_server() -> SessionServer {
@@ -8846,6 +8860,7 @@ impl EventParityHarness {
                 read_only: false,
                 shares_filesystem: true,
                 expected_server_nonce: None,
+                handoff_token: None,
             }),
         );
         self.deliver();
@@ -9146,6 +9161,7 @@ fn run_session_event_parity_mutations(harness: &mut EventParityHarness) {
             read_only: true,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         }),
     );
     harness.deliver();

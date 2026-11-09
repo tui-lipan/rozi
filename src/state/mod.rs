@@ -24,6 +24,7 @@ mod mode;
 mod pane;
 mod pickers;
 mod projects;
+mod relaunch;
 mod remote;
 mod search;
 mod services;
@@ -49,6 +50,7 @@ pub use keybindings::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
+pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
 pub use services::*;
@@ -447,6 +449,9 @@ pub struct State {
     /// it fires.
     pub(crate) welcome_due: bool,
     pub show_welcome: bool,
+    /// Replacing this client with another build: the dialog planning it, and the restore a
+    /// relaunched client works through.
+    pub relaunch: RelaunchState,
     pub event_hub: crate::events::EventHub,
     pub session_notification_cursors: HashMap<crate::session::protocol::SessionInstanceId, u64>,
     /// Open `publish` streams, keyed by the pane whose program opened one.
@@ -789,6 +794,7 @@ impl State {
             defer_startup_picker: false,
             welcome_due: false,
             show_welcome: false,
+            relaunch: RelaunchState::default(),
             event_hub: crate::events::EventHub::default(),
             session_notification_cursors: HashMap::new(),
             publish_streams: std::collections::HashMap::new(),
@@ -1310,6 +1316,7 @@ impl State {
     pub(crate) fn modal_overlays(&self) -> impl Iterator<Item = &'static str> {
         [
             (self.askpass.is_some(), "askpass"),
+            (self.relaunch.dialog.is_some(), "relaunch"),
             (self.show_release_notes, "release-notes"),
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),

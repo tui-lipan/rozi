@@ -22,6 +22,24 @@ pub enum Msg {
         update: crate::ops::update_check::AvailableUpdate,
         announce: bool,
     },
+    /// The binary a relaunch would run was found and described itself, or was not found. Fenced by
+    /// the dialog's generation.
+    RelaunchCandidate {
+        generation: u64,
+        result: std::result::Result<crate::relaunch::candidate::Candidate, String>,
+    },
+    /// Restart rozi: run the relaunch the dialog planned. A plan that ends programs arms first.
+    RelaunchConfirm,
+    /// Close the Restart rozi dialog without relaunching.
+    RelaunchCancel,
+    /// Move focus to one of the Restart rozi dialog's answers.
+    RelaunchFocusAnswer(usize),
+    /// Stop waiting for servers that have not reserved this client's slot.
+    RelaunchPrepareTimeout {
+        generation: u64,
+    },
+    /// Attach the next session a relaunched client is bringing back.
+    RelaunchRestoreNext,
     /// This install is about to join the anonymous weekly usage count for the first time, and this
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.
@@ -831,6 +849,19 @@ pub enum Msg {
     /// This client's pending control request was declined by the controller.
     SessionControlDeclined {
         epoch: u64,
+    },
+    /// The server reserved this client's slot for the process that replaces it (see
+    /// [`crate::ops::relaunch`]). `error` is set when it refused.
+    SessionHandoffPrepared {
+        epoch: u64,
+        request_id: u64,
+        token: String,
+        error: Option<String>,
+    },
+    /// Whether an attach that presented a handoff token took over the reserved slot.
+    SessionHandoffClaimed {
+        epoch: u64,
+        claimed: bool,
     },
     SessionPing {
         epoch: u64,

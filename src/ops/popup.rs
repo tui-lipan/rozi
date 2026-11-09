@@ -140,14 +140,14 @@ pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(crate) fn handle_exit(ctx: &mut Context<AppRoot>) -> Update {
-    crate::ops::update_check::popup_exited(ctx);
+    let followed_up = crate::ops::update_check::popup_exited(ctx);
     if let Some(pane) = ctx.state.popup.as_mut()
         && pane.identity.keep_open
     {
-        return Update::full();
+        return followed_up.merge(Update::full());
     }
 
-    close(ctx)
+    followed_up.merge(close(ctx))
 }
 
 pub(crate) fn dismisses_completed(key: KeyEvent) -> bool {

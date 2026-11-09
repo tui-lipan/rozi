@@ -1854,6 +1854,7 @@ mod tests {
                     allow_takeover: true,
                     origin: Default::default(),
                     rozi_version,
+                    handoff_claimed: None,
                 },
             )
             .expect("send Attached");

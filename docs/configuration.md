@@ -592,8 +592,9 @@ command palette for as long as it runs:
 
 1. Choosing it opens a popup that runs `rozi update`, or the upgrade command of the package manager
    that installed rozi. The popup stays open to show the result.
-2. On success, a `rozi vX.Y.Z installed` toast asks you to quit and start rozi again, because the
-   running client keeps its old build.
+2. On success, the `rozi vX.Y.Z installed` dialog offers to
+   [restart rozi on the new build](installation.md#restart-rozi-on-the-new-build), coming back to
+   the same sessions. **Later** keeps the old build running until you choose **Restart rozi**.
 3. On failure, the command stays listed so you can retry.
 
 The command is not listed while a remote session is in front, because the popup would run on that

@@ -35,6 +35,8 @@ pub struct SourceEnv {
     pub homebrew_prefix: Option<PathBuf>,
     /// Rozi's own managed data root, so a managed install is recognised as such.
     pub managed_root: Option<PathBuf>,
+    /// The stable command a managed install keeps pointing at its active version.
+    pub managed_command: Option<PathBuf>,
 }
 
 impl SourceEnv {
@@ -46,6 +48,7 @@ impl SourceEnv {
             mise_data_dir: absolute_env("MISE_DATA_DIR"),
             homebrew_prefix: absolute_env("HOMEBREW_PREFIX"),
             managed_root: Some(paths::data_dir(env)),
+            managed_command: Some(paths::managed_command_path(env)),
         }
     }
 }
@@ -132,6 +135,37 @@ impl InstallSource {
         }
     }
 
+    /// Where this channel puts the build that replaces `running`, most stable first.
+    ///
+    /// An update through a channel does not always replace the binary in place. Homebrew and Scoop
+    /// install each version into a directory of its own and move a link; a managed install moves
+    /// its stable command. These are the paths that follow the link, so they name whichever
+    /// version the channel made current, where `running` may still name the one it replaced.
+    /// Channels that do replace in place have nothing to add: `running` itself is that path.
+    pub fn relaunch_entries(self, running: &Path, env: &SourceEnv) -> Vec<PathBuf> {
+        let name = crate::platform::relaunch::executable_name();
+        let mut entries = Vec::new();
+        match self {
+            Self::Managed => entries.extend(env.managed_command.clone()),
+            Self::Cargo => entries.extend(cargo_bin(env).map(|bin| bin.join(name))),
+            Self::Homebrew => {
+                entries
+                    .extend(ancestor_before(running, "Cellar").map(|p| p.join("bin").join(name)));
+                entries.extend(
+                    env.homebrew_prefix
+                        .as_ref()
+                        .map(|prefix| prefix.join("bin").join(name)),
+                );
+            }
+            Self::Scoop => entries.extend(scoop_current(running)),
+            Self::WinGet => entries.extend(
+                ancestor_before(running, "Packages").map(|winget| winget.join("Links").join(name)),
+            ),
+            Self::Mise | Self::SystemPackage | Self::Unknown => {}
+        }
+        entries
+    }
+
     /// Short name for this channel, for `rozi update --check`.
     pub fn label(self) -> &'static str {
         match self {
@@ -188,6 +222,47 @@ fn homebrew_prefixes(env: &SourceEnv) -> [Option<PathBuf>; 4] {
     ]
 }
 
+/// The directory holding the last `component` of `path`, compared case-insensitively.
+fn ancestor_before(path: &Path, component: &str) -> Option<PathBuf> {
+    let mut found = None;
+    let mut prefix = PathBuf::new();
+    for part in path.components() {
+        if part
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(component)
+        {
+            found = Some(prefix.clone());
+        }
+        prefix.push(part);
+    }
+    found
+}
+
+/// Scoop keeps every version under `apps/<app>/<version>` and points `apps/<app>/current` at the
+/// active one; this is `running` with its version directory replaced by `current`.
+fn scoop_current(running: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = running.components().collect();
+    let apps = parts.iter().rposition(|part| {
+        part.as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("apps")
+    })?;
+    let version = apps + 2;
+    if version >= parts.len() - 1 {
+        return None;
+    }
+    let mut current = PathBuf::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index == version {
+            current.push("current");
+        } else {
+            current.push(part);
+        }
+    }
+    Some(current)
+}
+
 fn within_any<I>(path: &Path, bases: I) -> bool
 where
     I: IntoIterator<Item = Option<PathBuf>>,
@@ -221,6 +296,55 @@ mod tests {
             home: Some(PathBuf::from("/home/dev")),
             managed_root: Some(PathBuf::from("/home/dev/.local/share/rozi")),
             ..SourceEnv::default()
+        }
+    }
+
+    #[test]
+    fn a_channel_that_moves_a_link_names_the_link_to_relaunch_through() {
+        let source = SourceEnv {
+            managed_command: Some(PathBuf::from("/home/dev/.local/bin/rozi")),
+            ..env()
+        };
+        let name = crate::platform::relaunch::executable_name();
+        let cases = [
+            (
+                InstallSource::Managed,
+                "/home/dev/.local/share/rozi/versions/0.1.0/rozi",
+                vec![PathBuf::from("/home/dev/.local/bin/rozi")],
+            ),
+            (
+                InstallSource::Cargo,
+                "/home/dev/.cargo/bin/rozi (deleted)",
+                vec![PathBuf::from("/home/dev/.cargo/bin").join(name)],
+            ),
+            (
+                InstallSource::Homebrew,
+                "/opt/homebrew/Cellar/rozi/0.1.0/bin/rozi",
+                vec![PathBuf::from("/opt/homebrew/bin").join(name)],
+            ),
+            (
+                InstallSource::Scoop,
+                "/home/dev/scoop/apps/rozi/0.1.0/rozi.exe",
+                vec![PathBuf::from("/home/dev/scoop/apps/rozi/current/rozi.exe")],
+            ),
+            (
+                InstallSource::WinGet,
+                "/home/dev/AppData/Local/Microsoft/WinGet/Packages/rozi.rozi/rozi.exe",
+                vec![PathBuf::from("/home/dev/AppData/Local/Microsoft/WinGet/Links").join(name)],
+            ),
+            (
+                InstallSource::Mise,
+                "/home/dev/.local/share/mise/installs/rozi/0.1.0/rozi",
+                vec![],
+            ),
+            (InstallSource::SystemPackage, "/usr/bin/rozi", vec![]),
+        ];
+        for (channel, running, expected) in cases {
+            assert_eq!(
+                channel.relaunch_entries(Path::new(running), &source),
+                expected,
+                "{channel:?}"
+            );
         }
     }
 

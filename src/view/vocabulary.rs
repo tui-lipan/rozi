@@ -50,6 +50,21 @@ pub(crate) const SEPARATOR: &str = " · ";
 /// session family and the idle agent glyph already use.
 pub(crate) const BACKGROUND_RUN: &str = "⧉";
 
+/// What happens to a session when this client is restarted on another build. Each says what the
+/// session will be afterwards, so it reads as a status, capitalized.
+pub(crate) fn relaunch_transition(transition: &crate::relaunch::plan::Transition) -> String {
+    use crate::relaunch::plan::Transition;
+    match transition {
+        Transition::Carry { .. } => "Keeps running".to_string(),
+        Transition::Reconnect => "Reconnects".to_string(),
+        Transition::Upgrade => fields(["Upgraded", "its programs end"]),
+        Transition::Blocked { reason } => fields(["Blocked", reason.as_str()]),
+    }
+}
+
+/// A process that lives in the client itself, which a restart ends.
+pub(crate) const RELAUNCH_ENDS: &str = "Ends";
+
 /// The name shown for a temporary session in place of its generated one. Lowercase because it sits
 /// in the name column, where it stands for a name rather than a state.
 pub(crate) const EPHEMERAL: &str = "ephemeral";

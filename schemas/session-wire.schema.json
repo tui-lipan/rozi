@@ -807,6 +807,13 @@
                 "null"
               ]
             },
+            "handoff_token": {
+              "description": "Claim the client slot a departing client reserved with\n[`ClientMessage::PrepareHandoff`]: its layout-control lease and parked state pass to this\nconnection. A token the server does not hold - expired, spent, or never issued - is\nignored and the attach proceeds as an ordinary one. Sent only to a server that\nnegotiated [`super::Capability::ClientHandoff`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "label": {
               "type": "string"
             },
@@ -1724,6 +1731,25 @@
           "required": [
             "type",
             "target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token. Once this connection goes, the slot is held until the token is claimed by an\nattach that presents it or the reservation expires: the layout-control lease is not handed\non, and an ephemeral session does not count the gap as having no client.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "prepare-handoff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
           ],
           "type": "object"
         },
@@ -5841,6 +5867,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "handoff_claimed": {
+              "description": "Whether the attach's `handoff_token` claimed a reserved slot. Present only when the\nattach presented one.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "input_locked": {
               "type": "boolean"
             },
@@ -6608,6 +6641,41 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how\nlong the slot is held once the client has gone. `error` is set, and `token` empty, when the\nserver refused.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "expires_in_ms": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "token": {
+              "default": "",
+              "type": "string"
+            },
+            "type": {
+              "const": "handoff-prepared",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
           ],
           "type": "object"
         },
@@ -8339,6 +8407,7 @@
   "title": "Rozi session wire protocol",
   "x-rozi-capabilities": [
     "agent-summaries",
+    "client-handoff",
     "graphics-root-frame-edits",
     "project-summaries",
     "runtime-metrics"

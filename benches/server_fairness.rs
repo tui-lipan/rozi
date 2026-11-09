@@ -823,6 +823,7 @@ fn saturation_probe() {
             read_only: true,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     )
     .expect("attach slow client");
@@ -1224,6 +1225,7 @@ fn attach_relay_observer(server: &ServerOwner) -> JoinHandle<io::Result<()>> {
             read_only: true,
             shares_filesystem: false,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     )
     .expect("attach remote observer");

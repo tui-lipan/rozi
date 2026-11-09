@@ -457,6 +457,7 @@ fn execute_action_inner(
             crate::ops::extensions_manager::open(ctx)
         }
         Action::UpdateRozi => crate::ops::update_check::run_update(ctx),
+        Action::RestartRozi => crate::ops::relaunch::open(ctx, None),
         Action::ShowReleaseNotes => crate::ops::release_notes::open(ctx),
         Action::OpenAlerts => open_settings(ctx, crate::state::SettingsAction::ToggleBellUrgency),
         Action::ToggleDoNotDisturb => {

@@ -2484,7 +2484,7 @@ fn local_reconnect_failure_leaves_the_session() {
 
 /// A failed *remote* connect that had parked a live session restores that session rather than
 /// falling back to a fresh local ephemeral. The ephemeral fallback would re-attach to this
-/// process's own `eph-<pid>` server — still controlled by the parked client — and come back as a
+/// process's own `eph-<id>` server — still controlled by the parked client — and come back as a
 /// follower of itself. Restoring the parked attachment keeps the user on their real session, and
 /// the dead empty connect attachment is discarded.
 #[test]
@@ -3509,7 +3509,7 @@ fn attached_agent_acknowledgement_rejects_another_epoch_body() {
 }
 
 /// The update popup runs the updater and stays open. Success leaves the old build running, so it
-/// earns a toast naming the step that is left; failure brings **Update rozi** back to retry.
+/// opens Restart rozi for the release just installed; failure brings **Update rozi** back to retry.
 #[test]
 fn the_update_popup_exit_reports_what_is_left() {
     fn exit_update_popup(code: i32) -> TestBackend<crate::AppRoot> {
@@ -3550,21 +3550,18 @@ fn the_update_popup_exit_reports_what_is_left() {
 
     crate::test_support::on_large_stack(|| {
         let installed = exit_update_popup(0);
-        let toast = installed
+        let dialog = installed
             .state()
-            .replaceable_toasts
-            .values()
-            .next()
-            .expect("a successful update is followed up")
-            .content()
-            .replace('\u{0}', " ");
-        assert!(toast.starts_with("rozi v9.9.9 installed"), "{toast}");
-        assert!(toast.contains("quit and start rozi again"), "{toast}");
+            .relaunch
+            .dialog
+            .as_ref()
+            .expect("a successful update offers to restart onto it");
+        assert_eq!(dialog.expected, Some(semver::Version::new(9, 9, 9)));
         assert!(installed.state().popup.is_some(), "the popup stays open");
         assert!(installed.state().update_started);
 
         let failed = exit_update_popup(1);
-        assert!(failed.state().replaceable_toasts.is_empty());
+        assert!(failed.state().relaunch.dialog.is_none());
         assert!(
             !failed.state().update_started,
             "a failed update is offered again"

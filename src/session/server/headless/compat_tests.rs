@@ -130,6 +130,7 @@ fn unknown_attached_control_keeps_the_same_connection_open() {
             read_only: false,
             shares_filesystem: true,
             expected_server_nonce: None,
+            handoff_token: None,
         },
     )
     .unwrap();

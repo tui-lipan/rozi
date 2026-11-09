@@ -37,6 +37,7 @@ mod palette;
 mod pick;
 mod profiles;
 mod prompts;
+mod relaunch;
 mod release_notes;
 mod remotes;
 mod search;
@@ -59,6 +60,7 @@ pub(crate) use prompts::{
     askpass_overlay, extension_install_prompt_overlay, recording_mark_overlay, rename_overlay,
     rename_session_overlay, save_profile_overlay,
 };
+pub(crate) use relaunch::relaunch_overlay;
 pub(crate) use release_notes::release_notes_overlay;
 pub(crate) use remotes::remote_picker_overlay;
 pub(crate) use search::search_overlay;

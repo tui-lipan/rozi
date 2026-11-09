@@ -251,10 +251,12 @@ fn restarting_reserves_writes_commits_and_only_then_lets_go() {
             .expect("the runner is handed the new build");
         assert!(backend.state().relaunch.dialog.is_none());
         for sent in [&on_screen, &parked] {
-            assert_eq!(
-                sent_messages(sent),
-                vec![ClientMessage::Detach],
-                "every session is detached, none shut down"
+            let ending: Vec<ClientOutbound> = sent.try_iter().collect();
+            assert!(
+                matches!(ending.as_slice(), [ClientOutbound::Hangup]),
+                "every connection just ends: a detach would give the held slot up, a shutdown \
+                 would end the session ({} messages)",
+                ending.len()
             );
         }
         let handoff = crate::relaunch::document::take(&handover.handoff_id).unwrap();
@@ -481,6 +483,46 @@ fn a_session_that_changed_while_its_commit_was_answered_rolls_everything_back() 
         let plan = ready_plan(&backend);
         assert_eq!(plan.sessions[0].facts.name, "renamed");
         assert!(plan.notice.is_some());
+    });
+}
+
+#[test]
+fn a_configuration_reload_that_lengthens_reaching_a_session_rolls_the_restart_back() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let api = {
+            let state = backend.state_mut();
+            let _ = connect(state.current_mut(), "dev", None);
+            background(state, 7, "api", Some("workbox"))
+        };
+        // `dev` is reached after `api`, so its hold depends on how long `api` may take.
+        let dev_epoch = backend.state().runtime_epoch;
+        open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
+        backend.dispatch(Msg::RelaunchConfirm).unwrap();
+        let api_request = only_request(&api);
+        let RelaunchStage::Preparing(transaction) = stage(&backend) else {
+            panic!("preparing");
+        };
+        let dev_request = transaction
+            .pending
+            .iter()
+            .find(|(_, epoch)| **epoch == dev_epoch)
+            .map(|(request, _)| *request)
+            .unwrap();
+
+        // The configuration reloads while the reservations are on their way.
+        backend.state_mut().config.remote.connection_timeout_secs = 600;
+        prepared(&mut backend, 7, api_request);
+        prepared_holding(
+            &mut backend,
+            dev_epoch,
+            dev_request,
+            Duration::from_secs(3_600),
+        );
+
+        assert!(backend.state().relaunch.handover.take().is_none());
+        assert!(matches!(stage(&backend), RelaunchStage::Aborting(_)));
+        let _ = sent_messages(&api);
     });
 }
 

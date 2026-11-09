@@ -416,3 +416,20 @@ fn a_commit_lapses_when_its_client_stays() {
     assert_eq!(server.controller, Some(follower));
     assert!(!server.handoffs.any_in_transit());
 }
+
+/// Leaving is leaving: a client that detaches gives up a slot it committed, so a restart that was
+/// called off, its abort lost, can never turn a later ordinary quit into a held slot.
+#[test]
+fn a_detach_gives_up_even_a_committed_slot() {
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let token = hand_off(&mut server, old);
+
+    server.process_client_control_now(old, ClientMessage::Detach);
+
+    assert_eq!(server.controller, Some(follower));
+    assert!(!server.handoffs.any_in_transit());
+    let (_late, _late_stream, claimed) = claim(&mut server, &token);
+    assert_eq!(claimed, Some(false));
+}

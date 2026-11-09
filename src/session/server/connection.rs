@@ -350,6 +350,9 @@ impl SessionServer {
             self.set_close_after_flush(id);
         }
         if detach {
+            // A client that says it is leaving is leaving, whatever it reserved: only a connection
+            // that ends after a commit is a client in transit.
+            self.handoffs.forget_client(id);
             self.remove_client(id);
         }
     }

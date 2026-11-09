@@ -5,7 +5,9 @@
 //! inert reservation and returns its token; nothing changes if the client then stays, or leaves,
 //! which discards it. [`ClientMessage::CommitHandoff`] commits it, and the client leaves only once
 //! every commit is answered; [`ClientMessage::AbortHandoff`] takes a commit back when the relaunch
-//! fails. Once a committed client leaves, the server treats the client as in transit rather than gone: the
+//! fails. A client that sends [`ClientMessage::Detach`] is leaving for good, so a detach discards
+//! its reservation, committed or not; only its connection ending after a commit means a
+//! replacement is coming. Once a committed client's connection ends, the server treats the client as in transit rather than gone: the
 //! layout-control lease stays with it instead of passing to another client, nobody is told it left,
 //! and an ephemeral session does not start counting down to its own shutdown. The process that
 //! replaces it presents the token when it attaches and takes the slot over. A reservation nobody

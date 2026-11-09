@@ -8877,6 +8877,11 @@ impl EventParityHarness {
                 while let Ok(outbound) = self.clients[index].outbound.try_recv() {
                     progressed = true;
                     let frame = match outbound {
+                        // The connection ends, as a closed socket does.
+                        crate::session::client::ClientOutbound::Hangup => {
+                            self.server.remove_client(id);
+                            continue;
+                        }
                         crate::session::client::ClientOutbound::Control(msg) => Frame::Control(msg),
                         crate::session::client::ClientOutbound::PresentationAcks(acks) => {
                             Frame::PresentationAcks(acks)

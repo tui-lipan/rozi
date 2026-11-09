@@ -264,6 +264,9 @@ pub(crate) enum ClientOutbound {
         generation: u64,
         bytes: Vec<u8>,
     },
+    /// Close the connection once everything queued before it is written, without a word to the
+    /// server. Never written itself.
+    Hangup,
 }
 
 impl SessionClient {
@@ -528,7 +531,7 @@ impl SessionClient {
                     &message,
                     ClientOutbound::Control(
                         ClientMessage::Shutdown | ClientMessage::ShutdownForRestart
-                    )
+                    ) | ClientOutbound::Hangup
                 );
                 let result = match message {
                     ClientOutbound::Control(message) => {
@@ -561,6 +564,13 @@ impl SessionClient {
                         latency_sensitive,
                         &bytes,
                     ),
+                    // The server reads the end of the stream as the client's departure. A socket
+                    // already gone has departed all the same.
+                    ClientOutbound::Hangup => {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        writer_shutdown_flush.signal();
+                        Ok(())
+                    }
                 };
                 if result.is_err() {
                     if !writer_shutdown_signal.load(Ordering::Relaxed)
@@ -1064,8 +1074,22 @@ impl SessionClient {
         self.end_server(ClientMessage::ShutdownForRestart);
     }
 
+    /// Close the connection for the process replacing this client, after everything queued is
+    /// written, and wait briefly for that. Unlike [`Self::detach`], which tells the server this
+    /// client is leaving and so discards any slot it reserved, the connection just ends: a slot this
+    /// client committed for a replacement is held for it.
+    pub fn end_for_handoff(&self) {
+        self.send(ClientOutbound::Hangup);
+        self.await_final_write();
+    }
+
     fn end_server(&self, message: ClientMessage) {
         self.send_control(message);
+        self.await_final_write();
+    }
+
+    /// Wait for the writer to put the last thing queued on the wire, so the process can go.
+    fn await_final_write(&self) {
         if let Some(transport) = &self.transport {
             if !self.transport_failed.load(Ordering::Acquire) {
                 transport.shutdown_requested.store(true, Ordering::Release);
@@ -1493,6 +1517,7 @@ impl ClientOutbound {
             Self::PaneInput { bytes, .. } => {
                 bytes.len().saturating_add(protocol::PANE_FRAME_OVERHEAD)
             }
+            Self::Hangup => 0,
         }
     }
 }

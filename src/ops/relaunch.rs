@@ -540,6 +540,25 @@ fn invalidated(state: &State, transaction: &Transaction) -> Option<RelaunchStage
     if !transaction.plan.same_as(&current) {
         return Some(replanned(current));
     }
+    // Configuration reloads live. A longer connection timeout, or ssh now allowed to ask for a
+    // password, can make reaching a session take longer than the hold its server guaranteed.
+    let required_now = required_holds(state, &current);
+    let outgrown = transaction.tokens.keys().any(|epoch| {
+        required_now.get(epoch).is_some_and(|needed| {
+            transaction
+                .required
+                .get(epoch)
+                .is_none_or(|held| needed > held)
+        })
+    });
+    if outgrown {
+        let mut current = current;
+        current.notice = Some(
+            "Connection settings changed · a session may now take longer to reach; restart again"
+                .to_string(),
+        );
+        return Some(RelaunchStage::Ready(current));
+    }
     if !transaction.plan.candidate.unchanged() {
         return Some(RelaunchStage::Unavailable(format!(
             "{} changed after it was checked",

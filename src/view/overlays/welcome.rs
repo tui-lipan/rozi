@@ -29,8 +29,8 @@ const LOGO: [&str; 24] = [
     "..........##..........",
 ];
 /// The mark's own gradient, top to bottom: brand colours, the same in every theme.
-const LOGO_TOP: (u8, u8, u8) = (0xFD, 0x4A, 0x80);
-const LOGO_BOTTOM: (u8, u8, u8) = (0x98, 0x2B, 0xF2);
+pub(super) const LOGO_TOP: (u8, u8, u8) = (0xFD, 0x4A, 0x80);
+pub(super) const LOGO_BOTTOM: (u8, u8, u8) = (0x98, 0x2B, 0xF2);
 const LOGO_WIDTH: u16 = 22;
 /// The logo column: the mark with breathing room on both sides.
 const LOGO_COLUMN: u16 = LOGO_WIDTH + 6;

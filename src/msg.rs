@@ -45,6 +45,26 @@ pub enum Msg {
         attempt: u64,
         result: std::result::Result<(), String>,
     },
+    /// **Update rozi**'s worker reports progress. Fenced by the run's generation.
+    SelfUpdateProgress {
+        generation: u64,
+        event: crate::state::SelfUpdateEvent,
+    },
+    /// **Update rozi**'s worker is done: the release is installed, or why it is not.
+    SelfUpdateFinished {
+        generation: u64,
+        result: std::result::Result<(), String>,
+    },
+    /// The installed release has been on the card long enough; turn the card into Restart rozi.
+    SelfUpdateSettled {
+        generation: u64,
+    },
+    /// Put the update card away while the update keeps going.
+    SelfUpdateHide,
+    /// Run a failed update again.
+    SelfUpdateRetry,
+    /// Move focus to one of the update card's answers.
+    SelfUpdateFocusAnswer(usize),
     /// This install is about to join the anonymous weekly usage count for the first time, and this
     /// client is the one that tells the user. The client records the notice as shown once it has
     /// raised it; until then another launch may be told to show it again.

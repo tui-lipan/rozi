@@ -27,6 +27,7 @@ mod projects;
 mod relaunch;
 mod remote;
 mod search;
+mod self_update;
 mod services;
 mod session;
 mod sessions_view;
@@ -53,6 +54,7 @@ pub use pickers::*;
 pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
+pub use self_update::*;
 pub use services::*;
 pub use session::*;
 pub use sessions_view::*;
@@ -452,6 +454,8 @@ pub struct State {
     /// Replacing this client with another build: the dialog planning it, and the restore a
     /// relaunched client works through.
     pub relaunch: RelaunchState,
+    /// **Update rozi** while it runs, and its card.
+    pub self_update: SelfUpdateState,
     pub event_hub: crate::events::EventHub,
     pub session_notification_cursors: HashMap<crate::session::protocol::SessionInstanceId, u64>,
     /// Open `publish` streams, keyed by the pane whose program opened one.
@@ -795,6 +799,7 @@ impl State {
             welcome_due: false,
             show_welcome: false,
             relaunch: RelaunchState::default(),
+            self_update: SelfUpdateState::default(),
             event_hub: crate::events::EventHub::default(),
             session_notification_cursors: HashMap::new(),
             publish_streams: std::collections::HashMap::new(),
@@ -1329,6 +1334,7 @@ impl State {
         [
             (self.askpass.is_some(), "askpass"),
             (self.relaunch.dialog.is_some(), "relaunch"),
+            (self.self_update.visible(), "self-update"),
             (self.show_release_notes, "release-notes"),
             (self.follow_prompt.is_some(), "follow-prompt"),
             (self.collaboration.is_some(), "collaboration"),

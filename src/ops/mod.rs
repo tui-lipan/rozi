@@ -32,6 +32,7 @@ pub(crate) mod resize_move;
 pub(crate) mod screenshot;
 pub(crate) mod scrollback;
 pub(crate) mod search;
+pub(crate) mod self_update;
 pub(crate) mod services;
 pub(crate) mod session;
 pub(crate) mod sidebar_memory;

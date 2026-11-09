@@ -219,6 +219,37 @@ pub fn forget_install(paths: &SkillPaths, state_dir: &Path) -> Result<(), String
     write_registry(state_dir, &registry)
 }
 
+/// After an update installed `version` at `command_path`, ask that binary for its skill document
+/// and refresh the registered copies it supersedes: the global scope and the one in the current
+/// directory. The running process still carries the old document, which is why the new binary is
+/// asked rather than this one.
+pub fn refresh_after_update(command_path: &Path, version: &str) -> Result<RefreshReport, String> {
+    let output = std::process::Command::new(command_path)
+        .args(["skill", "print"])
+        .output()
+        .map_err(|error| format!("could not run updated rozi: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "updated rozi skill print exited with {}",
+            output.status
+        ));
+    }
+    let skill = String::from_utf8(output.stdout)
+        .map_err(|error| format!("updated rozi emitted invalid UTF-8: {error}"))?;
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    let state_dir = crate::platform::paths::state_dir(&env);
+    let mut roots = Vec::new();
+    if let Ok(paths) = super::default_paths(true) {
+        roots.push(paths.scope_root);
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && !roots.contains(&cwd)
+    {
+        roots.push(cwd);
+    }
+    refresh_managed(&state_dir, &skill, version, &roots)
+}
+
 /// Refresh registered copies using the skill emitted by the newly activated binary.
 pub fn refresh_managed(
     state_dir: &Path,

@@ -582,7 +582,8 @@ schedules the next check one interval later, not immediately.
 ### Update notices
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available` with the version
-change and how to update. It stays up for 15 seconds; click it to dismiss it sooner. If the release
+change and how to update. It stays up for 15 seconds; click it to dismiss it sooner, and it goes
+away when you start the update. If the release
 raises the extension API, the toast uses warning colors and names the new version. If running
 sessions must be restarted after the update, the toast uses warning colors and says so. Each
 release is announced only once across clients, and a failed check shows nothing.
@@ -590,15 +591,21 @@ release is announced only once across clients, and a failed check shows nothing.
 Every client that finds the release also lists **Update rozi to vX.Y.Z** (`update-rozi`) in the
 command palette for as long as it runs:
 
-1. Choosing it opens a popup that runs `rozi update`, or the upgrade command of the package manager
-   that installed rozi. The popup stays open to show the result.
-2. On success, the `rozi vX.Y.Z installed` dialog offers to
+1. Choosing it opens the `Updating rozi` dialog. For a rozi you installed with its installer, it
+   shows the download and then the install. For one a package manager installed, it runs that
+   manager's upgrade command and shows the last lines it prints. The command runs without a
+   terminal, so one that stops to ask a question fails instead of waiting.
+2. **Hide** puts the dialog away while the update keeps going; choose **Update rozi** again to see
+   it.
+3. On success, the dialog becomes the `rozi vX.Y.Z installed` dialog, which offers to
    [restart rozi on the new build](installation.md#restart-rozi-on-the-new-build), coming back to
    the same sessions. **Later** keeps the old build running until you choose **Restart rozi**.
-3. On failure, the command stays listed so you can retry.
+4. On failure, the dialog says what stopped the update, and **Try again** runs it again. If you hid
+   it, a toast says it failed and the command stays listed so you can retry.
 
-The command is not listed while a remote session is in front, because the popup would run on that
-host, or when rozi was installed from a distribution package or in a way it does not recognize.
+The update always installs the rozi this window was started from, even while a remote session is in
+front. The command is not listed when rozi was installed from a distribution package or in a way it
+does not recognize.
 
 ### Release notes
 

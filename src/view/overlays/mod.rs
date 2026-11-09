@@ -41,6 +41,7 @@ mod relaunch;
 mod release_notes;
 mod remotes;
 mod search;
+mod self_update;
 mod sessions;
 mod settings;
 mod welcome;
@@ -64,6 +65,7 @@ pub(crate) use relaunch::relaunch_overlay;
 pub(crate) use release_notes::release_notes_overlay;
 pub(crate) use remotes::remote_picker_overlay;
 pub(crate) use search::search_overlay;
+pub(crate) use self_update::self_update_overlay;
 pub(crate) use sessions::{
     collaboration_overlay, follow_prompt_overlay, reconnecting_overlay, session_picker_overlay,
 };

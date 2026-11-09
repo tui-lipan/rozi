@@ -614,6 +614,7 @@ fn askpass_choice_overlay(
             dim_behind: true,
             parent_reserve_percent,
             layers,
+            key: None,
         },
         Msg::CancelRemoteAskpass,
         &buttons,

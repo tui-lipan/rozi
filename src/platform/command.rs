@@ -119,6 +119,26 @@ where
     run_bounded_command(&mut command, None, timeout, capture_limit)
 }
 
+/// Receives a command's output as it arrives, one chunk at a time from either stream, on the
+/// thread draining that stream. A chunk can end anywhere, including inside a line.
+pub type OutputObserver = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
+
+/// Run one command line through an already-resolved command shell, as
+/// [`run_bounded_shell_command`], and show `observer` every chunk of its output as it arrives
+/// rather than only when the command is done.
+pub fn run_observed_shell_command(
+    shell: &ShellCommand,
+    command_line: &str,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+    observer: OutputObserver,
+) -> std::io::Result<CommandOutput> {
+    let mut args = shell.args.clone();
+    args.push(command_line.to_string());
+    let mut command = bounded_command(&shell.program, &args, &[]);
+    run_observed_command(&mut command, None, timeout, capture_limit, Some(observer))
+}
+
 /// Run a prepared command with bounded output and a deadline, including any stdin transfer.
 /// The process group/job is terminated and reaped before returning. Input must be a finite,
 /// nonblocking source such as a file or an in-memory script.
@@ -127,6 +147,16 @@ pub(crate) fn run_bounded_command(
     input: Option<Box<dyn std::io::Read + Send>>,
     timeout: std::time::Duration,
     capture_limit: usize,
+) -> std::io::Result<CommandOutput> {
+    run_observed_command(command, input, timeout, capture_limit, None)
+}
+
+fn run_observed_command(
+    command: &mut std::process::Command,
+    input: Option<Box<dyn std::io::Read + Send>>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+    observer: Option<OutputObserver>,
 ) -> std::io::Result<CommandOutput> {
     use std::io::Read;
     use std::process::Stdio;
@@ -156,6 +186,7 @@ pub(crate) fn run_bounded_command(
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
     let capture = |mut stream: Box<dyn Read + Send>| {
+        let observer = observer.clone();
         std::thread::spawn(move || {
             let mut retained = Vec::with_capacity(capture_limit.min(8192));
             let mut buffer = [0u8; 8192];
@@ -163,6 +194,9 @@ pub(crate) fn run_bounded_command(
                 match stream.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
+                        if let Some(observer) = &observer {
+                            observer(&buffer[..read]);
+                        }
                         let keep = capture_limit.saturating_sub(retained.len()).min(read);
                         retained.extend_from_slice(&buffer[..keep]);
                     }
@@ -1156,6 +1190,25 @@ mod tests {
         assert_eq!(output.stdout.len(), 64 * 1024);
         assert!(output.stdout.iter().all(|byte| *byte == b' '));
         assert_eq!(output.stderr, b"err");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_observed_command_shows_its_output_as_it_arrives() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let output = run_observed_shell_command(
+            &ShellCommand::new("/bin/sh").arg("-c"),
+            "printf 'one\\n' && printf 'two\\n' >&2 && exit 3",
+            std::time::Duration::from_secs(10),
+            1024,
+            std::sync::Arc::new(move |chunk: &[u8]| sink.lock().unwrap().extend_from_slice(chunk)),
+        )
+        .unwrap();
+        assert_eq!(output.status, Some(3));
+        let seen = String::from_utf8(seen.lock().unwrap().clone()).unwrap();
+        assert!(seen.contains("one\n") && seen.contains("two\n"), "{seen:?}");
+        assert_eq!(output.stdout, b"one\n", "observing keeps the capture");
     }
 
     #[cfg(unix)]

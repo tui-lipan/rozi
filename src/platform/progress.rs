@@ -325,7 +325,7 @@ const MIN_REPORTABLE: u64 = 1024 * 1024;
 /// An unknown total draws: it could be the archive arriving chunked, and showing bytes climb beats
 /// showing nothing. A small known total does not - relswap reports the sub-kilobyte manifest and
 /// signature too, and a bar that flashes on and off for those is noise.
-fn worth_drawing(total: Option<u64>) -> bool {
+pub(crate) fn worth_drawing(total: Option<u64>) -> bool {
     total.is_none_or(|total| total > MIN_REPORTABLE)
 }
 

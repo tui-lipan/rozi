@@ -47,6 +47,22 @@ impl AvailableUpdate {
         }
     }
 
+    /// How **Update rozi** installs the release here: rozi's own installer for a managed install,
+    /// the owning package manager's command for a known channel, nothing otherwise.
+    pub(crate) fn channel(&self) -> Option<crate::state::UpdateChannel> {
+        match self.source {
+            InstallSource::Managed => Some(crate::state::UpdateChannel::Managed),
+            source => source
+                .upgrade_command()
+                .map(crate::state::UpdateChannel::Command),
+        }
+    }
+
+    /// The release this client runs, which the update moves from.
+    pub(crate) fn running(&self) -> &Version {
+        &self.running
+    }
+
     pub(crate) fn toast_title(&self) -> String {
         format!("rozi v{} available", self.latest)
     }
@@ -216,82 +232,33 @@ impl ReleaseCompatibility {
     }
 }
 
-/// The command **Update rozi** would run from this client right now, or `None` when it has nothing
-/// to offer here.
+/// Whether **Update rozi** has something to do in this client right now.
 ///
-/// Nothing when no newer release is known, when this client already ran the update, or when the
-/// install has no single command (a distribution package, an unrecognised layout). And nothing
-/// while a remote session is in front: the popup runs on that session's server, which would update
-/// the host rather than the rozi the user is looking at.
-pub(crate) fn update_command_here(state: &crate::state::State) -> Option<&'static str> {
-    if state.update_started || state.current().remote_target.is_some() {
-        return None;
+/// It does when a newer release is known, this install has a way to take it (rozi's installer or
+/// the package manager that owns it), and no update to it has run yet; and while an update runs
+/// with its card put away, which the command brings back. The update runs in this client, so it
+/// installs the rozi this client was started from whichever session is in front, remote or not.
+pub(crate) fn update_offered_here(state: &crate::state::State) -> bool {
+    if state.self_update.run.as_ref().is_some_and(|run| run.hidden) {
+        return true;
     }
-    state.available_update.as_ref()?.update_command()
+    !state.update_started
+        && state
+            .available_update
+            .as_ref()
+            .and_then(AvailableUpdate::channel)
+            .is_some()
 }
 
-/// Install the known newer release in a popup. The popup stays open once the updater exits, so its
-/// result - success, or the error that stopped it - is there to read.
+/// **Update rozi**: install the known newer release on a card of its own, or bring back the card of
+/// the update already running.
 pub(crate) fn run_update(
     ctx: &mut tui_lipan::prelude::Context<crate::AppRoot>,
 ) -> tui_lipan::prelude::Update {
-    let Some(command) = update_command_here(&ctx.state) else {
+    if !update_offered_here(&ctx.state) {
         return tui_lipan::prelude::Update::none();
-    };
-    // Refused before anything is marked: the row must survive a popup that never opened.
-    if ctx.state.popup_is_present() {
-        return crate::pane::pty_events::notify_info(ctx, "Close the open popup to update rozi")
-            .update();
     }
-    ctx.state.update_started = true;
-    ctx.state.commands_dirty = true;
-    crate::ops::user_command::execute(
-        ctx,
-        &crate::config::UserCommandAction::Popup {
-            command: command.to_string(),
-            keep_open: true,
-        },
-    )
-}
-
-/// Follow up on the update popup once its updater exits.
-///
-/// Success installs the release for the next launch only - this client and every session server
-/// keep running the build they started with - so Restart rozi opens to take the step. A failure
-/// is already on screen in the popup, which stays open; all that changes is that **Update rozi**
-/// comes back, so the user can try again without hunting for the command.
-///
-/// The popup is recognised by the command it runs: only one popup can be open, and [`run_update`]
-/// refuses to start while another is.
-pub(crate) fn popup_exited(
-    ctx: &mut tui_lipan::prelude::Context<crate::AppRoot>,
-) -> tui_lipan::prelude::Update {
-    use tui_lipan::prelude::Update;
-    if !ctx.state.update_started {
-        return Update::none();
-    }
-    let (Some(popup), Some(update)) =
-        (ctx.state.popup.as_ref(), ctx.state.available_update.clone())
-    else {
-        return Update::none();
-    };
-    let Some(command) = update.update_command() else {
-        return Update::none();
-    };
-    if popup.identity.launch != Some(crate::pane::launch::PaneLaunch::shell(command)) {
-        return Update::none();
-    }
-    let tui_lipan::prelude::ManagedTerminalStatus::Exited(code) = popup.terminal.status else {
-        return Update::none();
-    };
-    if code != 0 {
-        ctx.state.update_started = false;
-        ctx.state.commands_dirty = true;
-        return Update::none();
-    }
-    // The new build is on disk; this client is still the old one. Restart rozi replaces it and
-    // comes back to the same sessions.
-    crate::ops::relaunch::open_after_update(ctx, update.latest.clone(), update.extension_note())
+    crate::ops::self_update::start(ctx)
 }
 
 /// Look for a newer release and report it to this client.

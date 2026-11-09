@@ -340,10 +340,18 @@ pub(crate) fn notify_update(
     .duration(ANNOUNCEMENT_TOAST_SECS);
     notify(
         ctx,
-        ToastKey::Content(content_key(&content)),
+        ToastKey::Channel(crate::state::ToastChannel::UpdateNotice),
         content,
         toast,
     )
+}
+
+/// Put the newer-release toast away: the update it offered has started, and its card says more.
+pub(crate) fn dismiss_update_notice(ctx: &mut Context<AppRoot>) {
+    let key = ToastKey::Channel(crate::state::ToastChannel::UpdateNotice);
+    if let Some(tracked) = ctx.state.replaceable_toasts.remove(&key) {
+        ctx.toast().dismiss(tracked.id);
+    }
 }
 
 /// A once-only info announcement whose details live on a page: a click sends `on_click` (which

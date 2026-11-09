@@ -606,6 +606,10 @@ pub fn render(ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_release_notes {
         root = root.child(overlays::release_notes_overlay(ctx));
     }
+    // Side by side: the update's card becomes the relaunch dialog under one key.
+    if ctx.state.self_update.visible() {
+        root = root.child(overlays::self_update_overlay(ctx));
+    }
     if ctx.state.relaunch.dialog.is_some() {
         root = root.child(overlays::relaunch_overlay(ctx));
     }

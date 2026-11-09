@@ -5,7 +5,6 @@ use super::args::UpdateCommand;
 use super::output::{OutputStyles, OutputTone};
 use crate::platform::install::InstallError;
 use crate::platform::install_source::InstallSource;
-use relswap::ReleaseError;
 
 pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> {
     crate::platform::install::from_process()
@@ -174,32 +173,12 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
     Ok(())
 }
 
-/// Phrases a failed download carries when the machine simply is not online. `relswap` reports
-/// every download failure as one string, so this is the only way to tell "offline" from a bad
-/// response.
-const OFFLINE_MARKERS: &[&str] = &[
-    "name resolution",
-    "lookup address",
-    "failed to lookup",
-    "network is unreachable",
-    "connection refused",
-    "connection reset",
-    "timed out",
-    "no route to host",
-];
-
-/// `prefix: error`, except that being offline reads as an instruction instead of a stack of
-/// nested library errors.
+/// `prefix: error`, with being offline read as an instruction rather than nested library errors.
 fn describe_failure(prefix: &str, error: &InstallError) -> String {
-    if let InstallError::Release(ReleaseError::Download(detail)) = error {
-        let detail = detail.to_ascii_lowercase();
-        if OFFLINE_MARKERS.iter().any(|marker| detail.contains(marker)) {
-            return format!(
-                "{prefix}: could not reach the release server - check your internet connection and try again"
-            );
-        }
-    }
-    format!("{prefix}: {error}")
+    format!(
+        "{prefix}: {}",
+        crate::platform::install::describe_error(error)
+    )
 }
 
 fn report_skill_refresh(command_path: &std::path::Path, version: &str, styles: OutputStyles) {
@@ -215,30 +194,7 @@ fn report_skill_refresh(command_path: &std::path::Path, version: &str, styles: O
 }
 
 fn refresh_skills(command_path: &std::path::Path, version: &str) -> Result<(), String> {
-    let output = std::process::Command::new(command_path)
-        .args(["skill", "print"])
-        .output()
-        .map_err(|error| format!("could not run updated rozi: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "updated rozi skill print exited with {}",
-            output.status
-        ));
-    }
-    let skill = String::from_utf8(output.stdout)
-        .map_err(|error| format!("updated rozi emitted invalid UTF-8: {error}"))?;
-    let env = crate::platform::paths::PlatformEnv::from_process();
-    let state_dir = crate::platform::paths::state_dir(&env);
-    let mut roots = Vec::new();
-    if let Ok(paths) = crate::skill::default_paths(true) {
-        roots.push(paths.scope_root);
-    }
-    if let Ok(cwd) = std::env::current_dir()
-        && !roots.contains(&cwd)
-    {
-        roots.push(cwd);
-    }
-    let report = crate::skill::refresh_managed(&state_dir, &skill, version, &roots)?;
+    let report = crate::skill::refresh_after_update(command_path, version)?;
     for path in report.refreshed {
         println!("Updated Rozi skill: {}", path.display());
     }
@@ -266,6 +222,7 @@ fn refresh_skills(command_path: &std::path::Path, version: &str) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relswap::ReleaseError;
 
     #[test]
     fn offline_download_reads_as_connection_advice() {

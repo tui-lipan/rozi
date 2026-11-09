@@ -221,6 +221,7 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
                 | Action::ApplyProfile
                 | Action::OpenSessionPicker
                 | Action::OpenAgentPicker
+                | Action::FocusNextAgentNeedingAttention
                 | Action::OpenCollaborators
                 | Action::RenameSession
                 | Action::NewTemporarySession
@@ -738,6 +739,8 @@ mod tests {
             Action::KillWorkspace,
             Action::SaveProfile,
             Action::OpenSessionPicker,
+            Action::OpenAgentPicker,
+            Action::FocusNextAgentNeedingAttention,
             Action::KillSession,
         ] {
             assert!(

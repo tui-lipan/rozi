@@ -2662,11 +2662,13 @@ fn in_order(lines: &[String], needles: &[&str]) -> bool {
     )
 }
 
-/// Activate the Agents tab row whose expansion state is kept under `row`, folding or opening it.
+/// Activate the row of the configured Agents tab whose expansion state is kept under `row`,
+/// folding or opening it.
 fn toggle_agents_row(backend: &mut TestBackend<AppRoot>, row: &str) {
+    let tab = backend.state().config.sidebar.tabs[0].clone();
     let index = backend
         .state()
-        .sidebar_rows(&SidebarTab::agents())
+        .sidebar_rows(&tab)
         .iter()
         .position(|item| item.expansion.as_ref().is_some_and(|key| key.row == row))
         .unwrap_or_else(|| panic!("a foldable row {row:?}"));
@@ -2872,6 +2874,96 @@ fn the_agents_tab_can_name_each_repository_once() {
             1,
             "{}",
             lines.join("\n")
+        );
+
+        // Folded, the repository takes the colour of its most urgent agent - the blocked one in
+        // the worktree - however its checkouts are ordered.
+        toggle_agents_row(&mut backend, "repository:/x/rozi");
+        let warning = backend.state().theme.status.warning;
+        let rows = backend.state().sidebar_rows(&tab);
+        let repository = rows
+            .iter()
+            .find(|row| {
+                row.expansion
+                    .as_ref()
+                    .is_some_and(|key| key.row == "repository:/x/rozi")
+            })
+            .expect("the repository row");
+        assert_eq!(repository.expanded(), Some(false));
+        assert_eq!(repository.arrow_style, Some(Style::new().fg(warning)));
+    });
+}
+
+/// Outside any checkout nothing relates two panes, so one agent in unrelated directories of two
+/// sessions is two rows. Runs one pane holds still cluster.
+#[test]
+fn agents_elsewhere_cluster_only_within_one_pane() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        let slot = |pane, id: &str| {
+            let mut agent = monitored_agent("three", pane, "working");
+            agent.reference = crate::session::protocol::AgentRef::for_test(
+                pane,
+                0,
+                Some(crate::session::protocol::RowKey::new("sessions", id)),
+            );
+            agent
+        };
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![
+                    monitored_agent("one", 4, "idle"),
+                    monitored_agent("two", 4, "blocked"),
+                    slot(7, "a"),
+                    slot(7, "b"),
+                ],
+                projects: Vec::new(),
+            });
+        agents_tab_lines(&mut backend);
+        let clusters: Vec<String> = backend
+            .state()
+            .sidebar_rows(&SidebarTab::agents())
+            .iter()
+            .filter_map(|row| row.expansion.as_ref())
+            .map(|key| key.row.clone())
+            .filter(|row| row.starts_with("cluster:"))
+            .collect();
+        assert_eq!(clusters, ["cluster:elsewhere|three|7|codex"]);
+    });
+}
+
+/// Windows shells can report one directory in different casings. Two sessions that do are in one
+/// checkout, by the host's own path rules.
+#[test]
+fn one_windows_checkout_spelled_two_ways_is_one_checkout() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![
+                    monitored_agent("one", 4, "idle"),
+                    monitored_agent("two", 5, "working"),
+                ],
+                projects: vec![
+                    project("one", "C:\\Work\\rozi", None, "master", &[4]),
+                    project("two", "c:\\work\\rozi", None, "master", &[5]),
+                ],
+            });
+        agents_tab_lines(&mut backend);
+        let rows = backend.state().sidebar_rows(&SidebarTab::agents());
+        let checkouts: Vec<String> = rows
+            .iter()
+            .filter_map(|row| row.expansion.as_ref())
+            .map(|key| key.row.clone())
+            .filter(|row| row.starts_with("checkout:"))
+            .collect();
+        assert_eq!(checkouts, ["checkout:c:\\work\\rozi"]);
+        assert_eq!(
+            rows.len(),
+            4,
+            "the checkout, the Codex cluster, and its two runs"
         );
     });
 }

@@ -35,7 +35,12 @@ fn tab_id() -> SidebarTabId {
 
 /// One checkout's agents on one host, in the projection's order: most urgent first.
 struct Checkout<'a> {
-    /// `None` for the agents outside any Git checkout, listed last as `Elsewhere`.
+    /// What the checkout is, by its host's path rules: every spelling of one directory gives the
+    /// same key. `None` for the agents outside any Git checkout, listed last as `Elsewhere`.
+    key: Option<String>,
+    /// The repository's key, as `key` is the checkout's.
+    repository_key: Option<String>,
+    /// The checkout's path as the first of its agents reported it, for showing.
     root: Option<&'a str>,
     repository: Option<&'a str>,
     branch: Option<&'a str>,
@@ -47,10 +52,13 @@ struct Checkout<'a> {
 impl Checkout<'_> {
     /// Where its open or folded state is kept: the checkout's path, never a label two can share.
     fn row_id(&self) -> String {
-        self.root.map_or_else(
-            || "elsewhere".to_string(),
-            |root| format!("checkout:{root}"),
-        )
+        self.key
+            .as_deref()
+            .map_or_else(|| "elsewhere".to_string(), |key| format!("checkout:{key}"))
+    }
+
+    fn is_primary(&self) -> bool {
+        self.key.is_some() && self.key == self.repository_key
     }
 
     /// What names the checkout beside its repository: the branch, or its directory when detached
@@ -128,16 +136,16 @@ pub(super) fn global_agents_rows(state: &State, config: &SidebarAgentsConfig) ->
 fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
     let mut checkouts: Vec<Checkout<'a>> = Vec::new();
     for agent in agents {
-        let root = agent
-            .checkout
-            .as_ref()
-            .map(|checkout| checkout.root.as_str());
-        match checkouts.iter_mut().find(|known| known.root == root) {
+        let checkout = agent.checkout.as_ref();
+        let key = checkout.map(crate::view::agents::AgentCheckout::root_key);
+        match checkouts.iter_mut().find(|known| known.key == key) {
             Some(known) => known.agents.push(agent),
             None => {
-                let checkout = agent.checkout.as_ref();
                 checkouts.push(Checkout {
-                    root,
+                    key,
+                    repository_key: checkout
+                        .map(crate::view::agents::AgentCheckout::repository_key),
+                    root: checkout.map(|checkout| checkout.root.as_str()),
                     repository: checkout.map(|checkout| checkout.repository.as_str()),
                     branch: checkout.and_then(|checkout| checkout.branch.as_deref()),
                     label: String::new(),
@@ -146,26 +154,38 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
             }
         }
     }
-    let mut repositories: Vec<&str> = checkouts.iter().filter_map(|c| c.repository).collect();
+    // One spelling per repository, the first one seen, so its label is derived once.
+    let mut repositories: Vec<(&str, &str)> = Vec::new();
+    for checkout in &checkouts {
+        if let (Some(key), Some(path)) = (checkout.repository_key.as_deref(), checkout.repository)
+            && !repositories.iter().any(|(known, _)| *known == key)
+        {
+            repositories.push((key, path));
+        }
+    }
     repositories.sort_unstable();
-    repositories.dedup();
-    let labels = crate::state::projects::repository_labels(&repositories);
-    for checkout in &mut checkouts {
-        checkout.label = match checkout.repository {
-            Some(repository) => repositories
+    let paths: Vec<&str> = repositories.iter().map(|(_, path)| *path).collect();
+    let labels = crate::state::projects::repository_labels(&paths);
+    let labels: Vec<(String, String)> = checkouts
+        .iter()
+        .map(|checkout| match checkout.repository_key.as_deref() {
+            Some(key) => repositories
                 .iter()
-                .position(|known| *known == repository)
-                .map(|index| labels[index].clone())
+                .position(|(known, _)| *known == key)
+                .map(|index| (key.to_string(), labels[index].clone()))
                 .unwrap_or_default(),
-            None => "Elsewhere".to_string(),
-        };
+            None => (String::new(), "Elsewhere".to_string()),
+        })
+        .collect();
+    for (checkout, (_, label)) in checkouts.iter_mut().zip(labels) {
+        checkout.label = label;
     }
     checkouts.sort_by_cached_key(|checkout| {
         (
-            checkout.root.is_none(),
+            checkout.key.is_none(),
             checkout.label.to_lowercase(),
-            checkout.repository.map(str::to_string),
-            checkout.root != checkout.repository,
+            checkout.repository_key.clone(),
+            !checkout.is_primary(),
             checkout.branch_label(),
         )
     });
@@ -174,10 +194,10 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
 
 /// Several checkouts of one repository read alike but for the branch, which then keeps its width.
 fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
-    checkout.repository.is_some()
+    checkout.repository_key.is_some()
         && checkouts
             .iter()
-            .filter(|other| other.repository == checkout.repository)
+            .filter(|other| other.repository_key == checkout.repository_key)
             .count()
             > 1
 }
@@ -239,7 +259,7 @@ impl Layout<'_> {
     fn by_repository(&self, checkouts: &[Checkout<'_>], rows: &mut Vec<SidebarRow>) {
         let mut placed: Vec<&str> = Vec::new();
         for checkout in checkouts {
-            let Some(repository) = checkout.repository else {
+            let Some(repository) = checkout.repository_key.as_deref() else {
                 self.checkout(checkout, false, rows);
                 continue;
             };
@@ -249,7 +269,7 @@ impl Layout<'_> {
             placed.push(repository);
             let siblings: Vec<&Checkout<'_>> = checkouts
                 .iter()
-                .filter(|other| other.repository == Some(repository))
+                .filter(|other| other.repository_key.as_deref() == Some(repository))
                 .collect();
             if let [only] = siblings.as_slice() {
                 self.checkout(only, false, rows);
@@ -341,8 +361,9 @@ impl Layout<'_> {
         let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
             .keyed(format!("{}:{}", key.section, key.row))
             .collapsible(key, expanded);
-        match agents.first().filter(|_| !expanded) {
-            // The projection lists the most urgent agent first.
+        // A repository's agents arrive checkout by checkout, so the lead is chosen, not assumed.
+        let lead = agents.iter().copied().min_by_key(|agent| agent.rank());
+        match lead.filter(|_| !expanded) {
             Some(lead) => {
                 let (_, color, _) =
                     super::agents::row_glyph(status(lead), lead.finished_unseen, theme);
@@ -354,24 +375,38 @@ impl Layout<'_> {
 
     /// A checkout's agents at `depth`: a row each, and a cluster wherever one agent runs more than
     /// once there. The cluster takes the place of its most urgent run.
+    ///
+    /// In a checkout, every run of one agent there is one cluster, whichever session or pane hosts
+    /// it. Outside any checkout nothing says two panes are related, so only one pane's own runs
+    /// cluster, as in Activity.
     fn agent_rows(&self, checkout: &Checkout<'_>, depth: usize, rows: &mut Vec<SidebarRow>) {
-        let mut placed: Vec<&str> = Vec::new();
+        let cluster = |agent: &GlobalAgentRow| match checkout.key {
+            Some(_) => agent.agent_id.clone(),
+            None => format!(
+                "{}|{}|{}",
+                agent.session,
+                agent.location.pane(),
+                agent.agent_id
+            ),
+        };
+        let mut placed: Vec<String> = Vec::new();
         for agent in &checkout.agents {
+            let id = cluster(agent);
             let members: Vec<&GlobalAgentRow> = checkout
                 .agents
                 .iter()
                 .copied()
-                .filter(|other| other.agent_id == agent.agent_id)
+                .filter(|other| cluster(other) == id)
                 .collect();
             if members.len() < 2 {
                 rows.push(self.run_row(agent, false).at(depth));
                 continue;
             }
-            if placed.contains(&agent.agent_id.as_str()) {
+            if placed.contains(&id) {
                 continue;
             }
-            placed.push(&agent.agent_id);
-            let key = self.key(format!("cluster:{}|{}", checkout.row_id(), agent.agent_id));
+            let key = self.key(format!("cluster:{}|{id}", checkout.row_id()));
+            placed.push(id);
             let expanded = self.expanded(&key);
             rows.push(self.cluster_row(&members, key, expanded).at(depth));
             if expanded {

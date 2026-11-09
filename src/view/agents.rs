@@ -20,14 +20,55 @@ pub(crate) struct AgentCheckout {
     pub repository: String,
     /// The branch checked out at `root`, or a short commit when `HEAD` is detached.
     pub branch: Option<String>,
+    /// How the host that owns these paths compares them. Windows shells can report one directory
+    /// in different casings, so `C:\Work\rozi` and `c:\work\rozi` are the same checkout there.
+    pub family: crate::platform::paths::PathFamily,
 }
 
 impl AgentCheckout {
-    fn from_summary(summary: &crate::session::protocol::ProjectSummary) -> Self {
+    /// A checkout at `root`. The family follows the path's own shape, which is enough for the
+    /// absolute paths session servers resolve: only a Windows path has a drive or UNC prefix.
+    pub(crate) fn new(root: String, repository: Option<String>, branch: Option<String>) -> Self {
+        let family = if crate::platform::paths::is_windows_path_shape(&root) {
+            crate::platform::paths::PathFamily::Windows
+        } else {
+            crate::platform::paths::PathFamily::Posix
+        };
         Self {
-            root: summary.root.clone(),
-            repository: summary.repository_root().to_string(),
-            branch: summary.branch.clone(),
+            repository: repository.unwrap_or_else(|| root.clone()),
+            root,
+            branch,
+            family,
+        }
+    }
+
+    fn from_summary(summary: &crate::session::protocol::ProjectSummary) -> Self {
+        Self::new(
+            summary.root.clone(),
+            Some(summary.repository_root().to_string()),
+            summary.branch.clone(),
+        )
+    }
+
+    /// Whether `root` is this checkout, by its host's rules.
+    pub fn is_at(&self, root: &str) -> bool {
+        self.family.paths_equal(&self.root, root)
+    }
+
+    /// The checkout's identity: equal for every spelling its host treats as the same directory.
+    pub fn root_key(&self) -> String {
+        self.key(&self.root)
+    }
+
+    /// The repository's identity, as [`Self::root_key`] is the checkout's.
+    pub fn repository_key(&self) -> String {
+        self.key(&self.repository)
+    }
+
+    fn key(&self, path: &str) -> String {
+        match self.family {
+            crate::platform::paths::PathFamily::Windows => path.to_ascii_lowercase(),
+            crate::platform::paths::PathFamily::Posix => path.to_string(),
         }
     }
 }
@@ -382,11 +423,10 @@ fn live_attachment_rows(
             continue;
         };
         let (project, branch) = row_project(&row);
-        let checkout = row.project_root.clone().map(|root| AgentCheckout {
-            repository: row.repository.clone().unwrap_or_else(|| root.clone()),
-            branch: row.branch.clone(),
-            root,
-        });
+        let checkout = row
+            .project_root
+            .clone()
+            .map(|root| AgentCheckout::new(root, row.repository.clone(), row.branch.clone()));
         let elapsed = crate::view::sidebar::agents::elapsed(
             row.status.as_deref().unwrap_or(pane_status::IDLE),
             row.finished_unseen,

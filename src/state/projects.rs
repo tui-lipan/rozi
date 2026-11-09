@@ -278,7 +278,7 @@ fn agent_in(
         && agent
             .checkout
             .as_ref()
-            .is_some_and(|checkout| checkout.root == summary.root)
+            .is_some_and(|checkout| checkout.is_at(&summary.root))
 }
 
 fn agent_tone(agent: &GlobalAgentRow) -> SidebarTone {

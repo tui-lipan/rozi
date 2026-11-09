@@ -27,6 +27,10 @@ pub(crate) fn relaunch_overlay(ctx: &Context<AppRoot>) -> Element {
             Some(PromptCaption::Note("Handing over…")),
             vec![cancel("Cancel")],
         ),
+        RelaunchStage::Aborting(_) => (
+            Some(PromptCaption::Note("Taking back what was reserved…")),
+            vec![cancel("Close")],
+        ),
         RelaunchStage::Unavailable(_) => (None, vec![cancel("Close")]),
         RelaunchStage::Ready(plan) if plan.blocked() => (
             Some(PromptCaption::Note(
@@ -98,7 +102,9 @@ fn facts(dialog: &RelaunchDialog) -> Vec<(String, String)> {
         RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) => {
             Some(&transaction.plan)
         }
-        RelaunchStage::Checking | RelaunchStage::Unavailable(_) => None,
+        RelaunchStage::Checking | RelaunchStage::Unavailable(_) | RelaunchStage::Aborting(_) => {
+            None
+        }
     };
     let mut rows = Vec::new();
     if let Some(plan) = plan {

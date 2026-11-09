@@ -2034,6 +2034,7 @@ fn disconnect_cancels_pointer_gestures_and_reconnect_flushes_pending_resizes_bod
             allow_takeover: false,
             read_only: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            handoff_claimed: None,
         })
         .expect("flush pending geometry after reconnect");
     let mut resized: Vec<_> = reconnect_rx
@@ -2652,6 +2653,7 @@ fn attach_policy_result(
                 allow_takeover,
                 read_only,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         let requested = outbound.try_iter().any(|message| {
@@ -2705,6 +2707,7 @@ fn land_on_occupied_session(
             allow_takeover: true,
             read_only: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            handoff_claimed: None,
         })
         .expect("dispatch attach");
     let requested = outbound.try_iter().any(|message| {
@@ -2828,6 +2831,7 @@ fn session_view_revision_step(reconnect: bool) -> u64 {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         assert_eq!(
@@ -2884,6 +2888,7 @@ fn seeded_pane_arrival(reconnect: bool) -> ((bool, bool, bool), bool) {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
         let state = backend.state();
@@ -3027,6 +3032,7 @@ fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("dispatch attach");
 
@@ -3353,6 +3359,7 @@ fn attach_metadata_targets_shared_namespace_when_scratch_id_collides() {
                 allow_takeover: false,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("attach shared pane");
 
@@ -3613,6 +3620,7 @@ fn attaching_to_a_populated_session_hands_the_keyboard_to_the_focused_pane() {
                 allow_takeover: true,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: None,
             })
             .expect("attach to a populated session");
         backend.render();
@@ -3936,6 +3944,7 @@ fn attachment_keeps_the_remote_path_family_across_disconnect() {
                     allow_takeover: false,
                     read_only: false,
                     origin: crate::session::origin::SessionOrigin::default(),
+                    handoff_claimed: None,
                 })
                 .expect("attach remote session");
             assert_eq!(backend.state().current().path_family, family);

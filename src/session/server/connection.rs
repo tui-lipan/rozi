@@ -534,9 +534,10 @@ impl SessionServer {
                     handoff_token,
                 },
             ),
-            ClientMessage::PrepareHandoff { request_id } => {
-                self.handle_prepare_handoff(client_id, request_id)
-            }
+            ClientMessage::PrepareHandoff {
+                request_id,
+                hold_ms,
+            } => self.handle_prepare_handoff(client_id, request_id, hold_ms),
             ClientMessage::SetSessionOrigin { origin } => {
                 if self.origin.is_empty()
                     && self.origin_seed_client == Some(client_id)
@@ -1111,9 +1112,8 @@ impl SessionServer {
             ClientMessage::CommitHandoff { request_id, token } => {
                 self.handle_commit_handoff(client_id, request_id, &token)
             }
-            ClientMessage::AbortHandoff { token } => {
-                self.abort_handoff(client_id, &token);
-                Vec::new()
+            ClientMessage::AbortHandoff { request_id, token } => {
+                self.handle_abort_handoff(client_id, request_id, &token)
             }
             // A newer client's request that skipped its send gate. Refuse that one request and keep
             // the connection: everything else the client does still works.

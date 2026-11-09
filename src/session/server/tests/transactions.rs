@@ -514,6 +514,7 @@ impl StartupSpawns {
             allow_takeover: true,
             read_only: false,
             origin: Default::default(),
+            handoff_claimed: None,
         })
         .unwrap();
         Self {
@@ -679,6 +680,7 @@ fn attaching_to_a_layout_with_a_retained_exit_preserves_its_status() {
             allow_takeover: true,
             read_only: false,
             origin: Default::default(),
+            handoff_claimed: None,
         })
         .unwrap();
         let pane = crate::pane::lifecycle::find_pane(ui.state(), 1).unwrap();

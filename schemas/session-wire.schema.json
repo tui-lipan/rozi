@@ -1735,8 +1735,15 @@
           "type": "object"
         },
         {
-          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token. The reservation is inert: the client leaving without committing it discards\nit, so a relaunch abandoned at this point changes nothing.",
+          "description": "Reserve this client's slot for the process that replaces it, such as the same client\nrelaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a\none-time token and how long it grants. The reservation is inert: the client leaving without\ncommitting it discards it, so a relaunch abandoned at this point changes nothing.",
           "properties": {
+            "hold_ms": {
+              "default": 0,
+              "description": "How long, once this client has left, its replacement may take to claim the slot. The\nserver grants up to its own limit and says what it granted; zero asks for its default.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "request_id": {
               "format": "uint64",
               "minimum": 0,
@@ -1777,8 +1784,13 @@
           "type": "object"
         },
         {
-          "description": "Discard the reservation `token` names, committed or not: the relaunch it was for failed and\nthis client stays.",
+          "description": "Discard the reservation `token` names, committed or not: the relaunch it was for failed and\nthis client stays. Answered by [`ServerMessage::HandoffAborted`], so the client knows no\ncommit of its survives before it carries on as it was.",
           "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "token": {
               "type": "string"
             },
@@ -1789,6 +1801,7 @@
           },
           "required": [
             "type",
+            "request_id",
             "token"
           ],
           "type": "object"
@@ -6694,7 +6707,7 @@
           "type": "object"
         },
         {
-          "description": "Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how\nlong the slot is held once the client has gone. `error` is set, and `token` empty, when the\nserver refused.",
+          "description": "Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how\nlong the slot is held once the client has gone, which may be less than was asked for.\n`error` is set, and `token` empty, when the server refused.",
           "properties": {
             "error": {
               "type": [
@@ -6702,7 +6715,7 @@
                 "null"
               ]
             },
-            "expires_in_ms": {
+            "hold_ms": {
               "default": 0,
               "format": "uint64",
               "minimum": 0,
@@ -6744,6 +6757,25 @@
             },
             "type": {
               "const": "handoff-committed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains.",
+          "properties": {
+            "request_id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "handoff-aborted",
               "type": "string"
             }
           },

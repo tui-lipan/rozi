@@ -167,20 +167,27 @@ impl RemoteAttachPolicy {
     }
 }
 
-/// Deliver the attach reply, then - for an attach that presented a handoff token - whether it took
-/// over the slot the previous client process reserved.
+/// Deliver the attach reply. Whether a handoff token claimed its slot travels inside it, so the
+/// attach and the claim are judged together.
 fn send_attached(link: &CommandLink<Msg>, epoch: u64, attached: ServerMessage) {
-    let claimed = match &attached {
-        ServerMessage::Attached {
-            handoff_claimed, ..
-        } => *handoff_claimed,
-        _ => None,
-    };
     link.send(server_message_to_msg(epoch, Frame::Control(attached)));
-    if let Some(claimed) = claimed {
-        link.send(Msg::SessionHandoffClaimed { epoch, claimed });
+}
+
+/// The longest a [`crate::state::AttachMode::Resume`] attach to session on `remote` can take,
+/// prompts included. Locally that is a connection and a handshake; on a host, see
+/// [`crate::session::remote::join_budget`].
+pub(crate) fn resume_budget(
+    remote: Option<&crate::session::remote::RemoteTarget>,
+    config: &crate::config::RemoteConfig,
+) -> std::time::Duration {
+    match remote {
+        Some(_) => crate::session::remote::join_budget(config),
+        None => LOCAL_RESUME_BUDGET,
     }
 }
+
+/// A local join: the endpoint is on this machine, and a busy server is not retried.
+const LOCAL_RESUME_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// `reconnect` re-drives an established link that dropped: a busy server is retried until
 /// [`LOCAL_RECONNECT_BUSY_DEADLINE`] before the reconnect is abandoned.
@@ -824,6 +831,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 input_locked,
                 allow_takeover,
                 origin,
+                handoff_claimed,
                 ..
             } => Msg::SessionAttached {
                 epoch,
@@ -842,6 +850,7 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 input_locked,
                 allow_takeover,
                 origin,
+                handoff_claimed,
             },
             // Neither reaches an attached client: a probe and a headless control request each
             // answer their own short-lived connection. Arriving here means the server answered
@@ -931,14 +940,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             ServerMessage::HandoffPrepared {
                 request_id,
                 token,
+                hold_ms,
                 error,
-                ..
             } => Msg::SessionHandoffPrepared {
                 epoch,
                 request_id,
                 token,
+                hold: std::time::Duration::from_millis(hold_ms),
                 error,
             },
+            ServerMessage::HandoffAborted { request_id } => {
+                Msg::SessionHandoffAborted { epoch, request_id }
+            }
             ServerMessage::HandoffCommitted { request_id, error } => Msg::SessionHandoffCommitted {
                 epoch,
                 request_id,

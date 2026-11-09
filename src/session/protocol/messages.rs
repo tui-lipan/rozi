@@ -313,10 +313,14 @@ pub enum ClientMessage {
     },
     /// Reserve this client's slot for the process that replaces it, such as the same client
     /// relaunched on a newer build. The server answers [`ServerMessage::HandoffPrepared`] with a
-    /// one-time token. The reservation is inert: the client leaving without committing it discards
-    /// it, so a relaunch abandoned at this point changes nothing.
+    /// one-time token and how long it grants. The reservation is inert: the client leaving without
+    /// committing it discards it, so a relaunch abandoned at this point changes nothing.
     PrepareHandoff {
         request_id: u64,
+        /// How long, once this client has left, its replacement may take to claim the slot. The
+        /// server grants up to its own limit and says what it granted; zero asks for its default.
+        #[serde(default)]
+        hold_ms: u64,
     },
     /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`]. Once
     /// committed, this client's departure holds its slot until an attach presents the token or the
@@ -328,8 +332,10 @@ pub enum ClientMessage {
         token: String,
     },
     /// Discard the reservation `token` names, committed or not: the relaunch it was for failed and
-    /// this client stays.
+    /// this client stays. Answered by [`ServerMessage::HandoffAborted`], so the client knows no
+    /// commit of its survives before it carries on as it was.
     AbortHandoff {
+        request_id: u64,
         token: String,
     },
     SetInputLock {
@@ -809,14 +815,14 @@ pub enum ServerMessage {
     /// Sent only to a requester whose pending control request the controller declined.
     ControlDeclined,
     /// Reply to [`ClientMessage::PrepareHandoff`]: the token that claims this client's slot, and how
-    /// long the slot is held once the client has gone. `error` is set, and `token` empty, when the
-    /// server refused.
+    /// long the slot is held once the client has gone, which may be less than was asked for.
+    /// `error` is set, and `token` empty, when the server refused.
     HandoffPrepared {
         request_id: u64,
         #[serde(default)]
         token: String,
         #[serde(default)]
-        expires_in_ms: u64,
+        hold_ms: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -826,6 +832,10 @@ pub enum ServerMessage {
         request_id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// Reply to [`ClientMessage::AbortHandoff`]: no reservation for that token remains.
+    HandoffAborted {
+        request_id: u64,
     },
     ClientsChanged {
         clients: Vec<ClientInfo>,
@@ -990,9 +1000,9 @@ impl ServerMessage {
             | ServerMessage::SessionEvent { .. }
             | ServerMessage::SessionSubscribeRecord { .. } => None,
             ServerMessage::RuntimeMetrics { .. } => Some(super::Capability::RuntimeMetrics),
-            ServerMessage::HandoffPrepared { .. } | ServerMessage::HandoffCommitted { .. } => {
-                Some(super::Capability::ClientHandoff)
-            }
+            ServerMessage::HandoffPrepared { .. }
+            | ServerMessage::HandoffCommitted { .. }
+            | ServerMessage::HandoffAborted { .. } => Some(super::Capability::ClientHandoff),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

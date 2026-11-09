@@ -1,4 +1,5 @@
 {
+  "hold_ms": 225000,
   "request_id": 1,
   "type": "prepare-handoff"
 }

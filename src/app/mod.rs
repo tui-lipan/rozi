@@ -849,6 +849,7 @@ mod tests {
                             allow_takeover: false,
                             read_only: false,
                             origin: Default::default(),
+                            handoff_claimed: None,
                         })
                         .unwrap();
                     assert_eq!(backend.state().session_view_revision, revision + 1);

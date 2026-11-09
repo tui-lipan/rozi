@@ -215,7 +215,9 @@ Scratchpad shells and an open popup run in the client itself, so they end with i
 them. When a restart ends programs, **Restart anyway** asks for a second press.
 
 The restart goes ahead only when every session it carries over has agreed to keep this client's
-place. If one does not answer or refuses, rozi stays as it was and the dialog says which session;
+place for as long as the new rozi may take to reach it, including the time to type a password for
+each host it reconnects to before that one. If one does not answer, refuses, or cannot keep the
+place that long, rozi stays as it was and the dialog says which session;
 **Restart** tries again. If your sessions change while the dialog is open, it shows what the restart
 would do now before anything happens.
 

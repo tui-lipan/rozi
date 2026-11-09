@@ -3,6 +3,7 @@
 //! restore that build runs.
 
 use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 use tui_lipan::TestBackend;
 
@@ -108,17 +109,47 @@ fn only_request(sent: &Receiver<ClientOutbound>) -> ClientMessage {
     }
 }
 
+/// The server grants a reservation request, holding the slot for as long as it was asked to.
 fn prepared(backend: &mut TestBackend<AppRoot>, epoch: u64, message: ClientMessage) {
-    let ClientMessage::PrepareHandoff { request_id } = message else {
+    let ClientMessage::PrepareHandoff {
+        request_id,
+        hold_ms,
+    } = message
+    else {
         panic!("expected a reservation request, got {message:?}");
     };
+    prepared_holding(backend, epoch, request_id, Duration::from_millis(hold_ms));
+}
+
+fn prepared_holding(
+    backend: &mut TestBackend<AppRoot>,
+    epoch: u64,
+    request_id: u64,
+    hold: Duration,
+) {
     backend
         .dispatch(Msg::SessionHandoffPrepared {
             epoch,
             request_id,
             token: format!("token-{epoch}"),
+            hold,
             error: None,
         })
+        .unwrap();
+}
+
+/// The session's one request is taking back its reservation; the server confirms it.
+fn aborted(backend: &mut TestBackend<AppRoot>, epoch: u64, sent: &Receiver<ClientOutbound>) {
+    let ClientMessage::AbortHandoff { request_id, token } = only_request(sent) else {
+        panic!("expected the reservation to be taken back");
+    };
+    assert_eq!(token, format!("token-{epoch}"));
+    assert!(
+        matches!(stage(backend), RelaunchStage::Aborting(_)),
+        "nothing goes on until the server confirms"
+    );
+    backend
+        .dispatch(Msg::SessionHandoffAborted { epoch, request_id })
         .unwrap();
 }
 
@@ -269,15 +300,9 @@ fn a_server_that_does_not_answer_stops_the_restart_and_the_client_stays() {
             .dispatch(Msg::RelaunchAnswerTimeout { attempt })
             .unwrap();
         assert!(backend.state().relaunch.handover.take().is_none());
+        aborted(&mut backend, epoch, &dev);
         let plan = ready_plan(&backend);
         assert_eq!(plan.notice.as_deref(), Some("`api` did not answer"));
-        assert_eq!(
-            sent_messages(&dev),
-            vec![ClientMessage::AbortHandoff {
-                token: format!("token-{epoch}")
-            }],
-            "the reservation already granted is taken back"
-        );
         assert!(sent_messages(&api).is_empty(), "nothing is detached");
     });
 }
@@ -304,17 +329,12 @@ fn a_refused_commit_takes_every_commit_back_and_discards_the_handoff() {
             })
             .unwrap();
         assert!(backend.state().relaunch.handover.take().is_none());
+        aborted(&mut backend, epoch, &dev);
         assert!(
             ready_plan(&backend)
                 .notice
                 .as_deref()
                 .is_some_and(|notice| notice.contains("could not hold its place"))
-        );
-        assert_eq!(
-            sent_messages(&dev),
-            vec![ClientMessage::AbortHandoff {
-                token: format!("token-{epoch}")
-            }]
         );
     });
 }
@@ -340,12 +360,7 @@ fn a_plan_that_changed_since_it_was_shown_is_shown_again_before_anything_is_rese
         let request = only_request(&dev);
         backend.state_mut().current_mut().session_name = Some("again".to_string());
         prepared(&mut backend, epoch, request);
-        assert_eq!(
-            sent_messages(&dev),
-            vec![ClientMessage::AbortHandoff {
-                token: format!("token-{epoch}")
-            }]
-        );
+        aborted(&mut backend, epoch, &dev);
         assert_eq!(ready_plan(&backend).sessions[0].facts.name, "again");
     });
 }
@@ -370,12 +385,132 @@ fn closing_the_dialog_mid_restart_takes_back_what_was_reserved() {
 
         backend.dispatch(Msg::RelaunchCancel).unwrap();
         assert!(backend.state().relaunch.dialog.is_none());
-        assert_eq!(
-            sent_messages(&dev),
-            vec![ClientMessage::AbortHandoff {
-                token: format!("token-{epoch}")
-            }]
+        assert!(
+            matches!(
+                only_request(&dev),
+                ClientMessage::AbortHandoff { token, .. } if token == format!("token-{epoch}")
+            ),
+            "closing takes the reservation back without waiting"
         );
+    });
+}
+
+#[test]
+fn each_slot_is_asked_to_last_until_every_session_before_it_may_have_been_reached() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let (dev, old, api) = {
+            let state = backend.state_mut();
+            let dev = connect(state.current_mut(), "dev", None);
+            let old = background(state, 7, "old", None);
+            let api = background(state, 8, "api", Some("workbox"));
+            (dev, old, api)
+        };
+        let config = backend.state().config.remote.clone();
+        open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
+        backend.dispatch(Msg::RelaunchConfirm).unwrap();
+
+        let asked = |sent: &Receiver<ClientOutbound>| match only_request(sent) {
+            ClientMessage::PrepareHandoff { hold_ms, .. } => Duration::from_millis(hold_ms),
+            other => panic!("expected a reservation request, got {other:?}"),
+        };
+        let local = crate::session::bootstrap::resume_budget(None, &config);
+        let remote = crate::session::bootstrap::resume_budget(
+            Some(&crate::session::remote::RemoteTarget::Alias(
+                "workbox".into(),
+            )),
+            &config,
+        );
+        assert!(remote > local, "a host takes longer to reach");
+        // Attached oldest parked first, the session on screen last.
+        let old_hold = asked(&old);
+        let api_hold = asked(&api);
+        let dev_hold = asked(&dev);
+        assert_eq!(api_hold, old_hold + remote);
+        assert_eq!(dev_hold, api_hold + local);
+    });
+}
+
+#[test]
+fn a_server_that_cannot_hold_long_enough_stops_the_restart_before_anything_is_let_go() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let dev = connect(backend.state_mut().current_mut(), "dev", None);
+        let epoch = backend.state().runtime_epoch;
+        open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
+        backend.dispatch(Msg::RelaunchConfirm).unwrap();
+        let ClientMessage::PrepareHandoff { request_id, .. } = only_request(&dev) else {
+            panic!("expected a reservation request");
+        };
+
+        prepared_holding(&mut backend, epoch, request_id, Duration::from_secs(1));
+        assert!(backend.state().relaunch.handover.take().is_none());
+        aborted(&mut backend, epoch, &dev);
+        assert!(
+            ready_plan(&backend)
+                .notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("holds this client's place for at most 1 s")),
+            "{:?}",
+            ready_plan(&backend).notice
+        );
+    });
+}
+
+#[test]
+fn a_session_that_changed_while_its_commit_was_answered_rolls_everything_back() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let dev = connect(backend.state_mut().current_mut(), "dev", None);
+        let epoch = backend.state().runtime_epoch;
+        open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
+        backend.dispatch(Msg::RelaunchConfirm).unwrap();
+        let request = only_request(&dev);
+        prepared(&mut backend, epoch, request);
+        let commit = only_request(&dev);
+
+        // Another client renames the session while the commit is on its way.
+        backend.state_mut().current_mut().session_name = Some("renamed".to_string());
+        committed(&mut backend, epoch, commit);
+
+        assert!(
+            backend.state().relaunch.handover.take().is_none(),
+            "a stale handoff is never handed over"
+        );
+        aborted(&mut backend, epoch, &dev);
+        let plan = ready_plan(&backend);
+        assert_eq!(plan.sessions[0].facts.name, "renamed");
+        assert!(plan.notice.is_some());
+    });
+}
+
+#[test]
+fn a_roll_back_nobody_confirms_still_ends_and_says_so() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let dev = connect(backend.state_mut().current_mut(), "dev", None);
+        let epoch = backend.state().runtime_epoch;
+        open_ready(&mut backend, PROTOCOL_VERSION..=PROTOCOL_VERSION);
+        backend.dispatch(Msg::RelaunchConfirm).unwrap();
+        let ClientMessage::PrepareHandoff { request_id, .. } = only_request(&dev) else {
+            panic!("expected a reservation request");
+        };
+        prepared_holding(&mut backend, epoch, request_id, Duration::from_secs(1));
+        assert!(matches!(
+            only_request(&dev),
+            ClientMessage::AbortHandoff { .. }
+        ));
+        let RelaunchStage::Aborting(aborting) = stage(&backend) else {
+            panic!("waiting for the abort to be confirmed");
+        };
+        let attempt = aborting.attempt;
+
+        backend
+            .dispatch(Msg::RelaunchAnswerTimeout { attempt })
+            .unwrap();
+        let notice = ready_plan(&backend).notice.clone().unwrap();
+        assert!(notice.contains("`dev` did not confirm"), "{notice}");
+        assert!(notice.contains("lapses within 30 s"), "{notice}");
     });
 }
 
@@ -644,13 +779,18 @@ fn a_session_that_lands_gets_its_view_back_and_marks_where_the_foreground_is() {
                 allow_takeover: true,
                 read_only: false,
                 origin: crate::session::origin::SessionOrigin::default(),
+                handoff_claimed: Some(false),
             })
             .unwrap();
 
         let restore = backend.state().relaunch.restore.as_ref().unwrap();
         assert_eq!(restore.foreground_epoch, Some(epoch));
         assert_eq!(restore.done, 1);
-        assert!(restore.problems.is_empty());
+        assert_eq!(
+            restore.problems,
+            vec!["`dev` was rejoined without its held place".to_string()],
+            "the claim is judged with the attach it came with"
+        );
         assert_eq!(backend.state().current().focused_pane, Some(9));
         assert!(backend.state().current().engaged);
 

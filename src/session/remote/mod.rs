@@ -26,6 +26,7 @@ pub(crate) use bootstrap::{
 };
 pub use connect::RemoteConnectError;
 pub(crate) use connect::connect_remote_within;
+pub(crate) use connect::join_budget;
 pub use connect::{
     connect_remote, create_remote_detached_session, kill_remote_session, restart_remote_session,
     upgrade_remote_session,

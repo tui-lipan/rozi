@@ -13,14 +13,19 @@
 
 use super::*;
 
-/// How long a reservation is held: from being issued to the client committing it, and again from
-/// the commit to the replacement claiming it.
-///
-/// The replacement claims every slot before it does anything that can take long, such as
-/// upgrading another session, so a relaunch claims within seconds; a session on another host may
-/// first need an SSH connection. The lease is held for this long against every other client, so it
-/// bounds how long a relaunch that failed can keep a session without a controller.
+/// How long a slot is held for a client that asks for no particular time: from the reservation to
+/// the commit, and from the client leaving to the replacement claiming it.
 pub(super) const HANDOFF_HOLD: Duration = Duration::from_secs(120);
+
+/// The longest hold a client may ask for. The lease is held this long against every other client
+/// when a relaunch fails after its commit, so a client that needs longer - many sessions to reach
+/// over SSH, each allowed time for a password - is refused before it lets go, not trusted.
+pub(super) const MAX_HANDOFF_HOLD: Duration = Duration::from_secs(30 * 60);
+
+/// How long a committed client may stay connected. It commits as the very last thing before it
+/// leaves, so one still here is a relaunch that stopped; its commit lapses rather than turn a
+/// later, ordinary departure into a held slot.
+pub(crate) const COMMITTED_DEPARTURE_WINDOW: Duration = Duration::from_secs(30);
 
 /// One client's reserved slot.
 pub(super) struct Reservation {
@@ -28,8 +33,11 @@ pub(super) struct Reservation {
     client: ClientId,
     label: Option<String>,
     issued: Instant,
-    /// Set by [`ClientMessage::CommitHandoff`]. Until then the reservation holds nothing.
-    committed: bool,
+    /// How long the replacement has to claim the slot once the client has left.
+    hold: Duration,
+    /// When [`ClientMessage::CommitHandoff`] committed it. Until then the reservation holds
+    /// nothing.
+    committed: Option<Instant>,
     departure: Option<Departure>,
 }
 
@@ -43,8 +51,16 @@ struct Departure {
 
 impl Reservation {
     fn expired(&self, now: Instant) -> bool {
-        let since = self.departure.map_or(self.issued, |departure| departure.at);
-        now.duration_since(since) >= HANDOFF_HOLD
+        let (since, lasts) = match (self.departure, self.committed) {
+            (Some(departure), _) => (departure.at, self.hold),
+            (None, Some(committed)) => (committed, COMMITTED_DEPARTURE_WINDOW),
+            (None, None) => (self.issued, HANDOFF_HOLD),
+        };
+        now.duration_since(since) >= lasts
+    }
+
+    fn is_committed(&self) -> bool {
+        self.committed.is_some()
     }
 }
 
@@ -87,6 +103,7 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
         request_id: u64,
+        hold_ms: u64,
     ) -> Vec<(Target, ServerMessage)> {
         let refused = |error: &str| {
             vec![(
@@ -94,7 +111,7 @@ impl SessionServer {
                 ServerMessage::HandoffPrepared {
                     request_id,
                     token: String::new(),
-                    expires_in_ms: 0,
+                    hold_ms: 0,
                     error: Some(error.to_string()),
                 },
             )]
@@ -111,13 +128,18 @@ impl SessionServer {
             Ok(token) => token,
             Err(error) => return refused(&format!("no randomness for a token: {error}")),
         };
+        let hold = match hold_ms {
+            0 => HANDOFF_HOLD,
+            asked => Duration::from_millis(asked).min(MAX_HANDOFF_HOLD),
+        };
         self.handoffs.forget_client(client_id);
         self.handoffs.held.push(Reservation {
             token: token.clone(),
             client: client_id,
             label,
             issued: Instant::now(),
-            committed: false,
+            hold,
+            committed: None,
             departure: None,
         });
         vec![(
@@ -125,7 +147,7 @@ impl SessionServer {
             ServerMessage::HandoffPrepared {
                 request_id,
                 token,
-                expires_in_ms: u64::try_from(HANDOFF_HOLD.as_millis()).unwrap_or(u64::MAX),
+                hold_ms: u64::try_from(hold.as_millis()).unwrap_or(u64::MAX),
                 error: None,
             },
         )]
@@ -147,9 +169,7 @@ impl SessionServer {
             .find(|held| held.client == client && held.token == token && !held.expired(now));
         let error = match reservation {
             Some(reservation) => {
-                reservation.committed = true;
-                // The hold before departure starts again: the client is about to leave.
-                reservation.issued = now;
+                reservation.committed = Some(now);
                 None
             }
             None => Some("no reservation for that token".to_string()),
@@ -160,11 +180,18 @@ impl SessionServer {
         )]
     }
 
-    /// Discard `client`'s reservation `token`: the relaunch failed and the client stays.
-    pub(super) fn abort_handoff(&mut self, client: ClientId, token: &str) {
+    /// Discard `client`'s reservation `token`, and confirm that none remains: the relaunch failed
+    /// and the client stays. A token already gone is confirmed all the same.
+    pub(super) fn handle_abort_handoff(
+        &mut self,
+        client: ClientId,
+        request_id: u64,
+        token: &str,
+    ) -> Vec<(Target, ServerMessage)> {
         self.handoffs
             .held
             .retain(|held| !(held.client == client && held.token == token));
+        vec![(Target::Sender, ServerMessage::HandoffAborted { request_id })]
     }
 
     /// Record that a reserving client's connection went, and say whether its slot is now held. A
@@ -177,7 +204,7 @@ impl SessionServer {
             return false;
         };
         let reservation = &mut self.handoffs.held[index];
-        if !reservation.committed || reservation.expired(now) {
+        if !reservation.is_committed() || reservation.expired(now) {
             self.handoffs.held.remove(index);
             return false;
         }
@@ -195,11 +222,9 @@ impl SessionServer {
         let now = Instant::now();
         // Only a committed reservation can be claimed: before the commit, the client that made it
         // may still decide to stay.
-        let index = self
-            .handoffs
-            .held
-            .iter()
-            .position(|held| held.token == token && held.client != claimer && held.committed)?;
+        let index = self.handoffs.held.iter().position(|held| {
+            held.token == token && held.client != claimer && held.is_committed()
+        })?;
         if self.handoffs.held[index].expired(now) {
             let expired = self.handoffs.held.remove(index);
             self.release_reservation(expired);
@@ -264,6 +289,9 @@ impl Reservations {
     pub(super) fn age_for_test(&mut self, by: Duration) {
         for held in &mut self.held {
             held.issued -= by;
+            if let Some(committed) = &mut held.committed {
+                *committed -= by;
+            }
             if let Some(departure) = &mut held.departure {
                 departure.at -= by;
             }

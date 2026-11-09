@@ -66,6 +66,7 @@ mod waits;
 mod worktree;
 pub(crate) use create::{create_detached_session, restart_named_session, upgrade_named_session};
 pub(crate) use deployments::DEPLOY_CHUNK_BYTES;
+pub(crate) use handoff::COMMITTED_DEPARTURE_WINDOW;
 pub(crate) use shutdown::{
     StoppedForRestart, shutdown_named_session, shutdown_named_session_if_present,
     stop_named_session_for_restart, stop_named_session_for_upgrade,

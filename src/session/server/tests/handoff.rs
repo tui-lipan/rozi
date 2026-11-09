@@ -3,7 +3,18 @@
 use super::*;
 
 fn prepare(server: &mut SessionServer, client: ClientId) -> String {
-    let replies = server.handle_message(client, ClientMessage::PrepareHandoff { request_id: 7 });
+    prepare_holding(server, client, 0).0
+}
+
+/// Reserve `client`'s slot asking for `hold_ms`, returning the token and the hold granted.
+fn prepare_holding(server: &mut SessionServer, client: ClientId, hold_ms: u64) -> (String, u64) {
+    let replies = server.handle_message(
+        client,
+        ClientMessage::PrepareHandoff {
+            request_id: 7,
+            hold_ms,
+        },
+    );
     match replies.as_slice() {
         [
             (
@@ -11,14 +22,13 @@ fn prepare(server: &mut SessionServer, client: ClientId) -> String {
                 ServerMessage::HandoffPrepared {
                     request_id: 7,
                     token,
-                    expires_in_ms,
+                    hold_ms,
                     error: None,
                 },
             ),
         ] => {
             assert!(token.len() >= 32, "token {token:?}");
-            assert_eq!(*expires_in_ms, 120_000);
-            token.clone()
+            (token.clone(), *hold_ms)
         }
         other => panic!("unexpected reply: {other:?}"),
     }
@@ -217,7 +227,23 @@ fn an_aborted_commit_leaves_an_ordinary_departure() {
     let (old, _old_stream) = attach_client(&mut server);
     let (follower, _follower_stream) = attach_client(&mut server);
     let token = hand_off(&mut server, old);
-    server.handle_message(old, ClientMessage::AbortHandoff { token });
+    let replies = server.handle_message(
+        old,
+        ClientMessage::AbortHandoff {
+            request_id: 4,
+            token,
+        },
+    );
+    assert!(
+        matches!(
+            replies.as_slice(),
+            [(
+                Target::Sender,
+                ServerMessage::HandoffAborted { request_id: 4 }
+            )]
+        ),
+        "{replies:?}"
+    );
 
     server.remove_client(old);
     assert_eq!(server.controller, Some(follower));
@@ -332,4 +358,61 @@ fn the_attach_reply_names_every_generation_the_server_speaks() {
     };
     assert_eq!(protocol_version, PROTOCOL_VERSION);
     assert_eq!(protocol_min, Some(protocol::MIN_SUPPORTED_PROTOCOL));
+}
+
+#[test]
+fn a_client_gets_the_hold_it_asks_for_up_to_the_servers_limit() {
+    use crate::session::server::handoff::{HANDOFF_HOLD, MAX_HANDOFF_HOLD};
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    let millis = |hold: Duration| u64::try_from(hold.as_millis()).unwrap();
+    assert_eq!(
+        prepare_holding(&mut server, client, 0).1,
+        millis(HANDOFF_HOLD)
+    );
+    assert_eq!(prepare_holding(&mut server, client, 600_000).1, 600_000);
+    assert_eq!(
+        prepare_holding(&mut server, client, u64::MAX).1,
+        millis(MAX_HANDOFF_HOLD),
+        "a client asking for more learns it got less"
+    );
+}
+
+#[test]
+fn a_long_hold_outlasts_the_default_and_then_expires() {
+    use crate::session::server::handoff::HANDOFF_HOLD;
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    let (token, _) = prepare_holding(&mut server, old, 600_000);
+    commit(&mut server, old, &token);
+    server.remove_client(old);
+
+    server.handoffs.age_for_test(HANDOFF_HOLD * 2);
+    server.expire_handoffs();
+    assert_eq!(
+        server.controller,
+        Some(old),
+        "still held for the replacement"
+    );
+
+    server.handoffs.age_for_test(Duration::from_secs(600));
+    server.expire_handoffs();
+    assert_eq!(server.controller, Some(follower));
+}
+
+#[test]
+fn a_commit_lapses_when_its_client_stays() {
+    use crate::session::server::handoff::COMMITTED_DEPARTURE_WINDOW;
+    let mut server = SessionServer::new_named("dev");
+    let (old, _old_stream) = attach_client(&mut server);
+    let (follower, _follower_stream) = attach_client(&mut server);
+    hand_off(&mut server, old);
+
+    // The relaunch stopped after its commit and the abort never arrived; the client quits later.
+    server.handoffs.age_for_test(COMMITTED_DEPARTURE_WINDOW);
+    server.remove_client(old);
+
+    assert_eq!(server.controller, Some(follower));
+    assert!(!server.handoffs.any_in_transit());
 }

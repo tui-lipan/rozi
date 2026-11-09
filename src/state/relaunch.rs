@@ -74,6 +74,8 @@ pub enum RelaunchStage {
     Preparing(Transaction),
     /// The handoff is written; asking each server to commit its reservation.
     Committing(Transaction),
+    /// The relaunch stopped; waiting for each server to confirm it took back what it reserved.
+    Aborting(Aborting),
 }
 
 /// What relaunching would do, as the dialog shows it.
@@ -132,6 +134,21 @@ pub struct Transaction {
     pub tokens: HashMap<AttachmentId, String>,
     /// The handoff document, once written.
     pub handoff_id: Option<String>,
+    /// How long each server must hold this client's slot: until the new process can have reached
+    /// that session, counting every session it attaches to first.
+    pub required: HashMap<AttachmentId, std::time::Duration>,
+}
+
+/// A relaunch being rolled back.
+#[derive(Debug)]
+pub struct Aborting {
+    pub attempt: u64,
+    /// Abort requests still unconfirmed, by request id, to the attachment that sent each.
+    pub pending: HashMap<u64, AttachmentId>,
+    /// How each of those sessions is named, for a server that never confirms.
+    pub labels: HashMap<AttachmentId, String>,
+    /// What the dialog shows once every abort is confirmed.
+    pub after: Box<RelaunchStage>,
 }
 
 /// One step of bringing a relaunched client back.

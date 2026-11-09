@@ -2010,6 +2010,7 @@ mod reconciler_tests {
                     allow_takeover: false,
                     read_only: false,
                     origin: crate::session::origin::SessionOrigin::default(),
+                    handoff_claimed: None,
                 })
                 .expect("dispatch attach");
 
@@ -2038,6 +2039,7 @@ mod reconciler_tests {
             allow_takeover: false,
             read_only: false,
             origin: crate::session::origin::SessionOrigin::default(),
+            handoff_claimed: None,
         }
     }
 

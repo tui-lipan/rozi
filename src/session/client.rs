@@ -722,8 +722,11 @@ impl SessionClient {
     /// the server cannot (see [`protocol::Capability::ClientHandoff`]); the answer arrives as
     /// [`ServerMessage::HandoffPrepared`] carrying `request_id`. The reservation does nothing until
     /// [`Self::commit_handoff`] commits it.
-    pub fn prepare_handoff(&self, request_id: u64) -> bool {
-        self.send_control(ClientMessage::PrepareHandoff { request_id })
+    pub fn prepare_handoff(&self, request_id: u64, hold: Duration) -> bool {
+        self.send_control(ClientMessage::PrepareHandoff {
+            request_id,
+            hold_ms: u64::try_from(hold.as_millis()).unwrap_or(u64::MAX),
+        })
     }
 
     /// Commit the reservation `token` names; answered by [`ServerMessage::HandoffCommitted`].
@@ -731,9 +734,10 @@ impl SessionClient {
         self.send_control(ClientMessage::CommitHandoff { request_id, token })
     }
 
-    /// Discard the reservation `token` names: the relaunch failed and this client stays.
-    pub fn abort_handoff(&self, token: String) {
-        self.send_control(ClientMessage::AbortHandoff { token });
+    /// Discard the reservation `token` names: the relaunch failed and this client stays. Answered
+    /// by [`ServerMessage::HandoffAborted`].
+    pub fn abort_handoff(&self, request_id: u64, token: String) -> bool {
+        self.send_control(ClientMessage::AbortHandoff { request_id, token })
     }
 
     /// Ask the server to list one directory on its own host.

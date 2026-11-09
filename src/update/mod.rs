@@ -731,16 +731,17 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             epoch,
             request_id,
             token,
+            hold,
             error,
-        } => crate::ops::relaunch::handoff_prepared(ctx, epoch, request_id, token, error),
+        } => crate::ops::relaunch::handoff_prepared(ctx, epoch, request_id, token, hold, error),
+        Msg::SessionHandoffAborted { epoch, request_id } => {
+            crate::ops::relaunch::handoff_aborted(ctx, epoch, request_id)
+        }
         Msg::SessionHandoffCommitted {
             epoch,
             request_id,
             error,
         } => crate::ops::relaunch::handoff_committed(ctx, epoch, request_id, error),
-        Msg::SessionHandoffClaimed { epoch, claimed } => {
-            crate::ops::relaunch::handoff_claimed(ctx, epoch, claimed)
-        }
         Msg::ScratchRuntimeFailed(message) => crate::scratchpad::runtime::failed(ctx, message),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
         Msg::RetrySessionReconnect => {
@@ -762,7 +763,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             session::attach_failed(ctx, epoch, message).merge(crate::ops::relaunch::attach_settled(
                 ctx,
                 epoch,
-                Some(&failure),
+                crate::ops::relaunch::Settled::Failed(&failure),
             ))
         }
         Msg::ConnectHoldElapsed(epoch) => crate::ops::session::connect_hold_elapsed(ctx, epoch),
@@ -771,7 +772,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             session::lost(ctx, epoch, message).merge(crate::ops::relaunch::attach_settled(
                 ctx,
                 epoch,
-                Some(&failure),
+                crate::ops::relaunch::Settled::Failed(&failure),
             ))
         }
         Msg::SessionAttached {
@@ -788,6 +789,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             allow_takeover,
             read_only,
             origin,
+            handoff_claimed,
         } => session::attached(
             ctx,
             epoch,
@@ -804,7 +806,11 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             read_only,
             origin,
         )
-        .merge(crate::ops::relaunch::attach_settled(ctx, epoch, None)),
+        .merge(crate::ops::relaunch::attach_settled(
+            ctx,
+            epoch,
+            crate::ops::relaunch::Settled::Landed { handoff_claimed },
+        )),
         Msg::RelaunchCandidate { generation, result } => {
             crate::ops::relaunch::candidate_found(ctx, generation, result)
         }

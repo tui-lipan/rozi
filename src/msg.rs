@@ -805,6 +805,9 @@ pub enum Msg {
         allow_takeover: bool,
         read_only: bool,
         origin: session::origin::SessionOrigin,
+        /// Whether a handoff token the attach presented claimed its reserved slot; `None` when it
+        /// presented none.
+        handoff_claimed: Option<bool>,
     },
     SessionOriginSet {
         epoch: u64,
@@ -861,7 +864,14 @@ pub enum Msg {
         epoch: u64,
         request_id: u64,
         token: String,
+        /// How long the server holds the slot once this client has gone.
+        hold: std::time::Duration,
         error: Option<String>,
+    },
+    /// The server discarded a reservation this client took back.
+    SessionHandoffAborted {
+        epoch: u64,
+        request_id: u64,
     },
     /// The server committed this client's reserved slot, or refused to (`error`).
     SessionHandoffCommitted {
@@ -869,11 +879,7 @@ pub enum Msg {
         request_id: u64,
         error: Option<String>,
     },
-    /// Whether an attach that presented a handoff token took over the reserved slot.
-    SessionHandoffClaimed {
-        epoch: u64,
-        claimed: bool,
-    },
+
     SessionPing {
         epoch: u64,
         seq: u64,

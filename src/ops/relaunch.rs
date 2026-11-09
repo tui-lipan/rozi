@@ -21,8 +21,8 @@ use tui_lipan::prelude::*;
 use crate::relaunch::document::{ClientHandoff, HandoffSession};
 use crate::relaunch::plan::{ServerFacts, SessionFacts, Transition};
 use crate::state::{
-    AttachmentId, Handover, PlannedSession, RelaunchDialog, RelaunchPlan, RelaunchStage, Restore,
-    RestoreActivity, RestoreInFlight, RestoreStep, State, Transaction,
+    Aborting, AttachmentId, Handover, PlannedSession, RelaunchDialog, RelaunchPlan, RelaunchStage,
+    Restore, RestoreActivity, RestoreInFlight, RestoreStep, State, Transaction,
 };
 use crate::{AppRoot, Msg};
 
@@ -30,6 +30,10 @@ use crate::{AppRoot, Msg};
 /// server answers within a frame; one that has not by now is wedged or unreachable, and the
 /// relaunch stops rather than leave without the slot it promised to keep.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// From this process handing over to the new one attaching to its first session: the new build
+/// starting, reading its configuration and the handoff, and drawing its first frame.
+const STARTUP_ALLOWANCE: Duration = Duration::from_secs(30);
 
 /// Open the Restart rozi dialog. `expected` is the release an update just installed, which the
 /// binary found must be; without one, whatever rozi is installed qualifies.
@@ -76,14 +80,18 @@ fn open_with(
     }))
 }
 
-/// Close the dialog. A relaunch in progress is abandoned: whatever it reserved is discarded, and the
-/// client stays as it was.
+/// Close the dialog. A relaunch in progress is abandoned: whatever it reserved is taken back, and
+/// the client stays as it was. Nothing waits for the servers to confirm here: a commit one of them
+/// never hears taken back lapses on its own while this client stays connected.
 pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(dialog) = ctx.state.relaunch.dialog.take()
         && let RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) =
             dialog.stage
     {
-        abandon(&ctx.state, &transaction);
+        let _ = send_aborts(&mut ctx.state, &transaction);
+        if let Some(id) = &transaction.handoff_id {
+            crate::relaunch::document::discard(id);
+        }
     }
     crate::ops::focus::request_current_pane_focus(ctx);
     Update::full()
@@ -247,14 +255,15 @@ pub(crate) fn confirm(ctx: &mut Context<AppRoot>) -> Update {
     if !shown.same_as(&current) {
         return show(ctx, replanned(current));
     }
-    ctx.state.relaunch.attempt += 1;
-    let attempt = ctx.state.relaunch.attempt;
+    let required = required_holds(&ctx.state, &shown);
+    let attempt = next_attempt(&mut ctx.state);
     let mut transaction = Transaction {
         plan: shown,
         attempt,
         pending: HashMap::new(),
         tokens: HashMap::new(),
         handoff_id: None,
+        required,
     };
     let claims: Vec<(AttachmentId, String)> = transaction
         .plan
@@ -268,9 +277,13 @@ pub(crate) fn confirm(ctx: &mut Context<AppRoot>) -> Update {
             .state
             .attachment_for_epoch(epoch)
             .and_then(|attachment| attachment.session_client.clone());
-        ctx.state.relaunch.next_request += 1;
-        let request = ctx.state.relaunch.next_request;
-        if !client.is_some_and(|client| client.prepare_handoff(request)) {
+        let hold = transaction
+            .required
+            .get(&epoch)
+            .copied()
+            .unwrap_or_default();
+        let request = next_request(&mut ctx.state);
+        if !client.is_some_and(|client| client.prepare_handoff(request, hold)) {
             let reason = format!("`{label}` could not be asked to hold its place");
             return fail(ctx, transaction, reason);
         }
@@ -280,6 +293,53 @@ pub(crate) fn confirm(ctx: &mut Context<AppRoot>) -> Update {
         return commit(ctx, transaction);
     }
     awaiting(ctx, RelaunchStage::Preparing(transaction), attempt)
+}
+
+fn next_attempt(state: &mut State) -> u64 {
+    state.relaunch.attempt += 1;
+    state.relaunch.attempt
+}
+
+fn next_request(state: &mut State) -> u64 {
+    state.relaunch.next_request += 1;
+    state.relaunch.next_request
+}
+
+/// How long each session the new build carries over has to hold this client's slot.
+///
+/// The new build attaches to those sessions one after another - the background oldest parked
+/// first, the session on screen last - so a session's slot must last until every session before
+/// it may also have been reached, each allowed as long as an attach there can take, a password
+/// typed for a host included.
+fn required_holds(state: &State, plan: &RelaunchPlan) -> HashMap<AttachmentId, Duration> {
+    let mut carried: Vec<(bool, u64, &PlannedSession)> = plan
+        .sessions
+        .iter()
+        .filter(|session| {
+            matches!(
+                session.transition,
+                Transition::Carry { .. } | Transition::Reconnect
+            )
+        })
+        .map(|session| {
+            let parked_seq = state
+                .attachment_for_epoch(session.epoch)
+                .map_or(0, |attachment| attachment.parked_seq);
+            (session.epoch == state.runtime_epoch, parked_seq, session)
+        })
+        .collect();
+    carried.sort_by_key(|(foreground, parked_seq, _)| (*foreground, *parked_seq));
+    let mut reached = STARTUP_ALLOWANCE;
+    carried
+        .into_iter()
+        .map(|(_, _, session)| {
+            reached += crate::session::bootstrap::resume_budget(
+                session.facts.remote.as_ref(),
+                &state.config.remote,
+            );
+            (session.epoch, reached)
+        })
+        .collect()
 }
 
 fn replanned(mut plan: RelaunchPlan) -> RelaunchStage {
@@ -298,32 +358,24 @@ fn awaiting(ctx: &mut Context<AppRoot>, stage: RelaunchStage, attempt: u64) -> U
     ))
 }
 
-/// The transaction in progress, taken out of the dialog, when `pick` accepts its stage.
-fn take_transaction(
+/// The stage in progress, taken out of the dialog, when `pick` accepts it.
+fn take_stage(
     ctx: &mut Context<AppRoot>,
     pick: impl Fn(&RelaunchStage) -> bool,
-) -> Option<(Transaction, bool)> {
+) -> Option<RelaunchStage> {
     let dialog = ctx.state.relaunch.dialog.as_mut()?;
     if !pick(&dialog.stage) {
         return None;
     }
-    match std::mem::replace(&mut dialog.stage, RelaunchStage::Checking) {
-        RelaunchStage::Preparing(transaction) => Some((transaction, false)),
-        RelaunchStage::Committing(transaction) => Some((transaction, true)),
-        other => {
-            dialog.stage = other;
-            None
-        }
-    }
+    Some(std::mem::replace(
+        &mut dialog.stage,
+        RelaunchStage::Checking,
+    ))
 }
 
-fn put_back(ctx: &mut Context<AppRoot>, transaction: Transaction, committing: bool) {
+fn put_back(ctx: &mut Context<AppRoot>, stage: RelaunchStage) {
     if let Some(dialog) = ctx.state.relaunch.dialog.as_mut() {
-        dialog.stage = if committing {
-            RelaunchStage::Committing(transaction)
-        } else {
-            RelaunchStage::Preparing(transaction)
-        };
+        dialog.stage = stage;
     }
 }
 
@@ -333,9 +385,10 @@ pub(crate) fn handoff_prepared(
     epoch: u64,
     request_id: u64,
     token: String,
+    hold: Duration,
     error: Option<String>,
 ) -> Update {
-    let Some((mut transaction, _)) = take_transaction(ctx, |stage| {
+    let Some(RelaunchStage::Preparing(mut transaction)) = take_stage(ctx, |stage| {
         matches!(stage, RelaunchStage::Preparing(transaction)
             if transaction.pending.get(&request_id) == Some(&epoch))
     }) else {
@@ -350,11 +403,26 @@ pub(crate) fn handoff_prepared(
         );
         return fail(ctx, transaction, reason);
     }
+    // Taken back with the rest if anything fails from here on.
     transaction.tokens.insert(epoch, token);
+    let required = transaction
+        .required
+        .get(&epoch)
+        .copied()
+        .unwrap_or_default();
+    if hold < required {
+        let reason = format!(
+            "`{}` holds this client's place for at most {} s, and reaching it again may take {} s",
+            label_of(&transaction, epoch),
+            hold.as_secs(),
+            required.as_secs()
+        );
+        return fail(ctx, transaction, reason);
+    }
     if transaction.pending.is_empty() {
         return commit(ctx, transaction);
     }
-    put_back(ctx, transaction, false);
+    put_back(ctx, RelaunchStage::Preparing(transaction));
     Update::none()
 }
 
@@ -365,7 +433,7 @@ pub(crate) fn handoff_committed(
     request_id: u64,
     error: Option<String>,
 ) -> Update {
-    let Some((mut transaction, _)) = take_transaction(ctx, |stage| {
+    let Some(RelaunchStage::Committing(mut transaction)) = take_stage(ctx, |stage| {
         matches!(stage, RelaunchStage::Committing(transaction)
             if transaction.pending.get(&request_id) == Some(&epoch))
     }) else {
@@ -382,25 +450,77 @@ pub(crate) fn handoff_committed(
     if transaction.pending.is_empty() {
         return hand_over(ctx, transaction);
     }
-    put_back(ctx, transaction, true);
+    put_back(ctx, RelaunchStage::Committing(transaction));
     Update::none()
 }
 
-/// A server did not answer in time: the relaunch stops, failing closed.
-pub(crate) fn answer_timeout(ctx: &mut Context<AppRoot>, attempt: u64) -> Update {
-    let Some((transaction, _)) = take_transaction(ctx, |stage| {
-        matches!(stage, RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction)
-            if transaction.attempt == attempt)
+/// A server confirmed it took a reservation back.
+pub(crate) fn handoff_aborted(ctx: &mut Context<AppRoot>, epoch: u64, request_id: u64) -> Update {
+    let Some(RelaunchStage::Aborting(mut aborting)) = take_stage(ctx, |stage| {
+        matches!(stage, RelaunchStage::Aborting(aborting)
+            if aborting.pending.get(&request_id) == Some(&epoch))
     }) else {
         return Update::none();
     };
-    let silent: Vec<String> = transaction
-        .pending
-        .values()
-        .map(|epoch| format!("`{}`", label_of(&transaction, *epoch)))
-        .collect();
-    let reason = format!("{} did not answer", silent.join(", "));
-    fail(ctx, transaction, reason)
+    aborting.pending.remove(&request_id);
+    if aborting.pending.is_empty() {
+        return show(ctx, *aborting.after);
+    }
+    put_back(ctx, RelaunchStage::Aborting(aborting));
+    Update::none()
+}
+
+/// A server did not answer in time. A relaunch in progress stops, failing closed; a roll-back stops
+/// waiting, saying which commit nobody confirmed taking back.
+pub(crate) fn answer_timeout(ctx: &mut Context<AppRoot>, attempt: u64) -> Update {
+    let Some(stage) = take_stage(ctx, |stage| match stage {
+        RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) => {
+            transaction.attempt == attempt
+        }
+        RelaunchStage::Aborting(aborting) => aborting.attempt == attempt,
+        _ => false,
+    }) else {
+        return Update::none();
+    };
+    match stage {
+        RelaunchStage::Preparing(transaction) | RelaunchStage::Committing(transaction) => {
+            let silent: Vec<String> = transaction
+                .pending
+                .values()
+                .map(|epoch| format!("`{}`", label_of(&transaction, *epoch)))
+                .collect();
+            let reason = format!("{} did not answer", silent.join(", "));
+            fail(ctx, transaction, reason)
+        }
+        RelaunchStage::Aborting(aborting) => {
+            let silent: Vec<String> = aborting
+                .pending
+                .values()
+                .filter_map(|epoch| aborting.labels.get(epoch))
+                .map(|label| format!("`{label}`"))
+                .collect();
+            let unconfirmed = format!(
+                "{} did not confirm; its held place lapses within {} s",
+                silent.join(", "),
+                crate::session::server::COMMITTED_DEPARTURE_WINDOW.as_secs()
+            );
+            let after = match *aborting.after {
+                RelaunchStage::Ready(mut plan) => {
+                    plan.notice = Some(match plan.notice.take() {
+                        Some(notice) => format!("{notice} · {unconfirmed}"),
+                        None => unconfirmed,
+                    });
+                    RelaunchStage::Ready(plan)
+                }
+                RelaunchStage::Unavailable(reason) => {
+                    RelaunchStage::Unavailable(format!("{reason}\n{unconfirmed}"))
+                }
+                other => other,
+            };
+            show(ctx, after)
+        }
+        _ => unreachable!("take_stage picked an answerable stage"),
+    }
 }
 
 fn label_of(transaction: &Transaction, epoch: AttachmentId) -> String {
@@ -413,20 +533,26 @@ fn label_of(transaction: &Transaction, epoch: AttachmentId) -> String {
         .unwrap_or_else(|| "a session".to_string())
 }
 
-/// Every reservation is in: check the plan still holds, write the handoff, and commit.
-fn commit(ctx: &mut Context<AppRoot>, mut transaction: Transaction) -> Update {
-    let current = plan(&ctx.state, transaction.plan.candidate.clone());
+/// What the client looks like now differs from what the transaction was planned on, or the binary
+/// changed: the stage to go back to instead of going on, if so.
+fn invalidated(state: &State, transaction: &Transaction) -> Option<RelaunchStage> {
+    let current = plan(state, transaction.plan.candidate.clone());
     if !transaction.plan.same_as(&current) {
-        abandon(&ctx.state, &transaction);
-        return show(ctx, replanned(current));
+        return Some(replanned(current));
     }
     if !transaction.plan.candidate.unchanged() {
-        let reason = format!(
+        return Some(RelaunchStage::Unavailable(format!(
             "{} changed after it was checked",
             transaction.plan.candidate.path.display()
-        );
-        abandon(&ctx.state, &transaction);
-        return show(ctx, RelaunchStage::Unavailable(reason));
+        )));
+    }
+    None
+}
+
+/// Every reservation is in: check the plan still holds, write the handoff, and commit.
+fn commit(ctx: &mut Context<AppRoot>, mut transaction: Transaction) -> Update {
+    if let Some(after) = invalidated(&ctx.state, &transaction) {
+        return roll_back(ctx, transaction, after);
     }
     let handoff = handoff_document(&ctx.state, &transaction.plan, &transaction.tokens);
     match crate::relaunch::document::store(&handoff) {
@@ -436,35 +562,41 @@ fn commit(ctx: &mut Context<AppRoot>, mut transaction: Transaction) -> Update {
             return fail(ctx, transaction, reason);
         }
     }
-    for (epoch, token) in &transaction.tokens {
-        let Some(client) = ctx
+    let tokens: Vec<(AttachmentId, String)> = transaction
+        .tokens
+        .iter()
+        .map(|(epoch, token)| (*epoch, token.clone()))
+        .collect();
+    for (epoch, token) in tokens {
+        let client = ctx
             .state
-            .attachment_for_epoch(*epoch)
-            .and_then(|attachment| attachment.session_client.clone())
-        else {
-            let reason = format!("`{}` went away", label_of(&transaction, *epoch));
-            return fail(ctx, transaction, reason);
-        };
-        ctx.state.relaunch.next_request += 1;
-        let request = ctx.state.relaunch.next_request;
-        if !client.commit_handoff(request, token.clone()) {
+            .attachment_for_epoch(epoch)
+            .and_then(|attachment| attachment.session_client.clone());
+        let request = next_request(&mut ctx.state);
+        if !client.is_some_and(|client| client.commit_handoff(request, token)) {
             let reason = format!(
                 "`{}` could not hold its place",
-                label_of(&transaction, *epoch)
+                label_of(&transaction, epoch)
             );
             return fail(ctx, transaction, reason);
         }
-        transaction.pending.insert(request, *epoch);
+        transaction.pending.insert(request, epoch);
     }
     if transaction.pending.is_empty() {
         return hand_over(ctx, transaction);
     }
-    let attempt = transaction.attempt;
+    let attempt = next_attempt(&mut ctx.state);
+    transaction.attempt = attempt;
     awaiting(ctx, RelaunchStage::Committing(transaction), attempt)
 }
 
-/// Every commit is answered: hand the runner the new build and let go.
+/// Every commit is answered. The client is checked once more - another client may have renamed a
+/// session meanwhile - and only then handed over: until it lets go, everything can still be taken
+/// back.
 fn hand_over(ctx: &mut Context<AppRoot>, transaction: Transaction) -> Update {
+    if let Some(after) = invalidated(&ctx.state, &transaction) {
+        return roll_back(ctx, transaction, after);
+    }
     let Some(handoff_id) = transaction.handoff_id else {
         unreachable!("a transaction is committed only once its handoff is written");
     };
@@ -476,28 +608,54 @@ fn hand_over(ctx: &mut Context<AppRoot>, transaction: Transaction) -> Update {
     crate::ops::exit::leave_for_relaunch(ctx)
 }
 
-/// Stop the relaunch: take back what was reserved, and show why, ready to try again.
+/// Stop the relaunch and show why, ready to try again, once everything reserved is taken back.
 fn fail(ctx: &mut Context<AppRoot>, transaction: Transaction, reason: String) -> Update {
-    abandon(&ctx.state, &transaction);
-    let mut plan = transaction.plan;
+    let mut plan = transaction.plan.clone();
     plan.armed = false;
     plan.notice = Some(reason);
-    show(ctx, RelaunchStage::Ready(plan))
+    roll_back(ctx, transaction, RelaunchStage::Ready(plan))
 }
 
-/// Discard every reservation `transaction` holds, and its handoff document.
-fn abandon(state: &State, transaction: &Transaction) {
-    for (epoch, token) in &transaction.tokens {
-        if let Some(client) = state
-            .attachment_for_epoch(*epoch)
-            .and_then(|attachment| attachment.session_client.as_ref())
-        {
-            client.abort_handoff(token.clone());
-        }
-    }
+/// Take back everything `transaction` reserved and delete its handoff, then show `after` once each
+/// server has confirmed.
+fn roll_back(ctx: &mut Context<AppRoot>, transaction: Transaction, after: RelaunchStage) -> Update {
     if let Some(id) = &transaction.handoff_id {
         crate::relaunch::document::discard(id);
     }
+    let pending = send_aborts(&mut ctx.state, &transaction);
+    if pending.is_empty() {
+        return show(ctx, after);
+    }
+    let labels = pending
+        .values()
+        .map(|epoch| (*epoch, label_of(&transaction, *epoch)))
+        .collect();
+    let attempt = next_attempt(&mut ctx.state);
+    awaiting(
+        ctx,
+        RelaunchStage::Aborting(Aborting {
+            attempt,
+            pending,
+            labels,
+            after: Box::new(after),
+        }),
+        attempt,
+    )
+}
+
+/// Ask every server `transaction` reserved a slot on to take it back, by request id.
+fn send_aborts(state: &mut State, transaction: &Transaction) -> HashMap<u64, AttachmentId> {
+    let mut pending = HashMap::new();
+    for (epoch, token) in &transaction.tokens {
+        let client = state
+            .attachment_for_epoch(*epoch)
+            .and_then(|attachment| attachment.session_client.clone());
+        let request = next_request(state);
+        if client.is_some_and(|client| client.abort_handoff(request, token.clone())) {
+            pending.insert(request, *epoch);
+        }
+    }
+    pending
 }
 
 fn handoff_document(
@@ -725,12 +883,22 @@ fn skip(ctx: &mut Context<AppRoot>, problem: String) -> Update {
     next_step()
 }
 
+/// How an attach the restore started ended.
+pub(crate) enum Settled<'a> {
+    /// It landed. `handoff_claimed` is whether a token it presented took over the reserved slot.
+    Landed {
+        handoff_claimed: Option<bool>,
+    },
+    Failed(&'a str),
+}
+
 /// An attach the restore started has landed or failed. A landed one gets back the view state the
-/// previous process had; either way the next step follows.
+/// previous process had, and a claim it did not get is reported: its layout control may have
+/// passed to another client. Either way the next step follows.
 pub(crate) fn attach_settled(
     ctx: &mut Context<AppRoot>,
     epoch: u64,
-    failure: Option<&str>,
+    settled: Settled<'_>,
 ) -> Update {
     let Some(RestoreInFlight::Attach { session, .. }) =
         ctx.state.relaunch.restore.as_mut().and_then(|restore| {
@@ -741,9 +909,19 @@ pub(crate) fn attach_settled(
     else {
         return Update::none();
     };
-    let problem = match failure {
-        Some(message) => Some(message.to_string()),
-        None => {
+    let mut problems = Vec::new();
+    let landed = match settled {
+        Settled::Failed(message) => {
+            problems.push(message.to_string());
+            false
+        }
+        Settled::Landed { handoff_claimed } => {
+            if session.token.is_some() && handoff_claimed != Some(true) {
+                problems.push(format!(
+                    "`{}` was rejoined without its held place",
+                    session.name
+                ));
+            }
             let restarted = session.transition != Transition::Upgrade
                 && session.instance.as_deref().is_some_and(|instance| {
                     ctx.state
@@ -752,39 +930,22 @@ pub(crate) fn attach_settled(
                         .as_ref()
                         .is_some_and(|now| now.as_str() != instance)
                 });
+            if restarted {
+                problems.push(format!("`{}` was restarted meanwhile", session.name));
+            }
             restore_view(ctx.state.current_mut(), &session);
-            restarted.then(|| format!("`{}` was restarted meanwhile", session.name))
+            true
         }
     };
-    let landed = failure.is_none();
     let runtime_epoch = ctx.state.runtime_epoch;
     if let Some(restore) = ctx.state.relaunch.restore.as_mut() {
         restore.done += 1;
         if landed && restore.foreground.as_ref() == Some(&identity(&session)) {
             restore.foreground_epoch = Some(runtime_epoch);
         }
-        restore.problems.extend(problem);
+        restore.problems.extend(problems);
     }
     next_step()
-}
-
-/// Whether a claim on a reserved slot succeeded. A claim that did not means the session's layout
-/// control may have passed to another client meanwhile.
-pub(crate) fn handoff_claimed(ctx: &mut Context<AppRoot>, epoch: u64, claimed: bool) -> Update {
-    let Some(restore) = ctx.state.relaunch.restore.as_mut() else {
-        return Update::none();
-    };
-    if claimed {
-        return Update::none();
-    }
-    let name = match &restore.current {
-        Some(RestoreInFlight::Attach { epoch: e, session }) if *e == epoch => session.name.clone(),
-        _ => return Update::none(),
-    };
-    restore
-        .problems
-        .push(format!("`{name}` was rejoined without its held place"));
-    Update::none()
 }
 
 fn restore_view(attachment: &mut crate::state::Attachment, session: &HandoffSession) {

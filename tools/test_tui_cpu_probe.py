@@ -25,15 +25,20 @@ class SidebarProbeTests(unittest.TestCase):
         self.assertEqual(cases[6], ("body", True, "working"))
 
     def test_capture_checks_visibility_and_actual_animation(self):
-        probe.verify_sidebar("Activity\n⠹ Synthetic work", True, "working")
-        probe.verify_sidebar("Activity\n○ Synthetic work", True, "idle")
+        working = "Activity\n⠹ Claude Code\nProjects\n⠹ rozi-cpu\n└─ ⠹ cpu-probe"
+        idle = "Activity\n○ Claude Code\nProjects\n  rozi-cpu\n└─ cpu-probe"
+        probe.verify_sidebar(working, True, "working")
+        probe.verify_sidebar(idle, True, "idle")
         probe.verify_sidebar("rozi\nbody", False, "working")
         for text, visible, status in [
             ("", True, "working"),
             ("rozi\nbody", True, "working"),
-            ("Activity\n○ Synthetic work", True, "working"),
-            ("Activity\n⠹ Synthetic work", True, "idle"),
+            (idle, True, "working"),
+            (working, True, "idle"),
             ("Activity\nbody", False, "working"),
+            # Activity spinning alone, with Projects missing or still.
+            ("Activity\n⠹ Claude Code", True, "working"),
+            ("Activity\n⠹ Claude Code\nProjects\n  rozi-cpu", True, "working"),
         ]:
             with self.subTest(text=text, visible=visible, status=status):
                 with self.assertRaises(RuntimeError):
@@ -44,6 +49,16 @@ class SidebarProbeTests(unittest.TestCase):
         for value in ["", "80", "80x", "0x24", "80x0", "79x24", "80x23", "axt", "80x24x3"]:
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 probe.parse_viewport(value)
+
+    def test_status_reports_reach_the_pane_and_its_agent(self):
+        calls = []
+        probe.report_status(lambda *args: calls.append(args), "owned-probe", 7, "working", 3)
+        self.assertEqual(calls, [
+            ("--session", "owned-probe", "status", "--target", "7", "working"),
+            ("--session", "owned-probe", "agents", "report", "--target", "7",
+             "--agent", "claude", "--integration", "cpu-probe-7",
+             "--state", "working", "--seq", "3"),
+        ])
 
     def test_pane_setup_counts_actual_panes_including_an_empty_server(self):
         for initial in [0, 1, 2]:

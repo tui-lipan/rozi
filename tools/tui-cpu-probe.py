@@ -6,6 +6,7 @@ CPU-intensive work. Output is JSON lines; all PTYs and user directories are priv
 """
 
 import argparse
+import itertools
 import json
 import math
 import os
@@ -68,13 +69,48 @@ def cases(sidebar):
     return [(mode, None, None) for mode in ["idle", "body", "both", "title", "body", "dense"]]
 
 
+SPINNER_GLYPHS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
 def verify_sidebar(text, visible, status):
     lines = text.splitlines()
     if not lines or ("Activity" in lines[0]) != visible:
         raise RuntimeError("sidebar toggle did not reach the expected state")
-    spinning = any(glyph in text for glyph in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    if visible and spinning != (status == "working"):
+    if not visible:
+        return
+    working = status == "working"
+    if any(glyph in text for glyph in SPINNER_GLYPHS) != working:
         raise RuntimeError("sidebar status did not reach the expected spinner state")
+    # Projects is the lower panel. Its rows spin only for agents in a Git checkout, so check it
+    # separately: Activity alone spinning would measure a different sidebar.
+    projects = next((index for index, line in enumerate(lines) if "Projects" in line), None)
+    if projects is None:
+        raise RuntimeError("the Projects tab is not on screen")
+    below = "\n".join(lines[projects + 1:])
+    if any(glyph in below for glyph in SPINNER_GLYPHS) != working:
+        raise RuntimeError("Projects did not reach the expected spinner state")
+
+
+def agent_workload(root):
+    """Make the scratch root a Git checkout and return an interpreter that reads as an agent.
+
+    Projects lists sessions by checkout and spins a row only for a working agent. Agent reports
+    attach to the agent rozi detects in a pane, which it reads from the program's name, so the
+    workload runs through a `claude` link to this Python rather than through a real agent.
+    """
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    link = root / "bin" / "claude"
+    link.parent.mkdir()
+    link.symlink_to(sys.executable)
+    return str(link)
+
+
+def report_status(command, session, pane, status, seq):
+    """Set a pane's status and report the same state for its agent, which Projects shows."""
+    command("--session", session, "status", "--target", str(pane), status)
+    command("--session", session, "agents", "report", "--target", str(pane),
+            "--agent", "claude", "--integration", f"cpu-probe-{pane}",
+            "--state", status, "--seq", str(seq))
 
 
 def populate_panes(command, session, count, shell):
@@ -106,9 +142,12 @@ def run_probe(args):
     env = isolated_environment(root)
     (root / "work.py").write_text(WORKLOAD)
     (root / "mode").write_text("idle")
+    interpreter = agent_workload(root) if args.sidebar else sys.executable
+    # Agent reports from one integration must carry increasing sequence numbers for the whole run.
+    report_seq = itertools.count(1)
     # JSON strings are valid TOML basic strings for these paths.
     (root / "config/config.toml").write_text(f'''
-shell = [{json.dumps(sys.executable)}, {json.dumps(str(root / "work.py"))}]
+shell = [{json.dumps(interpreter)}, {json.dumps(str(root / "work.py"))}]
 command_shell = ["/bin/sh", "-c"]
 cwd = {json.dumps(str(root))}
 [shell_integration]
@@ -170,7 +209,7 @@ panels = [{ tabs = ["activity"], weight = 0.5 }, { tabs = ["projects"], weight =
                 sidebar_open = visible
             if status is not None:
                 for pane in panes:
-                    command("--session", session, "status", "--target", str(pane["id"]), status)
+                    report_status(command, session, pane["id"], status, next(report_seq))
             (root / "next-mode").write_text(mode)
             (root / "next-mode").replace(root / "mode")
             time.sleep(1)
@@ -199,7 +238,7 @@ panels = [{ tabs = ["activity"], weight = 0.5 }, { tabs = ["projects"], weight =
                                       env=env, stdout=log, stderr=log)
         await_value(lambda: list((root / "runtime/rozi").glob("session-*.sock")), "server socket")
         if args.panes > 1:
-            populate_panes(command, session, args.panes, [sys.executable, str(root / "work.py")])
+            populate_panes(command, session, args.panes, [interpreter, str(root / "work.py")])
         for cols, rows in args.viewport or [(200, 60), (475, 116)]:
             with (root / f"client-{cols}.log").open("wb") as log:
                 # The binary path is shell quoted because script's command is interpreted by sh.

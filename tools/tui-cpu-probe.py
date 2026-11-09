@@ -120,6 +120,12 @@ resurrect = false
 kill_session = false
 [animations]
 enabled = false
+# A fresh HOME otherwise shows the first-run usage-count notice for the whole run. Any toast on
+# screen turns every spinner and pane-output frame into a full repaint, so it would be measured
+# instead of the row repaint these cases exist for. This also keeps the probe off the network.
+[updates]
+check = false
+count_usage = false
 ''')
     if args.sidebar:
         with (root / "config/config.toml").open("a") as config:

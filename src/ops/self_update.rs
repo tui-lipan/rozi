@@ -44,9 +44,9 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>) -> Update {
             downloaded: 0,
             total: None,
         },
-        UpdateChannel::Command(_) => UpdatePhase::Running,
+        UpdateChannel::Command { .. } => UpdatePhase::Running,
     };
-    let stop = matches!(channel, UpdateChannel::Command(_))
+    let stop = matches!(channel, UpdateChannel::Command { .. })
         .then(|| Arc::new(crate::platform::command::CommandStop::default()));
     let running = update.running().clone();
     let latest = update.latest.clone();
@@ -82,9 +82,9 @@ pub(crate) fn start(ctx: &mut Context<AppRoot>) -> Update {
         // when this client leaves first.
         std::thread::spawn(move || {
             let result = match (channel, stop) {
-                (UpdateChannel::Command(command), Some(stop)) => run_command(
+                (UpdateChannel::Command { command, source }, Some(stop)) => run_command(
                     generation,
-                    command,
+                    (command, source),
                     (&running, &latest),
                     &shell,
                     stop,
@@ -152,8 +152,18 @@ pub(crate) fn finished(
     run.stop = None;
     match result {
         Ok(installed) => {
-            run.installed = Some(installed);
+            // A download of unknown length never says it is done; what arrived is its size.
+            if let UpdatePhase::Downloading { downloaded, .. } = run.phase
+                && downloaded > 0
+            {
+                run.downloaded.get_or_insert(downloaded);
+            }
+            run.installed = Some(installed.clone());
             run.phase = UpdatePhase::Installed;
+            settle_offer(ctx, &installed);
+            let Some(run) = current_run(ctx, generation) else {
+                return Update::none();
+            };
             if run.hidden {
                 return installed_in_background(ctx);
             }
@@ -184,6 +194,29 @@ pub(crate) fn finished(
             Update::full()
         }
     }
+}
+
+/// Square the release this client offers with the one just installed. A check that ran during the
+/// update may have announced a newer release, which the updater, asking for the latest itself,
+/// may have installed. An offer for that release or an older one is settled - no more **Update
+/// rozi**, no notice - and when it is exactly the installed release its metadata is that release's,
+/// so its note now counts. A strictly newer offer stands.
+fn settle_offer(ctx: &mut Context<AppRoot>, installed: &semver::Version) {
+    let Some(offered) = ctx.state.available_update.as_ref() else {
+        return;
+    };
+    if offered.latest > *installed {
+        return;
+    }
+    if offered.latest == *installed
+        && let Some(run) = ctx.state.self_update.run.as_mut()
+    {
+        run.latest = installed.clone();
+        run.note = offered.extension_note();
+    }
+    ctx.state.update_started = true;
+    ctx.state.commands_dirty = true;
+    crate::pane::pty_events::dismiss_update_notice(ctx);
 }
 
 /// An update in the background is done. The user chose to keep working, so nothing takes the
@@ -390,33 +423,35 @@ impl relswap::ProgressObserver for DownloadReporter {
 /// command that would stop to ask fails instead of waiting for an answer that cannot come.
 ///
 /// Its exit status only says the command is content. Success is the rozi it left installed: found
-/// where this channel installs, asked what it is, and newer than this client.
+/// where this channel installs - and only there - asked what it is, and newer than this client.
 fn run_command(
     generation: u64,
-    command: &'static str,
+    (command, source): (&'static str, crate::platform::install_source::InstallSource),
     (running, latest): (&semver::Version, &semver::Version),
     shell: &crate::platform::command::ShellCommand,
     stop: Arc<crate::platform::command::CommandStop>,
     link: &CommandLink<Msg>,
 ) -> std::result::Result<semver::Version, String> {
-    let lines = Arc::new(Mutex::new(LineBuffer::default()));
+    use crate::platform::command::OutputStream;
+    // One buffer per stream: a line half-written to stdout must not be finished by stderr.
+    let lines = Arc::new(Mutex::new([LineBuffer::default(), LineBuffer::default()]));
     let sink = lines.clone();
     let output_link = Mutex::new(link.clone());
-    let observer: crate::platform::command::OutputObserver = Arc::new(move |chunk: &[u8]| {
-        let complete = sink
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .push(chunk);
-        if !complete.is_empty() {
-            output_link
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .send(Msg::SelfUpdateProgress {
-                    generation,
-                    event: SelfUpdateEvent::Output(complete),
-                });
-        }
-    });
+    let observer: crate::platform::command::OutputObserver =
+        Arc::new(move |stream: OutputStream, chunk: &[u8]| {
+            let index = usize::from(stream == OutputStream::Stderr);
+            let complete =
+                sink.lock().unwrap_or_else(|poison| poison.into_inner())[index].push(chunk);
+            if !complete.is_empty() {
+                output_link
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .send(Msg::SelfUpdateProgress {
+                        generation,
+                        event: SelfUpdateEvent::Output(complete),
+                    });
+            }
+        });
     let output = crate::platform::command::run_observed_shell_command(
         shell,
         command,
@@ -426,10 +461,12 @@ fn run_command(
         stop,
     )
     .map_err(|error| format!("could not run `{command}`: {error}"))?;
-    let rest = lines
+    let rest: Vec<String> = lines
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
-        .finish();
+        .iter_mut()
+        .flat_map(LineBuffer::finish)
+        .collect();
     if !rest.is_empty() {
         link.send(Msg::SelfUpdateProgress {
             generation,
@@ -442,11 +479,7 @@ fn run_command(
             COMMAND_TIMEOUT.as_secs() / 60
         )),
         Some(0) => {
-            // The announced release first: its path can be derived where a channel keeps each
-            // version apart (mise, Homebrew's Cellar). Then whatever the channel made current, for
-            // a newer release published since the check.
-            let installed = crate::relaunch::candidate::find(Some(latest))
-                .or_else(|_| crate::relaunch::candidate::find(None))
+            let installed = crate::relaunch::candidate::newest_in_channel(source, latest)
                 .map_err(|missing| format!("`{command}` finished, but {missing}"))?;
             newer_than_running(installed.release, running, &format!("`{command}`"))
         }
@@ -455,11 +488,15 @@ fn run_command(
     }
 }
 
-/// Splits a command's output into the lines a person would see: a carriage return starts the line
-/// over, as a progress meter means it to, and escape sequences and other control characters go.
+/// Splits one stream of a command's output into the lines a person would see: a carriage return
+/// alone starts the line over, as a progress meter means it to, while `\r\n` simply ends it; and
+/// terminal escape sequences and other control characters go.
 #[derive(Default)]
 struct LineBuffer {
     pending: Vec<u8>,
+    /// A carriage return was the last byte: what follows decides whether it ended the line
+    /// (`\r\n`) or started it over.
+    after_return: bool,
 }
 
 impl LineBuffer {
@@ -467,6 +504,9 @@ impl LineBuffer {
     fn push(&mut self, chunk: &[u8]) -> Vec<String> {
         let mut complete = Vec::new();
         for &byte in chunk {
+            if std::mem::take(&mut self.after_return) && byte != b'\n' {
+                self.pending.clear();
+            }
             match byte {
                 b'\n' => {
                     let line = clean(&self.pending);
@@ -475,7 +515,7 @@ impl LineBuffer {
                         complete.push(line);
                     }
                 }
-                b'\r' => self.pending.clear(),
+                b'\r' => self.after_return = true,
                 _ => self.pending.push(byte),
             }
         }
@@ -484,35 +524,65 @@ impl LineBuffer {
 
     /// The last line, if the command ended without a newline.
     fn finish(&mut self) -> Vec<String> {
+        self.after_return = false;
         let line = clean(&self.pending);
         self.pending.clear();
         if line.is_empty() { vec![] } else { vec![line] }
     }
 }
 
-/// `bytes` as text, without escape sequences or control characters, trimmed.
+/// `bytes` as the text a terminal would show, trimmed: every escape sequence goes, whether 7-bit
+/// (`ESC [`, `ESC ]`, …) or its 8-bit C1 form, and so does every other control character.
 fn clean(bytes: &[u8]) -> String {
+    const ESC: char = '\u{1b}';
+    const BEL: char = '\u{7}';
+    /// The 8-bit String Terminator, and the 7-bit one's second character after `ESC`.
+    const ST: char = '\u{9c}';
+
     let text = String::from_utf8_lossy(bytes);
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
+    // Skip a control string to its terminator: ST, `ESC \`, or BEL, which xterm also accepts.
+    let skip_string = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+        while let Some(next) = chars.next() {
+            match next {
+                BEL | ST => return,
+                ESC if chars.peek() == Some(&'\\') => {
+                    chars.next();
+                    return;
+                }
+                _ => {}
+            }
+        }
+    };
+    // Skip a control sequence's parameters and intermediates to its final byte.
+    let skip_csi = |chars: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+        for next in chars.by_ref() {
+            if ('@'..='~').contains(&next) {
+                return;
+            }
+        }
+    };
     while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            // CSI: `ESC [` parameters, then one final byte in `@`..`~`. Anything else after `ESC`
-            // is a two-character sequence.
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for next in chars.by_ref() {
-                    if ('@'..='~').contains(&next) {
-                        break;
+        match ch {
+            ESC => match chars.next() {
+                Some('[') => skip_csi(&mut chars),
+                Some(']' | 'P' | 'X' | '^' | '_') => skip_string(&mut chars),
+                // `ESC`, any intermediates, then one final character.
+                Some(' '..='/') => {
+                    for next in chars.by_ref() {
+                        if !(' '..='/').contains(&next) {
+                            break;
+                        }
                     }
                 }
-            } else {
-                chars.next();
-            }
-        } else if ch == '\t' {
-            out.push(' ');
-        } else if !ch.is_control() {
-            out.push(ch);
+                Some(_) | None => {}
+            },
+            '\u{9b}' => skip_csi(&mut chars),
+            '\u{9d}' | '\u{90}' | '\u{98}' | '\u{9e}' | '\u{9f}' => skip_string(&mut chars),
+            '\t' => out.push(' '),
+            ch if ch.is_control() => {}
+            ch => out.push(ch),
         }
     }
     out.trim().to_string()
@@ -1018,5 +1088,89 @@ mod tests {
         assert_eq!(buffer.push(b"--0.0.44\n\n"), vec!["Pouring rozi--0.0.44"]);
         assert_eq!(buffer.push(b"done"), Vec::<String>::new());
         assert_eq!(buffer.finish(), vec!["done"]);
+    }
+
+    /// Windows tools end lines with `\r\n`, which ends the line rather than starting it over -
+    /// including when the two bytes arrive in separate chunks.
+    #[test]
+    fn a_crlf_line_ending_keeps_its_line() {
+        let mut buffer = LineBuffer::default();
+        assert_eq!(
+            buffer.push(b"Updating 'rozi'\r\nInstalled\r"),
+            vec!["Updating 'rozi'"]
+        );
+        assert_eq!(
+            buffer.push(b"\nScanning 1%\rScanning 99%\r\n"),
+            vec!["Installed", "Scanning 99%"]
+        );
+    }
+
+    /// Every escape-sequence form a tool may print goes, whatever terminates it, and the text
+    /// around it stays.
+    #[test]
+    fn every_kind_of_escape_sequence_is_stripped() {
+        for (raw, shown) in [
+            ("\x1b[1;32m==>\x1b[0m Pouring", "==> Pouring"),
+            ("\x1b]0;brew upgrade\x07Upgrading", "Upgrading"),
+            (
+                "\x1b]8;;https://brew.sh\x1b\\link\x1b]8;;\x1b\\ text",
+                "link text",
+            ),
+            ("\x1b(Bplain\x1b=", "plain"),
+            ("\x1bP1$r0m\x1b\\after DCS", "after DCS"),
+            ("\u{9b}31mC1 colour\u{9b}0m", "C1 colour"),
+            ("\u{9d}2;title\u{9c}C1 title", "C1 title"),
+            ("\ttabbed\u{7}", "tabbed"),
+        ] {
+            assert_eq!(clean(raw.as_bytes()), shown, "{raw:?}");
+        }
+    }
+
+    /// The updater asked for the latest release itself and caught up to one a check announced
+    /// while it ran. That offer is settled: its note is the installed release's, its notice goes,
+    /// and choosing Later does not bring Update rozi back for a release already installed.
+    #[test]
+    fn an_update_that_catches_up_to_a_newer_offer_settles_it() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = updating_to("9.9.9", false);
+            backend.dispatch(raising_extension_api("9.9.10")).unwrap();
+            assert!(notice_raised(&backend));
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 10)));
+
+            assert!(
+                restart_note(&backend).is_some(),
+                "9.9.10's own note belongs to the 9.9.10 just installed"
+            );
+            assert!(!notice_raised(&backend), "no notice for what is installed");
+            backend.dispatch(Msg::RelaunchCancel).unwrap();
+            assert!(!crate::commands::command_available(
+                crate::input::Action::UpdateRozi,
+                backend.state()
+            ));
+        });
+    }
+
+    /// A download whose length the server never said does not report that it finished, so the
+    /// card learns it from the update succeeding: the size that arrived, and both steps done.
+    #[test]
+    fn a_download_of_unknown_length_ends_with_its_size() {
+        crate::test_support::on_large_stack(|| {
+            let mut backend = updating(InstallSource::Managed);
+            // Animations on, so the installed card stays up until it is told to settle.
+            backend.state_mut().config.animations.enabled = true;
+            report(
+                &mut backend,
+                SelfUpdateEvent::Downloaded {
+                    downloaded: 5 * MB,
+                    total: None,
+                },
+            );
+            finish(&mut backend, Ok(semver::Version::new(9, 9, 9)));
+            // The card is still opening at this frame, so read what it draws from: the row for a
+            // finished download shows `downloaded`, as the first test sees on screen.
+            let run = backend.state().self_update.run.as_ref().unwrap();
+            assert_eq!(run.phase, UpdatePhase::Installed);
+            assert_eq!(run.downloaded, Some(5 * MB));
+        });
     }
 }

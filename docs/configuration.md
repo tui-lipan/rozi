@@ -594,7 +594,9 @@ command palette for as long as it runs:
 1. Choosing it opens the `Updating rozi` dialog. For a rozi you installed with its installer, it
    shows the download and then the install. For one a package manager installed, it runs that
    manager's upgrade command and shows the last lines it prints. The command runs without a
-   terminal, so one that stops to ask a question fails instead of waiting.
+   terminal, so one that stops to ask a question fails instead of waiting. The update counts as
+   done only once the rozi that package manager installed reports a newer release than the one you
+   are running.
 2. **Run in background** puts the dialog away while the update keeps going; choose **Update rozi**
    again to see it. **Restart rozi** waits until the update is done, and leaving rozi stops an
    update a package manager is still running.

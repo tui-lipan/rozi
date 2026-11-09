@@ -54,7 +54,7 @@ impl AvailableUpdate {
             InstallSource::Managed => Some(crate::state::UpdateChannel::Managed),
             source => source
                 .upgrade_command()
-                .map(crate::state::UpdateChannel::Command),
+                .map(|command| crate::state::UpdateChannel::Command { command, source }),
         }
     }
 

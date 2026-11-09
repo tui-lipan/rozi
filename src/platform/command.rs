@@ -119,9 +119,17 @@ where
     run_bounded_command(&mut command, None, timeout, capture_limit)
 }
 
-/// Receives a command's output as it arrives, one chunk at a time from either stream, on the
-/// thread draining that stream. A chunk can end anywhere, including inside a line.
-pub type OutputObserver = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
+/// Which of a command's streams a chunk of its output came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+/// Receives a command's output as it arrives, one chunk at a time and labelled with its stream, on
+/// the thread draining that stream. A chunk can end anywhere, including inside a line, and the two
+/// streams interleave however the command wrote them.
+pub type OutputObserver = std::sync::Arc<dyn Fn(OutputStream, &[u8]) + Send + Sync>;
 
 /// The owner's hold on a command running on another thread: asking it to stop ends the command and
 /// everything it started, and the owner can wait until that has happened.
@@ -165,9 +173,10 @@ impl CommandStop {
 /// [`run_bounded_shell_command`], and show `observer` every chunk of its output as it arrives
 /// rather than only when the command is done.
 ///
-/// The command belongs to its caller for as long as it runs: `stop` ends it, and on Linux it also
-/// ends if this process dies without stopping it. Call this from a thread that lives as long as
-/// the command, since that is what Linux ties the guarantee to.
+/// The command belongs to its caller for as long as it runs: `stop` ends it and everything it
+/// started. If this process dies without stopping it, Linux still ends the command's own process,
+/// but not what that process started, which only a stop or the Windows job reaches. Call this from
+/// a thread that lives as long as the command, since that is what Linux ties the signal to.
 pub fn run_observed_shell_command(
     shell: &ShellCommand,
     command_line: &str,
@@ -239,7 +248,7 @@ fn run_observed_command(
     });
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let capture = |mut stream: Box<dyn Read + Send>| {
+    let capture = |mut stream: Box<dyn Read + Send>, label: OutputStream| {
         let observer = observer.clone();
         std::thread::spawn(move || {
             let mut retained = Vec::with_capacity(capture_limit.min(8192));
@@ -249,7 +258,7 @@ fn run_observed_command(
                     Ok(0) | Err(_) => break,
                     Ok(read) => {
                         if let Some(observer) = &observer {
-                            observer(&buffer[..read]);
+                            observer(label, &buffer[..read]);
                         }
                         let keep = capture_limit.saturating_sub(retained.len()).min(read);
                         retained.extend_from_slice(&buffer[..keep]);
@@ -259,8 +268,8 @@ fn run_observed_command(
             retained
         })
     };
-    let stdout_thread = capture(Box::new(stdout));
-    let stderr_thread = capture(Box::new(stderr));
+    let stdout_thread = capture(Box::new(stdout), OutputStream::Stdout);
+    let stderr_thread = capture(Box::new(stderr), OutputStream::Stderr);
 
     let started = std::time::Instant::now();
     let (status, timed_out) = loop {
@@ -1260,13 +1269,22 @@ mod tests {
             "printf 'one\\n' && printf 'two\\n' >&2 && exit 3",
             std::time::Duration::from_secs(10),
             1024,
-            std::sync::Arc::new(move |chunk: &[u8]| sink.lock().unwrap().extend_from_slice(chunk)),
+            std::sync::Arc::new(move |stream: OutputStream, chunk: &[u8]| {
+                sink.lock().unwrap().push((stream, chunk.to_vec()));
+            }),
             std::sync::Arc::new(CommandStop::default()),
         )
         .unwrap();
         assert_eq!(output.status, Some(3));
-        let seen = String::from_utf8(seen.lock().unwrap().clone()).unwrap();
-        assert!(seen.contains("one\n") && seen.contains("two\n"), "{seen:?}");
+        let seen = seen.lock().unwrap().clone();
+        let from = |wanted: OutputStream| -> Vec<u8> {
+            seen.iter()
+                .filter(|(stream, _)| *stream == wanted)
+                .flat_map(|(_, chunk)| chunk.clone())
+                .collect()
+        };
+        assert_eq!(from(OutputStream::Stdout), b"one\n");
+        assert_eq!(from(OutputStream::Stderr), b"two\n");
         assert_eq!(output.stdout, b"one\n", "observing keeps the capture");
     }
 
@@ -1287,7 +1305,7 @@ mod tests {
                     &script,
                     std::time::Duration::from_secs(60),
                     1024,
-                    std::sync::Arc::new(|_: &[u8]| {}),
+                    std::sync::Arc::new(|_: OutputStream, _: &[u8]| {}),
                     stop,
                 )
             })

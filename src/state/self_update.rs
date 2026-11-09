@@ -26,8 +26,12 @@ impl SelfUpdateState {
 pub enum UpdateChannel {
     /// rozi's own installer, run in this process: a real download, then the switch.
     Managed,
-    /// The package manager that owns this install, run as this command.
-    Command(&'static str),
+    /// The package manager that owns this install, run as `command`. `source` is that channel,
+    /// which is where the update looks for what it installed, and nowhere else.
+    Command {
+        command: &'static str,
+        source: crate::platform::install_source::InstallSource,
+    },
 }
 
 #[derive(Debug)]

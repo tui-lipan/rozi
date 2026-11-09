@@ -105,6 +105,58 @@ pub fn find(expected: Option<&Version>) -> Result<Candidate, NoCandidate> {
     first_qualifying(paths, expected, describe)
 }
 
+/// The newest rozi the install channel `source` holds now, after that channel updated it toward
+/// `expected`.
+///
+/// Unlike [`find`], this proves something about one channel, so it only looks where that channel
+/// installs: its own entry points, the launched path with its version moved to `expected`, and the
+/// launched path itself. Another install found on `PATH` is not evidence of what this channel did.
+/// Every place is asked and the newest answer wins, so neither a release newer than `expected` nor
+/// the old build still sitting at the launched path decides by being listed first.
+pub fn newest_in_channel(
+    source: InstallSource,
+    expected: &Version,
+) -> Result<Candidate, NoCandidate> {
+    let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("the package version is semver");
+    let platform_env = PlatformEnv::from_process();
+    let source_env = SourceEnv::from_platform_env(&platform_env);
+    let launched = crate::platform::relaunch::launched_from();
+    let paths = candidate_paths(
+        launched.as_deref(),
+        source,
+        &source_env,
+        &running,
+        Some(expected),
+        None,
+    );
+    newest(paths, describe)
+}
+
+fn newest(
+    paths: Vec<PathBuf>,
+    describe: impl Fn(&Path) -> Result<Candidate, String>,
+) -> Result<Candidate, NoCandidate> {
+    let mut tried = Vec::new();
+    let mut best: Option<Candidate> = None;
+    for path in paths {
+        match describe(&path) {
+            Ok(candidate) => {
+                if best
+                    .as_ref()
+                    .is_none_or(|best| candidate.release > best.release)
+                {
+                    best = Some(candidate);
+                }
+            }
+            Err(reason) => tried.push((path, reason)),
+        }
+    }
+    best.ok_or(NoCandidate {
+        expected: None,
+        tried,
+    })
+}
+
 fn first_qualifying(
     paths: Vec<PathBuf>,
     expected: Option<&Version>,
@@ -354,11 +406,36 @@ mod tests {
         assert_eq!(
             paths,
             vec![
+                PathBuf::from("/home/dev/.local/share/mise/installs/rozi/latest/rozi"),
                 PathBuf::from("/home/dev/.local/share/mise/installs/rozi/0.0.44/rozi"),
                 mise,
                 PathBuf::from("/usr/local/bin/rozi"),
             ]
         );
+    }
+
+    /// After a package manager ran, every place its channel installs is asked and the newest
+    /// answer wins: a release newer than the announced one counts, and the old build still at the
+    /// launched path cannot win by being asked first.
+    #[test]
+    fn the_newest_rozi_a_channel_holds_is_what_its_update_installed() {
+        let latest = PathBuf::from("/mise/installs/rozi/latest/rozi");
+        let moved = PathBuf::from("/mise/installs/rozi/0.0.43/rozi");
+        let launched = PathBuf::from("/mise/installs/rozi/0.0.42/rozi");
+        let describe = |path: &Path| match path.to_str() {
+            Some("/mise/installs/rozi/latest/rozi") => Ok(described(path, "0.0.44")),
+            Some("/mise/installs/rozi/0.0.42/rozi") => Ok(described(path, "0.0.42")),
+            _ => Err("not there".to_string()),
+        };
+        let found = newest(
+            vec![launched.clone(), moved.clone(), latest.clone()],
+            describe,
+        )
+        .unwrap();
+        assert_eq!((found.path, found.release), (latest, version("0.0.44")));
+
+        let nothing = newest(vec![moved.clone()], describe).unwrap_err();
+        assert_eq!(nothing.tried, vec![(moved, "not there".to_string())]);
     }
 
     fn described(path: &Path, release: &str) -> Candidate {

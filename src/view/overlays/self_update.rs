@@ -97,7 +97,7 @@ fn rows(theme: &Theme, run: &SelfUpdateRun) -> Element {
             rows = rows.child(download_row(theme, run));
             rows = rows.child(install_row(theme, run));
         }
-        UpdateChannel::Command(command) => {
+        UpdateChannel::Command { command, .. } => {
             rows = rows.child(
                 HStack::new()
                     .height(Length::Px(1))

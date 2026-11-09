@@ -48,7 +48,13 @@ fn wait_for(path: &Path) {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    // `cargo bench` runs every benchmark target with `--bench` and any Criterion options. This
+    // probe needs an external driver, so it steps aside instead of failing the whole suite.
+    if args.peek().is_none_or(|arg| arg.starts_with("--")) {
+        eprintln!("replay_memory is a process probe; see its header to run it");
+        return;
+    }
     let mode = args.next().expect("mode: vec or spool");
     let control = args.next().expect("control directory");
     assert!(args.next().is_none(), "unexpected extra argument");

@@ -4,7 +4,8 @@ This directory records performance audits for specific revisions and machines. D
 historical evidence. They are not current benchmark guidance and their source, dependency, or
 architecture descriptions may no longer match the repository.
 
-The latest measurements are [remote image relay, 2026-10-26](audits/2026-10-26-remote-image-relay.md).
+The latest measurements are [release regression check and loop alignment, 2026-11-09](audits/2026-11-09-loop-alignment.md).
+The latest graphics measurements are [remote image relay, 2026-10-26](audits/2026-10-26-remote-image-relay.md).
 The preceding [immutable media adoption](audits/2026-10-24-browser-media-regression.md#final-build-adoption-v2)
 covers local clients, and [graphics pipeline acceptance](audits/2026-10-14-graphics-pipeline.md)
 records the broader rendering work.
@@ -16,6 +17,7 @@ Use the [benchmark guide](../benchmarks.md) for permanent harness commands and d
 
 | Date | Measured revision | Recorded verdict | Report |
 | --- | --- | --- | --- |
+| 2026-11-09 | `v0.0.36`, `v0.0.43` and master `3f9623c6` | ready: the 18–42% scrollback search and replay slowdowns were code layout; 64-byte loop alignment on x86_64 brings them within 3% of 0.0.36 for a 5.3% larger binary; view layout +2.3% and dense copy +5% are feature costs | [Release regression check and loop alignment](audits/2026-11-09-loop-alignment.md) |
 | 2026-10-26 | 0.0.33 versus `088b37bc` plus this branch, with framework `4dc62a6` | remote terminal-browser: the server queue stays at one command instead of growing, video frame age p95 falls from 88.0 to 13.4 ms, generated-page wire traffic falls 75%, scrolling 23%; full-motion video stays near 27 frames/s over Wi-Fi, limited by bytes per frame | [Remote image relay](audits/2026-10-26-remote-image-relay.md) |
 | 2026-10-25 | `9f914739` and framework `a9a1005` with recorded adoption-v2 changes and source hashes | about 60 frames/s; combined plain/noise CPU 9.9–10.4% / 11.1–11.75%, below pre-#241; client pixel reads removed, shared snapshot storage lower; local raw-media fairness improves, inline tails vary; strict RSS parity remains unmet in some cases; registry framework 0.30.0 integrated | [Immutable adoption and acquisition watermarks](audits/2026-10-24-browser-media-regression.md#final-build-adoption-v2) |
 | 2026-10-24 | `3a07e529` versus `9f914739`, both with framework 0.29.0; fix on `9f914739` with an unreleased framework change | automatic shared-memory negotiation raised combined Rozi video CPU from 12–13% to 110% of one core and forced files dropped to 49.6 frames/s; snapshot relay and worker wakeup restore 59.8 frames/s at 16.4–16.9%, and 59.6 instead of 34.7 frames/s on incompressible video | [Browser consuming-media regression](audits/2026-10-24-browser-media-regression.md) |

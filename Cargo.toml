@@ -159,6 +159,16 @@ windows-launcher = []
 # `cargo build` should not compile `schemars_derive`. CI runs the generator and fails on a diff.
 schema-gen = ["dep:schemars"]
 
+# The library and the main binary hold no benchmarks. Left as benchmark targets, `cargo bench` runs
+# their libtest harnesses, which reject Criterion options such as `--save-baseline` and stop the run.
+[lib]
+bench = false
+
+[[bin]]
+name = "rozi"
+path = "src/main.rs"
+bench = false
+
 [[bin]]
 name = "rozi-launcher"
 path = "src/bin/rozi-launcher.rs"

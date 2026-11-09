@@ -247,6 +247,14 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+    env:
+      # Start every loop on a 64-byte boundary in x86_64 builds. With the default 16-byte alignment,
+      # tight per-cell terminal loops (replay, scrollback search) ran up to 40% faster or slower
+      # depending on where unrelated changes placed them. See
+      # dev/performance/audits/2026-11-09-loop-alignment.md.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C llvm-args=-align-loops=64
+      CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: -C llvm-args=-align-loops=64
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C llvm-args=-align-loops=64
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -312,6 +320,7 @@ jobs:
               --env CARGO_TERM_COLOR=always \
               --env ROZI_RELEASE_NOTES \
               --env ROZI_EARLIER_RELEASE_NOTES \
+              --env CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS \
               --env BUILD_UID="$(id -u)" \
               --env BUILD_GID="$(id -g)" \
               --volume "$GITHUB_WORKSPACE:/work" \

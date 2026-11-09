@@ -181,6 +181,22 @@ cargo bench -- --save-baseline before
 cargo bench -- --baseline before
 ```
 
+On x86_64, build both sides of a comparison with the loop alignment that release builds use:
+
+```bash
+RUSTFLAGS="-C llvm-args=-align-loops=64" cargo bench -- --save-baseline before
+RUSTFLAGS="-C llvm-args=-align-loops=64" cargo bench -- --baseline before
+```
+
+Without it, an unrelated change can move a tight per-cell terminal loop across a fetch boundary,
+and replay or scrollback search then moves by up to 40% with no change to its code. Keep a separate
+target directory for the aligned build if you also build without the flag, so that neither
+invalidates the other.
+
+Compare revisions within one session. Some cases, such as
+`terminal_pane_process_server_output/65536`, follow the kernel's memory state, so the same binary
+can measure differently after a reboot.
+
 The same options work for one target and filter:
 
 ```bash

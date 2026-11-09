@@ -599,9 +599,11 @@ command palette for as long as it runs:
    again to see it.
 3. On success, the dialog becomes the `rozi vX.Y.Z installed` dialog, which offers to
    [restart rozi on the new build](installation.md#restart-rozi-on-the-new-build), coming back to
-   the same sessions. **Later** keeps the old build running until you choose **Restart rozi**.
-4. On failure, the dialog says what stopped the update, and **Try again** runs it again. If you hid
-   it, a toast says it failed and the command stays listed so you can retry.
+   the same sessions. **Later** keeps the old build running until you choose **Restart rozi**. An
+   update in the background never opens a dialog by itself: a `rozi vX.Y.Z installed` toast says it
+   is done instead. Click it to restart now, or choose **Restart rozi** when you are ready.
+4. On failure, the dialog says what stopped the update, and **Try again** runs it again. For an
+   update in the background, a toast says it failed and the command stays listed so you can retry.
 
 The update always installs the rozi this window was started from, even while a remote session is in
 front. The command is not listed when rozi was installed from a distribution package or in a way it

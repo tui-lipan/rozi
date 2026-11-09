@@ -61,6 +61,10 @@ pub enum Msg {
     },
     /// Put the update card away while the update keeps going.
     SelfUpdateHide,
+    /// The toast for a release installed in the background was clicked: offer the restart onto it.
+    SelfUpdateRestart {
+        latest: semver::Version,
+    },
     /// Run a failed update again.
     SelfUpdateRetry,
     /// Move focus to one of the update card's answers.

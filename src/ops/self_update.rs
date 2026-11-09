@@ -110,7 +110,10 @@ pub(crate) fn finished(
     match result {
         Ok(()) => {
             run.phase = UpdatePhase::Installed;
-            if run.hidden || !ctx.state.config.animations.enabled {
+            if run.hidden {
+                return installed_in_background(ctx);
+            }
+            if !ctx.state.config.animations.enabled {
                 return settled(ctx, generation);
             }
             Update::with_command(Command::after(SETTLE, move |link: CommandLink<Msg>| {
@@ -129,7 +132,7 @@ pub(crate) fn finished(
                     ctx,
                     "rozi update failed",
                     crate::pane::pty_events::ToastBody::new(reason)
-                        .hint("run Update rozi to try again"),
+                        .hint("use `Update rozi` to try again"),
                 )
                 .update();
             }
@@ -137,6 +140,37 @@ pub(crate) fn finished(
             Update::full()
         }
     }
+}
+
+/// An update in the background is done. The user chose to keep working, so nothing takes the
+/// keyboard: a toast says the release is installed, and a click on it, or **Restart rozi** from
+/// Commands whenever suits, takes the restart.
+fn installed_in_background(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(run) = ctx.state.self_update.run.take() else {
+        return Update::none();
+    };
+    crate::pane::pty_events::notify_update_installed(
+        ctx,
+        format!("rozi v{} installed", run.latest),
+        crate::pane::pty_events::ToastBody::new(format!("v{} → v{}", run.running, run.latest))
+            .hint("click to restart now, or use `Restart rozi` later"),
+        Msg::SelfUpdateRestart { latest: run.latest },
+    )
+    .update()
+}
+
+/// The installed-release toast was clicked: open Restart rozi for that release, unless a restart
+/// dialog is already up.
+pub(crate) fn restart_installed(ctx: &mut Context<AppRoot>, latest: semver::Version) -> Update {
+    if ctx.state.relaunch.dialog.is_some() {
+        return Update::none();
+    }
+    let note = ctx
+        .state
+        .available_update
+        .as_ref()
+        .and_then(crate::ops::update_check::AvailableUpdate::extension_note);
+    crate::ops::relaunch::open_after_update(ctx, latest, note).merge(Update::full())
 }
 
 /// The installed release has had its moment: the card becomes Restart rozi for it.
@@ -575,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hidden_update_keeps_going_and_comes_back_through_update_rozi() {
+    fn an_update_in_the_background_keeps_going_and_finishes_with_a_toast() {
         crate::test_support::on_large_stack(|| {
             let mut backend = updating(InstallSource::Managed);
             backend.dispatch(Msg::SelfUpdateHide).unwrap();
@@ -597,9 +631,43 @@ mod tests {
             backend.dispatch(Msg::SelfUpdateHide).unwrap();
             finish(&mut backend, Ok(()));
             assert!(
-                backend.state().relaunch.dialog.is_some(),
-                "a hidden update still offers the restart once it is done"
+                backend.state().relaunch.dialog.is_none(),
+                "nothing takes the keyboard from a user who chose to keep working"
             );
+            assert!(backend.state().self_update.run.is_none());
+            let toast = backend
+                .state()
+                .replaceable_toasts
+                .get(&crate::pane::pty_events::ToastKey::Channel(
+                    crate::state::ToastChannel::UpdateNotice,
+                ))
+                .expect("a toast says the release is installed")
+                .content()
+                .to_string();
+            for expected in [
+                "rozi v9.9.9 installed",
+                "click to restart now",
+                "Restart rozi",
+            ] {
+                assert!(
+                    toast.contains(expected),
+                    "missing {expected:?} in {toast:?}"
+                );
+            }
+
+            // The toast's click.
+            backend
+                .dispatch(Msg::SelfUpdateRestart {
+                    latest: semver::Version::new(9, 9, 9),
+                })
+                .unwrap();
+            let dialog = backend
+                .state()
+                .relaunch
+                .dialog
+                .as_ref()
+                .expect("the click offers the restart");
+            assert_eq!(dialog.expected, Some(semver::Version::new(9, 9, 9)));
         });
     }
 

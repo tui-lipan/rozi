@@ -1102,23 +1102,66 @@ fn group_header(
 /// actually in.
 const SUBPATH_MAX_CHARS: usize = 12;
 
-/// The subpath's share of the name line, once the name, the elapsed run, and the workspace number
-/// have taken theirs.
+/// The subpath's share of the name line, once the name and the workspace number have taken theirs.
 ///
 /// The workspace number is the one thing in the badge that must survive: it is what the keybindings
 /// address, and unlike a path it cannot be guessed from the row above. So the subpath yields to it
 /// rather than the pair being clipped together from the right, which is what dropped the number.
-fn subpath_budget(width: u16, name: &str, duration: Option<&str>, workspace: &str) -> usize {
+fn subpath_budget(width: u16, name: &str, workspace: &str) -> usize {
     // Gutter, glyph, their gaps, the divider, the scrollbar column, the gap holding the badge off
     // the name, and the ` · ` joining the subpath to the workspace number.
     let chrome = 13;
-    let taken = name.chars().count()
-        + workspace.chars().count()
-        + duration.map_or(0, |text| text.chars().count() + 1);
+    let taken = name.chars().count() + workspace.chars().count();
     usize::from(width)
         .saturating_sub(chrome)
         .saturating_sub(taken)
         .min(SUBPATH_MAX_CHARS)
+}
+
+/// The two lines every agent run shares, in Activity and Agents alike.
+///
+/// The title line is what the run works on, with where it runs (`location`) on the right: a
+/// workspace in Activity, a session in Agents. A long title cannot push the location off the row,
+/// and a long location is cut before the title has less than two thirds of it.
+///
+/// The detail line leads with the state and the time it measures, in the state's colour, so the two
+/// read as one fact and never truncate. What the run said about it follows, muted: `notes` joined
+/// as description fields, giving way from the right, so the last note is the first to go.
+pub(super) struct RunLines<'a> {
+    pub title: String,
+    pub title_style: Style,
+    pub location: Option<String>,
+    pub status: &'a str,
+    pub finished_unseen: bool,
+    pub duration: Option<String>,
+    pub notes: Vec<String>,
+    pub active: bool,
+}
+
+impl RunLines<'_> {
+    pub(super) fn row(self, theme: &Theme, width: u16) -> Row {
+        let (glyph, color, spinner) = row_glyph(self.status, self.finished_unseen, theme);
+        let muted = super::super::fg_only(&theme.muted).dim();
+        let mut lead = row_status_label(self.status, self.finished_unseen);
+        if let Some(duration) = self.duration {
+            lead = format!("{lead} {duration}");
+        }
+        let mut content = Row::new(self.title)
+            .active(self.active)
+            .glyph(status_icon(glyph, color, spinner))
+            .title_style(self.title_style)
+            .detail(lead, Style::new().fg(color));
+        if let Some(location) = self.location.filter(|location| !location.is_empty()) {
+            content = content
+                .priority(row::Priority::Aside)
+                .badge_text(location, muted);
+        }
+        let notes = crate::view::vocabulary::fields(&self.notes);
+        if !notes.is_empty() {
+            content = content.detail(row::truncate(&notes, activity_budget(width)), muted);
+        }
+        content
+    }
 }
 
 /// A status glyph: the spinner while working, else the status's mark, in its color.
@@ -1280,49 +1323,20 @@ pub(super) fn status_count_parts<'a>(
 /// state, its elapsed time, and the reason for it on the detail line. It carries no badge unless
 /// the cluster spans workspaces, and then only where it sits.
 fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row {
-    let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
-    let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &state.theme);
-    let duration = row_duration(row).map(|(text, _)| text);
-    let muted = super::super::fg_only(&state.theme.muted).dim();
-    if let Some(child) = child {
-        // A run's title is what it works on, often long enough to truncate anything riding after
-        // it, so its time joins the state it measures, which the detail line never truncates.
-        let mut label = row_status_label(status, row.finished_unseen);
-        if let Some(duration) = duration.as_deref() {
-            label = format!("{label} {duration}");
-        }
-        let mut content = Row::new(child.label)
-            .active(row_is_active(state, row))
-            .glyph(status_icon(glyph, color, spinner))
-            .title_style(run_title_style(&state.theme, row))
-            .detail(label, Style::new().fg(color));
-        if let Some(reason) = row.reason.as_deref() {
-            let budget = activity_budget(
-                state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
+    let width = state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity"));
+    let workspace = super::workspace_badge(state, row.workspace_index);
+    let (title, location, note) = match child {
+        // Beneath a cluster, which names the agent, a run is named by its work, and its workspace
+        // shows only where the cluster's runs do not share one.
+        Some(child) => {
+            let location = crate::view::vocabulary::fields(
+                row.subpath
+                    .iter()
+                    .map(|subpath| row::truncate_start(subpath, SUBPATH_MAX_CHARS))
+                    .chain(child.show_workspace.then_some(workspace)),
             );
-            content = content.detail(row::truncate(reason, budget), muted);
+            (child.label, location, row.reason.clone())
         }
-        let badge = crate::view::vocabulary::fields(
-            row.subpath
-                .iter()
-                .map(|subpath| row::truncate_start(subpath, SUBPATH_MAX_CHARS))
-                .chain(
-                    child
-                        .show_workspace
-                        .then(|| super::workspace_badge(state, row.workspace_index)),
-                ),
-        );
-        if !badge.is_empty() {
-            content = content.badge_text(badge, muted);
-        }
-        return mark_background_run(content, state, row);
-    }
-    let mut content = Row::new(row.title.clone())
-        // For a published slot, being on screen in its own program decides this: a focused pane
-        // shows exactly one of its slots, so marking them all active would say nothing.
-        .active(row_is_active(state, row))
-        .glyph(status_icon(glyph, color, spinner))
-        .title_style(run_title_style(&state.theme, row))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
         // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
         // that two rows cannot be watched side by side.
@@ -1330,52 +1344,36 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
         // Where the agent sits below its project root leads it: in a monorepo, `services/api` is
         // the only thing separating two rows that otherwise read identically, and the group header
         // can no longer say it now that it names the project rather than the directory.
-        .badge_text(
-            {
-                let workspace = super::workspace_badge(state, row.workspace_index);
-                match row.subpath.as_deref() {
-                    Some(subpath) => {
-                        let budget = subpath_budget(
-                            state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")),
-                            &row.title,
-                            duration.as_deref(),
-                            &workspace,
-                        );
-                        // Too little room to say anything useful about the path: keep the number
-                        // alone rather than an ellipsis standing in for it.
-                        if budget < 4 {
-                            workspace
-                        } else {
-                            format!("{} · {workspace}", row::truncate_start(subpath, budget))
-                        }
+        None => {
+            let location = match row.subpath.as_deref() {
+                Some(subpath) => {
+                    let budget = subpath_budget(width, &row.title, &workspace);
+                    // Too little room to say anything useful about the path: keep the number
+                    // alone rather than an ellipsis standing in for it.
+                    if budget < 4 {
+                        workspace
+                    } else {
+                        format!("{} · {workspace}", row::truncate_start(subpath, budget))
                     }
-                    None => workspace,
                 }
-            },
-            super::super::fg_only(&state.theme.muted).dim(),
-        );
-
-    // The elapsed run rides beside the name, in the gap the badge left empty. It qualifies the
-    // agent, not the activity, and putting it here hands the whole detail line to the activity -
-    // which is the part that was truncating.
-    if let Some(duration) = duration.as_deref() {
-        content = content.meta(duration.to_string(), Style::new().fg(color));
+                None => workspace,
+            };
+            (row.title.clone(), location, row.activity.clone())
+        }
+    };
+    let content = RunLines {
+        title,
+        // For a published slot, being on screen in its own program decides this: a focused pane
+        // shows exactly one of its slots, so marking them all active would say nothing.
+        active: row_is_active(state, row),
+        title_style: run_title_style(&state.theme, row),
+        location: Some(location),
+        status: row.status.as_deref().unwrap_or(pane_status::IDLE),
+        finished_unseen: row.finished_unseen,
+        duration: row_duration(row).map(|(text, _)| text),
+        notes: note.into_iter().collect(),
     }
-    // Detail line: what the agent is doing. A canonical status yields to a real activity, since its
-    // glyph already carries it; a custom one like "compacting" keeps its word either way, having
-    // only a `•` to lean on.
-    let label = row_status_label(status, row.finished_unseen);
-    if !status_is_canonical(&label) || row.activity.is_none() {
-        content = content.detail(label, Style::new().fg(color));
-    }
-    if let Some(activity) = row.activity.as_deref() {
-        let budget =
-            activity_budget(state.sidebar_tab_width(&crate::config::SidebarTabId::new("activity")));
-        content = content.detail(
-            row::truncate(activity, budget),
-            super::super::fg_only(&state.theme.muted).dim(),
-        );
-    }
+    .row(&state.theme, width);
     mark_background_run(content, state, row)
 }
 
@@ -2933,27 +2931,19 @@ mod tests {
     #[test]
     fn the_subpath_yields_to_everything_else_on_the_name_line() {
         // Room to spare: the subpath gets its full allowance.
-        assert_eq!(subpath_budget(48, "OpenCode", None, "1"), SUBPATH_MAX_CHARS);
-        // The elapsed run takes its share out of the subpath, not the number.
-        assert!(
-            subpath_budget(32, "OpenCode #1", Some("2h12m"), "1")
-                < subpath_budget(32, "OpenCode #1", None, "1")
-        );
+        assert_eq!(subpath_budget(48, "OpenCode", "1"), SUBPATH_MAX_CHARS);
         // A longer name and a named workspace both come out of the same allowance.
         assert!(
-            subpath_budget(32, "GitHub Copilot #12", Some("2h12m"), "2:review")
-                < subpath_budget(32, "OpenCode #1", Some("2h12m"), "1")
+            subpath_budget(32, "GitHub Copilot #12", "2:review")
+                < subpath_budget(32, "OpenCode #1", "1")
         );
         // Nothing left over saturates at zero rather than wrapping.
-        assert_eq!(
-            subpath_budget(16, "GitHub Copilot #12", Some("2h12m"), "2:review"),
-            0
-        );
+        assert_eq!(subpath_budget(16, "GitHub Copilot #12", "2:review"), 0);
     }
 
     #[test]
     fn activity_budget_tracks_the_configured_width() {
-        // The elapsed time moved to the title line, so the whole detail line is the activity's.
+        // The detail line's notes get the tab less its chrome.
         assert_eq!(activity_budget(32), 27);
         // A wider sidebar spends the whole difference on the activity.
         assert_eq!(activity_budget(48), 43);
@@ -3055,10 +3045,10 @@ mod tests {
         assert_eq!(targets[1], (2, blocked));
     }
 
-    /// A run's title is what it works on and runs long, so its time rides with its state on the
-    /// detail line rather than after the title, where truncation would take it first.
+    /// A run's time rides with the state it measures on the detail line, never after the title,
+    /// where truncation would take it first and the row would read differently from its neighbours.
     #[test]
-    fn a_cluster_run_shows_its_time_beside_its_state() {
+    fn a_run_shows_its_time_beside_its_state() {
         let state = State::new(crate::config::Config::default(), Theme::default());
         let run = AgentRow {
             pane_id: 1,
@@ -3091,6 +3081,16 @@ mod tests {
         let content = agent_row(&state, &run, Some(child));
         assert_eq!(content.meta_text(), None);
         assert_eq!(content.detail_texts(), ["Working 9m22s", "Thinking"]);
+
+        // On its own the agent's name is short, but its time still joins its state, and the state
+        // keeps its word beside what the agent says it is doing.
+        let alone = AgentRow {
+            activity: Some("Reading files".into()),
+            ..run
+        };
+        let content = agent_row(&state, &alone, None);
+        assert_eq!(content.meta_text(), None);
+        assert_eq!(content.detail_texts(), ["Working 9m22s", "Reading files"]);
     }
 
     /// Runs are named by their task, else what their terminal says, else the agent - numbered

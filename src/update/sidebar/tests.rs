@@ -2789,15 +2789,7 @@ fn several_runs_of_one_agent_in_a_checkout_cluster_under_it() {
             });
         let lines = agents_tab_lines(&mut backend);
         assert!(
-            in_order(
-                &lines,
-                &[
-                    "master",
-                    "Codex",
-                    "Fix SSH reconnect",
-                    "Review the graphics PR"
-                ]
-            ),
+            in_order(&lines, &["master", "Codex", "Fix SSH", "Review the"]),
             "the cluster, then its runs most urgent first:\n{}",
             lines.join("\n")
         );
@@ -2815,6 +2807,85 @@ fn several_runs_of_one_agent_in_a_checkout_cluster_under_it() {
             cluster.contains("▲1") && cluster.contains("○1"),
             "{}",
             lines.join("\n")
+        );
+    });
+}
+
+/// An agent run reads the same in Agents as in Activity: its work with its session on the right, then
+/// its state, then why. A long task cannot push the session off its line, and in a narrow tab the
+/// agent's name gives way before the reason, and the reason before the state.
+#[test]
+fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let mut working = monitored_agent("backend", 4, "working");
+        working.task = Some("cursor trail sigwinch resize regression".into());
+        working.reason = Some("Background work running".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![working],
+                projects: vec![project("backend", "/x/rozi", None, "master", &[4])],
+            });
+        for width in [32, 60] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            let lines = agents_tab_lines(&mut backend);
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(usize::from(width)).collect())
+                .collect();
+            let title = line_of(&sidebar, "cursor trail");
+            assert!(
+                sidebar[title]
+                    .trim_end_matches(['│', ' '])
+                    .ends_with("backend"),
+                "the session holds the right of the title line at {width}:\n{}",
+                sidebar.join("\n")
+            );
+            let detail = &sidebar[title + 1];
+            assert!(
+                detail.trim_start().starts_with("Working"),
+                "the state leads the detail line:\n{}",
+                sidebar.join("\n")
+            );
+            assert!(detail.contains("Background"), "{}", sidebar.join("\n"));
+            assert_eq!(
+                detail.contains("Codex"),
+                width == 60,
+                "the agent's name is the first to give way:\n{}",
+                sidebar.join("\n")
+            );
+        }
+
+        // A long session name is cut before the title has less than two thirds of the line.
+        let session = "worktree-stable-docking-shell";
+        let mut working = monitored_agent(session, 4, "working");
+        working.task = Some("cursor trail sigwinch resize regression".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![working],
+                projects: vec![project(session, "/x/rozi", None, "master", &[4])],
+            });
+        backend.state_mut().config.sidebar.layout.left.width = 32;
+        let lines = agents_tab_lines(&mut backend);
+        let sidebar: Vec<String> = lines
+            .iter()
+            .map(|line| line.chars().take(32).collect())
+            .collect();
+        let title = &sidebar[line_of(&sidebar, "cursor trail")];
+        assert!(
+            title.contains("cursor trail si")
+                && title.contains("worktr")
+                && !title.contains(session),
+            "the title keeps most of the line and the session shortens:\n{}",
+            sidebar.join("\n")
         );
     });
 }
@@ -2853,13 +2924,7 @@ fn the_agents_tab_can_name_each_repository_once() {
         assert!(
             in_order(
                 &lines,
-                &[
-                    "rozi",
-                    "master",
-                    "Tidy the docs",
-                    "fix/ssh",
-                    "Fix SSH reconnect"
-                ]
+                &["rozi", "master", "Tidy the docs", "fix/ssh", "Fix SSH"]
             ),
             "the primary checkout first, then worktrees by branch:\n{}",
             lines.join("\n")

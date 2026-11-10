@@ -50,6 +50,9 @@ pub(crate) const SEPARATOR: &str = " · ";
 /// session family and the idle agent glyph already use.
 pub(crate) const BACKGROUND_RUN: &str = "⧉";
 
+/// The one you are in: the session on screen in Sessions, the agent on screen in Agents.
+pub(crate) const CURRENT: &str = "Current";
+
 /// What happens to a session when this client is restarted on another build. Each says what the
 /// session will be afterwards, so it reads as a status, capitalized. A blocked session's reason is
 /// its own, and is drawn apart from the word.
@@ -227,7 +230,7 @@ impl SessionPresence {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::Current => "Current",
+            Self::Current => CURRENT,
             Self::Background => "Background",
             Self::Reconnecting => "Reconnecting",
             Self::Offline => "Offline",

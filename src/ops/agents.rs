@@ -11,9 +11,10 @@ use crate::AppRoot;
 use crate::state::{AgentLocation, AgentPickerState, PendingAgentJump};
 
 pub(crate) fn open_agent_picker(ctx: &mut Context<AppRoot>) -> Update {
-    // Land on the first row, which is the most urgent one: the view is ordered by what wants
-    // attention, so the answer to "what needs me right now" is already under the cursor.
-    let selected = crate::view::agents::first_agent_location(&ctx.state);
+    // Land on the agent on screen, as Sessions lands on the session on screen. The order is still
+    // by what wants attention, so what needs the user is the top row, and
+    // `focus-next-agent-needing-attention` goes there without opening anything.
+    let selected = crate::view::agents::initial_agent_location(&ctx.state);
     ctx.state.agent_picker = Some(AgentPickerState::new(selected));
     ctx.state.commands_dirty = true;
     crate::ops::focus::request_agent_picker_focus(ctx);
@@ -727,7 +728,7 @@ mod tests {
                     agent: "codex".into(),
                     label: "Codex".into(),
                     state: crate::session::protocol::AgentState::from_status("blocked"),
-                    reason: None,
+                    reason: Some("Permission required".into()),
                     task: None,
                     screen_title: None,
                     completions: 0,
@@ -740,14 +741,9 @@ mod tests {
             backend.render();
             let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
             assert!(
-                frame
-                    .lines()
-                    .any(|line| line.contains("Codex") && line.contains("backend@workbox")),
-                "the row names who and where:\n{frame}"
-            );
-            assert!(
-                frame.contains("Blocked"),
-                "and the highlighted row's detail says what it is waiting on:\n{frame}"
+                frame.lines().any(|line| line.contains("Codex")
+                    && line.contains("Permission required · backend@workbox")),
+                "the row names who, what it is waiting on, and where:\n{frame}"
             );
         });
     }
@@ -786,7 +782,6 @@ mod tests {
                     .any(|line| line.contains("Codex") && line.contains("backend")),
                 "{frame}"
             );
-            assert!(frame.contains("Blocked"), "{frame}");
         });
     }
 
@@ -1202,7 +1197,7 @@ mod tests {
 
     /// A short description stays right-aligned like every picker's; a long one starts two columns
     /// after the name instead of at a fixed column. When both sides are long the label gives way
-    /// down to a third of the row, and a long label beside a short description is cut only as far
+    /// down to two fifths of the row, and a long label beside a short description is cut only as far
     /// as the description needs.
     #[test]
     fn row_descriptions_follow_the_name_and_share_the_row_with_long_labels() {
@@ -1220,20 +1215,20 @@ mod tests {
             assert!(long.contains("Codex  sss"), "{long}");
             assert!(long.contains("s… │"), "truncated at the end: {long}");
 
-            // The label keeps a third of what the row draws between its borders.
+            // The label keeps two fifths of what the row draws between its borders.
             let both = rendered_rows(&[(&long_label, &long_session)]).remove(0);
             assert!(both.contains("…  sss"), "{both}");
             let row_width = column(&both, " │") - column(&both, "│ ");
             let label_width = column(&both, "…  sss") + 1 - column(&both, "Codex");
             assert!(
-                (row_width * 30 / 100..=row_width * 36 / 100).contains(&label_width),
+                (row_width * 37 / 100..=row_width * 43 / 100).contains(&label_width),
                 "{label_width} of {row_width}: {both}"
             );
 
             let label = rendered_rows(&[(&long_label, "dev")]).remove(0);
             assert!(label.contains("…  dev │"), "{label}");
             assert!(
-                column(&label, "…  dev") + 1 - column(&label, "Codex") > row_width * 36 / 100,
+                column(&label, "…  dev") + 1 - column(&label, "Codex") > row_width * 43 / 100,
                 "{label}"
             );
         });
@@ -1255,6 +1250,228 @@ mod tests {
             assert!(
                 frame.contains("No agents running here"),
                 "nothing anywhere, and nowhere else was asked:\n{frame}"
+            );
+        });
+    }
+
+    /// The session `dev` on screen with a detected agent in each of `agents`' panes, `(pane,
+    /// agent, state)`, working in the `rozi` checkout on `master`, and pane `focused` focused.
+    fn session_with_agents(
+        agents: &[(
+            crate::pane::id::PaneId,
+            &str,
+            crate::session::protocol::DetectedAgentState,
+        )],
+        focused: crate::pane::id::PaneId,
+    ) -> TestBackend<AppRoot> {
+        let ids: Vec<_> = agents.iter().map(|(pane, ..)| *pane).collect();
+        let mut backend = backend_with_panes(&ids);
+        let state = backend.state_mut();
+        state.config.animations.picker = crate::layout::anim::PickerAnimationStyle::Off;
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().focused_pane = Some(focused);
+        state.current_mut().workspaces[0].focused_pane = Some(focused);
+        for pane in &mut state.current_mut().workspaces[0].panes {
+            let Some((_, agent, detected)) = agents.iter().find(|(id, ..)| *id == pane.id) else {
+                continue;
+            };
+            pane.opening = false;
+            pane.terminal.cwd = Some("/x/rozi".into());
+            pane.terminal.project_root = Some("/x/rozi".into());
+            pane.terminal.git_branch = Some("master".into());
+            if !agent.is_empty() {
+                pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                    agent: crate::session::protocol::AgentIdentity::new(
+                        agent.to_lowercase(),
+                        *agent,
+                    )
+                    .into(),
+                    state: *detected,
+                });
+            }
+        }
+        backend
+    }
+
+    fn open_picker(backend: &mut TestBackend<AppRoot>) -> String {
+        backend.dispatch(Msg::CloseAgentPicker).unwrap();
+        backend
+            .dispatch(Msg::RunAction(crate::input::Action::OpenAgentPicker))
+            .expect("open the agents view");
+        backend.render();
+        backend.capture_frame().to_fixed_grid_lines().join("\n")
+    }
+
+    fn picker_selection(backend: &TestBackend<AppRoot>) -> Option<AgentLocation> {
+        backend.state().agent_picker.as_ref()?.selected.clone()
+    }
+
+    /// Like every picker with a current item, Agents opens on it: the agent on screen, marked
+    /// `Current`, with nothing for Enter to offer there. The order is still by what wants the
+    /// user, so the blocked agent stays first. Every row is in the session on screen, which the
+    /// header names, so the rows name their checkout instead of repeating it.
+    #[test]
+    fn the_picker_opens_on_the_agent_on_screen_and_names_the_session() {
+        use crate::session::protocol::DetectedAgentState::{Blocked, Idle, Working};
+        crate::test_support::on_large_stack(|| {
+            let mut backend = session_with_agents(
+                &[
+                    (2, "Claude Code", Blocked),
+                    (3, "Codex", Working),
+                    (4, "", Idle),
+                ],
+                3,
+            );
+            let frame = open_picker(&mut backend);
+            assert_eq!(
+                picker_selection(&backend),
+                Some(AgentLocation::Here { pane: 3, row: None })
+            );
+            let lines: Vec<&str> = frame.lines().collect();
+            let header = lines
+                .iter()
+                .find(|line| line.contains("Agents"))
+                .expect("the frame header");
+            assert!(header.contains("dev"), "{frame}");
+            let rows: Vec<&str> = lines
+                .iter()
+                .copied()
+                .filter(|line| line.contains("Claude Code") || line.contains("Codex"))
+                .collect();
+            assert!(
+                rows[0].contains("Claude Code") && rows[0].contains("rozi (master) │"),
+                "the blocked agent leads, and names its checkout but not the session:\n{frame}"
+            );
+            assert!(
+                rows[1].contains("Codex") && rows[1].contains("Current · rozi (master)"),
+                "{frame}"
+            );
+            assert!(!frame.contains("go to"), "{frame}");
+
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Up,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+            backend.render();
+            let frame = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert_eq!(
+                picker_selection(&backend),
+                Some(AgentLocation::Here { pane: 2, row: None })
+            );
+            assert!(frame.contains("go to"), "{frame}");
+
+            // A shell in the focused pane is no agent to open on: the top row is.
+            backend.state_mut().current_mut().focused_pane = Some(4);
+            let frame = open_picker(&mut backend);
+            assert_eq!(
+                picker_selection(&backend),
+                Some(AgentLocation::Here { pane: 2, row: None })
+            );
+            assert!(!frame.contains("Current"), "{frame}");
+
+            // A remote session is named as its tab names it.
+            backend.state_mut().current_mut().remote_target =
+                Some(RemoteTarget::Alias("workbox".into()));
+            let frame = open_picker(&mut backend);
+            let header = frame
+                .lines()
+                .find(|line| line.contains("Agents"))
+                .expect("the frame header");
+            assert!(header.contains("dev@workbox"), "{frame}");
+        });
+    }
+
+    /// Of several runs one pane publishes, the one its program shows is the agent on screen; a run
+    /// it keeps in the background never is.
+    #[test]
+    fn the_picker_opens_on_the_run_its_pane_shows() {
+        use crate::session::protocol::DetectedAgentState::Idle;
+        crate::test_support::on_large_stack(|| {
+            let mut backend = session_with_agents(&[(2, "", Idle)], 2);
+            let run = |id: &str, active| crate::session::protocol::PublishedRow {
+                publisher: "sessions".into(),
+                kind: crate::session::protocol::PublisherKind::Agent,
+                live_session: None,
+                reported: false,
+                id: id.into(),
+                title: format!("run {id}"),
+                status: "idle".into(),
+                reason: None,
+                active,
+                work_started_at: None,
+                cwd: None,
+                project: None,
+                native_session: None,
+            };
+            backend.state_mut().current_mut().workspaces[0].panes[1]
+                .terminal
+                .published_rows = vec![run("behind", false), run("shown", true)];
+            let frame = open_picker(&mut backend);
+            let Some(AgentLocation::Here {
+                pane: 2,
+                row: Some(key),
+            }) = picker_selection(&backend)
+            else {
+                panic!("a run in pane 2:\n{frame}");
+            };
+            assert_eq!(key.id, "shown", "{frame}");
+            assert_eq!(
+                frame
+                    .lines()
+                    .filter(|line| line.contains("Current"))
+                    .count(),
+                1,
+                "{frame}"
+            );
+        });
+    }
+
+    /// Once any row runs elsewhere, every row names its session, except the agent on screen,
+    /// which is `Current` in the session the header names.
+    #[test]
+    fn rows_name_their_session_once_another_session_has_agents() {
+        use crate::session::protocol::DetectedAgentState::Working;
+        crate::test_support::on_large_stack(|| {
+            let mut backend =
+                session_with_agents(&[(2, "Codex", Working), (3, "Codex", Working)], 3);
+            backend.state_mut().local_agent_snapshot =
+                Some(crate::session::discovery::LocalAgentSnapshot {
+                    projects: Vec::new(),
+                    sessions: Vec::new(),
+                    agents: vec![crate::session::protocol::AgentSummary {
+                        reference: crate::session::protocol::AgentRef::for_test(4, 0, None),
+                        session: "backend".into(),
+                        agent: "claude".into(),
+                        label: "Claude Code".into(),
+                        state: crate::session::protocol::AgentState::from_status("idle"),
+                        reason: None,
+                        task: None,
+                        screen_title: None,
+                        completions: 0,
+                        changed_at: 0,
+                    }],
+                });
+            let frame = open_picker(&mut backend);
+            let rows: Vec<&str> = frame
+                .lines()
+                .filter(|line| line.contains("Claude Code") || line.contains("Codex"))
+                .collect();
+            assert_eq!(rows.len(), 3, "{frame}");
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains("Current · rozi (master)")),
+                "{frame}"
+            );
+            assert!(
+                rows.iter().any(|row| row.contains("dev · rozi (master)")),
+                "{frame}"
+            );
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains("Claude Code") && row.contains("backend │")),
+                "{frame}"
             );
         });
     }

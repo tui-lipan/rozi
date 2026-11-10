@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::state::{AgentLocation, AgentPickerTab};
+use crate::view::agents::GlobalAgentRow;
+
 /// The global Agents view: every agent this client knows about, wherever it is running, ordered by
 /// what wants attention. `Enter` lands on the one under the cursor — a focus change for a pane in
 /// the session on screen, and an attach followed by a focus change for anything else.
@@ -7,37 +10,49 @@ use super::*;
 /// Its rows are a pure projection of `State` (see [`crate::view::agents::global_agent_rows`]), so
 /// there is nothing here to keep in step with a poll: the list is whatever the last snapshot and
 /// the live panes currently say.
+///
+/// Everything a row says is on the row, as in every other picker. The frame header names the
+/// session on screen, and the right side carries the rest in the order it gives way.
 pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.agent_picker.as_ref() else {
         return Text::new("").into();
     };
     let theme = &ctx.state.theme;
-    let rows = crate::view::agents::global_agent_rows(&ctx.state);
     let tabs = crate::ops::agents::picker_tabs(&ctx.state);
     let active = tabs.iter().position(|tab| tab == &picker.tab).unwrap_or(0);
-    let show_location = picker.tab == crate::state::AgentPickerTab::All;
-    let rows = rows
+    let rows = crate::view::agents::global_agent_rows(&ctx.state)
         .into_iter()
         .filter(|row| row.in_tab(&ctx.state, &picker.tab))
-        .collect::<Vec<_>>();
-    let width = picker_width(&rows, show_location);
-    let entries = rows
-        .iter()
-        .map(|row| {
-            SearchEntry::Item(
-                SearchItem::new(row.label(), row.location.clone())
-                    .aliases(row.search_aliases(&ctx.state)),
-            )
-            .description(picker_description(row.description()))
+        .map(|row| PickerRow {
+            current: row.is_on_screen(&ctx.state),
+            row,
         })
         .collect::<Vec<_>>();
-    let selected = picker
-        .selected
-        .as_ref()
-        .and_then(|selected| rows.iter().position(|row| &row.location == selected));
-    let empty_text = if picker.input.text().trim().is_empty() && !show_location {
+    // A session tab says where its rows run, and so does the header when every row is in the
+    // session on screen. Only rows from elsewhere need to name theirs.
+    let show_session =
+        picker.tab == AgentPickerTab::All && rows.iter().any(|entry| !entry.row.is_here());
+    let width = picker_width(&rows, show_session);
+    let entries = rows
+        .iter()
+        .map(|entry| {
+            SearchEntry::Item(
+                SearchItem::new(entry.row.label(), entry.row.location.clone())
+                    .aliases(entry.row.search_aliases(&ctx.state)),
+            )
+            .description(picker_description(entry.row.description()))
+        })
+        .collect::<Vec<_>>();
+    let selected_row = picker.selected.as_ref().and_then(|selected| {
+        rows.iter()
+            .position(|entry| &entry.row.location == selected)
+    });
+    let query = picker.input.text().trim();
+    let empty_text = if !query.is_empty() {
+        format!("No agents match `{query}`")
+    } else if picker.tab != AgentPickerTab::All {
         "No agents in this session".to_string()
-    } else if picker.input.text().trim().is_empty() {
+    } else {
         // Says which machines were asked, not merely that the answer was empty: nothing running on
         // a client connected to nowhere is not news, and nothing running across four connected
         // hosts is.
@@ -46,14 +61,13 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             1 => "No agents running here or on the connected host".to_string(),
             count => format!("No agents running here or on {count} connected hosts"),
         }
-    } else {
-        format!("No agents match `{}`", picker.input.text().trim())
     };
     // Opening a row in another session attaches on the way, which is a larger step than a focus
-    // change and is worth saying before it is taken.
-    let selected_is_other_session = picker.selected.as_ref().is_some_and(|location| {
-        matches!(location, crate::state::AgentLocation::OtherSession { .. })
-    });
+    // change and is worth saying before it is taken. The agent on screen offers nothing: Enter
+    // there only closes the picker, as on the Sessions picker's current session.
+    let selected_entry = selected_row.map(|index| &rows[index]);
+    let selected_is_other_session = selected_entry
+        .is_some_and(|entry| matches!(entry.row.location, AgentLocation::OtherSession { .. }));
     let actions = vec![
         OverlayAction::new(
             "enter",
@@ -67,43 +81,20 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
                 .clone()
                 .map(Msg::AgentPickerActivate)
                 .unwrap_or(Msg::CloseAgentPicker),
-            picker.selected.is_some(),
+            selected_entry.is_some_and(|entry| !entry.current),
         )
         .hint_only(),
     ];
     let fallback = ctx
         .link()
         .key_handler(|key| key.is(KeyCode::Esc).then_some(Msg::CloseAgentPicker));
-    // Resolved up front so the gutter closure carries colors rather than the theme and the rows.
-    let gutters = rows
-        .iter()
-        .map(|row| {
-            let (glyph, color, working) =
-                crate::view::sidebar::agents::row_glyph(&row.status, row.finished_unseen, theme);
-            (row.location.clone(), glyph, color, working)
-        })
-        .collect::<Vec<_>>();
-    let detail = picker
-        .selected
-        .as_ref()
-        .and_then(|selected| rows.iter().find(|row| &row.location == selected))
-        .map(|row| {
-            let (_, color, _) =
-                crate::view::sidebar::agents::row_glyph(&row.status, row.finished_unseen, theme);
-            super::common::detail_line(detail_spans(
-                row,
-                Style::new().fg(color),
-                fg_only(&theme.muted),
-            ))
-        });
-    let render_rows = Arc::new(rows);
-    let name_style = fg_only(&theme.primary).bold();
-    let agent_style = fg_only(&theme.muted);
-    let location_style = fg_only(&theme.muted);
-    let status_colors = gutters
-        .iter()
-        .map(|(location, _, color, _)| (location.clone(), *color))
-        .collect::<Vec<_>>();
+    // Resolved up front so the closures carry spans and colors rather than the theme and the rows.
+    let rendered = Arc::new(
+        rows.iter()
+            .map(|entry| RenderedRow::new(entry, show_session, theme))
+            .collect::<Vec<_>>(),
+    );
+    let gutters = Arc::clone(&rendered);
     let mut overlay = OverlayPalette::new(
         "Agents",
         crate::view::agent_picker_key(),
@@ -115,79 +106,46 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     // would fold into one row, so every refresh would put the cursor back on the first of them.
     .item_key(|item| Arc::from(format!("{:?}", item.value)))
     .render_item(Arc::new(move |item, _highlight| {
-        let row = render_rows.iter().find(|row| row.location == item.value)?;
-        let (_, color) = status_colors
-            .iter()
-            .find(|(location, _)| location == &item.value)?;
-        // A run its client keeps in the background leans, as it does in the sidebar.
-        let name_style = if row.background {
-            name_style.italic()
-        } else {
-            name_style
-        };
-        let mut label = vec![Span::new(row.title()).style(name_style)];
-        if row.work().is_some() {
-            label.push(Span::new(format!(" · {}", row.agent)).style(agent_style));
-        }
-        let mut description = Vec::new();
-        if let Some(note) = state_note(row) {
-            description.push(Span::new(note).style(Style::new().fg(*color)));
-        }
-        if show_location {
-            let place = crate::view::vocabulary::session_at(&row.session, row.host.as_deref());
-            let place = if description.is_empty() {
-                place
-            } else {
-                format!(" · {place}")
-            };
-            description.push(Span::new(place).style(location_style));
-        }
+        let row = rendered.iter().find(|row| row.location == item.value)?;
         Some(
-            ListItem::from_spans(label)
-                .description_spans(description)
-                // What and where win the row, so a long task starts right after a short name, but
-                // keeps a third of it. One that fits stays right-aligned.
+            ListItem::from_spans(row.label.clone())
+                .description_spans(row.description.clone())
+                // What the agent works on wins the row: the right side gives way first, from its
+                // end, until the label is down to its share. One that fits stays right-aligned,
+                // and one cut down to nothing is hidden rather than drawn as a lone `…`.
                 .primary_truncate_description_first(false)
-                .primary_min_label_width(Length::Percent(33))
+                .primary_min_label_width(Length::Percent(LABEL_SHARE))
                 .primary_description_gap(2),
         )
     }))
-    .detail(detail)
     .actions(actions)
     .placeholder("Search agents…")
     .initial_query(picker.input.text().to_string())
-    .selected(selected)
+    .selected(selected_row)
     .empty_text(empty_text)
     .fallback_interceptor(fallback)
-    .item_gutter(Arc::new(
-        move |item: &SearchItem<crate::state::AgentLocation>, _hl| {
-            let (_, glyph, color, working) = gutters
-                .iter()
-                .find(|(location, ..)| location == &item.value)?;
-            let style = Style::new().fg(*color);
-            Some(if *working {
-                crate::view::vocabulary::picker_circle_spinner_gutter(style)
-            } else {
-                crate::view::vocabulary::picker_marker_gutter(glyph, style)
-            })
-        },
-    ))
+    .item_gutter(Arc::new(move |item: &SearchItem<AgentLocation>, _hl| {
+        let row = gutters.iter().find(|row| row.location == item.value)?;
+        let style = Style::new().fg(row.color);
+        Some(if row.working {
+            crate::view::vocabulary::picker_circle_spinner_gutter(style)
+        } else {
+            crate::view::vocabulary::picker_marker_gutter(&row.glyph, style)
+        })
+    }))
     .on_query_change(
         ctx.link()
             .callback(|query: Arc<str>| Msg::AgentPickerQueryChanged(query.to_string())),
     )
-    .on_select(
-        ctx.link()
-            .callback(|event: SearchEvent<crate::state::AgentLocation>| {
-                Msg::AgentPickerSelect(event.item.value.clone())
-            }),
-    )
-    .on_activate(
-        ctx.link()
-            .callback(|event: SearchEvent<crate::state::AgentLocation>| {
-                Msg::AgentPickerActivate(event.item.value.clone())
-            }),
-    );
+    .on_select(ctx.link().callback(|event: SearchEvent<AgentLocation>| {
+        Msg::AgentPickerSelect(event.item.value.clone())
+    }))
+    .on_activate(ctx.link().callback(|event: SearchEvent<AgentLocation>| {
+        Msg::AgentPickerActivate(event.item.value.clone())
+    }));
+    if let Some(session) = session_on_screen(&ctx.state) {
+        overlay = overlay.header_right(session);
+    }
     if tabs.len() > 1 {
         overlay = overlay.tabs(
             OverlayTabs::new(
@@ -201,10 +159,167 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     overlay.render(ctx)
 }
 
+/// The share of a row its label keeps when both sides are long. The task is what tells one run
+/// from another, so it keeps more of the row than the facts beside it.
+const LABEL_SHARE: u16 = 40;
+
+/// The columns a row needs besides its label and right side: frame border, row padding, the
+/// status gutter, and the gap between the two sides.
+const ROW_CHROME: usize = 8;
+
+const MIN_WIDTH: usize = 64;
+
+/// Rows widen the picker up to this, so a long task keeps its whole right side on a wide screen.
+/// A narrower terminal bounds it further.
+const MAX_WIDTH: usize = 180;
+
+/// One row and whether it is the agent on screen.
+struct PickerRow {
+    row: GlobalAgentRow,
+    current: bool,
+}
+
+/// What the row renderer and gutter draw for one row.
+struct RenderedRow {
+    location: AgentLocation,
+    label: Vec<Span>,
+    description: Vec<Span>,
+    glyph: String,
+    color: Color,
+    working: bool,
+}
+
+impl RenderedRow {
+    fn new(entry: &PickerRow, show_session: bool, theme: &Theme) -> Self {
+        let row = &entry.row;
+        let (glyph, color, working) =
+            crate::view::sidebar::agents::row_glyph(&row.status, row.finished_unseen, theme);
+        Self {
+            location: row.location.clone(),
+            label: label_spans(row, theme),
+            description: description_spans(entry, show_session, color, theme),
+            glyph,
+            color,
+            working,
+        }
+    }
+}
+
+/// The session on screen as its tab names it, `dev` or `dev@workbox`, for the frame header. The
+/// launcher has none.
+fn session_on_screen(state: &crate::state::State) -> Option<String> {
+    let current = state.current();
+    let session = current.session_name.clone()?;
+    Some(
+        AgentPickerTab::Session {
+            target: current.remote_target.clone(),
+            session,
+        }
+        .label(state),
+    )
+}
+
+/// The row's name: what the agent works on, then which agent it is when the work names the row.
+/// A run its client keeps in the background leans, as it does in the sidebar.
+fn label_spans(row: &GlobalAgentRow, theme: &Theme) -> Vec<Span> {
+    let name_style = fg_only(&theme.primary).bold();
+    let name_style = if row.background {
+        name_style.italic()
+    } else {
+        name_style
+    };
+    let mut label = vec![Span::new(row.title()).style(name_style)];
+    if row.work().is_some() {
+        label.push(Span::new(format!(" · {}", row.agent)).style(fg_only(&theme.muted)));
+    }
+    label
+}
+
+/// One fact on the right side of a row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Field {
+    /// Why the agent is in its state, and for how long.
+    State(String),
+    /// The agent on screen.
+    Current,
+    /// Where it runs, for a row outside the session on screen.
+    Session(String),
+    /// The checkout it works in.
+    Checkout(String),
+}
+
+impl Field {
+    fn text(&self) -> &str {
+        match self {
+            Self::State(text) | Self::Session(text) | Self::Checkout(text) => text,
+            Self::Current => crate::view::vocabulary::CURRENT,
+        }
+    }
+}
+
+/// The right side of a row, most important first, because it gives way from its end: the state
+/// and its time, why it is in that state, `Current` on the agent on screen, the session, and last
+/// the checkout, which a row short of room loses first.
+///
+/// A time is never shown bare: it leads with the word for the state it measures, `Working 14s`,
+/// as the sidebar's Agents tab writes it. A row with no time leaves the state to its glyph.
+fn fields(entry: &PickerRow, show_session: bool) -> Vec<Field> {
+    let row = &entry.row;
+    let lead = row.elapsed.map(|elapsed| {
+        format!(
+            "{} {}",
+            row.status_label(),
+            crate::view::sidebar::agents::format_age(elapsed)
+        )
+    });
+    // A custom state is its own word, which the lead already says.
+    let custom = crate::session::protocol::ActivityState::from_status(&row.status)
+        == crate::session::protocol::ActivityState::Custom;
+    let note = state_note(row).filter(|_| lead.is_none() || !custom);
+    let mut fields: Vec<Field> = lead.into_iter().chain(note).map(Field::State).collect();
+    // The header names the session on screen, so the agent on screen says it is current in place
+    // of that name.
+    if entry.current {
+        fields.push(Field::Current);
+    } else if show_session {
+        fields.push(Field::Session(crate::view::vocabulary::session_at(
+            &row.session,
+            row.host.as_deref(),
+        )));
+    }
+    fields.extend(row.place().map(Field::Checkout));
+    fields
+}
+
+/// The right side as spans: the state and its time in the state's colour, `Current` in the accent
+/// colour - not the green the Sessions picker gives it, which here means a finished run - and the
+/// places muted.
+fn description_spans(
+    entry: &PickerRow,
+    show_session: bool,
+    state_color: Color,
+    theme: &Theme,
+) -> Vec<Span> {
+    let muted = fg_only(&theme.muted);
+    let mut spans = Vec::new();
+    for field in fields(entry, show_session) {
+        if !spans.is_empty() {
+            spans.push(Span::new(crate::view::vocabulary::SEPARATOR).style(muted));
+        }
+        let style = match field {
+            Field::State(_) => Style::new().fg(state_color),
+            Field::Current => fg_only(&theme.accent),
+            Field::Session(_) | Field::Checkout(_) => muted,
+        };
+        spans.push(Span::new(field.text().to_string()).style(style));
+    }
+    spans
+}
+
 /// What the right side of a row says about its state, beyond the glyph: why it is waiting or
 /// failed when it said, or a publisher's own status word, which no glyph can show. A canonical state
 /// with nothing to add says nothing - the glyph and its color already do.
-fn state_note(row: &crate::view::agents::GlobalAgentRow) -> Option<String> {
+fn state_note(row: &GlobalAgentRow) -> Option<String> {
     use crate::session::protocol::ActivityState;
     let state = ActivityState::from_status(&row.status);
     match state {
@@ -214,55 +329,32 @@ fn state_note(row: &crate::view::agents::GlobalAgentRow) -> Option<String> {
     }
 }
 
-/// The highlighted row in full: its state, how long it has held or what the run took, why, and
-/// the project and branch it works in. Everything here is also searchable from the query field.
-fn detail_spans(
-    row: &crate::view::agents::GlobalAgentRow,
-    state_style: Style,
-    muted: Style,
-) -> Vec<Span> {
-    let rest = crate::view::vocabulary::fields(
-        row.elapsed
-            .map(crate::view::sidebar::agents::format_age)
-            .into_iter()
-            .chain(row.reason.clone())
-            .chain(row.place()),
-    );
-    let mut spans = vec![Span::new(row.status_label()).style(state_style)];
-    if !rest.is_empty() {
-        spans.push(Span::new(format!(" · {rest}")).style(muted));
-    }
-    spans
-}
-
-/// Size from all rows so filtering does not make the palette jump horizontally.
-fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: bool) -> u16 {
+/// Wide enough for the widest row's label and right side together, within bounds. Sized from all
+/// rows so filtering does not make the palette jump horizontally.
+fn picker_width(rows: &[PickerRow], show_session: bool) -> u16 {
     use unicode_width::UnicodeWidthStr;
+    let separator = crate::view::vocabulary::SEPARATOR.width();
     let widest = rows
         .iter()
-        .map(|row| {
-            let agent = row.work().map_or(0, |_| row.agent.width() + 3);
-            let note = state_note(row).map_or(0, |note| note.width());
-            let location = if show_location {
-                crate::view::vocabulary::session_at(&row.session, row.host.as_deref()).width()
-                    + if note > 0 { 3 } else { 0 }
-            } else {
-                0
-            };
-            let right = note + location;
-            row.title().width() + agent + if right > 0 { right + 2 } else { 0 }
+        .map(|entry| {
+            let row = &entry.row;
+            let label = row.title().width() + row.work().map_or(0, |_| row.agent.width() + 3);
+            let fields = fields(entry, show_session);
+            let right = fields
+                .iter()
+                .map(|field| field.text().width())
+                .sum::<usize>()
+                + separator * fields.len().saturating_sub(1);
+            label + right
         })
         .max()
         .unwrap_or(0);
-    // Frame border, row padding, and the status gutter.
-    (widest + 6).clamp(64, 140) as u16
+    (widest + ROW_CHROME).clamp(MIN_WIDTH, MAX_WIDTH) as u16
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::AgentLocation;
-    use crate::view::agents::GlobalAgentRow;
 
     fn row(task: &str) -> GlobalAgentRow {
         GlobalAgentRow {
@@ -285,14 +377,68 @@ mod tests {
         }
     }
 
+    fn entry(row: GlobalAgentRow, current: bool) -> PickerRow {
+        PickerRow { row, current }
+    }
+
     #[test]
-    fn width_fits_task_note_and_location_in_terminal_columns_within_bounds() {
+    fn width_fits_task_and_right_side_in_terminal_columns_within_bounds() {
         assert_eq!(picker_width(&[], true), 64);
-        assert_eq!(picker_width(&[row("")], true), 64);
-        // 40 columns of task, ` · Codex`, a two-column gap, and `dev@workbox`.
-        assert_eq!(picker_width(&[row(&"界".repeat(20))], true), 67);
-        assert_eq!(picker_width(&[row(&"界".repeat(20))], false), 64);
-        assert_eq!(picker_width(&[row(&"x".repeat(400))], true), 140);
+        assert_eq!(picker_width(&[entry(row(""), false)], true), 64);
+        // 40 columns of task and ` · Codex` beside `Working 4m00s · dev@workbox · api (fix-login)`.
+        let wide = row(&"界".repeat(20));
+        assert_eq!(
+            picker_width(&[entry(wide.clone(), false)], true),
+            48 + 45 + 8
+        );
+        // `Current` stands in for the session, and without the session column there is none.
+        assert_eq!(
+            picker_width(&[entry(wide.clone(), true)], true),
+            48 + 41 + 8
+        );
+        assert_eq!(picker_width(&[entry(wide, false)], false), 48 + 31 + 8);
+        assert_eq!(
+            picker_width(&[entry(row(&"x".repeat(400)), false)], true),
+            180
+        );
+    }
+
+    /// The right side reads most important first, so cutting it from the end loses the checkout,
+    /// then the session, before what the agent is doing.
+    #[test]
+    fn the_right_side_leads_with_the_state_and_ends_with_the_checkout() {
+        let mut blocked = row("fix login");
+        blocked.status = "blocked".into();
+        blocked.reason = Some("Permission required".into());
+        let text = |entry: &PickerRow, show_session| {
+            fields(entry, show_session)
+                .iter()
+                .map(Field::text)
+                .collect::<Vec<_>>()
+                .join(crate::view::vocabulary::SEPARATOR)
+        };
+        assert_eq!(
+            text(&entry(blocked.clone(), false), true),
+            "Blocked 4m00s · Permission required · dev@workbox · api (fix-login)"
+        );
+        assert_eq!(
+            text(&entry(blocked.clone(), true), true),
+            "Blocked 4m00s · Permission required · Current · api (fix-login)"
+        );
+        blocked.elapsed = None;
+        blocked.project = None;
+        assert_eq!(text(&entry(blocked, false), false), "Permission required");
+
+        // A custom state names itself once, beside its time.
+        let mut custom = row("fix login");
+        custom.status = "compacting".into();
+        custom.project = None;
+        assert_eq!(
+            text(&entry(custom.clone(), false), false),
+            "compacting 4m00s"
+        );
+        custom.elapsed = None;
+        assert_eq!(text(&entry(custom, false), false), "compacting");
     }
 
     /// The glyph says what state a row is in; the row adds only what the glyph cannot.
@@ -312,17 +458,5 @@ mod tests {
         assert_eq!(state_note(&row).as_deref(), Some("Permission required"));
         row.status = "compacting".into();
         assert_eq!(state_note(&row).as_deref(), Some("compacting"));
-    }
-
-    /// Project, branch, reason, and time move to the highlighted row's detail line.
-    #[test]
-    fn the_detail_line_carries_what_the_row_leaves_out() {
-        let mut row = row("fix login");
-        row.reason = Some("Running tests".into());
-        let text: String = detail_spans(&row, Style::new(), Style::new())
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect();
-        assert_eq!(text, "Working · 4m00s · Running tests · api (fix-login)");
     }
 }

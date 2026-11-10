@@ -475,12 +475,14 @@ fn live_attachment_rows(
     rows
 }
 
-/// The row the Agents view opens on: whichever one most wants attention.
-pub(crate) fn first_agent_location(state: &State) -> Option<AgentLocation> {
-    global_agent_rows(state)
-        .into_iter()
-        .next()
-        .map(|row| row.location)
+/// The row the Agents view opens on: the agent on screen, as every picker opens on what you are
+/// in, else whichever one most wants attention.
+pub(crate) fn initial_agent_location(state: &State) -> Option<AgentLocation> {
+    let rows = global_agent_rows(state);
+    rows.iter()
+        .find(|row| row.is_on_screen(state))
+        .or(rows.first())
+        .map(|row| row.location.clone())
 }
 
 #[cfg(test)]
@@ -718,7 +720,7 @@ mod tests {
             vec![("beta", "blocked"), ("alpha", "working"), ("beta", "idle")]
         );
         assert_eq!(
-            first_agent_location(&state),
+            initial_agent_location(&state),
             Some(AgentLocation::OtherSession {
                 target: Some(RemoteTarget::Alias("beta".into())),
                 session: "api".into(),

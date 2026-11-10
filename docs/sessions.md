@@ -181,32 +181,38 @@ waiting for you, then failed ones, then finished runs you have not looked at, th
 working, then finished runs you have seen, then idle agents.
 
 ```text
-Agents
- api   dev   backend@workbox   All
- ▲  fix login · Claude Code          Permission required · dev
- ×  Codex                              Thread failed · backend@workbox
- ●  add filesystem watcher · Claude Code                 dev
- ⠋  review PR · Claude Code                              dev
-
- Blocked · 2m10s · Permission required · api (fix-login)
+╭Agents────────────────────────────────────────────────────────────────────────────── dev╮
+│ api   dev   backend@workbox   All                                                      │
+│ ▲ fix login · Claude Code  Blocked 2m10s · Permission required · dev · api (fix-login) │
+│ × Codex                                                Thread failed · backend@workbox │
+│ ⠋ review PR · Claude Code                      Working 4m00s · Current · rozi (master) │
+│ ○ add filesystem watcher · Claude Code                             dev · rozi (master) │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-The picker opens on **All**. Each session with agents also gets its own tab; switch tabs with
-`Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter. Each tab keeps its own selection
-while Agents is open, starting on its top row.
+The frame names the session you are in, as `session` or `session@host`. **Agents** opens on **All**
+with the agent you are in highlighted and marked **Current**: the agent in the focused pane, or for
+a program running several agents there, the one it shows. When you are not in one, it opens on the
+top row. Each session with agents also gets its own tab; switch tabs with `Tab`, `Shift+Tab`, the
+arrow keys, or a click, and type to filter. Each tab keeps its own selection while Agents is open,
+starting on its top row.
 
 Each row leads with the agent's task when it names one, or else its terminal title, followed by the
-agent's name; two rows that would read the same are numbered. The glyph shows the agent's state. The right side adds the reason
-an agent gave for waiting or failing, and, on **All**, where it runs: the session name for local
-agents and `session@host` for remote agents. The line below the list describes the highlighted
-agent in full: its state, how long it has held or what its run took, the reason, and the project
-and branch it works in. A run its program keeps behind the one it shows, in a session this client
-is attached to, has an italic task.
+agent's name; two rows that would read the same are numbered. The glyph shows the agent's state. The
+right side adds, in order, the state with how long it has held or what its run took, such as
+`Working 4m00s`, the reason an agent gave for waiting or failing, **Current** on the agent you are
+in, the session it runs in, and the project and branch it works in. An agent with no time shows its
+state by the glyph alone. The session appears only on **All** once agents run outside the
+session you are in: the session name for local agents and `session@host` for remote agents. When a
+row is short of room, the right side gives way from its end, so the project and branch go first
+and the agent's state last. A run its program keeps behind the one it shows, in a session this
+client is attached to, has an italic task.
 
 Search matches all of it — the task, the agent, the session, the host, the project and branch, and
 the reason — so typing a branch or a host name narrows the list to the agents there.
 
-`Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane.
+`Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane;
+on the agent you are in, it only closes Agents.
 Anywhere else, rozi attaches to that session first and then focuses the pane — and, for a program
 running several agents, the agent's own row inside it. The host and session do not have to be open
 already. A session already in the background switches in immediately.

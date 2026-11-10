@@ -1570,3 +1570,47 @@ fn unavailable_settings_rows_keep_the_normal_pointer() {
         );
     });
 }
+
+/// Search lists the strongest match first even when the catalog files it under a later group, and
+/// the selection follows the query to that row rather than staying on an earlier keystroke's pick.
+#[test]
+fn settings_search_leads_with_the_best_match_across_groups() {
+    rozi::test_support::on_large_stack(|| {
+        for (query, best, later, action) in [
+            (
+                "startup",
+                "Sessions",
+                "Bars › Sidebar",
+                SettingsAction::CycleStartupMode,
+            ),
+            (
+                "background",
+                "Bars › Workbar",
+                "Panes › Background",
+                SettingsAction::ToggleWorkbarBackground,
+            ),
+        ] {
+            let mut backend = settings_backend(80, 60);
+            type_query(&mut backend, query);
+            let frame = rendered_rows(&mut backend);
+            let body = list_body(&frame);
+            let first_header = body
+                .lines()
+                .find(|line| line.contains('›') || line.contains("Sessions"))
+                .unwrap_or_else(|| panic!("`{query}` listed no group:\n{frame}"));
+            assert!(
+                first_header.contains(best),
+                "`{query}` should lead with {best}:\n{frame}"
+            );
+            assert!(
+                body.contains(later),
+                "`{query}` dropped the weaker {later} match:\n{frame}"
+            );
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(action),
+                "`{query}` should select its best match:\n{frame}"
+            );
+        }
+    });
+}

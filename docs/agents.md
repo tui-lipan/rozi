@@ -440,32 +440,41 @@ optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`.
 response as complete. `--capture` and `--result` can be combined.
 
 An integration response takes priority. When none is available at the end of an idle or completed
-turn, Rozi reads retained terminal history with `source: "terminal"`. This rendered text can include
-earlier turns and interface text, and always has `complete: false`.
+turn, rozi reads the agent's terminal with `source: "terminal"`. On the normal screen this is the
+retained terminal history, which can include earlier turns and interface text. An agent that draws
+on the alternate screen keeps no terminal history, so rozi scrolls its transcript to read it, as
+described below. When that is not possible, the response is the visible screen as it was when the
+turn ended. A `terminal` response always has `complete: false`.
 
-For an alternate-screen agent, Rozi can scroll through its history when its definition declares
-`history = "mouse-scroll"`, the agent is idle or done, mouse reporting is enabled, and the transcript
-is at the bottom. Declare it only for an agent whose mouse wheel does nothing but scroll its
-transcript, because Rozi sends real wheel events to read it:
+To read an alternate-screen transcript, rozi sends mouse-wheel events to the agent and reads each
+page, then scrolls back to where it started. It does this when the agent is idle or done, mouse
+reporting is enabled, and the transcript is at its bottom: rozi first scrolls down once, and if the
+screen moves, it scrolls back and returns the visible screen instead. Opt an agent out when its
+mouse wheel does anything other than scroll the transcript:
 
 ```toml
 [[agents]]
 id = "mycoolagent"
-history = "mouse-scroll"
+history = "none"
 ```
 
-No built-in definition declares it, and an agent without the declaration is never sent input. A
-built-in override keeps the built-in's setting when `history` is omitted. A successful read has
-`source: "alternate-screen-history"` and `fidelity: "rendered"`. `complete: true` means all history
-reachable by scrolling was read and the original viewport was restored; it does not identify one
-assistant turn. Ambiguous pages, unsupported terminals, and failed restoration return no
-reconstructed response. Rozi never resizes a pane to collect its history.
+An agent that has opted out is never sent input to read its history. A built-in override keeps the
+built-in's setting when `history` is omitted. A successful read has
+`source: "alternate-screen-history"` and `fidelity: "rendered"`. It leaves out scrollbars and the
+rows the agent keeps in place above its transcript, such as a pinned prompt; status rows between
+the transcript and the input box can remain. `complete: true` means all history reachable by
+scrolling was read and the original viewport was restored; it does not identify one assistant
+turn. A read that runs out of time, or reaches a page it cannot line up with the previous one,
+returns the newest part of the transcript with `complete: false`. Unsupported terminals and failed
+restoration return the visible screen instead. rozi never resizes a pane to collect its history.
 
 Typing or resizing cancels the read. Input and resize requests wait for restoration, then run in
 order, so resizing away and back ends at the original size. Screen detection holds its last state
-while Rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent prompts and headless input requests receive a busy error. Traversal is
-bounded to ten seconds, with up to three more seconds for restoration; a prompt deadline can stop
-it sooner. A manually scrolled transcript is restored to its starting position and left unread.
+while rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent
+prompts and headless input requests receive a busy error. Reading is bounded to ten seconds, and
+scrolling back may take as long again plus three seconds; a prompt deadline can stop it sooner. A
+manually scrolled transcript is restored to its starting position, and the response is its visible
+screen.
 `--capture` still captures the terminal when the turn resolves, before any scrolling.
 
 A prompt only returns an integration response published after that prompt was submitted for the same agent
@@ -476,7 +485,7 @@ and text output says it is unavailable. `agents response` returns the latest ret
 or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
 Each response accepts at most 1 MiB of text. Oversized reports fail explicitly. Normal terminal
 history is truncated at a UTF-8 boundary with `truncated: true`; oversized alternate-screen history
-returns no reconstruction.
+returns its newest part with `complete: false`.
 
 ### Report state from agent hooks
 

@@ -73,16 +73,16 @@ struct Rig {
     poll_runtime: bool,
 }
 
-const CLAUDE_WITH_HISTORY: &str = r#"
+/// A definition that says nothing about history, so it reads history by default.
+const CLAUDE: &str = r#"
 [[agents]]
 id = "claude"
 match = { names = ["claude"] }
-history = "mouse-scroll"
 "#;
 
 impl Rig {
     fn new(mode: &str) -> Self {
-        Self::with_agents(mode, CLAUDE_WITH_HISTORY)
+        Self::with_agents(mode, CLAUDE)
     }
 
     fn with_agents(mode: &str, agents: &str) -> Self {
@@ -235,6 +235,20 @@ impl Rig {
     }
 }
 
+/// No reconstruction: the reply carries the screen as it was when the turn resolved.
+fn assert_visible_fallback(result: &serde_json::Value, bottom: usize) {
+    let response = &result["data"]["response"];
+    assert_eq!(response["source"], "terminal", "{result}");
+    assert_eq!(response["fidelity"], "rendered", "{result}");
+    assert_eq!(response["complete"], false, "{result}");
+    let text = response["text"].as_str().unwrap();
+    for line in bottom..bottom + 6 {
+        assert!(text.contains(&format!("line {line:02} 日本語")), "{text}");
+    }
+    assert!(!text.contains(&format!("line {:02}", bottom - 1)), "{text}");
+    assert!(text.ends_with("footer"), "{text:?}");
+}
+
 #[test]
 fn history_returns_full_rendered_text_and_restores_for_both_transports() {
     for attached in [false, true] {
@@ -263,13 +277,13 @@ fn history_returns_full_rendered_text_and_restores_for_both_transports() {
 }
 
 #[test]
-fn scrolled_tui_and_failed_restoration_return_no_reconstruction() {
+fn scrolled_tui_and_failed_restoration_return_only_the_visible_screen() {
     for mode in ["scrolled", "restore-failure"] {
         let mut rig = Rig::new(mode);
         let original = rig.screen();
         rig.begin(true);
         let result = rig.finish();
-        assert!(result["data"]["response"].is_null(), "{result}");
+        assert_visible_fallback(&result, if mode == "scrolled" { 4 } else { 6 });
         if mode == "scrolled" {
             assert_eq!(rig.screen(), original);
         }
@@ -318,10 +332,7 @@ fn marked_input_and_resize_wait_for_restoration_in_order() {
         original_size
     );
     let result = rig.finish();
-    assert!(
-        result["data"]["response"].is_null(),
-        "cancelled read: {result}"
-    );
+    assert_visible_fallback(&result, 6);
     assert_eq!(
         (rig.server.panes[&3].cols, rig.server.panes[&3].rows),
         (40, 10)
@@ -387,6 +398,12 @@ fn normal_history_is_rendered_bounded_and_never_claimed_complete() {
     assert!(payload.text.len() <= MAX_RESPONSE_BYTES);
     assert!(payload.truncated);
     assert!(!payload.complete);
+    let history = format!("oldest{}newest", "🌷".repeat(MAX_RESPONSE_BYTES / 4));
+    let payload = rendered_payload(history, AgentResponseSource::AlternateScreenHistory, true);
+    assert!(payload.text.len() <= MAX_RESPONSE_BYTES);
+    assert!(payload.text.ends_with("newest") && !payload.text.starts_with("oldest"));
+    assert!(payload.truncated);
+    assert!(!payload.complete);
 }
 
 #[test]
@@ -401,12 +418,12 @@ fn eligibility_refuses_mouse_disabled_and_missing_pty() {
         }
         rig.begin(true);
         assert!(rig.server.agent_history.is_empty());
-        assert!(rig.result()["data"]["response"].is_null());
+        assert_visible_fallback(&rig.result(), 6);
     }
 }
 
 #[test]
-fn timeout_and_agent_resuming_restore_without_publishing() {
+fn timeout_and_agent_resuming_restore_without_reconstructing() {
     for timeout in [false, true] {
         let mut rig = Rig::new("bottom");
         let original = rig.screen();
@@ -419,15 +436,17 @@ fn timeout_and_agent_resuming_restore_without_publishing() {
         }
         let result = rig.finish();
         assert_eq!(rig.screen(), original);
-        assert!(result["data"]["response"].is_null(), "{result}");
         if timeout {
             assert_eq!(result["code"], "timeout", "{result}");
+            assert!(result["data"]["response"].is_null(), "{result}");
+        } else {
+            assert_visible_fallback(&result, 6);
         }
     }
 }
 
 #[test]
-fn unexpected_output_before_probe_never_scrolls_or_publishes() {
+fn unexpected_output_before_probe_never_scrolls() {
     let mut rig = Rig::new("bottom");
     rig.begin(true);
     rig.server.handle_event(ServerEvent::Pty(
@@ -438,11 +457,11 @@ fn unexpected_output_before_probe_never_scrolls_or_publishes() {
     ));
     assert!(rig.server.agent_history[&3].cancelled);
     let result = rig.finish();
-    assert!(result["data"]["response"].is_null());
+    assert_visible_fallback(&result, 6);
 }
 
 #[test]
-fn replacement_and_disconnected_requester_release_the_lease_without_content() {
+fn replacement_and_disconnected_requester_release_the_lease() {
     for replaced in [false, true] {
         let mut rig = Rig::new("bottom");
         let original = rig.screen();
@@ -454,9 +473,15 @@ fn replacement_and_disconnected_requester_release_the_lease_without_content() {
             rig.server.remove_agent_waits(rig.client);
         }
         let result = rig.finish();
-        assert!(result["data"]["response"].is_null());
         if replaced {
             assert_eq!(result["ok"], false);
+            assert!(result["data"]["response"].is_null(), "{result}");
+            assert!(
+                rig.server
+                    .agent_responses
+                    .latest(&rig.reference, &None)
+                    .is_none()
+            );
         } else {
             assert_eq!(rig.screen(), original);
         }
@@ -562,7 +587,7 @@ fn pending_pty_resize_prevents_history_and_its_retry_runs_normally() {
     rig.server.panes.get_mut(&3).unwrap().pty_resize_pending = true;
     rig.begin(true);
     assert!(rig.server.agent_history.is_empty());
-    assert!(rig.result()["data"]["response"].is_null());
+    assert_visible_fallback(&rig.result(), 6);
     let retried = std::cell::Cell::new(false);
     rig.server
         .handle_resize_with(rig.client, resize(30, 8), |_| {
@@ -576,7 +601,7 @@ fn pending_pty_resize_prevents_history_and_its_retry_runs_normally() {
 #[test]
 fn history_page_matching_a_working_rule_never_changes_agent_state() {
     let agents = format!(
-        "{CLAUDE_WITH_HISTORY}\n[[agents.states]]\nstate = \"working\"\nscreen = {{ any_of = [\"line 03\"] }}\n"
+        "{CLAUDE}\n[[agents.states]]\nstate = \"working\"\nscreen = {{ any_of = [\"line 03\"] }}\n"
     );
     let mut rig = Rig::with_agents("bottom", &agents);
     rig.server
@@ -629,17 +654,15 @@ fn history_page_matching_a_working_rule_never_changes_agent_state() {
 }
 
 #[test]
-fn history_requires_the_definition_to_declare_mouse_scroll() {
-    for declaration in ["", "history = \"none\"\n"] {
-        let agents = format!(
-            "[[agents]]\nid = \"claude\"\nmatch = {{ names = [\"claude\"] }}\n{declaration}"
-        );
-        let mut rig = Rig::with_agents("bottom", &agents);
-        rig.begin(true);
-        assert!(rig.server.agent_history.is_empty());
-        assert!(rig.result()["data"]["response"].is_null());
-        assert!(!rig.scratch.path().join("input").exists());
-    }
+fn opting_out_of_history_never_scrolls_and_returns_the_visible_screen() {
+    let agents = format!("{CLAUDE}history = \"none\"\n");
+    let mut rig = Rig::with_agents("bottom", &agents);
+    let original = rig.screen();
+    rig.begin(true);
+    assert!(rig.server.agent_history.is_empty());
+    assert_visible_fallback(&rig.result(), 6);
+    assert_eq!(rig.screen(), original);
+    assert!(!rig.scratch.path().join("input").exists());
 }
 
 #[test]
@@ -672,8 +695,8 @@ fn inline_image_in_a_history_page_still_restores_the_viewport() {
     );
     assert!(rig.server.agent_history[&3].cancelled);
     let result = rig.finish();
-    assert!(result["data"]["response"].is_null(), "{result}");
-    let _ = original;
+    assert_visible_fallback(&result, 6);
+    assert_eq!(rig.screen(), original);
 }
 
 fn stage_upload(rig: &mut Rig, transfer: u64) {

@@ -350,20 +350,6 @@ impl Layout<'_> {
         } else {
             status_counts(agents, theme)
         };
-        // A long branch keeps its end, where the line of work is named, so it is cut here from the
-        // start rather than left for the row to clip from the end. Its room is the tab less the
-        // gutter, the arrow, the divider and scrollbar columns, the label, the gap, and the counts.
-        let note = note.map(|note| {
-            let taken = 9
-                + label.chars().count()
-                + counts
-                    .iter()
-                    .map(|(count, _)| count.chars().count() + 1)
-                    .sum::<usize>()
-                + if counts.is_empty() { 0 } else { 2 };
-            let room = usize::from(self.width).saturating_sub(taken).max(8);
-            super::row::truncate_start(&note, room)
-        });
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
         if !parts.is_empty() && !counts.is_empty() {
             parts.push(("·".into(), dim));
@@ -373,6 +359,8 @@ impl Layout<'_> {
             .active(!expanded && agents.iter().any(|agent| is_active(self.state, agent)))
             .title_style(title_style)
             .priority(priority)
+            // A long branch keeps its end, where the line of work is named.
+            .badge_keeps_tail()
             .badge_parts(parts);
         let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
             .keyed(format!("{}:{}", key.section, key.row))

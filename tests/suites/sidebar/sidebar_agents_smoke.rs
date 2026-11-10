@@ -235,11 +235,11 @@ fn agents_tab_renders_project_groups() {
 
 /// Agents spread through one repository read as one project headed by its branch, with each row
 /// saying where in the project it sits.
-/// Two worktrees of one repository carry the same name, so in a narrow sidebar the branch is what
-/// must survive: it keeps its width and its tail, and the name gives way. A repository with one
-/// checkout keeps its name whole instead.
+/// Two worktrees of one repository carry the same name and tell apart by their branches. In a narrow
+/// sidebar the name leads, but a long one gives up width down to a share of the line, so the branch
+/// keeps its tail beside it. A repository with one checkout keeps its name whole instead.
 #[test]
-fn worktree_headings_keep_their_branch_when_the_name_repeats() {
+fn worktree_headings_keep_their_name_and_their_branch_tail_when_the_name_repeats() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -297,8 +297,8 @@ fn worktree_headings_keep_their_branch_when_the_name_repeats() {
         assert!(heading("master").contains("very-"), "{sidebar:#?}");
         let worktree = heading("work-status");
         assert!(
-            worktree.contains(" ve…"),
-            "the name keeps a stub where the branch needs the room: {sidebar:#?}"
+            worktree.contains(" very-long…"),
+            "the name keeps its share of the line: {sidebar:#?}"
         );
         assert!(
             worktree.contains("…")

@@ -2696,6 +2696,16 @@ fn the_agents_tab_lists_every_agent_by_checkout_on_each_host() {
         );
         let checkout = &lines[line_of(&lines, "master")];
         assert!(checkout.contains("rozi"), "{}", lines.join("\n"));
+        // A checkout reads as a heading, in Rozi's colour and bold as Activity's are.
+        let row = line_of(&lines, "master");
+        let column = lines[row].chars().position(|c| c == 'r').unwrap();
+        let cell = backend
+            .capture_frame()
+            .cell(column as u16, row as u16)
+            .clone();
+        let heading = crate::view::rozi_fg(&backend.state().theme);
+        assert_eq!(cell.fg, heading.fg.unwrap(), "{}", lines.join("\n"));
+        assert!(cell.modifiers.bold, "{}", lines.join("\n"));
         let checkout = &lines[line_of(&lines, "main")];
         assert!(checkout.contains("api"), "{}", lines.join("\n"));
 
@@ -2870,8 +2880,17 @@ fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
                 sessions: Vec::new(),
-                agents: vec![working],
-                projects: vec![project(session, "/x/rozi", None, "master", &[4])],
+                agents: vec![working, monitored_agent(session, 5, "idle")],
+                projects: vec![
+                    project(
+                        session,
+                        "/x/rozi-search",
+                        Some("/x/rozi"),
+                        "worktree-settings-search-ranking",
+                        &[4],
+                    ),
+                    project(session, "/x/rozi", None, "master", &[5]),
+                ],
             });
         backend.state_mut().config.sidebar.layout.left.width = 32;
         let lines = agents_tab_lines(&mut backend);
@@ -2885,6 +2904,15 @@ fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
                 && title.contains("worktr")
                 && !title.contains(session),
             "the title keeps most of the line and the session shortens:\n{}",
+            sidebar.join("\n")
+        );
+
+        // Beside another checkout of its repository, a branch too long for its row keeps its end
+        // and uses all the room the repository's name, which stays whole, leaves it.
+        let checkout = sidebar[line_of(&sidebar, "search-ranking")].trim_end_matches(['│', ' ']);
+        assert!(
+            checkout.ends_with("search-ranking") && checkout.contains("rozi  …"),
+            "the branch keeps its end and fills the row:\n{}",
             sidebar.join("\n")
         );
     });

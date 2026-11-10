@@ -187,10 +187,6 @@ pub(super) enum Priority {
     /// short, but a long one is cut before the label has less than two thirds of the line. An agent
     /// run beside the session or workspace it runs in.
     Aside,
-    /// The description is what tells this row from its neighbours, so it keeps its width first, but
-    /// the label keeps a stub - enough to show it is there and how it starts. A branch beside a
-    /// repository name that several headings share.
-    Distinguishing,
 }
 
 /// The least blank space between a label and its description, so the two read as separate things
@@ -216,6 +212,8 @@ pub(crate) struct Row {
     description: Vec<(String, Style)>,
     hover_description: Vec<(String, Style)>,
     priority: Priority,
+    /// A badge that has to shorten loses its start rather than its end.
+    badge_keeps_tail: bool,
     meta: Option<(String, Style)>,
     detail: Vec<(String, Style)>,
     detail_badge: Option<(String, Style)>,
@@ -235,6 +233,7 @@ impl Row {
             description: Vec::new(),
             hover_description: Vec::new(),
             priority: Priority::Label,
+            badge_keeps_tail: false,
             meta: None,
             detail: Vec::new(),
             detail_badge: None,
@@ -297,6 +296,13 @@ impl Row {
     /// Which of title and badge text survives when the title line is too narrow for both.
     pub(super) fn priority(mut self, priority: Priority) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// A badge that has to shorten keeps its end, as a section header's note does: a branch or a
+    /// path is told from its neighbours by its tail.
+    pub(super) fn badge_keeps_tail(mut self) -> Self {
+        self.badge_keeps_tail = true;
         self
     }
 
@@ -475,10 +481,11 @@ impl Row {
         // Title-line chrome (✕, host status) pins to this line only. A two-line List beside that
         // badge would steal width from the detail as well, which is how "Click to connect" was
         // ellipsized with empty space still sitting to its right.
-        let mut title = item_text(
-            titled_item(spans, joined_spans(description), self.priority),
-            1,
-        );
+        let mut item = titled_item(spans, joined_spans(description), self.priority);
+        if self.badge_keeps_tail {
+            item = item.primary_description_truncation(ListTruncation::Start);
+        }
+        let mut title = item_text(item, 1);
         if let Some(trailing) = trailing {
             title = HStack::new()
                 .gap(1)
@@ -503,9 +510,6 @@ fn titled_item(label: Vec<Span>, description: Vec<Span>, priority: Priority) -> 
         Priority::Aside => item
             .primary_truncate_description_first(false)
             .primary_min_label_width(Length::Percent(ASIDE_LABEL_SHARE)),
-        Priority::Distinguishing => item
-            .primary_truncate_description_first(false)
-            .primary_min_label_width(Length::Px(3)),
     }
 }
 

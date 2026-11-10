@@ -192,7 +192,8 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
     checkouts
 }
 
-/// Several checkouts of one repository read alike but for the branch, which then keeps its width.
+/// Several checkouts of one repository read alike but for the branch, so a long repository name
+/// gives it a share of the row.
 fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
     checkout.repository_key.is_some()
         && checkouts
@@ -200,6 +201,17 @@ fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
             .filter(|other| other.repository_key == checkout.repository_key)
             .count()
             > 1
+}
+
+/// What a row that folds agents beneath it names, which decides how it reads.
+#[derive(Clone, Copy)]
+enum Label {
+    /// A repository or checkout.
+    Project,
+    /// One checkout's branch beneath its repository.
+    Branch,
+    /// The agents in no Git checkout.
+    Elsewhere,
 }
 
 /// What every row on one host needs to place itself.
@@ -233,7 +245,7 @@ impl Layout<'_> {
         let key = self.key(checkout.row_id());
         let expanded = self.expanded(&key);
         let priority = if shared {
-            Priority::Distinguishing
+            Priority::Balanced
         } else {
             Priority::Label
         };
@@ -241,7 +253,11 @@ impl Layout<'_> {
             self.group_row(
                 checkout.label.clone(),
                 checkout.repository.and(checkout.branch_label()),
-                checkout.root.is_none(),
+                if checkout.root.is_none() {
+                    Label::Elsewhere
+                } else {
+                    Label::Project
+                },
                 &checkout.agents,
                 key,
                 expanded,
@@ -285,7 +301,7 @@ impl Layout<'_> {
                 self.group_row(
                     checkout.label.clone(),
                     None,
-                    false,
+                    Label::Project,
                     &agents,
                     key,
                     expanded,
@@ -310,7 +326,7 @@ impl Layout<'_> {
                     self.group_row(
                         branch,
                         None,
-                        false,
+                        Label::Branch,
                         &sibling.agents,
                         key,
                         expanded,
@@ -332,7 +348,7 @@ impl Layout<'_> {
         &self,
         label: String,
         note: Option<String>,
-        muted: bool,
+        kind: Label,
         agents: &[&GlobalAgentRow],
         key: TreeExpansionKey,
         expanded: bool,
@@ -340,30 +356,17 @@ impl Layout<'_> {
     ) -> SidebarRow {
         let theme = &self.state.theme;
         let dim = super::super::fg_only(&theme.muted).dim();
-        let title_style = if muted {
-            super::super::fg_only(&theme.muted)
-        } else {
-            super::super::fg_only(&theme.primary)
+        // Projects read as headings, in Rozi's colour as Activity's do; a branch beneath its
+        // repository and the agents in no checkout stay quiet.
+        let title_style = match kind {
+            Label::Project => super::super::rozi_fg(theme).bold(),
+            Label::Branch | Label::Elsewhere => super::super::fg_only(&theme.muted),
         };
         let counts = if expanded {
             Vec::new()
         } else {
             status_counts(agents, theme)
         };
-        // A long branch keeps its end, where the line of work is named, so it is cut here from the
-        // start rather than left for the row to clip from the end. Its room is the tab less the
-        // gutter, the arrow, the divider and scrollbar columns, the label, the gap, and the counts.
-        let note = note.map(|note| {
-            let taken = 9
-                + label.chars().count()
-                + counts
-                    .iter()
-                    .map(|(count, _)| count.chars().count() + 1)
-                    .sum::<usize>()
-                + if counts.is_empty() { 0 } else { 2 };
-            let room = usize::from(self.width).saturating_sub(taken).max(8);
-            super::row::truncate_start(&note, room)
-        });
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
         if !parts.is_empty() && !counts.is_empty() {
             parts.push(("·".into(), dim));
@@ -373,6 +376,8 @@ impl Layout<'_> {
             .active(!expanded && agents.iter().any(|agent| is_active(self.state, agent)))
             .title_style(title_style)
             .priority(priority)
+            // A long branch keeps its end, where the line of work is named.
+            .badge_keeps_tail()
             .badge_parts(parts);
         let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
             .keyed(format!("{}:{}", key.section, key.row))

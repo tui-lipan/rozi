@@ -824,6 +824,7 @@ show_hidden = false
 | Tab | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- | --- |
 | `activity` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`. See [Activity](sidebar.md#activity). |
+| `activity` | `agents` | bool | `false` | Lists coding agents in Activity as well as in the Agents tab. See [Activity](sidebar.md#activity). |
 | `agents` | `worktrees` | string | `"separate"` | `"separate"` or `"repository"`, independent of Activity's. See [Agents](sidebar.md#agents). |
 | `files`, `git` | `explorer` | bool | `true` for files, `false` for git | Shows a search field above the tree. |
 | `files`, `git` | `show_hidden` | bool | `true` | Lists entries whose names start with a dot. |

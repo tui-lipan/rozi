@@ -767,14 +767,24 @@ pub(super) fn activity_budget(width: u16) -> usize {
     (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
-/// The Activity tab: a heading per checkout with its agents beneath, and a cluster wherever one
+/// The Activity tab: a heading per checkout with its activities beneath, and a cluster wherever one
 /// agent runs more than once there, holding its runs unless folded. With `worktrees = "repository"`
-/// a repository's checkouts share one heading instead, each a branch line with its agents beneath.
+/// a repository's checkouts share one heading instead, each a branch line with its rows beneath.
+///
+/// Agents are listed only with `agents = true`: the Agents tab lists every agent, so by default
+/// this tab keeps to the status reports and published activities nothing else shows. An agent is
+/// what the Agents tab counts as one, a row that names its agent, so the two never list the same.
 pub(super) fn agents_rows(
     state: &State,
     config: &crate::config::SidebarActivityConfig,
 ) -> Vec<SidebarRow> {
-    let groups = agent_groups(state);
+    let mut groups = agent_groups(state);
+    if !config.agents {
+        for group in &mut groups {
+            group.rows.retain(|row| row.identity.is_none());
+        }
+        groups.retain(|group| !group.rows.is_empty());
+    }
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
     let show_headers = groups.len() > 1 || groups.first().is_some_and(|g| g.project.is_some());
@@ -1409,6 +1419,19 @@ mod tests {
         assert_eq!(parts, expected);
     }
 
+    /// Activity listing agents too, which these tests are about.
+    const LISTING_AGENTS: crate::config::SidebarActivityConfig =
+        crate::config::SidebarActivityConfig {
+            worktrees: crate::config::WorktreeLayout::Separate,
+            agents: true,
+        };
+
+    fn activity_with_agents() -> crate::config::SidebarTab {
+        crate::config::SidebarTab::Activity {
+            config: LISTING_AGENTS,
+        }
+    }
+
     use super::*;
     use crate::session::protocol::{AgentIdentity, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;
@@ -1529,7 +1552,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_rows(&crate::config::SidebarTab::activity())
+            .sidebar_rows(&activity_with_agents())
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1629,7 +1652,7 @@ mod tests {
             .map(|row| RowTarget::Pane(row.pane_id))
             .collect::<Vec<_>>();
         let projected = state
-            .sidebar_rows(&crate::config::SidebarTab::activity())
+            .sidebar_rows(&activity_with_agents())
             .into_iter()
             .map(|item| item.target)
             .filter(|target| *target != RowTarget::Inert)
@@ -1864,12 +1887,26 @@ mod tests {
         // The Activity tab's item list agrees with the rows it renders.
         assert_eq!(
             state
-                .sidebar_rows(&crate::config::SidebarTab::activity())
+                .sidebar_rows(&activity_with_agents())
                 .iter()
                 .filter(|item| !matches!(item.target, RowTarget::Inert))
                 .count(),
             3
         );
+        // By default Activity leaves the agent to the Agents tab and keeps the rest, so no row is
+        // listed in both.
+        let config = crate::config::SidebarTab::activity();
+        assert!(matches!(
+            config,
+            crate::config::SidebarTab::Activity { config } if !config.agents
+        ));
+        let listed: Vec<String> = state
+            .sidebar_rows(&config)
+            .iter()
+            .filter(|item| !matches!(item.target, RowTarget::Inert))
+            .map(|item| item.label().to_string())
+            .collect();
+        assert_eq!(listed, ["#1 fix login", "pr watcher"]);
     }
 
     /// A pane with only a `rozi status` is an activity of its own, named after the pane.
@@ -1942,7 +1979,7 @@ mod tests {
         assert_eq!(rows[0].activity.as_deref(), Some("approval"));
         assert_eq!(
             state
-                .sidebar_rows(&crate::config::SidebarTab::activity())
+                .sidebar_rows(&activity_with_agents())
                 .into_iter()
                 .filter_map(|item| match item.target {
                     RowTarget::Pane(pane_id) => Some(pane_id),
@@ -2664,7 +2701,7 @@ mod tests {
 
         // Keyboard navigation walks the same groups in the same order the view draws.
         let targets = state
-            .sidebar_rows(&crate::config::SidebarTab::activity())
+            .sidebar_rows(&activity_with_agents())
             .into_iter()
             .filter_map(|item| match item.target {
                 RowTarget::PublishedRow { row, .. } => Some(row.id),
@@ -2987,7 +3024,7 @@ mod tests {
         state.current_mut().workspaces[0].panes = vec![first];
         state.current_mut().workspaces[1].panes = vec![second];
 
-        let rows = agents_rows(&state, &Default::default());
+        let rows = agents_rows(&state, &LISTING_AGENTS);
         let cluster = rows
             .iter()
             .find(|row| row.expansion.is_some())
@@ -3017,7 +3054,7 @@ mod tests {
         sync_published_refs(&mut sessions);
         state.current_mut().workspaces[0].panes = vec![sessions, pane(2, Some("idle"), false)];
 
-        let rows = agents_rows(&state, &Default::default());
+        let rows = agents_rows(&state, &LISTING_AGENTS);
         let clusters = rows.iter().filter(|row| row.expansion.is_some()).count();
         assert_eq!(clusters, 1, "only the publishing pane's sessions cluster");
         assert_eq!(item_targets(&rows).len(), 4);
@@ -3035,7 +3072,7 @@ mod tests {
         let other = pane_in_project(2, Some("idle"), "/x/rozi", "/x/rozi", Some("master"));
         state.current_mut().workspaces[0].panes = vec![sessions, other];
 
-        let rows = agents_rows(&state, &Default::default());
+        let rows = agents_rows(&state, &LISTING_AGENTS);
         let blocked = RowTarget::PublishedRow {
             pane_id: 1,
             row: crate::session::protocol::RowKey::new("sessions", "b"),

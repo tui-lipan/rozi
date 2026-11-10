@@ -1008,8 +1008,9 @@ after the request.
 
 A published activity stream lets a program report its own activities as rows in the sidebar's
 Activity list, and hear when the user activates one. A publisher declares once, when the stream
-opens, whether it is an agent. Every published row appears in Activity; only an agent publisher's
-rows are also agents.
+opens, whether it is an agent. An activity publisher's rows appear in Activity. An agent
+publisher's rows are agents: they appear in the Agents tab and view, and in Activity only when its
+`agents` setting is on.
 
 Open with:
 

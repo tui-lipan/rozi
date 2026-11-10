@@ -434,7 +434,7 @@ WORKBOX                                     ● Connected
 
 Each row shows the most urgent state in the session — blocked, then working, then done — and names
 the agent when only one is in that state. Idle agents are not shown. A session you are attached to
-shows no summary, because the Activity tab already shows its live state.
+shows no summary, because the Agents tab already shows its live state.
 
 When an agent becomes blocked or finishes, you get the same desktop notification and sound as in an
 attached session, under the same `[notifications]` and `[sounds]` settings, and Do not disturb

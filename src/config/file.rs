@@ -4185,6 +4185,7 @@ command = "open"
             vec![SidebarTab::Activity {
                 config: super::super::SidebarActivityConfig {
                     worktrees: super::super::WorktreeLayout::Repository,
+                    agents: false,
                 },
             }]
         );

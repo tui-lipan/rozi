@@ -50,7 +50,7 @@ Start with [Getting started](getting-started.md).
 
 | Guide | Covers |
 | --- | --- |
-| [Agent activity](sidebar.md#activity) | How rozi shows working, blocked, and finished agents |
+| [Agent activity](sidebar.md#agents) | How rozi shows working, blocked, and finished agents |
 | [Agent definitions](agents.md) | Adding or overriding coding-agent detection rules |
 | [Agent skill](agent-skill.md) | Teaching a coding agent to control rozi |
 

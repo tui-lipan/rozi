@@ -88,7 +88,14 @@ fn rendered_payload(
     complete: bool,
 ) -> AgentResponsePayload {
     let truncated = text.len() > MAX_RESPONSE_BYTES;
-    if truncated {
+    if truncated && source == AgentResponseSource::AlternateScreenHistory {
+        // History is read upward from the newest row, so its newest rows are kept.
+        let mut start = text.len() - MAX_RESPONSE_BYTES;
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        text.drain(..start);
+    } else if truncated {
         let mut end = MAX_RESPONSE_BYTES;
         while !text.is_char_boundary(end) {
             end -= 1;
@@ -343,9 +350,9 @@ impl SessionServer {
         let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
             return false;
         };
-        let kind = match action {
-            HistoryReadStep::ScrollUp => MouseKind::ScrollUp,
-            HistoryReadStep::ScrollDown => MouseKind::ScrollDown,
+        let (kind, ticks) = match action {
+            HistoryReadStep::ScrollUp(ticks) => (MouseKind::ScrollUp, ticks),
+            HistoryReadStep::ScrollDown(ticks) => (MouseKind::ScrollDown, ticks),
             _ => return false,
         };
         // Pixel mouse reports share SGR framing, with coordinates measured in pixels.
@@ -364,9 +371,11 @@ impl SessionServer {
             kind,
             mods: KeyMods::default(),
         };
-        let Some(bytes) = mouse_event_to_bytes(event, encoding, Default::default()) else {
+        let Some(tick) = mouse_event_to_bytes(event, encoding, Default::default()) else {
             return false;
         };
+        // All ticks in one write, so the application sees them as one burst.
+        let bytes = tick.repeat(usize::from(ticks));
         pane.pty
             .as_ref()
             .is_some_and(|pty| pty.write(&bytes).is_ok())
@@ -375,13 +384,16 @@ impl SessionServer {
     fn finish_history(
         &mut self,
         mut read: PendingHistoryRead,
-        text: std::result::Result<String, HistoryReadError>,
+        history: std::result::Result<HistoryRead, HistoryReadError>,
     ) {
         let reference = read.reference().clone();
-        match text {
-            Ok(text) => {
-                let content =
-                    rendered_payload(text, AgentResponseSource::AlternateScreenHistory, true);
+        match history {
+            Ok(history) => {
+                let content = rendered_payload(
+                    history.text,
+                    AgentResponseSource::AlternateScreenHistory,
+                    history.complete,
+                );
                 self.store_rendered(&reference, &read.wait.fence, &mut read.wait.result, content);
             }
             // A failed request publishes nothing; a traversal that just ended without text

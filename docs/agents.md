@@ -459,17 +459,21 @@ history = "none"
 
 An agent that has opted out is never sent input to read its history. A built-in override keeps the
 built-in's setting when `history` is omitted. A successful read has
-`source: "alternate-screen-history"` and `fidelity: "rendered"`. `complete: true` means all history
-reachable by scrolling was read and the original viewport was restored; it does not identify one
-assistant turn. Ambiguous pages, unsupported terminals, and failed restoration return the visible
-screen instead of a reconstruction. rozi never resizes a pane to collect its history.
+`source: "alternate-screen-history"` and `fidelity: "rendered"`. It leaves out scrollbars and the
+rows the agent keeps in place above its transcript, such as a pinned prompt; status rows between
+the transcript and the input box can remain. `complete: true` means all history reachable by
+scrolling was read and the original viewport was restored; it does not identify one assistant
+turn. A read that runs out of time, or reaches a page it cannot line up with the previous one,
+returns the newest part of the transcript with `complete: false`. Unsupported terminals and failed
+restoration return the visible screen instead. rozi never resizes a pane to collect its history.
 
 Typing or resizing cancels the read. Input and resize requests wait for restoration, then run in
 order, so resizing away and back ends at the original size. Screen detection holds its last state
-while Rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent prompts and headless input requests receive a busy error. Traversal is
-bounded to ten seconds, with up to three more seconds for restoration; a prompt deadline can stop
-it sooner. A manually scrolled transcript is restored to its starting position, and the response is its
-visible screen.
+while rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent
+prompts and headless input requests receive a busy error. Reading is bounded to ten seconds, and
+scrolling back may take as long again plus three seconds; a prompt deadline can stop it sooner. A
+manually scrolled transcript is restored to its starting position, and the response is its visible
+screen.
 `--capture` still captures the terminal when the turn resolves, before any scrolling.
 
 A prompt only returns an integration response published after that prompt was submitted for the same agent
@@ -480,7 +484,7 @@ and text output says it is unavailable. `agents response` returns the latest ret
 or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
 Each response accepts at most 1 MiB of text. Oversized reports fail explicitly. Normal terminal
 history is truncated at a UTF-8 boundary with `truncated: true`; oversized alternate-screen history
-returns the visible screen.
+returns its newest part with `complete: false`.
 
 ### Report state from agent hooks
 

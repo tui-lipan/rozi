@@ -398,6 +398,12 @@ fn normal_history_is_rendered_bounded_and_never_claimed_complete() {
     assert!(payload.text.len() <= MAX_RESPONSE_BYTES);
     assert!(payload.truncated);
     assert!(!payload.complete);
+    let history = format!("oldest{}newest", "🌷".repeat(MAX_RESPONSE_BYTES / 4));
+    let payload = rendered_payload(history, AgentResponseSource::AlternateScreenHistory, true);
+    assert!(payload.text.len() <= MAX_RESPONSE_BYTES);
+    assert!(payload.text.ends_with("newest") && !payload.text.starts_with("oldest"));
+    assert!(payload.truncated);
+    assert!(!payload.complete);
 }
 
 #[test]

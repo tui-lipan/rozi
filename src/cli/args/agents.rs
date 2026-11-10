@@ -40,7 +40,7 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Wait until an agent reaches a state",
             ),
             row(
-                "prompt --target <PANE> [--wait <STATE> --timeout <DUR>] <TEXT>",
+                "prompt --target <PANE> [--wait <STATE> --timeout <DUR> [--result]] <TEXT>",
                 "Safely submit a prompt",
             ),
             row(

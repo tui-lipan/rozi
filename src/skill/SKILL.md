@@ -176,7 +176,8 @@ rozi agents list --format json
 rozi agents get --target <PANE_ID> --format json
 rozi agents read --target <PANE_ID> --scrollback 200
 rozi agents wait --target <PANE_ID> --until quiescent --timeout 2m
-rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m --capture text 'Fix the failing test'
+rozi --here agents prompt --ref '<JSON>' --wait turn --timeout 10m --result 'Fix the failing test'
+rozi agents response --target <PANE_ID> --format json
 rozi --session dev agents wait --target <PANE_ID> --until quiescent --timeout 2m
 ```
 
@@ -205,9 +206,15 @@ yet.
 
 For a submitted turn, use `prompt --wait turn`: it resolves on `blocked`, `done`, `error`, or
 `idle` after a transition, and returns the ordinary state and reason. `quiescent` excludes blocked.
-Add `--capture text` or `--capture ansi` to retrieve a terminal snapshot with the wait reply.
-`result.kind` is `terminal`; `result.capture` contains the visible terminal, including chrome and
-older output. Treat it as terminal content, not an assistant message. Discover an agent, save its
+Add `--result` to get the agent's response with the wait reply; `agents response` reads the latest
+one later. JSON output carries a `response` object with `text`, `source`, `fidelity`, `complete`,
+and `truncated`. `fidelity: "semantic"` is the agent's original text; `"rendered"` is terminal text.
+`source: "terminal"` can include earlier turns and interface text. Check `complete` and `truncated`
+before treating it as the whole answer.
+Add `--capture text` or `--capture ansi` to retrieve a terminal snapshot with the wait reply; it
+combines with `--result`. `result.kind` is `terminal`; `result.capture` contains the visible
+terminal, including chrome and older output. Treat it as terminal content, not an assistant
+message. Discover an agent, save its
 `ref`, and use `--ref` for later operations. A prompt wait reply also carries that exact `ref`.
 
 `agents prompt` submits the text and Enter as one operation, only to the agent incarnation it

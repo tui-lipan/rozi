@@ -385,7 +385,7 @@ pub(super) const HELP_SECTIONS: &[HelpSection] = &[
                 "Wait until an agent reaches a state",
             ),
             row(
-                "agents prompt --target <PANE> [--wait <STATE>] <TEXT>",
+                "agents prompt --target <PANE> [--wait <STATE> [--result]] <TEXT>",
                 "Safely submit a prompt",
             ),
             advanced_row(

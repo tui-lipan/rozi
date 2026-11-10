@@ -1014,6 +1014,7 @@ mod tests {
                     state: crate::session::protocol::AgentState::from_status("blocked"),
                     reason: None,
                     task: None,
+                    screen_title: None,
                     completions: 0,
                     changed_at: 0,
                 }],
@@ -1710,6 +1711,7 @@ mod tests {
                     state: AgentState::Idle,
                     reason: None,
                     task: None,
+                    screen_title: None,
                     completions: 1,
                     changed_at: 0,
                 };

@@ -190,6 +190,7 @@ mod tests {
             state: AgentState::Idle,
             reason: None,
             task: None,
+            screen_title: None,
             completions: 1,
             changed_at: 0,
         };

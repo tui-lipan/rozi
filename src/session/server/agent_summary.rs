@@ -4,15 +4,15 @@ impl SessionServer {
     /// What this session's agents are doing, for a client that will never attach.
     ///
     /// This is the host monitor's whole view of a session, so it is deliberately the *semantic*
-    /// layer and nothing more: who the agent is, what state it is in, and when that state last
-    /// changed. Screen contents, scrollback, cwd, layout, and the pane runtime at large stay
-    /// behind a real attachment. A monitor that grew those fields would be a second session
+    /// layer and nothing more: who the agent is, what state it is in, what it works on, and when
+    /// that state last changed. Screen contents, scrollback, cwd, layout, and the pane runtime at
+    /// large stay behind a real attachment. A monitor that grew those fields would be a second session
     /// protocol wearing a smaller name.
     ///
     /// One entry per *agent*, not per pane: a pane publishing several rows contributes one summary
     /// each, because an alert has to say which of a program's runs wants attention. Each carries
-    /// the task its row names, which is what tells one run of a program from another; the label
-    /// stays the program's own name. Panes are visited in id order, and a pane's own rows keep
+    /// the task its row names, or for a pane's own agent what its terminal title names, which is
+    /// what tells one run of a program from another; the label stays the program's own name. Panes are visited in id order, and a pane's own rows keep
     /// their publish order, so a client comparing consecutive snapshots sees a state change rather
     /// than a reshuffle.
     pub(super) fn agent_summaries(&self) -> Vec<protocol::AgentSummary> {
@@ -30,7 +30,20 @@ impl SessionServer {
             };
             let runtimes =
                 protocol::effective_agent_runtimes(&pane.runtime, &pane.agent.records(pane_ref));
+            let title = pane.effective_title();
             for runtime in runtimes {
+                // The terminal title is the pane's own agent's; a published row's title is its
+                // task.
+                let screen_title = title
+                    .as_deref()
+                    .filter(|_| runtime.reference.slot.is_none())
+                    .and_then(|title| {
+                        protocol::agent_title::screen_title(
+                            title,
+                            &runtime.label,
+                            pane.runtime.cwd.as_deref(),
+                        )
+                    });
                 summaries.push(protocol::AgentSummary {
                     session: self.session_name.clone(),
                     reference: runtime.reference,
@@ -39,6 +52,7 @@ impl SessionServer {
                     state: runtime.state,
                     reason: runtime.reason,
                     task: runtime.task,
+                    screen_title,
                     completions: runtime.completions,
                     changed_at: pane.agent.summary_changed_at,
                 });

@@ -77,8 +77,11 @@ pub(crate) struct GlobalAgentRow {
     /// The agent's own name (`Codex`, `Claude Code`). Several runs of one program share it.
     pub agent: String,
     /// What the agent works on, when it named its work (`Fix SSH reconnect`): what tells one run of
-    /// a program from another. Never a terminal title, which renames the row with every tool call.
+    /// a program from another.
     pub task: Option<String>,
+    /// What the agent's terminal title names, for a run that named no task. See
+    /// [`crate::session::protocol::agent_title::screen_title`].
+    pub screen_title: Option<String>,
     /// The machine it is on, `None` for this one.
     pub host: Option<String>,
     pub session: String,
@@ -169,10 +172,16 @@ impl GlobalAgentRow {
             })
     }
 
-    /// What the row is called: its task when it named one, else the agent, numbered only when
-    /// another row would otherwise read the same.
+    /// What the agent works on: the task it named, else what its terminal title says. `None` for a
+    /// run known only by its agent's name.
+    pub fn work(&self) -> Option<&str> {
+        self.task.as_deref().or(self.screen_title.as_deref())
+    }
+
+    /// What the row is called: its work when it names some, else the agent, numbered only when
+    /// another row would otherwise read the same. As Activity names each run of a cluster.
     pub fn title(&self) -> String {
-        let title = self.task.as_deref().unwrap_or(&self.agent);
+        let title = self.work().unwrap_or(&self.agent);
         match self.ordinal {
             Some(number) => format!("{title} #{number}"),
             None => title.to_string(),
@@ -199,7 +208,7 @@ impl GlobalAgentRow {
     pub fn label(&self) -> String {
         crate::view::vocabulary::fields(
             std::iter::once(self.title())
-                .chain(self.task.is_some().then(|| self.agent.clone()))
+                .chain(self.work().is_some().then(|| self.agent.clone()))
                 .chain([crate::view::vocabulary::session_at(
                     &self.session,
                     self.host.as_deref(),
@@ -273,7 +282,8 @@ fn summary_row(
         task: agent
             .task
             .as_deref()
-            .and_then(|task| crate::view::sidebar::agents::task_title(task, &agent.label)),
+            .and_then(|task| crate::session::protocol::agent_title::task_title(task, &agent.label)),
+        screen_title: agent.screen_title.clone(),
         host: target.map(|target| state.remote_target_label(target)),
         session: agent.session.clone(),
         status: agent.state.as_str().to_string(),
@@ -301,7 +311,7 @@ fn number_twins(rows: &mut [(GlobalAgentRow, Seat)]) {
     let key = |row: &GlobalAgentRow| {
         (
             row.title(),
-            row.task.is_some().then(|| row.agent.clone()),
+            row.work().is_some().then(|| row.agent.clone()),
             row.session.clone(),
             row.host.clone(),
             row.place(),
@@ -442,10 +452,10 @@ fn live_attachment_rows(
                     row: row.slot.as_ref().map(|slot| slot.key.clone()),
                 }
             },
-            task: row
-                .task
-                .as_deref()
-                .and_then(|task| crate::view::sidebar::agents::task_title(task, &identity.label)),
+            task: row.task.as_deref().and_then(|task| {
+                crate::session::protocol::agent_title::task_title(task, &identity.label)
+            }),
+            screen_title: row.screen_title,
             agent_id: identity.id,
             checkout,
             agent: identity.label,
@@ -488,6 +498,7 @@ mod tests {
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
             task: None,
+            screen_title: None,
             completions: 0,
             changed_at: 0,
         }
@@ -740,6 +751,7 @@ mod tests {
             checkout: None,
             agent: "Claude Code".into(),
             task: Some("fix login redirect".into()),
+            screen_title: None,
             host: None,
             session: "dev".into(),
             status: "blocked".into(),

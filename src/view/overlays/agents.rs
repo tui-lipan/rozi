@@ -126,7 +126,7 @@ pub(crate) fn agent_picker_overlay(ctx: &Context<AppRoot>) -> Element {
             name_style
         };
         let mut label = vec![Span::new(row.title()).style(name_style)];
-        if row.task.is_some() {
+        if row.work().is_some() {
             label.push(Span::new(format!(" · {}", row.agent)).style(agent_style));
         }
         let mut description = Vec::new();
@@ -241,7 +241,7 @@ fn picker_width(rows: &[crate::view::agents::GlobalAgentRow], show_location: boo
     let widest = rows
         .iter()
         .map(|row| {
-            let agent = row.task.as_ref().map_or(0, |_| row.agent.width() + 3);
+            let agent = row.work().map_or(0, |_| row.agent.width() + 3);
             let note = state_note(row).map_or(0, |note| note.width());
             let location = if show_location {
                 crate::view::vocabulary::session_at(&row.session, row.host.as_deref()).width()
@@ -271,6 +271,7 @@ mod tests {
             checkout: None,
             agent: "Codex".into(),
             task: Some(task.into()),
+            screen_title: None,
             host: Some("workbox".into()),
             session: "dev".into(),
             status: "working".into(),

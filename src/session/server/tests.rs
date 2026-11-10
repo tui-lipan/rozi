@@ -3024,6 +3024,38 @@ fn a_pane_publishing_rows_contributes_one_named_summary_per_row() {
     assert!(!summaries[0].same_agent(&summaries[1]));
 }
 
+/// A pane's own agent that published no rows names its work only in its terminal title. The
+/// summary carries what the title names, filtered as every row filters it, so a client with
+/// nothing attached names the run as Activity does: a title that only echoes the directory or the
+/// agent's name is no title.
+#[test]
+fn agent_summaries_carry_what_a_detected_agents_terminal_title_names() {
+    let mut server = SessionServer::new_named("dev");
+    let mut pane = test_pane(2);
+    pane.runtime.detected_agent = Some(protocol::DetectedAgent {
+        agent: protocol::AgentIdentity::new("claude", "Claude Code").into(),
+        state: protocol::DetectedAgentState::Idle,
+    });
+    pane.runtime.cwd = Some("/src/rozi".into());
+    pane.agent.sync_references(&pane.runtime);
+    server.panes.insert(1, pane);
+    let named = |server: &mut SessionServer, title: &str| {
+        let pane = server.panes.get_mut(&1).unwrap();
+        pane.screen_mut()
+            .process_bytes(format!("\x1b]0;{title}\x07").as_bytes());
+        let summaries = server.agent_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].task, None);
+        summaries[0].screen_title.clone()
+    };
+    assert_eq!(
+        named(&mut server, "✳ Fix SSH reconnect"),
+        Some("Fix SSH reconnect".into())
+    );
+    assert_eq!(named(&mut server, "~/src/rozi"), None);
+    assert_eq!(named(&mut server, "✳ Claude Code"), None);
+}
+
 /// An exited pane is not an agent that went quiet — it is a pane that is gone. Leaving it in the
 /// summary would park a `done` beside a session on a machine nobody is watching, permanently.
 #[test]

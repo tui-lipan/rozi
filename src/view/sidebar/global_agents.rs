@@ -203,6 +203,17 @@ fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
             > 1
 }
 
+/// What a row that folds agents beneath it names, which decides how it reads.
+#[derive(Clone, Copy)]
+enum Label {
+    /// A repository or checkout.
+    Project,
+    /// One checkout's branch beneath its repository.
+    Branch,
+    /// The agents in no Git checkout.
+    Elsewhere,
+}
+
 /// What every row on one host needs to place itself.
 struct Layout<'a> {
     state: &'a State,
@@ -242,7 +253,11 @@ impl Layout<'_> {
             self.group_row(
                 checkout.label.clone(),
                 checkout.repository.and(checkout.branch_label()),
-                checkout.root.is_none(),
+                if checkout.root.is_none() {
+                    Label::Elsewhere
+                } else {
+                    Label::Project
+                },
                 &checkout.agents,
                 key,
                 expanded,
@@ -286,7 +301,7 @@ impl Layout<'_> {
                 self.group_row(
                     checkout.label.clone(),
                     None,
-                    false,
+                    Label::Project,
                     &agents,
                     key,
                     expanded,
@@ -311,7 +326,7 @@ impl Layout<'_> {
                     self.group_row(
                         branch,
                         None,
-                        false,
+                        Label::Branch,
                         &sibling.agents,
                         key,
                         expanded,
@@ -333,7 +348,7 @@ impl Layout<'_> {
         &self,
         label: String,
         note: Option<String>,
-        muted: bool,
+        kind: Label,
         agents: &[&GlobalAgentRow],
         key: TreeExpansionKey,
         expanded: bool,
@@ -341,10 +356,11 @@ impl Layout<'_> {
     ) -> SidebarRow {
         let theme = &self.state.theme;
         let dim = super::super::fg_only(&theme.muted).dim();
-        let title_style = if muted {
-            super::super::fg_only(&theme.muted)
-        } else {
-            super::super::fg_only(&theme.primary)
+        // Projects read as headings, in Rozi's colour as Activity's do; a branch beneath its
+        // repository and the agents in no checkout stay quiet.
+        let title_style = match kind {
+            Label::Project => super::super::rozi_fg(theme).bold(),
+            Label::Branch | Label::Elsewhere => super::super::fg_only(&theme.muted),
         };
         let counts = if expanded {
             Vec::new()

@@ -2696,6 +2696,16 @@ fn the_agents_tab_lists_every_agent_by_checkout_on_each_host() {
         );
         let checkout = &lines[line_of(&lines, "master")];
         assert!(checkout.contains("rozi"), "{}", lines.join("\n"));
+        // A checkout reads as a heading, in Rozi's colour and bold as Activity's are.
+        let row = line_of(&lines, "master");
+        let column = lines[row].chars().position(|c| c == 'r').unwrap();
+        let cell = backend
+            .capture_frame()
+            .cell(column as u16, row as u16)
+            .clone();
+        let heading = crate::view::rozi_fg(&backend.state().theme);
+        assert_eq!(cell.fg, heading.fg.unwrap(), "{}", lines.join("\n"));
+        assert!(cell.modifiers.bold, "{}", lines.join("\n"));
         let checkout = &lines[line_of(&lines, "main")];
         assert!(checkout.contains("api"), "{}", lines.join("\n"));
 

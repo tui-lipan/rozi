@@ -1,0 +1,112 @@
+{
+  "agents": [
+    {
+      "completions": 1,
+      "reference": {
+        "incarnation": 1,
+        "pane": {
+          "generation": 1,
+          "pane_id": 1,
+          "session_instance": "example"
+        },
+        "slot": {
+          "id": "example",
+          "publisher": "example"
+        }
+      }
+    }
+  ],
+  "generation": 1,
+  "local": false,
+  "pane_id": 1,
+  "state": {
+    "agent_launch": 1,
+    "command_phase": {
+      "phase": "unknown"
+    },
+    "cwd": "example",
+    "cwd_host": "example",
+    "cwd_source": "shell-report",
+    "detected_agent": {
+      "agent": {
+        "id": "example",
+        "label": "example"
+      },
+      "state": "idle"
+    },
+    "display_path": "example",
+    "foreground_arguments": [
+      "example"
+    ],
+    "foreground_executable": "example",
+    "foreground_pid": 1,
+    "foreground_program": "example",
+    "foreground_programs": [
+      "example"
+    ],
+    "foreground_shell": false,
+    "git_branch": "example",
+    "integration": {
+      "identity": {
+        "id": "example",
+        "label": "example"
+      },
+      "integration": "example",
+      "native_session": "example",
+      "reason": "example",
+      "reference": {
+        "incarnation": 1,
+        "pane": {
+          "generation": 1,
+          "pane_id": 1,
+          "session_instance": "example"
+        },
+        "slot": {
+          "id": "example",
+          "publisher": "example"
+        }
+      },
+      "reported_at_unix_ms": 1,
+      "seq": 1,
+      "state": "working",
+      "unless_quiet": {
+        "ended": false,
+        "reason": "example",
+        "state": "working"
+      }
+    },
+    "last_exit_status": 1,
+    "project_root": "example",
+    "recording": false,
+    "repository": "example",
+    "rows": [
+      {
+        "active": false,
+        "cwd": "example",
+        "id": "example",
+        "kind": "agent",
+        "live_session": "example",
+        "native_session": "example",
+        "project": {
+          "branch": "example",
+          "repository": "example",
+          "root": "example"
+        },
+        "publisher": "example",
+        "reason": "example",
+        "reported": false,
+        "status": "example",
+        "title": "example",
+        "work_started_at": 1
+      }
+    ],
+    "sequence": 1,
+    "status": {
+      "reason": "example",
+      "set_at": 1,
+      "value": "example"
+    },
+    "work_started_at": 1
+  },
+  "type": "pane-runtime-changed"
+}

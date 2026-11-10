@@ -1,0 +1,14 @@
+{
+  "allow_takeover": false,
+  "clients": [
+    {
+      "id": 1,
+      "label": "example",
+      "parked": false,
+      "read_only": false,
+      "requesting_control": false
+    }
+  ],
+  "input_locked": false,
+  "type": "clients-changed"
+}

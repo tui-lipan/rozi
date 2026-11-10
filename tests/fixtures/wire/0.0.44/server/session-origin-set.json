@@ -1,0 +1,9 @@
+{
+  "origin": {
+    "profile": "example",
+    "worktree": {
+      "path": "example"
+    }
+  },
+  "type": "session-origin-set"
+}

@@ -1,0 +1,63 @@
+{
+  "agents": [
+    {
+      "agent": "example",
+      "changed_at": 1,
+      "completions": 1,
+      "label": "example",
+      "reason": "example",
+      "reference": {
+        "incarnation": 1,
+        "pane": {
+          "generation": 1,
+          "pane_id": 1,
+          "session_instance": "example"
+        },
+        "slot": {
+          "id": "example",
+          "publisher": "example"
+        }
+      },
+      "session": "example",
+      "state": "working",
+      "task": "example"
+    }
+  ],
+  "capabilities": [
+    "example"
+  ],
+  "clients": 1,
+  "effective_protocol": 1,
+  "has_layout": false,
+  "instance": "example",
+  "origin": {
+    "profile": "example",
+    "worktree": {
+      "path": "example"
+    }
+  },
+  "panes": 1,
+  "projects": [
+    {
+      "branch": "example",
+      "panes": [
+        1
+      ],
+      "repository": "example",
+      "root": "example",
+      "rows": [
+        {
+          "pane": 1,
+          "row": {
+            "id": "example",
+            "publisher": "example"
+          }
+        }
+      ],
+      "session": "example"
+    }
+  ],
+  "rozi_version": "example",
+  "session": "example",
+  "type": "session-info"
+}

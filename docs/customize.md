@@ -41,7 +41,8 @@ Settings is divided into categories:
 To change a setting:
 
 1. Type to search every category, or switch categories with `Tab`, `Shift+Tab`, `Left`, and
-   `Right`; each category remembers its last row. Select a setting with `Up` and `Down`.
+   `Right`; each category remembers its last row. Search lists the best match first, with its
+   group, and highlights it. Select a setting with `Up` and `Down`.
 2. Press `Enter`. A setting with two values toggles. A setting with more values shows `…` after its
    label and opens a list of them.
 3. Move through the list. Static appearance choices, such as borders and tab styles, preview live

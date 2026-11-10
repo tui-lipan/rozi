@@ -481,6 +481,8 @@
 # "separate" gives each checkout its own section; "repository" names each repository once, with
 # a line per checkout's branch.
 #worktrees = "separate"
+# List coding agents here as well as in the Agents tab.
+#agents = false
 
 [sidebar.settings.agents]
 # The same choice for the Agents tab, kept apart from Activity's.

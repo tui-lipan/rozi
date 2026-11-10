@@ -3158,6 +3158,49 @@ fn projects_keep_long_session_names_and_work_counts_visible() {
     });
 }
 
+/// A repository reads as a heading, bold in Rozi's colour as Activity's and Agents' projects do;
+/// its checkouts and sessions keep the ordinary row colour.
+#[test]
+fn projects_head_each_repository_as_the_other_agent_tabs_do() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: Vec::new(),
+                projects: vec![project("backend", "/x/shop", None, "main", &[1])],
+            });
+        backend.render();
+        let frame = backend.capture_frame();
+        let lines = frame.to_fixed_grid_lines();
+        let cell = |needle: &str| {
+            let row = line_of(&lines, needle);
+            let column = lines[row].find(needle).unwrap();
+            let column = lines[row][..column].chars().count();
+            frame.cell(column as u16, row as u16).clone()
+        };
+        let theme = &backend.state().theme;
+        let repository = cell("shop");
+        assert_eq!(
+            repository.fg,
+            crate::view::rozi_fg(theme).fg.unwrap(),
+            "{}",
+            lines.join("\n")
+        );
+        assert!(repository.modifiers.bold, "{}", lines.join("\n"));
+        for row in ["main", "backend"] {
+            let cell = cell(row);
+            assert!(!cell.modifiers.bold, "{row}: {}", lines.join("\n"));
+            assert_eq!(
+                cell.fg,
+                crate::view::fg_only(&theme.primary).fg.unwrap(),
+                "{row}: {}",
+                lines.join("\n")
+            );
+        }
+    });
+}
+
 #[test]
 fn project_guides_gain_hover_contrast_and_restore_their_color_on_leave() {
     crate::test_support::on_large_stack(|| {

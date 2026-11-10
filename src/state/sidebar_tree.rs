@@ -270,6 +270,7 @@ impl TreeRow {
                 active: spec.active,
                 disabled: spec.disabled.clone(),
                 heading: spec.heading,
+                project: false,
                 activity_statuses: Vec::new(),
             },
             target,
@@ -300,6 +301,9 @@ pub struct RowContent {
     pub disabled: Option<String>,
     /// Titles the rows beneath it. Honored on top-level rows only.
     pub heading: bool,
+    /// Names a project, drawn as Activity and Agents draw their project headings. Only Rozi's own
+    /// tabs set it: a producer's row cannot pass itself off as one.
+    pub project: bool,
 }
 
 /// One row of a hierarchical tab, before flattening.

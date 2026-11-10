@@ -392,6 +392,7 @@ fn host_rows(
             parent: None,
             content: RowContent {
                 label: labels[index].clone(),
+                project: true,
                 ..RowContent::default()
             },
             target: RowTarget::Inert,

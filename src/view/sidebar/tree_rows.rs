@@ -80,6 +80,9 @@ fn tree_row(state: &State, line: TreeLine) -> Row {
     let disabled = content.disabled.is_some();
     let title_style = if disabled || content.tone == SidebarTone::Muted {
         muted
+    } else if content.project {
+        // A project reads as a heading, as it does in Activity and Agents.
+        super::super::rozi_fg(theme).bold()
     } else {
         super::super::fg_only(&theme.primary)
     };

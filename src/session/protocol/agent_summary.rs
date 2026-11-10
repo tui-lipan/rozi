@@ -7,9 +7,11 @@
 //! session attachment  "I am participating in this session."
 //! ```
 //!
-//! So this carries semantics only — who, what state, when it changed. Screen contents, scrollback,
-//! cwd, project, layout, and process arguments belong to an attachment, and adding one of them
-//! here would turn a supervisor into a second session protocol.
+//! So this carries semantics only — who, what state, what it works on, when it changed. Screen
+//! contents, scrollback, cwd, project, layout, and process arguments belong to an attachment, and
+//! adding one of them here would turn a supervisor into a second session protocol. The terminal
+//! title an agent sets is the exception that proves the rule: it travels only as the agent's name
+//! for its work, filtered the way every row filters it, never as the raw title.
 use serde::{Deserialize, Serialize};
 
 /// One agent's state, as reported by the session server that owns it.
@@ -37,6 +39,11 @@ pub struct AgentSummary {
     /// What the agent works on, when it named its work. See [`super::AgentRuntime::task`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,
+    /// What a pane's own agent calls its work in its terminal title, when that says more than its
+    /// name or its directory: what names a run with no [`Self::task`]. `None` for a published row,
+    /// whose title is its task. See [`super::agent_title::screen_title`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_title: Option<String>,
     /// Runs this agent has finished. See [`super::AgentRecord::completions`].
     #[serde(default, skip_serializing_if = "is_zero")]
     pub completions: u64,
@@ -92,6 +99,7 @@ mod tests {
             state,
             reason: None,
             task: None,
+            screen_title: None,
             completions: 0,
             changed_at: 0,
         };

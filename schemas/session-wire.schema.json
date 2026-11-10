@@ -262,6 +262,13 @@
           "$ref": "#/$defs/AgentRef",
           "description": "Which agent this is: its pane, that pane's spawn generation, the published row for a pane\nrunning several agents, and the incarnation of the occupant. Everything identifying is\nhere, so a respawned pane, a relaunched agent, or a row that left and came back each read as\na different agent rather than as the old one changing state."
         },
+        "screen_title": {
+          "description": "What a pane's own agent calls its work in its terminal title, when that says more than its\nname or its directory: what names a run with no [`Self::task`]. `None` for a published row,\nwhose title is its task. See [`super::agent_title::screen_title`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session": {
           "type": "string"
         },

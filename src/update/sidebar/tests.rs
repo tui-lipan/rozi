@@ -2576,6 +2576,7 @@ fn monitored_agent(
         state: crate::session::protocol::AgentState::from_status(state),
         reason: None,
         task: None,
+        screen_title: None,
         completions: 0,
         changed_at: 0,
     }
@@ -2740,6 +2741,47 @@ fn the_agents_tab_lists_every_agent_by_checkout_on_each_host() {
             "{}",
             lines.join("\n")
         );
+    });
+}
+
+/// An agent that published no task is named by what its terminal title says, as Activity names it:
+/// in the session on screen from its pane, and on another host from the title its server
+/// summarized. The agent's name then gives way to the detail line.
+#[test]
+fn the_agents_tab_names_untitled_runs_by_their_terminal_title() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        let pane = agents_across_hosts(&mut backend);
+        let state = backend.state_mut();
+        state
+            .current_mut()
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| &mut workspace.panes)
+            .find(|candidate| candidate.id == pane)
+            .unwrap()
+            .terminal
+            .title = Some("✳ Fix SSH reconnect".into());
+        let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+        state.remote.agents.get_mut(&workbox).unwrap()[0].screen_title =
+            Some("Review backend".into());
+        let lines = agents_tab_lines(&mut backend);
+        for (title, agent) in [
+            ("Fix SSH reconnect", "Claude Code"),
+            ("Review backend", "Codex"),
+        ] {
+            let row = line_of(&lines, title);
+            assert!(
+                !lines[row].contains('✳'),
+                "the title's glyph is dropped:\n{}",
+                lines.join("\n")
+            );
+            assert!(
+                lines[row + 1].contains(agent),
+                "{agent} gives way to its run's title:\n{}",
+                lines.join("\n")
+            );
+        }
     });
 }
 

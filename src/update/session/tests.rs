@@ -1073,6 +1073,7 @@ fn summary_edges_report_transitions_rather_than_standing_states() {
         state,
         reason: None,
         task: None,
+        screen_title: None,
         completions,
         changed_at: 0,
     };

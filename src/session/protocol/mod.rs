@@ -16,6 +16,7 @@
 
 pub mod agent_runtime;
 pub mod agent_summary;
+pub mod agent_title;
 pub mod capabilities;
 pub mod constants;
 pub mod events;

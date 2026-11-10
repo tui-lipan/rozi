@@ -477,7 +477,7 @@ impl Layout<'_> {
     fn run_row(&self, row: &GlobalAgentRow, in_cluster: bool) -> SidebarRow {
         let theme = &self.state.theme;
         let title_style = super::super::fg_only(&theme.primary);
-        let agent = (!in_cluster && row.task.is_some()).then(|| row.agent.clone());
+        let agent = (!in_cluster && row.work().is_some()).then(|| row.agent.clone());
         let mut content = super::agents::RunLines {
             title: row.title(),
             title_style: if row.background {

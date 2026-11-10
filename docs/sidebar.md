@@ -189,11 +189,11 @@ checkout, its runs are listed beneath one row for the agent, which shows its mos
 state.
 
 A run is titled by the agent's task when it names one, such as the title of a session that Claude
-Code, Codex, or OpenCode lists, and by the agent's name otherwise; two runs that would read the
-same are numbered. The session it runs in is on the right; a long session name shortens before the title gets less
+Code, Codex, or OpenCode lists, then by its terminal title, as in Activity, and by the agent's name
+otherwise; two runs that would read the same are numbered. The session it runs in is on the right; a long session name shortens before the title gets less
 than two thirds of the line. The second line gives the state, then
 the reason for it when the agent gave one, such as `Permission required`, then the agent's name
-when the title is its task. In a narrow sidebar the agent's name goes first, then the reason
+when the run is titled by something else. In a narrow sidebar the agent's name goes first, then the reason
 shortens, and the state stays. Agents in a session this client holds, the one on screen or one in
 the background, also show a time beside their state: how long a working or blocked state has
 held, or how long a finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,

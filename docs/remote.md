@@ -442,7 +442,8 @@ silences them the same way. The first update after connecting only sets a baseli
 to a host whose agent has been waiting since yesterday does not notify.
 
 Summaries contain the session, pane, and agent, its state and the reason it gave, the task a
-listed session names, how many runs the agent has finished, and when its state last changed.
+listed session names or else its terminal title, how many runs the agent has finished, and when its
+state last changed.
 Terminal contents, scrollback, working directories, and layout need an attached session.
 
 The [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then `a`) lists these alongside local

@@ -195,8 +195,8 @@ The picker opens on **All**. Each session with agents also gets its own tab; swi
 `Tab`, `Shift+Tab`, the arrow keys, or a click, and type to filter. Each tab keeps its own selection
 while Agents is open, starting on its top row.
 
-Each row leads with the agent's task when it names one, followed by the agent's name; two rows that
-would read the same are numbered. The glyph shows the agent's state. The right side adds the reason
+Each row leads with the agent's task when it names one, or else its terminal title, followed by the
+agent's name; two rows that would read the same are numbered. The glyph shows the agent's state. The right side adds the reason
 an agent gave for waiting or failing, and, on **All**, where it runs: the session name for local
 agents and `session@host` for remote agents. The line below the list describes the highlighted
 agent in full: its state, how long it has held or what its run took, the reason, and the project

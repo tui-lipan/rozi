@@ -105,6 +105,7 @@ mod tests {
             state: crate::session::protocol::AgentState::from_status(state),
             reason: None,
             task: None,
+            screen_title: None,
             completions: 0,
             changed_at: 1,
         }

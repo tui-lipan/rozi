@@ -3,7 +3,7 @@ use tui_lipan::prelude::*;
 use super::row::{self, Row, RowTarget, Shape, SidebarRow};
 use crate::pane::id::PaneId;
 use crate::platform::paths::path_segments;
-use crate::session::protocol::pane_status;
+use crate::session::protocol::{agent_title, pane_status};
 use crate::state::{State, TreeExpansionKey};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,18 +137,10 @@ fn semantic_activity_text(
     screen_title(pane, kind_label)
 }
 
-/// The pane's terminal title, when it says more than the agent's name or the directory it is in:
-/// agents write their current task there, which makes it the only work a detected-only agent names.
+/// The pane's terminal title, when it says more than the agent's name or the directory it is in.
+/// See [`agent_title::screen_title`].
 fn screen_title(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<String> {
-    let title = pane.title()?;
-    let title = strip_agent_title_prefix(strip_title_decoration(&title), kind_label);
-    if title.is_empty()
-        || title.eq_ignore_ascii_case(kind_label)
-        || is_cwd_echo(title, pane.cwd.as_deref())
-    {
-        return None;
-    }
-    Some(title.to_string())
+    agent_title::screen_title(&pane.title()?, kind_label, pane.cwd.as_deref())
 }
 
 /// What a published row is doing, for its detail line.
@@ -161,7 +153,10 @@ fn screen_title(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<St
 ///
 /// A title that only repeats the agent's own name says nothing the row does not already.
 fn row_activity(row: &crate::session::protocol::PublishedRow, kind_label: &str) -> Option<String> {
-    let title = strip_agent_title_prefix(strip_title_decoration(&row.title), kind_label);
+    let title = agent_title::strip_agent_title_prefix(
+        agent_title::strip_title_decoration(&row.title),
+        kind_label,
+    );
     if !title.is_empty() && !title.eq_ignore_ascii_case(kind_label) {
         return Some(title.to_string());
     }
@@ -170,57 +165,6 @@ fn row_activity(row: &crate::session::protocol::PublishedRow, kind_label: &str) 
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
         .map(str::to_string)
-}
-
-/// Drop the status glyph agents prefix their title with (`✳`, `⏺`, `●`). The row already has a
-/// glyph column, so a second one beside the text is noise. Only non-ASCII symbols go — ASCII
-/// punctuation is load-bearing in a real title (`~/repo`, `[2/7] running tests`).
-fn strip_title_decoration(title: &str) -> &str {
-    title
-        .trim_start_matches(|ch: char| {
-            ch.is_whitespace() || (!ch.is_ascii() && !ch.is_alphanumeric())
-        })
-        .trim()
-}
-
-/// OpenCode reserves the beginning of its terminal title for its own short label. The sidebar has
-/// already named the row `OpenCode`, so keep only the useful title text there.
-fn strip_agent_title_prefix<'a>(title: &'a str, kind_label: &str) -> &'a str {
-    if kind_label.eq_ignore_ascii_case("OpenCode") {
-        title
-            .strip_prefix("OC |")
-            .map(str::trim_start)
-            .unwrap_or(title)
-    } else {
-        title
-    }
-}
-
-/// A task as rows present it: without the status glyph or the agent's own label prefix an agent
-/// decorates its titles with, and `None` when nothing is left that the agent's name does not
-/// already say.
-pub(crate) fn task_title(task: &str, label: &str) -> Option<String> {
-    let title = strip_agent_title_prefix(strip_title_decoration(task), label);
-    (!title.is_empty() && !title.eq_ignore_ascii_case(label)).then(|| title.to_string())
-}
-
-/// Whether a terminal title is just the working directory. A shell sets its title to `$PWD`, so an
-/// agent that never set one of its own leaves a stale path there — and the project header already
-/// says where the row is, so echoing it into the activity slot spends the line on nothing.
-fn is_cwd_echo(title: &str, cwd: Option<&str>) -> bool {
-    let Some(cwd) = cwd else {
-        return false;
-    };
-    if crate::platform::paths::paths_equal(title, cwd) {
-        return true;
-    }
-    // `~/repo` against `/home/you/repo`: the last segment is what the two spellings share. A
-    // one-word activity that happens to match the directory name is lost to this, which is a fair
-    // trade for never presenting a path as a task.
-    match (path_segments(title).last(), path_segments(cwd).last()) {
-        (Some(title), Some(cwd)) => title.eq_ignore_ascii_case(cwd),
-        _ => false,
-    }
 }
 
 /// Every activity in the current session, agents included: the Activity tab's rows.
@@ -992,7 +936,7 @@ fn member_labels(members: &[&AgentRow]) -> Vec<String> {
             member
                 .task
                 .as_deref()
-                .and_then(|task| task_title(task, agent))
+                .and_then(|task| agent_title::task_title(task, agent))
                 .or_else(|| member.screen_title.clone())
                 .unwrap_or_else(|| agent.to_string())
         })

@@ -1368,7 +1368,14 @@ fn agent_row(state: &State, row: &AgentRow, child: Option<ClusterChild>) -> Row 
                 }
                 None => workspace,
             };
-            (row.title.clone(), location, row.activity.clone())
+            // An activity that only repeats the title, as a published row's own title does when
+            // the row stands alone, gives way to the reason it gave.
+            let note = row
+                .activity
+                .clone()
+                .filter(|activity| activity != &row.title)
+                .or_else(|| row.reason.clone());
+            (row.title.clone(), location, note)
         }
     };
     let content = RunLines {
@@ -3128,6 +3135,22 @@ mod tests {
         let content = agent_row(&state, &alone, None);
         assert_eq!(content.meta_text(), None);
         assert_eq!(content.detail_texts(), ["Working 9m22s", "Reading files"]);
+
+        // A published activity on its own row is titled by its work, so the line beneath gives
+        // its reason rather than the title again.
+        let published = AgentRow {
+            title: "#366 search ranking".into(),
+            activity: Some("#366 search ranking".into()),
+            reason: Some("Review requested".into()),
+            status: Some("blocked".into()),
+            identity: None,
+            ..alone
+        };
+        let content = agent_row(&state, &published, None);
+        assert_eq!(
+            content.detail_texts(),
+            ["Blocked 9m22s", "Review requested"]
+        );
     }
 
     /// Runs are named by their task, else what their terminal says, else the agent - numbered

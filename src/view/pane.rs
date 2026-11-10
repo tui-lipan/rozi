@@ -2007,6 +2007,8 @@ pub(crate) fn tiled_resize_strips(
             ctx.state.pane_config_for(pane.id)
         });
     let title_row = pane_config.show_titles && pane_config.titlebar.takes_outer_row();
+    // `allocate_master` places the master first.
+    let master = master.then(|| tiled.first().map(|(id, _)| *id)).flatten();
     let (vertical_strips, horizontal_strips) =
         resize_strip_hitboxes(&tiled, gap, master, title_row);
     // Junction segment lookup compares the drag origin against canvas-space starts, so shift by
@@ -2033,7 +2035,8 @@ pub(crate) fn tiled_resize_strips(
 fn resize_strip_hitboxes(
     tiled: &[(PaneId, FloatRect)],
     gap: TileGap,
-    master: bool,
+    // The master pane in the master layout, whose right edge is the only adjustable boundary there.
+    master: Option<PaneId>,
     // Whether a stacked pane leads with a titlebar row of its own (`[pane] titlebar = "bar"`),
     // which is then the only handle a horizontal boundary offers.
     title_row: bool,
@@ -2045,9 +2048,11 @@ fn resize_strip_hitboxes(
     let mut horizontal_strips = Vec::new();
     for (a_id, a) in tiled {
         for (_b_id, b) in tiled {
-            // Vertical boundary → horizontal (left|right) split. `a` is the left pane.
+            // Vertical boundary → horizontal (left|right) split. `a` is the left pane. In master,
+            // only the master's edge moves; the gutters between stack columns are fixed.
             let a_right = a.x + a.w;
-            if (b.x - (a_right + h_gap)).abs() < eps {
+            let adjustable = master.is_none_or(|master| master == *a_id);
+            if adjustable && (b.x - (a_right + h_gap)).abs() < eps {
                 let y0 = a.y.max(b.y);
                 let y1 = (a.y + a.h).min(b.y + b.h);
                 if y1 - y0 > eps {
@@ -2068,7 +2073,7 @@ fn resize_strip_hitboxes(
                 }
             }
             // Horizontal boundary → vertical (top|bottom) split. Not adjustable in master.
-            if !master {
+            if master.is_none() {
                 let a_bottom = a.y + a.h;
                 if (b.y - (a_bottom + v_gap)).abs() < eps {
                     let x0 = a.x.max(b.x);
@@ -2865,12 +2870,46 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(11.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, None, false);
 
         assert!(horizontal.is_empty());
         assert_eq!(vertical.len(), 1);
         // Pane 1 ends on column 9 and pane 2 starts on 11, so only column 10 is up for grabs.
         assert_eq!(vertical[0].rect, rect(10.0, 0.0, 1.0, 10.0));
+    }
+
+    /// A master stack that spills into a second column still offers one draggable boundary: the
+    /// master's edge. The gutter between stack columns has no ratio behind it, so it gets no strip.
+    #[test]
+    fn master_stack_columns_offer_only_the_master_divider() {
+        let mut placements = Vec::new();
+        crate::layout::tiling::allocate_master(
+            &[1, 2, 3, 4, 5, 6, 7],
+            rect(0.0, 0.0, 200.0, 50.0),
+            TileGap::DEFAULT,
+            0.5,
+            &mut placements,
+        );
+        let tiled: Vec<_> = placements.iter().map(|p| (p.id, p.rect)).collect();
+        let stack_columns = tiled[1..]
+            .iter()
+            .map(|(_, r)| r.x.to_bits())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(stack_columns.len(), 2, "precondition: {tiled:?}");
+
+        let (vertical, horizontal) =
+            resize_strip_hitboxes(&tiled, TileGap::DEFAULT, Some(1), false);
+
+        assert!(horizontal.is_empty());
+        assert!(!vertical.is_empty());
+        assert!(
+            vertical.iter().all(|strip| strip.pane_id == 1),
+            "a stack column gutter got a strip: {:?}",
+            vertical
+                .iter()
+                .map(|s| (s.pane_id, s.rect))
+                .collect::<Vec<_>>()
+        );
     }
 
     /// Merged borders overlap by a column, leaving nothing between the panes: the strip falls
@@ -2885,7 +2924,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(9.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false, false);
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, None, false);
 
         assert_eq!(vertical.len(), 1);
         assert_eq!(vertical[0].rect, rect(9.0, 0.0, 1.0, 10.0));
@@ -2922,7 +2961,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 10.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, None, false);
 
         assert!(vertical.is_empty());
         assert_eq!(horizontal.len(), 1);
@@ -2937,7 +2976,7 @@ mod tests {
             (3, rect(0.0, 10.0, 10.0, 10.0)),
             (4, rect(11.0, 10.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, None, false);
         let junctions = resize_junction_hitboxes(&vertical, &horizontal);
 
         assert_eq!(junctions.len(), 1, "coincident intersections must merge");
@@ -2997,7 +3036,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 10.0, 10.0, 10.0)),
         ];
-        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, true);
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, None, true);
 
         assert_eq!(horizontal.len(), 1);
         let strip = horizontal[0];
@@ -3020,7 +3059,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 11.0, 10.0, 10.0)),
         ];
-        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, true);
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, None, true);
 
         assert_eq!(horizontal.len(), 1);
         let strip = horizontal[0];
@@ -3043,7 +3082,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 11.0, 10.0, 10.0)),
         ];
-        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, false);
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, None, false);
 
         assert_eq!(horizontal.len(), 1);
         assert_eq!(horizontal[0].rect, rect(0.0, 10.0, 10.0, 1.0));
@@ -3060,7 +3099,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(9.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false, true);
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, None, true);
 
         assert_eq!(vertical.len(), 1);
         assert_eq!(vertical[0].pane_id, 1);

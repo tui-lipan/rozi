@@ -6,21 +6,25 @@ page covers what the skill lets an agent do and how to install, refresh, and rem
 
 ## What the agent can do
 
-With the skill installed, an agent that you ask to use `rozi` can:
+With the skill installed, an agent can use `rozi` when you ask for it, and whenever its task needs
+a real terminal:
 
-- list panes, read the layout, and capture pane output;
-- split panes and run commands in them;
-- watch and read coding agents running in other panes through `rozi agents`;
-- control a detached named session with `--session`;
+- list panes, read the layout, and capture pane output as text or as an image;
+- split panes, run commands in them, send keys, and wait for the output;
+- show you a live preview of an app in a pane beside your work;
+- test a terminal app by pressing keys and checking what the screen shows;
+- record a pane or the whole UI and export the recording;
+- start coding agents in other panes, prompt them, wait for them, and read their answers through
+  `rozi agents`;
+- control a detached named session with `--session`, on this machine or over SSH with `--remote`;
 - start a session of its own with `rozi sessions new <NAME> --detach --no-resurrect` for test
   runs and captures you did not ask to see, so its panes stay out of your workspaces and it is
   never offered for restoring.
 
-The skill lets the agent act when you ask it to use `rozi` or request a live terminal preview
-from a verified `rozi` pane, to read live pane
-IDs instead of guessing them, and to change only the panes and sessions you name or it created. It
-controls the current UI only from inside one of that UI's panes. For the commands themselves, see
-[Control CLI](control.md) and [Scripting](scripting.md).
+The skill tells the agent to read live pane IDs instead of guessing them, and to change only the
+panes and sessions you name or it created. Work you did not ask to see goes in the agent's own
+session. The agent controls the current UI only from inside one of that UI's panes. For the
+commands themselves, see [Control CLI](control.md) and [Scripting](scripting.md).
 
 For contributors doing visual reviews in this repository, the separate
 [rozi visual skill](../.agents/skills/rozi-visual/SKILL.md) covers preview panes, screenshots,

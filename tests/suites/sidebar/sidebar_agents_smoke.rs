@@ -213,8 +213,8 @@ fn agents_tab_renders_project_groups() {
         assert!(api < line_index("Codex"));
         assert!(rozi_group < line_index("Claude Code"));
         assert!(elsewhere < line_index("Aider"));
-        // The detail line spends its width on what the agent is doing and how long it has been
-        // at it, not on repeating a status the glyph column already carries.
+        // The detail line leads with the state and how long it has held, then what the agent is
+        // doing.
         assert!(sidebar.iter().any(|line| line.contains("needs approval")));
         // Dated `now` at pane construction, so a slow runner can tick past 0s before paint.
         // The check is that a duration is on the detail line, not that this suite finished
@@ -225,11 +225,7 @@ fn agents_tab_renders_project_groups() {
                 !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
             })
         }));
-        assert!(
-            !sidebar
-                .iter()
-                .any(|line| line.to_ascii_lowercase().contains("blocked"))
-        );
+        assert!(sidebar.iter().any(|line| line.contains("Blocked")));
         // An agent-defined status has no glyph of its own, so its word survives.
         assert!(sidebar.iter().any(|line| line.contains("compacting")));
         // A finished-unseen agent shows the filled attention pulse.

@@ -345,14 +345,30 @@ impl Layout<'_> {
         } else {
             super::super::fg_only(&theme.primary)
         };
+        let counts = if expanded {
+            Vec::new()
+        } else {
+            status_counts(agents, theme)
+        };
+        // A long branch keeps its end, where the line of work is named, so it is cut here from the
+        // start rather than left for the row to clip from the end. Its room is the tab less the
+        // gutter, the arrow, the divider and scrollbar columns, the label, the gap, and the counts.
+        let note = note.map(|note| {
+            let taken = 9
+                + label.chars().count()
+                + counts
+                    .iter()
+                    .map(|(count, _)| count.chars().count() + 1)
+                    .sum::<usize>()
+                + if counts.is_empty() { 0 } else { 2 };
+            let room = usize::from(self.width).saturating_sub(taken).max(8);
+            super::row::truncate_start(&note, room)
+        });
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
-        if !expanded {
-            let counts = status_counts(agents, theme);
-            if !parts.is_empty() && !counts.is_empty() {
-                parts.push(("·".into(), dim));
-            }
-            parts.extend(counts);
+        if !parts.is_empty() && !counts.is_empty() {
+            parts.push(("·".into(), dim));
         }
+        parts.extend(counts);
         let content = Row::new(label)
             .active(!expanded && agents.iter().any(|agent| is_active(self.state, agent)))
             .title_style(title_style)
@@ -448,42 +464,36 @@ impl Layout<'_> {
         }
     }
 
-    /// One agent run: what it works on and the session it is in, then why it is in its state.
+    /// One agent run: what it works on and the session it is in, then its state and time and why it
+    /// is in it.
     ///
-    /// On its own, a run that named its work leads its second line with the agent's name. Beneath a
-    /// cluster, which already names the agent, the second line is its state alone.
+    /// On its own, a run that named its work ends its detail line with the agent's name, the first
+    /// thing to give way. Beneath a cluster, which already names the agent, it leaves it out.
     fn run_row(&self, row: &GlobalAgentRow, in_cluster: bool) -> SidebarRow {
         let theme = &self.state.theme;
-        let (glyph, color, spinner) =
-            super::agents::row_glyph(status(row), row.finished_unseen, theme);
-        let muted = super::super::fg_only(&theme.muted).dim();
         let title_style = super::super::fg_only(&theme.primary);
-        let mut content = Row::new(row.title())
-            .active(is_active(self.state, row))
-            .glyph(super::agents::status_icon(glyph, color, spinner))
-            .title_style(if row.background {
+        let agent = (!in_cluster && row.task.is_some()).then(|| row.agent.clone());
+        let mut content = super::agents::RunLines {
+            title: row.title(),
+            title_style: if row.background {
                 title_style.italic()
             } else {
                 title_style
-            })
-            .badge_text(
-                crate::view::vocabulary::session_name(&row.session).to_string(),
-                muted,
-            );
+            },
+            location: Some(crate::view::vocabulary::session_name(&row.session).to_string()),
+            status: status(row),
+            finished_unseen: row.finished_unseen,
+            duration: row.elapsed.map(super::agents::format_age),
+            notes: row.reason.clone().into_iter().chain(agent).collect(),
+            active: is_active(self.state, row),
+        }
+        .row(theme, self.width);
         if row.background {
-            content = content.detail_badge(crate::view::vocabulary::BACKGROUND_RUN, muted);
+            content = content.detail_badge(
+                crate::view::vocabulary::BACKGROUND_RUN,
+                super::super::fg_only(&theme.muted).dim(),
+            );
         }
-        if let Some(elapsed) = row.elapsed {
-            content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
-        }
-        let budget = super::agents::activity_budget(self.width);
-        if !in_cluster && row.task.is_some() {
-            content = content.detail(super::row::truncate(&row.agent, budget), muted);
-        }
-        content = content.detail(
-            super::row::truncate(&state_text(row), budget),
-            Style::new().fg(color),
-        );
         SidebarRow::item(content, RowTarget::Agent(row.location.clone()))
             .keyed(format!("agent:{:?}", row.location))
     }
@@ -508,60 +518,6 @@ fn status_counts(agents: &[&GlobalAgentRow], theme: &Theme) -> Vec<(String, Styl
     )
 }
 
-/// Why the agent is in its state when it said, else the state itself. A finished run nobody has
-/// looked at always reads `Done`: that is the news, whatever the agent last gave as a reason.
-fn state_text(row: &GlobalAgentRow) -> String {
-    match row.reason.as_deref() {
-        Some(reason) if !row.finished_unseen => reason.to_string(),
-        _ => super::agents::row_status_label(status(row), row.finished_unseen),
-    }
-}
-
 fn is_active(state: &State, row: &GlobalAgentRow) -> bool {
     row.is_on_screen(state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(status: &str) -> GlobalAgentRow {
-        GlobalAgentRow {
-            location: AgentLocation::OtherSession {
-                target: None,
-                session: "dev".into(),
-                pane: 1,
-                row: None,
-            },
-            agent_id: "codex".into(),
-            checkout: None,
-            agent: "Codex".into(),
-            task: None,
-            host: None,
-            session: "dev".into(),
-            status: status.into(),
-            reason: None,
-            finished_unseen: false,
-            elapsed: None,
-            project: None,
-            branch: None,
-            ordinal: None,
-            background: false,
-        }
-    }
-
-    /// A blocked agent says why; a finished run nobody has read says it is done, whatever the agent
-    /// last gave as a reason; one that reported nothing is idle.
-    #[test]
-    fn the_state_line_prefers_the_reason_until_a_run_is_unread() {
-        let mut row = row("blocked");
-        assert_eq!(state_text(&row), "Blocked");
-        row.reason = Some("Permission required".into());
-        assert_eq!(state_text(&row), "Permission required");
-        row.status = "idle".into();
-        row.finished_unseen = true;
-        assert_eq!(state_text(&row), "Done");
-        let quiet = super::tests::row("");
-        assert_eq!(state_text(&quiet), "Idle");
-    }
 }

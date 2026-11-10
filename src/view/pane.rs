@@ -1279,12 +1279,16 @@ pub(crate) fn pane_element(
     // stops taking focus on click: the framework hands the caret to whatever the pointer lands on,
     // and a caret blinking in a pane the app does not consider focused is the visible half of that
     // split. The labelled pane stays focusable because it is the one holding the keyboard.
+    // Copy mode pins the keyboard to its pane the same way, so a click elsewhere neither takes
+    // focus nor reaches the program in that other pane.
     let hinting = ctx.state.hint_mode.is_some();
-    let takes_pointer_focus = ctx
+    let pinned_target = ctx
         .state
         .hint_mode
         .as_ref()
-        .is_none_or(|hints| hints.target == id);
+        .map(|hints| hints.target)
+        .or_else(|| ctx.state.copy_mode.as_ref().map(|copy| copy.target));
+    let takes_pointer_focus = pinned_target.is_none_or(|target| target == id);
     // The widget reads the screen itself rather than being handed a snapshot, which keeps this
     // element identical from one chunk of output to the next - that is what lets `session::output`
     // ask for a repaint instead of a rebuild of every pane in the window. Decorations ride along
@@ -1362,7 +1366,7 @@ pub(crate) fn pane_element(
                 ctx.link()
                     .callback(move |event| Msg::PaneSelection(id, event)),
             );
-        } else if !hinting {
+        } else if pinned_target.is_none() {
             terminal_widget =
                 terminal_widget
                     .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {

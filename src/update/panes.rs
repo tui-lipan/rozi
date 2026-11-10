@@ -23,6 +23,16 @@ pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     if crate::ops::hints::cancel_for_pointer(ctx) {
         return Update::full();
     }
+    // Copy mode holds the keyboard on its pane until it is left with a key, so a click on another
+    // pane leaves focus where it is.
+    if ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .is_some_and(|copy| copy.target != id)
+    {
+        return Update::none();
+    }
     focus(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     Update::full()

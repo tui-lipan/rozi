@@ -22,6 +22,8 @@ pub(super) struct HistoryWait {
 
 pub(super) struct PendingHistoryRead {
     wait: HistoryWait,
+    /// The screen when the turn resolved, returned when no history can be reconstructed.
+    visible: String,
     reader: AltScreenHistoryReader,
     mouse: MouseModeState,
     mutations: Vec<DeferredMutation>,
@@ -61,6 +63,7 @@ impl PendingHistoryRead {
     }
 }
 
+/// The active grid's text: retained history on the normal screen, the viewport on the alternate.
 fn bounded_terminal_text(screen: &TerminalScreen) -> String {
     use std::ops::ControlFlow;
     let mut text = String::new();
@@ -75,6 +78,7 @@ fn bounded_terminal_text(screen: &TerminalScreen) -> String {
             ControlFlow::Continue(())
         }
     });
+    text.truncate(text.trim_end().len());
     text
 }
 
@@ -114,15 +118,9 @@ impl SessionServer {
             return Some(ControlResponse::ok(wait.result));
         };
         let screen = pane.screen_without_change();
-        if !screen.is_alternate_screen() {
-            let text = bounded_terminal_text(screen);
-            if !text.trim().is_empty() {
-                let content = rendered_payload(text, AgentResponseSource::Terminal, false);
-                self.store_rendered(&reference, &wait.fence, &mut wait.result, content);
-            }
-            return Some(ControlResponse::ok(wait.result));
-        }
-        if !self.may_read_history(&wait, &reference) {
+        let visible = bounded_terminal_text(screen);
+        if !screen.is_alternate_screen() || !self.may_read_history(&wait, &reference) {
+            self.store_terminal(&reference, &wait.fence, &mut wait.result, visible);
             return Some(ControlResponse::ok(wait.result));
         }
         let pane = self
@@ -133,12 +131,14 @@ impl SessionServer {
         let mouse = screen.render_snapshot().mouse_mode;
         let Ok(reader) = AltScreenHistoryReader::new(screen.history_read_frame(), Instant::now())
         else {
+            self.store_terminal(&reference, &wait.fence, &mut wait.result, visible);
             return Some(ControlResponse::ok(wait.result));
         };
         self.agent_history.insert(
             reference.pane.pane_id,
             PendingHistoryRead {
                 wait,
+                visible,
                 reader,
                 mouse,
                 mutations: Vec::new(),
@@ -173,12 +173,12 @@ impl SessionServer {
         let eligible = screen.scrollback_offset() == 0
             && snapshot.mouse_mode.mode != MouseMode::None
             && snapshot.images.is_empty();
-        eligible && self.history_declared(reference)
+        eligible && self.history_allowed(reference)
     }
 
-    /// Synthetic wheel input is only ever sent to an agent whose definition declares that the
-    /// wheel reversibly scrolls its transcript.
-    fn history_declared(&self, reference: &protocol::AgentRef) -> bool {
+    /// Synthetic wheel input is only ever sent to a recognized agent whose definition has not
+    /// opted out.
+    fn history_allowed(&self, reference: &protocol::AgentRef) -> bool {
         let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
             return false;
         };
@@ -198,6 +198,20 @@ impl SessionServer {
         match wait.reply {
             ReplyTo::Attached { .. } => self.client_may_input(wait.key.0),
             _ => !self.input_locked,
+        }
+    }
+
+    /// Store rendered terminal text, which never claims to be a complete response.
+    fn store_terminal(
+        &mut self,
+        reference: &protocol::AgentRef,
+        fence: &AgentResponseFence,
+        result: &mut AgentWaitResult,
+        text: String,
+    ) {
+        if !text.is_empty() {
+            let content = rendered_payload(text, AgentResponseSource::Terminal, false);
+            self.store_rendered(reference, fence, result, content);
         }
     }
 
@@ -364,14 +378,19 @@ impl SessionServer {
         text: std::result::Result<String, HistoryReadError>,
     ) {
         let reference = read.reference().clone();
-        if let Ok(text) = text {
-            let content = rendered_payload(text, AgentResponseSource::AlternateScreenHistory, true);
-            self.store_rendered(&reference, &read.wait.fence, &mut read.wait.result, content);
-        } else {
-            read.wait.result.response = self
-                .agent_responses
-                .after(&reference, &read.wait.fence)
-                .cloned();
+        match text {
+            Ok(text) => {
+                let content =
+                    rendered_payload(text, AgentResponseSource::AlternateScreenHistory, true);
+                self.store_rendered(&reference, &read.wait.fence, &mut read.wait.result, content);
+            }
+            // A failed request publishes nothing; a traversal that just ended without text
+            // still answers with the screen the turn ended on.
+            Err(_) if read.error.is_none() => {
+                let visible = std::mem::take(&mut read.visible);
+                self.store_terminal(&reference, &read.wait.fence, &mut read.wait.result, visible);
+            }
+            Err(_) => {}
         }
         let response = read
             .error

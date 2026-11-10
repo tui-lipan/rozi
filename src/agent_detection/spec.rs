@@ -33,8 +33,8 @@ pub struct AgentSpec {
     pub r#match: AgentMatchSpec,
     pub states: Vec<AgentStateSpec>,
     pub resume: Option<AgentResumeSpec>,
-    /// Declares that the mouse wheel reversibly scrolls this agent's transcript. Unset keeps a
-    /// built-in's setting; otherwise history is never read.
+    /// Whether Rozi may scroll this agent's transcript to read it. Unset keeps a built-in's
+    /// setting; otherwise history may be read.
     pub history: Option<AgentHistorySpec>,
 }
 
@@ -43,7 +43,7 @@ pub struct AgentSpec {
 pub enum AgentHistorySpec {
     /// No synthetic input is ever sent to read history.
     None,
-    /// The mouse wheel only scrolls the transcript, and scrolling back restores the view.
+    /// The mouse wheel may scroll the transcript to read it.
     MouseScroll,
 }
 
@@ -240,7 +240,9 @@ pub fn build_definitions(
             history: match spec.history {
                 Some(AgentHistorySpec::MouseScroll) => AgentHistory::MouseScroll,
                 Some(AgentHistorySpec::None) => AgentHistory::None,
-                None => inherited.map_or(AgentHistory::None, |definition| definition.history),
+                None => {
+                    inherited.map_or_else(AgentHistory::default, |definition| definition.history)
+                }
             },
         });
     }
@@ -698,6 +700,51 @@ mod tests {
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(built[0].resume_argv.is_none());
+    }
+
+    #[test]
+    fn history_defaults_on_and_an_override_keeps_an_opt_out() {
+        let opted_out = AgentDefinition {
+            identity: crate::session::protocol::AgentIdentity::new("grok", "Grok").into(),
+            names: vec!["grok".into()],
+            paths: Vec::new(),
+            base: true,
+            states: Vec::new(),
+            resume_argv: None,
+            attach_argv: None,
+            reported_resume_argv: None,
+            history: AgentHistory::None,
+        };
+        let cases = [
+            (
+                "id = \"fresh\"\nmatch = { names = [\"fresh\"] }",
+                None,
+                AgentHistory::MouseScroll,
+            ),
+            ("id = \"grok\"", Some(&opted_out), AgentHistory::None),
+            (
+                "id = \"grok\"\nhistory = \"mouse-scroll\"",
+                Some(&opted_out),
+                AgentHistory::MouseScroll,
+            ),
+            (
+                "id = \"fresh\"\nmatch = { names = [\"fresh\"] }\nhistory = \"none\"",
+                None,
+                AgentHistory::None,
+            ),
+        ];
+        for (definition, inherited, expected) in cases {
+            let mut warnings = Vec::new();
+            let inherit: Vec<_> = inherited.into_iter().cloned().collect();
+            let built = build_definitions(
+                parse(&format!("[[agents]]\n{definition}\n")),
+                AgentOrigin::Config,
+                &inherit,
+                &mut warnings,
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(built[0].history, expected, "{definition}");
+        }
     }
 
     #[test]

@@ -2870,14 +2870,17 @@ fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
         backend.state_mut().local_agent_snapshot =
             Some(crate::session::discovery::LocalAgentSnapshot {
                 sessions: Vec::new(),
-                agents: vec![working],
-                projects: vec![project(
-                    session,
-                    "/x/rozi",
-                    None,
-                    "worktree-settings-search-ranking",
-                    &[4],
-                )],
+                agents: vec![working, monitored_agent(session, 5, "idle")],
+                projects: vec![
+                    project(
+                        session,
+                        "/x/rozi-search",
+                        Some("/x/rozi"),
+                        "worktree-settings-search-ranking",
+                        &[4],
+                    ),
+                    project(session, "/x/rozi", None, "master", &[5]),
+                ],
             });
         backend.state_mut().config.sidebar.layout.left.width = 32;
         let lines = agents_tab_lines(&mut backend);
@@ -2894,9 +2897,9 @@ fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
             sidebar.join("\n")
         );
 
-        // A branch too long for its checkout row keeps its end and uses all the room the
-        // repository's name leaves it.
-        let checkout = sidebar[line_of(&sidebar, "rozi")].trim_end_matches(['│', ' ']);
+        // Beside another checkout of its repository, a branch too long for its row keeps its end
+        // and uses all the room the repository's name, which stays whole, leaves it.
+        let checkout = sidebar[line_of(&sidebar, "search-ranking")].trim_end_matches(['│', ' ']);
         assert!(
             checkout.ends_with("search-ranking") && checkout.contains("rozi  …"),
             "the branch keeps its end and fills the row:\n{}",

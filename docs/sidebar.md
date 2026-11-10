@@ -88,8 +88,9 @@ the Git project that contains each pane's working directory, with branch and wor
 published row can name its own directory, so a program that runs several sessions in separate
 worktrees shows each one under its own branch. A linked Git worktree is labelled with its
 repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
-repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
-repository name shortens. A checkout with no branch shows its short commit.
+repository are listed, the repository name comes first in a narrow sidebar, and the branch
+shortens from its start, showing its end. A very long repository name shortens too, so the branch
+always keeps some room. A checkout with no branch shows its short commit.
 
 Each agent takes two lines: what it works on, with its workspace number on the right, then its
 state and how long it has held, such as `Working 9m22s`, followed by what the agent says it is

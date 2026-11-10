@@ -192,7 +192,8 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
     checkouts
 }
 
-/// Several checkouts of one repository read alike but for the branch, which then keeps its width.
+/// Several checkouts of one repository read alike but for the branch, so a long repository name
+/// gives it a share of the row.
 fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
     checkout.repository_key.is_some()
         && checkouts
@@ -233,7 +234,7 @@ impl Layout<'_> {
         let key = self.key(checkout.row_id());
         let expanded = self.expanded(&key);
         let priority = if shared {
-            Priority::Distinguishing
+            Priority::Balanced
         } else {
             Priority::Label
         };

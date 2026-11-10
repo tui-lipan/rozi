@@ -187,10 +187,6 @@ pub(super) enum Priority {
     /// short, but a long one is cut before the label has less than two thirds of the line. An agent
     /// run beside the session or workspace it runs in.
     Aside,
-    /// The description is what tells this row from its neighbours, so it keeps its width first, but
-    /// the label keeps a stub - enough to show it is there and how it starts. A branch beside a
-    /// repository name that several headings share.
-    Distinguishing,
 }
 
 /// The least blank space between a label and its description, so the two read as separate things
@@ -514,9 +510,6 @@ fn titled_item(label: Vec<Span>, description: Vec<Span>, priority: Priority) -> 
         Priority::Aside => item
             .primary_truncate_description_first(false)
             .primary_min_label_width(Length::Percent(ASIDE_LABEL_SHARE)),
-        Priority::Distinguishing => item
-            .primary_truncate_description_first(false)
-            .primary_min_label_width(Length::Px(3)),
     }
 }
 

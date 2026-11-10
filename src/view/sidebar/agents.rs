@@ -1070,11 +1070,11 @@ pub(crate) fn row_glyph(
 /// it would summarize is already on screen directly beneath it — and the glyph plus the nesting it
 /// forced cost four cells on every row of the narrowest surface in the app.
 ///
-/// Which side keeps its width depends on what tells the group apart. A repository with one checkout
-/// on screen is named by its name, and the branch takes whatever width is left, down to nothing.
-/// Several checkouts of one repository all carry its name, so there the branch is the identity: it
-/// keeps its width, shortened from the start if it must be, and the name truncates first, down to a
-/// stub. A detached checkout's branch is its short commit.
+/// The repository's name leads. A repository with one checkout on screen is named by its name, and
+/// the branch takes whatever width is left, down to nothing. Several checkouts of one repository
+/// tell apart by their branches, so there a long name gives up width down to a share of the line
+/// rather than leaving the branch none. Either way the branch shortens from its start, keeping the
+/// end that names the work. A detached checkout's branch is its short commit.
 fn group_header(
     state: &State,
     project: Option<&str>,
@@ -1085,7 +1085,7 @@ fn group_header(
         return row::header(state, "Elsewhere", true);
     };
     let priority = if shared_name {
-        row::Priority::Distinguishing
+        row::Priority::Balanced
     } else {
         row::Priority::Label
     };

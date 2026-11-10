@@ -443,9 +443,10 @@ cursor as it keeps moving. A jump to another line, or to the start of the line, 
 cursor has held still for `settle_ms`, so a cursor that lands in steps, such as a shell's newline
 and then its prompt, gets one smear straight to where it settled. A move to another pane draws at
 once. A pane that moves, such as one sliding
-with its workspace or a floating pane you drag, carries its cursor along without a trail. Switching
-to another workspace or session, or creating a session, draws no trail either: the cursor arrives
-with the new screen.
+with its workspace or a floating pane you drag, carries its cursor along without a trail. Resizing a
+pane or the whole window draws no trail while the program in it redraws for the new size, even
+though its prompt moves. Switching to another workspace or session, or creating a session, draws no
+trail either: the cursor arrives with the new screen.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |

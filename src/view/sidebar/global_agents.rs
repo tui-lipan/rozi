@@ -192,7 +192,8 @@ fn checkouts<'a>(agents: &[&'a GlobalAgentRow]) -> Vec<Checkout<'a>> {
     checkouts
 }
 
-/// Several checkouts of one repository read alike but for the branch, which then keeps its width.
+/// Several checkouts of one repository read alike but for the branch, so a long repository name
+/// gives it a share of the row.
 fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
     checkout.repository_key.is_some()
         && checkouts
@@ -200,6 +201,17 @@ fn shares_label(checkouts: &[Checkout<'_>], checkout: &Checkout<'_>) -> bool {
             .filter(|other| other.repository_key == checkout.repository_key)
             .count()
             > 1
+}
+
+/// What a row that folds agents beneath it names, which decides how it reads.
+#[derive(Clone, Copy)]
+enum Label {
+    /// A repository or checkout.
+    Project,
+    /// One checkout's branch beneath its repository.
+    Branch,
+    /// The agents in no Git checkout.
+    Elsewhere,
 }
 
 /// What every row on one host needs to place itself.
@@ -233,7 +245,7 @@ impl Layout<'_> {
         let key = self.key(checkout.row_id());
         let expanded = self.expanded(&key);
         let priority = if shared {
-            Priority::Distinguishing
+            Priority::Balanced
         } else {
             Priority::Label
         };
@@ -241,7 +253,11 @@ impl Layout<'_> {
             self.group_row(
                 checkout.label.clone(),
                 checkout.repository.and(checkout.branch_label()),
-                checkout.root.is_none(),
+                if checkout.root.is_none() {
+                    Label::Elsewhere
+                } else {
+                    Label::Project
+                },
                 &checkout.agents,
                 key,
                 expanded,
@@ -285,7 +301,7 @@ impl Layout<'_> {
                 self.group_row(
                     checkout.label.clone(),
                     None,
-                    false,
+                    Label::Project,
                     &agents,
                     key,
                     expanded,
@@ -310,7 +326,7 @@ impl Layout<'_> {
                     self.group_row(
                         branch,
                         None,
-                        false,
+                        Label::Branch,
                         &sibling.agents,
                         key,
                         expanded,
@@ -332,7 +348,7 @@ impl Layout<'_> {
         &self,
         label: String,
         note: Option<String>,
-        muted: bool,
+        kind: Label,
         agents: &[&GlobalAgentRow],
         key: TreeExpansionKey,
         expanded: bool,
@@ -340,23 +356,28 @@ impl Layout<'_> {
     ) -> SidebarRow {
         let theme = &self.state.theme;
         let dim = super::super::fg_only(&theme.muted).dim();
-        let title_style = if muted {
-            super::super::fg_only(&theme.muted)
+        // Projects read as headings, in Rozi's colour as Activity's do; a branch beneath its
+        // repository and the agents in no checkout stay quiet.
+        let title_style = match kind {
+            Label::Project => super::super::rozi_fg(theme).bold(),
+            Label::Branch | Label::Elsewhere => super::super::fg_only(&theme.muted),
+        };
+        let counts = if expanded {
+            Vec::new()
         } else {
-            super::super::fg_only(&theme.primary)
+            status_counts(agents, theme)
         };
         let mut parts: Vec<(String, Style)> = note.into_iter().map(|note| (note, dim)).collect();
-        if !expanded {
-            let counts = status_counts(agents, theme);
-            if !parts.is_empty() && !counts.is_empty() {
-                parts.push(("·".into(), dim));
-            }
-            parts.extend(counts);
+        if !parts.is_empty() && !counts.is_empty() {
+            parts.push(("·".into(), dim));
         }
+        parts.extend(counts);
         let content = Row::new(label)
             .active(!expanded && agents.iter().any(|agent| is_active(self.state, agent)))
             .title_style(title_style)
             .priority(priority)
+            // A long branch keeps its end, where the line of work is named.
+            .badge_keeps_tail()
             .badge_parts(parts);
         let row = SidebarRow::item(content, RowTarget::TreeToggle(key.clone()))
             .keyed(format!("{}:{}", key.section, key.row))
@@ -448,42 +469,36 @@ impl Layout<'_> {
         }
     }
 
-    /// One agent run: what it works on and the session it is in, then why it is in its state.
+    /// One agent run: what it works on and the session it is in, then its state and time and why it
+    /// is in it.
     ///
-    /// On its own, a run that named its work leads its second line with the agent's name. Beneath a
-    /// cluster, which already names the agent, the second line is its state alone.
+    /// On its own, a run that named its work ends its detail line with the agent's name, the first
+    /// thing to give way. Beneath a cluster, which already names the agent, it leaves it out.
     fn run_row(&self, row: &GlobalAgentRow, in_cluster: bool) -> SidebarRow {
         let theme = &self.state.theme;
-        let (glyph, color, spinner) =
-            super::agents::row_glyph(status(row), row.finished_unseen, theme);
-        let muted = super::super::fg_only(&theme.muted).dim();
         let title_style = super::super::fg_only(&theme.primary);
-        let mut content = Row::new(row.title())
-            .active(is_active(self.state, row))
-            .glyph(super::agents::status_icon(glyph, color, spinner))
-            .title_style(if row.background {
+        let agent = (!in_cluster && row.task.is_some()).then(|| row.agent.clone());
+        let mut content = super::agents::RunLines {
+            title: row.title(),
+            title_style: if row.background {
                 title_style.italic()
             } else {
                 title_style
-            })
-            .badge_text(
-                crate::view::vocabulary::session_name(&row.session).to_string(),
-                muted,
-            );
+            },
+            location: Some(crate::view::vocabulary::session_name(&row.session).to_string()),
+            status: status(row),
+            finished_unseen: row.finished_unseen,
+            duration: row.elapsed.map(super::agents::format_age),
+            notes: row.reason.clone().into_iter().chain(agent).collect(),
+            active: is_active(self.state, row),
+        }
+        .row(theme, self.width);
         if row.background {
-            content = content.detail_badge(crate::view::vocabulary::BACKGROUND_RUN, muted);
+            content = content.detail_badge(
+                crate::view::vocabulary::BACKGROUND_RUN,
+                super::super::fg_only(&theme.muted).dim(),
+            );
         }
-        if let Some(elapsed) = row.elapsed {
-            content = content.meta(super::agents::format_age(elapsed), Style::new().fg(color));
-        }
-        let budget = super::agents::activity_budget(self.width);
-        if !in_cluster && row.task.is_some() {
-            content = content.detail(super::row::truncate(&row.agent, budget), muted);
-        }
-        content = content.detail(
-            super::row::truncate(&state_text(row), budget),
-            Style::new().fg(color),
-        );
         SidebarRow::item(content, RowTarget::Agent(row.location.clone()))
             .keyed(format!("agent:{:?}", row.location))
     }
@@ -508,60 +523,6 @@ fn status_counts(agents: &[&GlobalAgentRow], theme: &Theme) -> Vec<(String, Styl
     )
 }
 
-/// Why the agent is in its state when it said, else the state itself. A finished run nobody has
-/// looked at always reads `Done`: that is the news, whatever the agent last gave as a reason.
-fn state_text(row: &GlobalAgentRow) -> String {
-    match row.reason.as_deref() {
-        Some(reason) if !row.finished_unseen => reason.to_string(),
-        _ => super::agents::row_status_label(status(row), row.finished_unseen),
-    }
-}
-
 fn is_active(state: &State, row: &GlobalAgentRow) -> bool {
     row.is_on_screen(state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(status: &str) -> GlobalAgentRow {
-        GlobalAgentRow {
-            location: AgentLocation::OtherSession {
-                target: None,
-                session: "dev".into(),
-                pane: 1,
-                row: None,
-            },
-            agent_id: "codex".into(),
-            checkout: None,
-            agent: "Codex".into(),
-            task: None,
-            host: None,
-            session: "dev".into(),
-            status: status.into(),
-            reason: None,
-            finished_unseen: false,
-            elapsed: None,
-            project: None,
-            branch: None,
-            ordinal: None,
-            background: false,
-        }
-    }
-
-    /// A blocked agent says why; a finished run nobody has read says it is done, whatever the agent
-    /// last gave as a reason; one that reported nothing is idle.
-    #[test]
-    fn the_state_line_prefers_the_reason_until_a_run_is_unread() {
-        let mut row = row("blocked");
-        assert_eq!(state_text(&row), "Blocked");
-        row.reason = Some("Permission required".into());
-        assert_eq!(state_text(&row), "Permission required");
-        row.status = "idle".into();
-        row.finished_unseen = true;
-        assert_eq!(state_text(&row), "Done");
-        let quiet = super::tests::row("");
-        assert_eq!(state_text(&quiet), "Idle");
-    }
 }

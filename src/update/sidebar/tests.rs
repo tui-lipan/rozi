@@ -2696,6 +2696,16 @@ fn the_agents_tab_lists_every_agent_by_checkout_on_each_host() {
         );
         let checkout = &lines[line_of(&lines, "master")];
         assert!(checkout.contains("rozi"), "{}", lines.join("\n"));
+        // A checkout reads as a heading, in Rozi's colour and bold as Activity's are.
+        let row = line_of(&lines, "master");
+        let column = lines[row].chars().position(|c| c == 'r').unwrap();
+        let cell = backend
+            .capture_frame()
+            .cell(column as u16, row as u16)
+            .clone();
+        let heading = crate::view::rozi_fg(&backend.state().theme);
+        assert_eq!(cell.fg, heading.fg.unwrap(), "{}", lines.join("\n"));
+        assert!(cell.modifiers.bold, "{}", lines.join("\n"));
         let checkout = &lines[line_of(&lines, "main")];
         assert!(checkout.contains("api"), "{}", lines.join("\n"));
 
@@ -2789,15 +2799,7 @@ fn several_runs_of_one_agent_in_a_checkout_cluster_under_it() {
             });
         let lines = agents_tab_lines(&mut backend);
         assert!(
-            in_order(
-                &lines,
-                &[
-                    "master",
-                    "Codex",
-                    "Fix SSH reconnect",
-                    "Review the graphics PR"
-                ]
-            ),
+            in_order(&lines, &["master", "Codex", "Fix SSH", "Review the"]),
             "the cluster, then its runs most urgent first:\n{}",
             lines.join("\n")
         );
@@ -2815,6 +2817,103 @@ fn several_runs_of_one_agent_in_a_checkout_cluster_under_it() {
             cluster.contains("▲1") && cluster.contains("○1"),
             "{}",
             lines.join("\n")
+        );
+    });
+}
+
+/// An agent run reads the same in Agents as in Activity: its work with its session on the right, then
+/// its state, then why. A long task cannot push the session off its line, and in a narrow tab the
+/// agent's name gives way before the reason, and the reason before the state.
+#[test]
+fn an_agent_run_keeps_its_session_and_its_state_in_a_narrow_tab() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::agents()]);
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let mut working = monitored_agent("backend", 4, "working");
+        working.task = Some("cursor trail sigwinch resize regression".into());
+        working.reason = Some("Background work running".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![working],
+                projects: vec![project("backend", "/x/rozi", None, "master", &[4])],
+            });
+        for width in [32, 60] {
+            backend.state_mut().config.sidebar.layout.left.width = width;
+            let lines = agents_tab_lines(&mut backend);
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(usize::from(width)).collect())
+                .collect();
+            let title = line_of(&sidebar, "cursor trail");
+            assert!(
+                sidebar[title]
+                    .trim_end_matches(['│', ' '])
+                    .ends_with("backend"),
+                "the session holds the right of the title line at {width}:\n{}",
+                sidebar.join("\n")
+            );
+            let detail = &sidebar[title + 1];
+            assert!(
+                detail.trim_start().starts_with("Working"),
+                "the state leads the detail line:\n{}",
+                sidebar.join("\n")
+            );
+            assert!(detail.contains("Background"), "{}", sidebar.join("\n"));
+            assert_eq!(
+                detail.contains("Codex"),
+                width == 60,
+                "the agent's name is the first to give way:\n{}",
+                sidebar.join("\n")
+            );
+        }
+
+        // A long session name is cut before the title has less than two thirds of the line.
+        let session = "worktree-stable-docking-shell";
+        let mut working = monitored_agent(session, 4, "working");
+        working.task = Some("cursor trail sigwinch resize regression".into());
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: vec![working, monitored_agent(session, 5, "idle")],
+                projects: vec![
+                    project(
+                        session,
+                        "/x/rozi-search",
+                        Some("/x/rozi"),
+                        "worktree-settings-search-ranking",
+                        &[4],
+                    ),
+                    project(session, "/x/rozi", None, "master", &[5]),
+                ],
+            });
+        backend.state_mut().config.sidebar.layout.left.width = 32;
+        let lines = agents_tab_lines(&mut backend);
+        let sidebar: Vec<String> = lines
+            .iter()
+            .map(|line| line.chars().take(32).collect())
+            .collect();
+        let title = &sidebar[line_of(&sidebar, "cursor trail")];
+        assert!(
+            title.contains("cursor trail si")
+                && title.contains("worktr")
+                && !title.contains(session),
+            "the title keeps most of the line and the session shortens:\n{}",
+            sidebar.join("\n")
+        );
+
+        // Beside another checkout of its repository, a branch too long for its row keeps its end
+        // and uses all the room the repository's name, which stays whole, leaves it.
+        let checkout = sidebar[line_of(&sidebar, "search-ranking")].trim_end_matches(['│', ' ']);
+        assert!(
+            checkout.ends_with("search-ranking") && checkout.contains("rozi  …"),
+            "the branch keeps its end and fills the row:\n{}",
+            sidebar.join("\n")
         );
     });
 }
@@ -2853,13 +2952,7 @@ fn the_agents_tab_can_name_each_repository_once() {
         assert!(
             in_order(
                 &lines,
-                &[
-                    "rozi",
-                    "master",
-                    "Tidy the docs",
-                    "fix/ssh",
-                    "Fix SSH reconnect"
-                ]
+                &["rozi", "master", "Tidy the docs", "fix/ssh", "Fix SSH"]
             ),
             "the primary checkout first, then worktrees by branch:\n{}",
             lines.join("\n")
@@ -3088,6 +3181,49 @@ fn projects_keep_long_session_names_and_work_counts_visible() {
                     .iter()
                     .any(|line| line.contains("sess") && line.contains("1 pane")),
                 "both session identity and work count at width {width}: {lines:#?}"
+            );
+        }
+    });
+}
+
+/// A repository reads as a heading, bold in Rozi's colour as Activity's and Agents' projects do;
+/// its checkouts and sessions keep the ordinary row colour.
+#[test]
+fn projects_head_each_repository_as_the_other_agent_tabs_do() {
+    crate::test_support::on_large_stack(|| {
+        let mut backend = focused_sidebar_backend(vec![SidebarTab::Projects]);
+        backend.state_mut().local_agent_snapshot =
+            Some(crate::session::discovery::LocalAgentSnapshot {
+                sessions: Vec::new(),
+                agents: Vec::new(),
+                projects: vec![project("backend", "/x/shop", None, "main", &[1])],
+            });
+        backend.render();
+        let frame = backend.capture_frame();
+        let lines = frame.to_fixed_grid_lines();
+        let cell = |needle: &str| {
+            let row = line_of(&lines, needle);
+            let column = lines[row].find(needle).unwrap();
+            let column = lines[row][..column].chars().count();
+            frame.cell(column as u16, row as u16).clone()
+        };
+        let theme = &backend.state().theme;
+        let repository = cell("shop");
+        assert_eq!(
+            repository.fg,
+            crate::view::rozi_fg(theme).fg.unwrap(),
+            "{}",
+            lines.join("\n")
+        );
+        assert!(repository.modifiers.bold, "{}", lines.join("\n"));
+        for row in ["main", "backend"] {
+            let cell = cell(row);
+            assert!(!cell.modifiers.bold, "{row}: {}", lines.join("\n"));
+            assert_eq!(
+                cell.fg,
+                crate::view::fg_only(&theme.primary).fg.unwrap(),
+                "{row}: {}",
+                lines.join("\n")
             );
         }
     });

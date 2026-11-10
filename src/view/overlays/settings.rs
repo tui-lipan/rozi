@@ -1,7 +1,5 @@
 use super::*;
 
-use std::collections::HashSet;
-
 use crate::state::SettingControl;
 
 const SETTINGS_MAX_HEIGHT_PERCENT: u16 = 70;
@@ -63,14 +61,31 @@ fn settings_query(ctx: &Context<AppRoot>) -> &str {
     ctx.state.settings_navigation.query.text()
 }
 
-fn settings_entries(ctx: &Context<AppRoot>) -> Vec<SettingEntry> {
-    let searching = !settings_query(ctx).is_empty();
+/// The rows Settings lists and how many settings the searched scope holds. Browsing lists the
+/// active tab in catalog order; a query searches every tab and lists only its matches.
+fn settings_entries(ctx: &Context<AppRoot>) -> (Vec<SettingEntry>, usize) {
+    let query = settings_query(ctx);
+    let searching = !query.is_empty();
     let tab = if searching {
         crate::state::SettingsTab::All
     } else {
         ctx.state.settings_navigation.tab
     };
-    settings_entries_for_tab(ctx, tab, searching)
+    let groups = settings_groups_for_tab(ctx, tab, searching);
+    let total = groups.iter().map(|(_, entries)| entries.len()).sum();
+    let groups = if searching {
+        rank_settings_groups(groups, query)
+    } else {
+        groups
+    };
+    let entries = search_entries_with_groups(groups)
+        .into_iter()
+        .filter(|entry| match entry {
+            SearchEntry::Header(title) if !searching => title.as_ref() != tab.label(),
+            _ => true,
+        })
+        .collect();
+    (entries, total)
 }
 
 fn settings_item_count(entries: &[SettingEntry]) -> usize {
@@ -80,81 +95,83 @@ fn settings_item_count(entries: &[SettingEntry]) -> usize {
         .count()
 }
 
-fn visible_settings_entries(entries: &[SettingEntry], query: &str) -> Vec<SettingEntry> {
-    if query.is_empty() {
-        return entries.to_vec();
-    }
-    let items: Vec<_> = entries
+/// Keeps the rows that match `query`, best match first. A group sits where its best row ranks, and
+/// its rows follow their own ranks, so the top row is the strongest match in all of Settings.
+fn rank_settings_groups(
+    groups: Vec<(String, Vec<SettingEntry>)>,
+    query: &str,
+) -> Vec<(String, Vec<SettingEntry>)> {
+    let items: Vec<_> = groups
         .iter()
+        .flat_map(|(_, entries)| entries)
         .filter_map(|entry| match entry {
             SearchEntry::Item(item) => Some(item.clone()),
             _ => None,
         })
         .collect();
-    let matched: HashSet<usize> = rank_search_palette_indices_with_mode(
+    let mut ranks = vec![None; items.len()];
+    for (rank, index) in rank_search_palette_indices_with_mode(
         &items,
         query,
         SearchMatchMode::Hybrid,
         |_, _, score| score as f64,
     )
     .into_iter()
-    .collect();
-    let mut visible = Vec::new();
-    let mut chrome = Vec::new();
-    let mut item_index = 0;
-    for entry in entries {
-        match entry {
-            SearchEntry::Spacer => {
-                chrome.clear();
-                chrome.push(entry.clone());
-            }
-            SearchEntry::Header(_) => chrome.push(entry.clone()),
-            SearchEntry::Item(_) => {
-                if matched.contains(&item_index) {
-                    if visible.is_empty() {
-                        chrome.retain(|entry| !matches!(entry, SearchEntry::Spacer));
-                    }
-                    visible.append(&mut chrome);
-                    visible.push(entry.clone());
-                }
-                item_index += 1;
-            }
-        }
+    .enumerate()
+    {
+        ranks[index] = Some(rank);
     }
-    visible
+    let mut ranks = ranks.into_iter();
+    let mut ranked: Vec<_> = groups
+        .into_iter()
+        .filter_map(|(heading, entries)| {
+            let mut matched: Vec<_> = entries
+                .into_iter()
+                .filter(|entry| matches!(entry, SearchEntry::Item(_)))
+                .filter_map(|entry| Some((ranks.next().flatten()?, entry)))
+                .collect();
+            matched.sort_by_key(|(rank, _)| *rank);
+            let best = matched.first()?.0;
+            Some((best, heading, matched))
+        })
+        .collect();
+    ranked.sort_by_key(|(best, ..)| *best);
+    ranked
+        .into_iter()
+        .map(|(_, heading, matched)| {
+            (
+                heading,
+                matched.into_iter().map(|(_, entry)| entry).collect(),
+            )
+        })
+        .collect()
 }
 
-fn settings_entries_for_tab(
+fn settings_groups_for_tab(
     ctx: &Context<AppRoot>,
     tab: crate::state::SettingsTab,
     searching: bool,
-) -> Vec<SettingEntry> {
-    search_entries_with_groups(
-        settings_groups(ctx)
-            .into_iter()
-            .filter_map(|(group, entries)| {
-                let category = group.tab();
-                if tab != crate::state::SettingsTab::All && tab != category {
-                    return None;
-                }
-                let heading = if searching && category.label() != group.label() {
-                    format!("{} › {}", category.label(), group.label())
-                } else {
-                    group.label().to_string()
-                };
-                Some((heading, entries))
-            }),
-    )
-    .into_iter()
-    .filter(|entry| match entry {
-        SearchEntry::Header(title) if !searching => title.as_ref() != tab.label(),
-        _ => true,
-    })
-    .collect()
+) -> Vec<(String, Vec<SettingEntry>)> {
+    settings_groups(ctx)
+        .into_iter()
+        .filter_map(|(group, entries)| {
+            let category = group.tab();
+            if tab != crate::state::SettingsTab::All && tab != category {
+                return None;
+            }
+            let heading = if searching && category.label() != group.label() {
+                format!("{} › {}", category.label(), group.label())
+            } else {
+                group.label().to_string()
+            };
+            Some((heading, entries))
+        })
+        .collect()
 }
 
 pub(crate) fn settings_query_selection(ctx: &Context<AppRoot>) -> Option<SettingsAction> {
-    let actions: Vec<_> = visible_settings_entries(&settings_entries(ctx), settings_query(ctx))
+    let actions: Vec<_> = settings_entries(ctx)
+        .0
         .into_iter()
         .filter_map(|entry| match entry {
             SearchEntry::Item(item) => Some(item.value.0),
@@ -264,9 +281,7 @@ fn settings_search(
 pub(crate) fn settings_overlay(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let query = settings_query(ctx);
-    let entries = settings_entries(ctx);
-    let total = settings_item_count(&entries);
-    let visible = visible_settings_entries(&entries, query);
+    let (visible, total) = settings_entries(ctx);
     let matches = settings_item_count(&visible);
     let config = ctx.state.config.clone();
     let item_style = fg_only(&theme.primary);

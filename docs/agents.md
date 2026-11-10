@@ -6,10 +6,11 @@ and the `rozi agents` commands for scripts.
 
 ## What agent detection shows
 
-Detected agents appear in the sidebar's [Activity tab](sidebar.md#activity) and in the
-[Agents view](sessions.md#go-to-an-agent), which also lists agents in your other local sessions and
-on connected hosts. Activity also lists things that are not agents, such as a build that sets
-`rozi status`; see [Activities and agents](control-protocol.md#activities-and-agents).
+Detected agents appear in the sidebar's [Agents tab](sidebar.md#agents) and in the
+[Agents view](sessions.md#go-to-an-agent), with agents in your other local sessions and on
+connected hosts. The [Activity tab](sidebar.md#activity) lists things that are not agents, such as
+a build that sets `rozi status`, and lists the session's agents too when its **Agents** setting is
+on; see [Activities and agents](control-protocol.md#activities-and-agents).
 
 rozi ships definitions for common agent CLIs in
 [`src/agent_detection/builtin.toml`](../src/agent_detection/builtin.toml). Add an `[[agents]]` entry

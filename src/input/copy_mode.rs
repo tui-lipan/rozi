@@ -7,6 +7,9 @@ use crate::state::{CopyModeState, Mode};
 
 /// Enter copy mode on the focused pane: seed tui-lipan's navigator at the live cursor position
 /// with no selection, and park scrollback at its current offset. Closes any open overlay first.
+///
+/// A pane scrolled back far enough has its live cursor below the view; the copy cursor then
+/// starts at the start of the bottom row, so it shows at once and the view stays where it was.
 pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.focused_pane() else {
         return Update::full();
@@ -15,6 +18,12 @@ pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
         return Update::full();
     };
     let (cursor_row, cursor_col) = pane.terminal.cursor_position();
+    let bottom_row = usize::from(pane.terminal.rows).saturating_sub(1);
+    let (cursor_row, cursor_col) = if cursor_row > bottom_row {
+        (bottom_row, 0)
+    } else {
+        (cursor_row, cursor_col)
+    };
     let offset = pane.terminal.scrollback_offset();
     clear_copy_feedback(ctx);
     ctx.state.copy_mode = Some(CopyModeState {
@@ -692,6 +701,136 @@ mod tests {
                 ))
                 .expect("pointer press elsewhere");
             assert_eq!(backend.state().copy_mode, before);
+        });
+    }
+
+    /// Entered over a pane scrolled back past its live cursor, the copy cursor starts on the
+    /// bottom row in view, where it shows at once, and the view stays where it was put.
+    #[test]
+    fn entering_a_scrolled_back_pane_starts_the_cursor_in_view() {
+        crate::test_support::on_large_stack(|| {
+            let (mut backend, target) = copy_mode_backend();
+            backend.state_mut().copy_mode = None;
+            backend.state_mut().mode = Mode::Normal;
+            let pane = find_pane_mut(backend.state_mut(), target).expect("pane");
+            assert!(pane.terminal.set_scrollback(5));
+            let rows = usize::from(pane.terminal.rows);
+            assert!(
+                pane.terminal.cursor_position().0 >= rows,
+                "the live cursor is below the scrolled-back view"
+            );
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::EnterCopyMode))
+                .expect("enter copy mode");
+            let copy = backend.state().copy_mode.clone().expect("copy mode");
+            assert_eq!(copy.navigation.cursor(), (rows - 1, 0));
+            assert_eq!(copy.navigation.scrollback_offset(), 5);
+            assert_eq!(
+                find_pane_mut(backend.state_mut(), target)
+                    .expect("pane")
+                    .terminal
+                    .scrollback_offset(),
+                5
+            );
+        });
+    }
+
+    /// Copy mode holds the keyboard on its pane: clicking another pane, on its terminal or on its
+    /// frame, neither moves the app's focus nor the framework's. Once the mode is left the same
+    /// click focuses that pane as usual.
+    #[test]
+    fn clicking_another_pane_keeps_focus_on_the_copy_mode_pane() {
+        crate::test_support::on_large_stack(|| {
+            use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.panes.clear();
+                workspace.tile_tree = None;
+                for id in [1, 2] {
+                    let mut pane = crate::state::Pane::new(id, 100, rect);
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    workspace.panes.push(pane);
+                    crate::layout::tiling::append_tiled_window(workspace, id);
+                }
+                crate::ops::focus::focus_pane(state, 1);
+            }
+            let terminal_key = |backend: &mut TestBackend<AppRoot>, id| {
+                find_pane_mut(backend.state_mut(), id)
+                    .expect("pane")
+                    .keys
+                    .terminal
+                    .clone()
+            };
+            let first = terminal_key(&mut backend, 1);
+            let second = terminal_key(&mut backend, 2);
+            backend.render();
+            backend.focus_key(&first);
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::EnterCopyMode))
+                .expect("enter copy mode");
+            backend.render();
+
+            let click = |backend: &mut TestBackend<AppRoot>| {
+                let rect = backend
+                    .rect_of_key(&second)
+                    .expect("second terminal on screen");
+                let (x, y) = ((rect.x + rect.w as i16 / 2) as u16, (rect.y + 1) as u16);
+                for kind in [
+                    MouseKind::Down(MouseButton::Left),
+                    MouseKind::Up(MouseButton::Left),
+                ] {
+                    backend
+                        .send_mouse(MouseEvent {
+                            x,
+                            y,
+                            kind,
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("click the second pane");
+                }
+                backend.render();
+            };
+            click(&mut backend);
+            backend
+                .dispatch(crate::Msg::FocusPane(2))
+                .expect("click the second pane's frame");
+            backend.render();
+            assert_eq!(backend.state().focused_pane(), Some(1));
+            assert!(backend.has_focus_within_key(first.clone()));
+            assert_eq!(backend.state().mode, Mode::Copy);
+            assert_eq!(
+                backend.state().copy_mode.as_ref().map(|copy| copy.target),
+                Some(1)
+            );
+
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Esc,
+                    mods: KeyMods::NONE,
+                })
+                .expect("leave copy mode");
+            backend.render();
+            assert_eq!(backend.state().mode, Mode::Normal);
+            click(&mut backend);
+            assert_eq!(backend.state().focused_pane(), Some(2));
+            assert!(backend.has_focus_within_key(second));
         });
     }
 }

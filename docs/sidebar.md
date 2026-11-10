@@ -80,16 +80,30 @@ to every client.
 
 ## Activity
 
-Activity lists everything happening in the session: detected coding agents, agents that report
-their own state, statuses set with `rozi status`, and rows published with `rozi publish`. Only the
-agents among them also appear in the [Agents view](sessions.md#go-to-an-agent); see
+Activity lists what is happening in the session besides your coding agents: statuses set with
+`rozi status` and rows published with `rozi publish`. Coding agents are listed in the
+[Agents](#agents) tab. To list the session's agents in Activity as well, turn on its **Agents**
+setting:
+
+```toml
+[sidebar.settings.activity]
+agents = true
+```
+
+An agent is anything the Agents tab lists: a coding agent rozi detects, or a program that reports
+or publishes its state as an agent; see
 [Activities and agents](control-protocol.md#activities-and-agents). Rows are grouped by
 the Git project that contains each pane's working directory, with branch and workspace context. A
 published row can name its own directory, so a program that runs several sessions in separate
 worktrees shows each one under its own branch. A linked Git worktree is labelled with its
 repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
-repository are listed, the branch keeps its room in a narrow sidebar, showing its end, and the
-repository name shortens. A checkout with no branch shows its short commit.
+repository are listed, the repository name comes first in a narrow sidebar, and the branch
+shortens from its start, showing its end. A very long repository name shortens too, so the branch
+always keeps some room. A checkout with no branch shows its short commit.
+
+Each agent takes two lines: what it works on, with its workspace number on the right, then its
+state and how long it has held, such as `Working 9m22s`, followed by what the agent says it is
+doing.
 
 If you run many worktrees of one repository at once, set the tab's **Worktrees** setting to
 **By repository** to name each repository once, with a line per checkout's branch and its agents
@@ -150,23 +164,23 @@ Each agent is listed under the Git checkout it works in, so you see who is worki
 LOCAL
 rozi                          master
 ├ Claude Code                  ▲1 ⠋1
-│ ├ ▲ Fix SSH reconnect 3m20s    dev
-│ │   Permission required
+│ ├ ▲ Fix SSH reconnect          dev
+│ │   Blocked 3m20s  Permission req…
 │ └ ⠋ Review the docs         review
-│     Working
+│     Working 1m09s
 └ ○ Codex                        dev
     Idle
 
 WORKBOX
 backend                      migrate
 └ × Migrate the schema          prod
-    Codex  Thread failed
+    Error   Thread failed · Codex
 ```
 
 A heading names each machine once another machine has agents, `LOCAL` for this one. Beneath it,
-each checkout is a row named by its repository, with its branch on the right. A repository's
-primary checkout comes first, then its worktrees by branch, and agents outside any Git checkout
-come last, under **Elsewhere**. Checkouts are listed by name, so they stay where they are while
+each checkout is a row named by its repository, with its branch on the right, shortened from its
+start when long. A repository's primary checkout comes first, then its worktrees by branch, and
+agents outside any Git checkout come last, under **Elsewhere**. Checkouts are listed by name, so they stay where they are while
 their agents work, wait, and finish.
 
 Within a checkout, agents waiting for you come first, then failed ones, then finished runs you have
@@ -176,11 +190,13 @@ state.
 
 A run is titled by the agent's task when it names one, such as the title of a session that Claude
 Code, Codex, or OpenCode lists, and by the agent's name otherwise; two runs that would read the
-same are numbered. The session it runs in is on the right. The second line names the agent, when
-the title is its task, and gives the reason for its state when it gave one, such as `Permission
-required`, or the state itself. Agents in a session this client holds, the one on screen or one in
-the background, also show a time: how long a working or blocked state has held, or how long a
-finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
+same are numbered. The session it runs in is on the right; a long session name shortens before the title gets less
+than two thirds of the line. The second line gives the state, then
+the reason for it when the agent gave one, such as `Permission required`, then the agent's name
+when the title is its task. In a narrow sidebar the agent's name goes first, then the reason
+shortens, and the state stays. Agents in a session this client holds, the one on screen or one in
+the background, also show a time beside their state: how long a working or blocked state has
+held, or how long a finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
 a run its program keeps in the background has an italic title and `⧉` on its second line.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for

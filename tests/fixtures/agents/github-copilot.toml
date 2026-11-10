@@ -79,3 +79,67 @@ screen = '''
 ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
  ← open sidebar · / commands · ? help · tab next tab                 Auto → gpt-5-mini
 '''
+
+# Copilot 1.0.108 (127-column pane, captured 2026-11-10) spells its state the same way but moved
+# the interrupt to ctrl+c: `◎ Working · 883 B ctrl+c interrupt`. With only `esc interrupt` in the
+# shared vocabulary, every turn read idle and a prompt wait timed out while Copilot answered.
+[[case]]
+name = "working-with-ctrl-c-interrupt"
+state = "working"
+title = "Explain Common Data Structures - GitHub Copilot"
+screen = '''
+ ❯ Thinking…
+
+ ● Bubble Sort
+
+   Bubble sort repeatedly compares adjacent elements and swaps them whenever they are in the wrong order. After one complete
+   pass, the largest unsorted element “bubbles” to the end of the list. The process continues on the remaining unsorted
+   portion until no swaps are needed. A common op
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ~/.cache/rozi-agent-lab                                                                                Session: 0.56 AIC used
+╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ◎ Working · 883 B ctrl+c interrupt                                                              Copilot Fusion → gpt-5.6-luna
+'''
+
+# The same 1.0.108 pane after the turn: the status line is key hints again, with no interrupt.
+[[case]]
+name = "idle-after-turn-ctrl-c-era"
+state = "idle"
+title = "Explain Common Data Structures - GitHub Copilot"
+screen = '''
+   Quick sort has O(n log n) average-case time complexity, but can degrade to O(n²) when partitions are consistently          ┃
+   unbalanced, such as when a poor pivot is repeatedly chosen. It generally uses O(log n) stack space for balanced recursion  ┃
+   and can operate in-place, making it memory-efficient in practice. Standard quick sort is usually not stable, but its cache ┃
+   efficiency often makes it faster than merge sort for in-memory arrays.                                                     ┃
+                                                                                                                              ┃
+ ~/.cache/rozi-agent-lab                                                                                Session: 0.72 AIC used
+╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+┃
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ ← open sidebar · Interactive · Manual Approval · / commands · ? help · tab next tab             Copilot Fusion → gpt-5.6-luna
+'''

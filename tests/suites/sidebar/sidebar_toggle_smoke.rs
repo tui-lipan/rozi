@@ -512,3 +512,65 @@ fn sidebar_preferences_persist_inside_the_test_scratch_root() {
         path.display()
     );
 }
+
+/// Docking a sidebar, on either side, and taking it away again keeps the app content's widgets on
+/// their nodes. The shell around the content keeps its shape, so nothing under it is rebuilt: the
+/// focused pane's terminal is the same node throughout, with whatever state it held.
+#[test]
+fn docking_and_undocking_a_sidebar_keeps_the_content_s_nodes() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut backend = sidebar_backend(100, 30);
+        {
+            let state = backend.state_mut();
+            state.config.sidebar.tabs = vec![SidebarTab::Panes];
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.panes.clear();
+            let mut pane = rozi::state::Pane::new(
+                1,
+                5_000,
+                tui_lipan::prelude::FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 30.0,
+                },
+            );
+            pane.opening = false;
+            pane.terminal_active = true;
+            workspace.panes.push(pane);
+            workspace.focused_pane = Some(1);
+            state.current_mut().focused_pane = Some(1);
+        }
+        backend.render();
+        let terminal = backend.state().current().workspaces[0].panes[0]
+            .keys
+            .terminal
+            .clone();
+        assert!(
+            backend.focus_key(&terminal),
+            "the pane's terminal takes focus"
+        );
+        let focused = backend.focused().expect("the terminal is focused");
+        for shown in [
+            [true, false],
+            [false, false],
+            [false, true],
+            [true, true],
+            [false, false],
+        ] {
+            backend.state_mut().sidebar.shown = shown;
+            backend.render();
+            assert_eq!(
+                backend.state().content_viewport(backend.viewport()).w < 100,
+                shown != [false, false],
+                "{shown:?} docks as asked"
+            );
+            assert_eq!(
+                backend.focused(),
+                Some(focused),
+                "{shown:?} rebuilt the focused terminal:\n{}",
+                backend.capture_frame().to_fixed_grid_lines().join("\n")
+            );
+        }
+    });
+}

@@ -212,26 +212,30 @@ pub(super) fn settings_escape(ctx: &mut Context<AppRoot>) -> Update {
         return close_settings(ctx);
     }
     ctx.state.settings_navigation.query = TextInput::new("");
-    sync_settings_query_selection(ctx, true);
+    sync_settings_query_selection(ctx, true, true);
     ctx.request_focus(crate::view::settings_palette_key());
     Update::full()
 }
 
 pub(super) fn settings_query_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
-    let was_empty = ctx.state.settings_navigation.query.text().is_empty();
+    let before = ctx.state.settings_navigation.query.text().to_owned();
     event.apply_to(&mut ctx.state.settings_navigation.query);
-    sync_settings_query_selection(ctx, was_empty);
+    let edited = ctx.state.settings_navigation.query.text() != before;
+    sync_settings_query_selection(ctx, before.is_empty(), edited);
     ctx.request_focus(crate::view::settings_palette_key());
     Update::full()
 }
 
-fn sync_settings_query_selection(ctx: &mut Context<AppRoot>, was_empty: bool) {
+/// An edited query selects its best match; clearing it restores the row browsing had selected.
+fn sync_settings_query_selection(ctx: &mut Context<AppRoot>, was_empty: bool, edited: bool) {
     let is_empty = ctx.state.settings_navigation.query.text().is_empty();
     if was_empty && !is_empty {
         ctx.state.settings_navigation.browse_selected = ctx.state.settings_selected;
     }
     if is_empty {
         ctx.state.settings_selected = ctx.state.settings_navigation.browse_selected.take();
+    } else if edited {
+        ctx.state.settings_selected = None;
     }
     let selected = crate::view::settings_query_selection(ctx);
     crate::state::assign_settings_selection(&mut ctx.state, selected);

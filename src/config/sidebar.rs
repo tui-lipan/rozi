@@ -84,13 +84,20 @@ pub fn builtin_tab_settings(id: &str) -> Vec<SettingSpec> {
         ));
         specs
     };
+    let worktrees = SettingSpec::choice(
+        "worktrees",
+        "Worktrees",
+        "separate",
+        &[("separate", "Separate"), ("repository", "By repository")],
+    );
     match id {
-        "activity" | "agents" => vec![SettingSpec::choice(
-            "worktrees",
-            "Worktrees",
-            "separate",
-            &[("separate", "Separate"), ("repository", "By repository")],
-        )],
+        "activity" => vec![
+            worktrees,
+            SettingSpec::toggle("agents", "Agents", false).with_description(
+                "List coding agents here too. The Agents tab lists every agent either way.",
+            ),
+        ],
+        "agents" => vec![worktrees],
         other => tree_view(other).map(tree).unwrap_or_default(),
     }
 }
@@ -258,7 +265,13 @@ pub(crate) fn apply_builtin_settings(
         }
         let (group, on_click) = builtin_group(&id, specs, raw.get(&id), warnings);
         match tab {
-            SidebarTab::Activity { config } => config.worktrees = worktree_layout(&group),
+            SidebarTab::Activity { config } => {
+                config.worktrees = worktree_layout(&group);
+                config.agents = group
+                    .value("agents")
+                    .and_then(SettingValue::as_bool)
+                    .unwrap_or_default();
+            }
             SidebarTab::Agents { config } => config.worktrees = worktree_layout(&group),
             SidebarTab::Tree { view, config } => {
                 *config = tree_config(*view, &group, on_click, warnings);
@@ -837,6 +850,7 @@ mod tests {
             vec![SidebarTab::Activity {
                 config: crate::config::SidebarActivityConfig {
                     worktrees: crate::config::WorktreeLayout::Repository,
+                    agents: false,
                 },
             }]
         );
@@ -864,6 +878,22 @@ mod tests {
             ]
         );
 
+        // Activity leaves agents to the Agents tab unless asked to list them.
+        let (config, warnings) = parse("[settings.activity]\nagents = true\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(matches!(
+            config.tabs[0],
+            SidebarTab::Activity {
+                config: crate::config::SidebarActivityConfig { agents: true, .. },
+            }
+        ));
+        assert!(matches!(
+            SidebarTab::activity(),
+            SidebarTab::Activity {
+                config: crate::config::SidebarActivityConfig { agents: false, .. },
+            }
+        ));
+
         // The default tab list still reads its settings.
         let (config, _) = parse("[settings.activity]\nworktrees = \"repository\"\n");
         assert!(matches!(
@@ -871,6 +901,7 @@ mod tests {
             SidebarTab::Activity {
                 config: crate::config::SidebarActivityConfig {
                     worktrees: crate::config::WorktreeLayout::Repository,
+                    ..
                 },
             }
         ));

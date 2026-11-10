@@ -109,10 +109,21 @@ fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
     // Revealing the sidebar after the first frame is a real toggle, so it runs the real
     // slide. These tests assert on the settled column, not on a frame part-way through it.
     state.config.animations.sidebar = false;
-    state.config.sidebar.tabs = vec![SidebarTab::activity()];
+    // These tests are about how Activity lists agents, which it does only when asked.
+    state.config.sidebar.tabs = vec![activity_with_agents()];
     state.config.sidebar.layout.left.panel_count = 1;
     state.sidebar.apply_configured_panels(&state.config.sidebar);
     state.sidebar.panels[0].active_tab = Some(SidebarTab::activity().id());
+}
+
+/// The Activity tab listing agents too.
+fn activity_with_agents() -> SidebarTab {
+    SidebarTab::Activity {
+        config: rozi::config::SidebarActivityConfig {
+            worktrees: rozi::config::WorktreeLayout::Separate,
+            agents: true,
+        },
+    }
 }
 
 /// The same pane, plus the Git project the session server resolved for its cwd.
@@ -183,7 +194,7 @@ fn agents_tab_renders_project_groups() {
         }
         let targets: Vec<_> = backend
             .state()
-            .sidebar_targets(&SidebarTab::activity())
+            .sidebar_targets(&activity_with_agents())
             .into_iter()
             .filter_map(|target| match target {
                 rozi::state::RowTarget::Pane(id) => Some(id),
@@ -213,8 +224,8 @@ fn agents_tab_renders_project_groups() {
         assert!(api < line_index("Codex"));
         assert!(rozi_group < line_index("Claude Code"));
         assert!(elsewhere < line_index("Aider"));
-        // The detail line spends its width on what the agent is doing and how long it has been
-        // at it, not on repeating a status the glyph column already carries.
+        // The detail line leads with the state and how long it has held, then what the agent is
+        // doing.
         assert!(sidebar.iter().any(|line| line.contains("needs approval")));
         // Dated `now` at pane construction, so a slow runner can tick past 0s before paint.
         // The check is that a duration is on the detail line, not that this suite finished
@@ -225,11 +236,7 @@ fn agents_tab_renders_project_groups() {
                 !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
             })
         }));
-        assert!(
-            !sidebar
-                .iter()
-                .any(|line| line.to_ascii_lowercase().contains("blocked"))
-        );
+        assert!(sidebar.iter().any(|line| line.contains("Blocked")));
         // An agent-defined status has no glyph of its own, so its word survives.
         assert!(sidebar.iter().any(|line| line.contains("compacting")));
         // A finished-unseen agent shows the filled attention pulse.
@@ -239,11 +246,11 @@ fn agents_tab_renders_project_groups() {
 
 /// Agents spread through one repository read as one project headed by its branch, with each row
 /// saying where in the project it sits.
-/// Two worktrees of one repository carry the same name, so in a narrow sidebar the branch is what
-/// must survive: it keeps its width and its tail, and the name gives way. A repository with one
-/// checkout keeps its name whole instead.
+/// Two worktrees of one repository carry the same name and tell apart by their branches. In a narrow
+/// sidebar the name leads, but a long one gives up width down to a share of the line, so the branch
+/// keeps its tail beside it. A repository with one checkout keeps its name whole instead.
 #[test]
-fn worktree_headings_keep_their_branch_when_the_name_repeats() {
+fn worktree_headings_keep_their_name_and_their_branch_tail_when_the_name_repeats() {
     rozi::test_support::on_large_stack(|| {
         let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
@@ -301,8 +308,8 @@ fn worktree_headings_keep_their_branch_when_the_name_repeats() {
         assert!(heading("master").contains("very-"), "{sidebar:#?}");
         let worktree = heading("work-status");
         assert!(
-            worktree.contains(" ve…"),
-            "the name keeps a stub where the branch needs the room: {sidebar:#?}"
+            worktree.contains(" very-long…"),
+            "the name keeps its share of the line: {sidebar:#?}"
         );
         assert!(
             worktree.contains("…")
@@ -337,6 +344,7 @@ fn the_repository_layout_names_a_repository_once_with_a_line_per_checkout() {
             state.config.sidebar.tabs = vec![SidebarTab::Activity {
                 config: rozi::config::SidebarActivityConfig {
                     worktrees: rozi::config::WorktreeLayout::Repository,
+                    agents: true,
                 },
             }];
             state.config.sidebar.layout.left.width = 28;

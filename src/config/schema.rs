@@ -1965,6 +1965,9 @@ impl WorktreeLayout {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SidebarActivityConfig {
     pub worktrees: WorktreeLayout,
+    /// List agents alongside other activities. Off by default: the Agents tab lists every agent,
+    /// so Activity keeps to what nothing else shows.
+    pub agents: bool,
 }
 
 /// Options for the Agents tab. Kept apart from Activity's, so one tab can name each repository once
@@ -2057,6 +2060,7 @@ impl SidebarTab {
         Self::Activity {
             config: SidebarActivityConfig {
                 worktrees: WorktreeLayout::Separate,
+                agents: false,
             },
         }
     }

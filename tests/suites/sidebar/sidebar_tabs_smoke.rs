@@ -626,7 +626,8 @@ mod settings {
             };
             assert!(row("Files").contains("Enabled · 5 settings"), "{grid}");
             assert!(row("Git").contains("Enabled · 6 settings"), "{grid}");
-            assert!(row("Activity").contains("Enabled · 1 setting "), "{grid}");
+            assert!(row("Activity").contains("Enabled · 2 settings"), "{grid}");
+            assert!(row("Agents").contains("Enabled · 1 setting "), "{grid}");
             assert!(!row("Panes").contains("setting"), "{grid}");
 
             b.dispatch(Msg::SidebarManagerSelect("panes".into()))

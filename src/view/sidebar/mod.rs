@@ -77,6 +77,13 @@ pub(super) fn sidebar(
         .pointer_focus(false)
 }
 
+/// The key the app content keeps beside the docks, so docking or undocking a sidebar reuses its
+/// whole subtree instead of rebuilding every pane and overlay under a new parent.
+const DOCK_CONTENT_KEY: &str = "rozi-dock-content";
+
+/// The app content between the sidebar docks. The shell is a splitter whether or not a dock is
+/// shown, with the content as its keyed child, so the element tree keeps its shape as docks come
+/// and go: a widget keeps its node, and with it its focus, selection, scroll, and graphics.
 pub(super) fn docking_shell(
     ctx: &Context<AppRoot>,
     viewport: Rect,
@@ -89,8 +96,18 @@ pub(super) fn docking_shell(
         ctx.state.dock_reserved_width(viewport, Left),
         ctx.state.dock_reserved_width(viewport, Right),
     ];
+    let content = content.key(DOCK_CONTENT_KEY);
+    let content_limits =
+        SplitterPaneLimits::min_size(crate::layout::geometry::MIN_CANVAS_COLS.min(viewport.w / 2));
+    let splitter = Splitter::vertical()
+        .split_id("rozi-sidebar-shell")
+        .min_size(0);
     if widths == [0, 0] {
-        return content;
+        return splitter
+            .weights(vec![f32::from(viewport.w)])
+            .pane_limits(vec![content_limits])
+            .child(content)
+            .into();
     }
     let deployed = ctx.state.dock_deployed_widths(viewport);
     let fade = super::animation::layer_fade(dialog_dim, ctx.state.theme.surface.backdrop, ui_flash);
@@ -113,9 +130,7 @@ pub(super) fn docking_shell(
         if side == Right {
             children.push(content.take().unwrap());
             weights.push(viewport.w.saturating_sub(widths[0] + widths[1]) as f32);
-            limits.push(SplitterPaneLimits::min_size(
-                crate::layout::geometry::MIN_CANVAS_COLS.min(viewport.w / 2),
-            ));
+            limits.push(content_limits);
         }
         if widths[index] == 0 {
             continue;
@@ -173,13 +188,11 @@ pub(super) fn docking_shell(
             u32::from(widths[1]),
         ],
     );
-    let mut splitter = Splitter::vertical()
+    let mut splitter = splitter
         .handle_pointer_shape(PointerShape::EwResize)
-        .split_id("rozi-sidebar-shell")
         .weights(weights)
         .weights_nonce(nonce)
         .pane_limits(limits)
-        .min_size(0)
         .handle_symbol('│')
         .handle_style(divider)
         .handle_hover_style(divider)

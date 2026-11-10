@@ -259,6 +259,10 @@ clients, and scratch files are cleaned up.
 spinners, and open with idle statuses. It repeats the working and closed cases,
 then compares closed/open/closed with 10 Hz pane output. `--panes` creates the
 requested number of synthetic panes; it does not launch real coding agents.
+For Projects to spin, the scratch directory is a Git checkout and each pane
+runs the workload through a link named `claude`, so the probe can report its
+state with `rozi agents report`. Sidebar runs need `git`. The probe turns off
+the update check and the usage count, so no notice is on screen while it samples.
 `--viewport WIDTHxHEIGHT` selects a size and can be repeated. With `--keep-scratch`,
 sidebar cases also save a PNG after each measurement. The probe verifies sidebar
 visibility before sampling; capture and status-command overhead is outside the

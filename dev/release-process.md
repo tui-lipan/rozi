@@ -58,7 +58,7 @@ repository intentionally has no `CHANGELOG.md`; do not recreate one or add per-P
    ```bash
    release=0.0.44   # the version from step 1
    cp -r tests/fixtures/wire/current "tests/fixtures/wire/$release"
-   generation=$(cargo run -q -- api describe | jq .session_protocol)
+   generation=$(cargo run -q --bin rozi -- api describe | jq .session_protocol)
    printf '{"generation": %s}\n' "$generation" > "tests/fixtures/wire/$release/manifest.json"
    ```
 

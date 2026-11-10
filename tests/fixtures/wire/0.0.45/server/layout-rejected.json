@@ -1,0 +1,63 @@
+{
+  "current_rev": 1,
+  "layout": {
+    "canvas_cols": 1,
+    "canvas_rows": 1,
+    "pane_geometry": {
+      "border_mode": "separate",
+      "keep_special_borders": false,
+      "padding": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "show_titles": false,
+      "titlebar": "bar",
+      "top_gap": 1
+    },
+    "version": 1,
+    "workspaces": [
+      {
+        "index": 1,
+        "layout": "dwindle",
+        "name": "example",
+        "panes": [
+          {
+            "cwd": "example",
+            "floating": false,
+            "fullscreen": false,
+            "generation": 1,
+            "keep_open": false,
+            "launch": {
+              "command": "example",
+              "kind": "shell"
+            },
+            "pane_id": 1,
+            "pinned": false,
+            "profile_name": "example",
+            "rect": {
+              "h": 0.5,
+              "w": 0.5,
+              "x": 0.5,
+              "y": 0.5
+            },
+            "replay": false,
+            "scrollable_width": 0.5,
+            "title": "example"
+          }
+        ],
+        "split_ratios": [
+          0.5
+        ],
+        "start_axis": "horizontal",
+        "synchronized": false,
+        "tree": {
+          "kind": "leaf",
+          "pane": 1
+        }
+      }
+    ]
+  },
+  "type": "layout-rejected"
+}

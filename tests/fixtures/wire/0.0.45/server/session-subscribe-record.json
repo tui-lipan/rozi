@@ -1,0 +1,131 @@
+{
+  "record": {
+    "client_count": 1,
+    "controller": 1,
+    "layout": {
+      "canvas": {
+        "cols": 1,
+        "rows": 1
+      },
+      "client": {
+        "active_workspace": 1,
+        "committed": false,
+        "controller": false,
+        "focused_pane": 1,
+        "viewport": {
+          "cols": 1,
+          "rows": 1
+        }
+      },
+      "revision": 1,
+      "session": "example",
+      "unplaced_panes": [
+        1
+      ],
+      "workspaces": [
+        {
+          "index": 1,
+          "layout": "dwindle",
+          "master_ratio": 0.5,
+          "name": "example",
+          "panes": [
+            {
+              "floating": false,
+              "fullscreen": false,
+              "id": 1,
+              "order": 1,
+              "pinned": false,
+              "rect": {
+                "height": 1,
+                "width": 1,
+                "x": 1,
+                "y": 1
+              },
+              "rect_fraction": {
+                "height": 0.5,
+                "width": 0.5,
+                "x": 0.5,
+                "y": 0.5
+              },
+              "reference": {
+                "generation": 1,
+                "pane_id": 1,
+                "session_instance": "example"
+              },
+              "split_ratio": 0.5,
+              "view_rect": {
+                "height": 1,
+                "width": 1,
+                "x": 1,
+                "y": 1
+              },
+              "width_ratio": 0.5
+            }
+          ],
+          "synchronized": false
+        }
+      ]
+    },
+    "layout_rev": 1,
+    "notifications": [
+      {
+        "id": "example",
+        "level": "info",
+        "message": "example",
+        "seq": 1,
+        "title": "example"
+      }
+    ],
+    "panes": [
+      {
+        "agent": "example",
+        "agent_ref": {
+          "incarnation": 1,
+          "pane": {
+            "generation": 1,
+            "pane_id": 1,
+            "session_instance": "example"
+          },
+          "slot": {
+            "id": "example",
+            "publisher": "example"
+          }
+        },
+        "agent_session": "example",
+        "agent_state": "example",
+        "argv": [
+          "example"
+        ],
+        "command": "example",
+        "cwd": "example",
+        "foreground_arguments": [
+          "example"
+        ],
+        "foreground_pid": 1,
+        "foreground_program": "example",
+        "foreground_programs": [
+          "example"
+        ],
+        "id": 1,
+        "on_screen": false,
+        "recording": false,
+        "reference": {
+          "generation": 1,
+          "pane_id": 1,
+          "session_instance": "example"
+        },
+        "reported_status": "example",
+        "session": "example",
+        "status": "example",
+        "status_reason": "example",
+        "title": "example",
+        "workspace": 1
+      }
+    ],
+    "seq": 1,
+    "session": "example",
+    "session_instance": "example",
+    "type": "snapshot"
+  },
+  "type": "session-subscribe-record"
+}

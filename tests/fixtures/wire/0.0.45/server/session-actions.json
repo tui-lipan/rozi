@@ -1,0 +1,9 @@
+{
+  "actions": [
+    {
+      "id": "example",
+      "title": "example"
+    }
+  ],
+  "type": "session-actions"
+}

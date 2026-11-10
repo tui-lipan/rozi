@@ -1,0 +1,13 @@
+{
+  "capabilities": [
+    "example"
+  ],
+  "effective_protocol": 1,
+  "response": {
+    "code": "invalid-request",
+    "data": null,
+    "error": "example",
+    "ok": false
+  },
+  "type": "session-control-result"
+}

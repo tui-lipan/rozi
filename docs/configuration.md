@@ -619,10 +619,10 @@ The first time rozi starts after an update, a `What's new · rozi` dialog shows 
 at startup, and only one client shows it. A first install skips it, and so does going back to an
 older version.
 
-The dialog has a tab for each of the latest seven releases that have notes, newest first, and
+The dialog has a tab for each of the latest 20 releases that have notes, newest first, and
 opens on the newest. A release with nothing user-facing has no tab. The header names the newest
 older version that ran on this machine, such as `updated from v0.0.37`, so every tab with a newer
-version is a release you skipped. Releases older than the seven are on the GitHub releases page.
+version is a release you skipped. Releases older than those are on the GitHub releases page.
 
 | Key | Action |
 | --- | --- |

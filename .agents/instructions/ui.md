@@ -42,6 +42,9 @@ chrome.
   `search_entries_with_groups` for grouped rows.
 - Tabbed pickers always place tabs below the search field and its divider, above the results.
   `OverlayPalette::tabs` supplies this layout; custom picker bodies use the same order.
+- Picker tab rows (`picker_tabs`) scroll: tabs that do not fit sit behind `❮` and `❯` overflow
+  arrows, and the tab keys bring the active one into view. Do not cap a tab count to the modal
+  width.
 - Text prompts add a thin wrapper around `view/overlays/prompts.rs::prompt_overlay`.
 - Plain modals use `view::styled_modal`.
 

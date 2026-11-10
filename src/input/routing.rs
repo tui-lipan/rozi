@@ -242,8 +242,9 @@ pub(crate) fn framework_focus_entered_pane(
 
     // Hint mode is pinned to the pane it scanned: every label names a position on that pane's
     // screen. A pane running mouse tracking takes the framework's focus with the click itself, so
-    // changing the app selection here would make the labels refer to the wrong screen.
-    if ctx.state.mode == Mode::Hint {
+    // changing the app selection here would make the labels refer to the wrong screen. Copy mode
+    // is pinned to its pane for the same reason: its cursor and selection are that pane's cells.
+    if matches!(ctx.state.mode, Mode::Hint | Mode::Copy) {
         return sidebar_was_focused
             .then(Update::full)
             .unwrap_or_else(Update::none);

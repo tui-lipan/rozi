@@ -175,12 +175,15 @@ text, jump between shell prompts, and copy the last command's output. Press `/` 
 search the focused pane. See [Keybindings](keybindings.md#copy-mode) for every key. The copy-mode
 cursor is your terminal's own cursor, in its usual shape. With the
 [cursor trail](configuration.md#cursor-trail) in `"jump"` mode, a smear follows its long moves.
+The cursor starts where the shell's cursor is. If you entered copy mode while scrolled back and that
+spot is below the view, the cursor starts at the bottom row of what you are looking at instead.
 
 The mouse works in copy mode too. Drag to select text, or click to move the cursor there. The
 keys then pick up where the mouse left off: `$` extends a dragged selection to the end of its row,
 and `y` copies it and exits. The wheel scrolls the pane and keeps the cursor on the same screen
 row. While copy mode is open, the mouse belongs to it, even when the program in the pane tracks
-the mouse, and a paste with the middle or right mouse button does not reach the pane.
+the mouse, and a paste with the middle or right mouse button does not reach the pane. Copy mode
+also keeps focus on its pane: clicking another pane does nothing until you leave copy mode.
 
 ### Search scrollback
 

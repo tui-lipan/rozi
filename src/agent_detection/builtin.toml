@@ -136,6 +136,8 @@ screen = { any_of = [
     "press esc to interrupt",
     "ctrl+c to interrupt",
     "esc interrupt",
+    # GitHub Copilot 1.0.108 moved its interrupt to ctrl+c: `◉ Working ctrl+c interrupt`.
+    "ctrl+c interrupt",
 ] }
 
 # Claude Code opts out of the shared blocked vocabulary: its transcripts quote approval prose
@@ -294,6 +296,14 @@ match = { names = ["pi", "pi-coding-agent"], paths = ["pi-coding-agent"] }
 [[agents.states]]
 state = "working"
 screen = { any_of = ["working..."] }
+
+# Pi 1.5 moved the spinner into the divider above its editor: `── ⠦ Working ───`. The shared
+# spinner rule needs the spinner at the head of its line, so it cannot see this one. Anchored to
+# the divider shape, so prose that mentions working cannot claim it; unscoped for the same reason
+# as the rule above, since a multi-line draft in the editor sits below it.
+[[agents.states]]
+state = "working"
+screen = { regex = true, any_of = ["(?m)^\\s*─+\\s*[\\x{2800}-\\x{28ff}]{1,2}\\s+working\\b"] }
 
 [[agents]]
 id = "gemini"

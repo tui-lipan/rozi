@@ -121,3 +121,48 @@ screen = '''
 ~
 $0.000 (sub) 0.0%/500k (auto)                                           grok-4.5 • medium
 '''
+
+# Pi 1.5.1 (grok-4.7 backend, 127-column pane, captured 2026-11-10) moved its spinner into the
+# divider above the editor. `Working...` and its ellipsis are gone, and the spinner no longer heads
+# its line, so neither the old Pi literal nor the shared spinner rule sees it: Pi read idle for
+# whole turns, and a prompt wait never resolved. The divider rule is the only signal here.
+[[case]]
+name = "working-in-the-divider"
+state = "working"
+title = "π - rozi-agent-lab"
+screen = '''
+ sorted. The comparison count is rigid. Pass i always scans n−i−1 elements, so the total is always about n²/2 regardless of
+ whether the input was already sorted, reversed, or random. There is no early-exit trick that helps the common case, because
+ the algorithm cannot know it has the minimum without looking at every remaining element.
+
+ The compensating virtue is the number of writes. Selection sort performs at most n−1 swaps, one per pass, which matters on
+ media where writing is far more expensive than reading, or when the elements are huge and a swap means moving a lot of bytes.
+ It is in-place and not stable in the usual
+
+── ⠦ Working ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/.cache/rozi-agent-lab
+↑4.0k ↓1.1k R1.2k CH22.6% $0.015 (sub) 1.2%/500k (auto)                                                 (xai) grok-4.7 • medium
+'''
+
+# The same Pi 1.5.1 pane once the turn is done: the divider is plain again. Kept so the divider
+# rule cannot match the bare divider, which is on screen for the whole session.
+[[case]]
+name = "idle-after-turn-in-the-divider-era"
+state = "idle"
+title = "π - rozi-agent-lab"
+screen = '''
+ first or last element as the pivot. Practical implementations avoid it by choosing the median of the first, middle, and last
+ elements, by sampling a few random candidates, or by switching to heapsort when recursion gets too deep. That last idea is
+ introsort, which keeps quicksort’s speed and guarantees n log n. Partitioning also decides stability. The usual two-pointer
+ partition is not stable, so equal keys can be reordered, and a stable quicksort needs extra space or a different scheme.
+ Three-way partitioning, which isolates a middle band of keys equal to the pivot, is worth using when duplicates are common,
+ because those equals are then skipped entirely by the recursive calls.
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/.cache/rozi-agent-lab
+↑9.0k ↓2.8k R2.3k CH18.5% $0.036 (sub) 1.6%/500k (auto)                                                 (xai) grok-4.7 • medium
+'''

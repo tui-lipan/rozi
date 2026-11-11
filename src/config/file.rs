@@ -648,6 +648,7 @@ struct ClipboardFileConfig {
     middle_click_paste: Option<String>,
     right_click: Option<String>,
     enable_osc52: Option<bool>,
+    drag_and_drop: Option<bool>,
     copy_feedback: Option<String>,
     copy_feedback_on_select: Option<bool>,
     clear_selection_after_copy: Option<bool>,
@@ -1341,6 +1342,9 @@ fn load_config_from_text_with_extensions(
     }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
+    }
+    if let Some(drag_and_drop) = parsed.clipboard.drag_and_drop {
+        config.clipboard.drag_and_drop = drag_and_drop;
     }
     if let Some(value) = parsed.clipboard.copy_feedback.as_deref() {
         match CopyFeedback::parse(value) {

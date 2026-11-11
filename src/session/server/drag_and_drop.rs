@@ -1,0 +1,327 @@
+//! A pane's drag-and-drop conversation (OSC 72), between its program and one client.
+//!
+//! The pane's screen answers the program's support query and keeps its registration; the
+//! registration reaches every client in the pane's runtime state. A drag itself happens on one
+//! client, the one whose host terminal the user is dragging over, so the program's answers go to
+//! that client only: the last one to write drag-and-drop escape codes to the pane. The server
+//! follows the conversation closely enough to end it for the program if that client goes away,
+//! and answers for nobody when no client owns the pane, as the protocol requires.
+
+use tui_lipan::dnd::{
+    DndError, ErrorCode, EventDecoder, ProgramCommand, TaggedCommand, TerminalEvent,
+};
+
+use super::{ClientId, PaneId, ServerMessage, SessionServer, Target, wire_local};
+
+/// Who a pane's drag belongs to, and how far it has got.
+#[derive(Debug, Default)]
+pub(super) struct PaneDragAndDrop {
+    owner: Option<ClientId>,
+    /// Reads what the owner wrote, to follow the drag.
+    written: EventDecoder,
+    /// A drag is over the pane.
+    hovering: bool,
+    /// The pane took a drop and has not said it is done reading it.
+    dropped: bool,
+    /// The pane's program offered a drag the host has not finished.
+    dragging: bool,
+}
+
+impl PaneDragAndDrop {
+    fn busy(&self) -> bool {
+        self.hovering || self.dropped || self.dragging
+    }
+
+    fn observe_written(&mut self, escape_codes: &[u8]) {
+        for (_, body) in tui_lipan::dnd::OscScanner::default().scan(escape_codes) {
+            for tagged in self.written.push_body(&body) {
+                match tagged.event {
+                    TerminalEvent::DragOver { .. } => self.hovering = true,
+                    TerminalEvent::DragLeave => {
+                        self.hovering = false;
+                        self.dropped = false;
+                    }
+                    TerminalEvent::Drop { .. } => {
+                        self.hovering = false;
+                        self.dropped = true;
+                    }
+                    TerminalEvent::DragFailed(_) | TerminalEvent::DragFinished { .. } => {
+                        self.dragging = false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn observe_command(&mut self, command: &ProgramCommand) {
+        match command {
+            ProgramCommand::FinishDrop { .. } => self.dropped = false,
+            ProgramCommand::StartDrag => self.dragging = true,
+            ProgramCommand::CancelDrag | ProgramCommand::DragError(_) => self.dragging = false,
+            _ => {}
+        }
+    }
+
+    /// What tells the program its drag is over, when its owner has gone mid-way.
+    fn abandon(&mut self, client_id: Option<u32>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        if self.hovering || self.dropped {
+            TerminalEvent::DragLeave.encode(client_id, &mut bytes);
+        }
+        if self.dragging {
+            TerminalEvent::DragFinished { canceled: true }.encode(client_id, &mut bytes);
+        }
+        *self = Self::default();
+        bytes
+    }
+}
+
+/// A command from a program that no client owns, answered as the protocol asks of a terminal.
+fn unowned_reply(command: &TaggedCommand) -> Option<TerminalEvent> {
+    let refused = |why: &str| DndError::with_description(ErrorCode::PermissionDenied, why);
+    Some(match &command.command {
+        ProgramCommand::RequestData(target) => TerminalEvent::DataError {
+            target: Some(*target),
+            error: refused("drop data can only be requested after a drop"),
+        },
+        ProgramCommand::Offer { .. } | ProgramCommand::StartDrag => {
+            TerminalEvent::DragFailed(refused("no drag gesture to answer"))
+        }
+        _ => return None,
+    })
+}
+
+impl SessionServer {
+    /// Write a client's drag-and-drop escape codes to a pane, making the client its drag's owner.
+    pub(super) fn accept_drag_and_drop(
+        &mut self,
+        client_id: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: String,
+    ) {
+        let owner = local.then_some(client_id);
+        let may_operate = if local {
+            self.client_attached(client_id) && !self.client_read_only(client_id)
+        } else {
+            self.client_may_input(client_id)
+        };
+        if !may_operate {
+            return;
+        }
+        let owner_connected = |server: &Self, id| server.client_attached(id);
+        let Some(pane) = self.pane(owner, pane_id) else {
+            return;
+        };
+        if pane.generation != generation || pane.exited.is_some() {
+            return;
+        }
+        // Another client is mid-drag over this pane: two drags cannot share it.
+        if let Some(current) = pane.drag_and_drop.owner
+            && current != client_id
+            && pane.drag_and_drop.busy()
+            && owner_connected(self, current)
+        {
+            return;
+        }
+        let bytes = escape_codes.into_bytes();
+        let Some(pane) = self.live_pane_mut(owner, pane_id, generation) else {
+            return;
+        };
+        if pane.drag_and_drop.owner != Some(client_id) {
+            pane.drag_and_drop = PaneDragAndDrop {
+                owner: Some(client_id),
+                ..PaneDragAndDrop::default()
+            };
+        }
+        pane.drag_and_drop.observe_written(&bytes);
+        if let Some(pty) = &pane.pty {
+            let _ = pty.write(&bytes);
+        }
+    }
+
+    /// Send what a pane's program said about drag and drop to its drag's owner, after its output.
+    pub(super) fn route_drag_and_drop(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+    ) {
+        let attached: Vec<ClientId> = self
+            .clients
+            .iter()
+            .filter(|client| client.attached)
+            .map(|client| client.id)
+            .collect();
+        let Some(pane) = self
+            .pane_mut(owner, pane_id)
+            .filter(|pane| pane.generation == generation)
+        else {
+            return;
+        };
+        let commands = pane.screen_without_change().drain_drag_and_drop_commands();
+        if commands.is_empty() {
+            return;
+        }
+        let session_owner = pane
+            .drag_and_drop
+            .owner
+            .filter(|client| attached.contains(client));
+        let Some(client) = session_owner else {
+            let mut replies = Vec::new();
+            for command in &commands {
+                if let Some(reply) = unowned_reply(command) {
+                    reply.encode(command.client_id, &mut replies);
+                }
+            }
+            if !replies.is_empty()
+                && let Some(pty) = &pane.pty
+            {
+                let _ = pty.write(&replies);
+            }
+            return;
+        };
+        let mut escape_codes = Vec::new();
+        for command in &commands {
+            pane.drag_and_drop.observe_command(&command.command);
+            command.command.encode(command.client_id, &mut escape_codes);
+        }
+        let Ok(escape_codes) = String::from_utf8(escape_codes) else {
+            return;
+        };
+        self.enqueue(
+            client,
+            Target::Client(client),
+            ServerMessage::PaneDragAndDrop {
+                pane_id,
+                local: wire_local(owner),
+                generation,
+                escape_codes,
+            },
+        );
+    }
+
+    /// A client has gone: end every drag it owned, so no program waits on it forever.
+    pub(super) fn drop_client_drags(&mut self, client_id: ClientId) {
+        let panes = self
+            .panes
+            .values_mut()
+            .chain(self.local_panes.values_mut())
+            .filter(|pane| pane.drag_and_drop.owner == Some(client_id));
+        for pane in panes {
+            let registration = pane.screen().drag_and_drop_registration().clone();
+            let client_id = registration
+                .drops
+                .as_ref()
+                .and_then(|drops| drops.client_id)
+                .or_else(|| {
+                    registration
+                        .drags
+                        .as_ref()
+                        .and_then(|drags| drags.client_id)
+                });
+            let bytes = pane.drag_and_drop.abandon(client_id);
+            if !bytes.is_empty()
+                && let Some(pty) = &pane.pty
+            {
+                let _ = pty.write(&bytes);
+            }
+        }
+    }
+
+    /// The pane's program has gone: forget what it registered and whose drag it was in.
+    pub(super) fn forget_pane_drag_and_drop(pane: &mut super::ServerPane) {
+        pane.screen_without_change()
+            .clear_drag_and_drop_registration();
+        pane.drag_and_drop = PaneDragAndDrop::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tui_lipan::dnd::{DataTarget, DragPosition, DropOperations};
+
+    fn written(events: &[TerminalEvent]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for event in events {
+            event.encode(Some(4), &mut bytes);
+        }
+        bytes
+    }
+
+    #[test]
+    fn the_drag_is_followed_from_what_the_owner_writes_and_the_program_answers() {
+        let mut state = PaneDragAndDrop::default();
+        let position = DragPosition::default();
+        state.observe_written(&written(&[TerminalEvent::DragOver {
+            position,
+            operations: DropOperations::COPY,
+            mimes: Some(vec!["text/plain".into()]),
+        }]));
+        assert!(state.busy());
+        state.observe_written(&written(&[TerminalEvent::Drop {
+            position,
+            operations: DropOperations::COPY,
+            mimes: vec!["text/plain".into()],
+        }]));
+        assert!(state.dropped && !state.hovering);
+        state.observe_command(&ProgramCommand::FinishDrop {
+            operation: tui_lipan::dnd::DropOperation::Copy,
+        });
+        assert!(!state.busy());
+
+        state.observe_command(&ProgramCommand::StartDrag);
+        assert!(state.busy());
+        state.observe_written(&written(&[TerminalEvent::DragFinished { canceled: false }]));
+        assert!(!state.busy());
+    }
+
+    #[test]
+    fn a_lost_owner_leaves_the_program_told_the_drag_is_over() {
+        let mut state = PaneDragAndDrop {
+            dropped: true,
+            dragging: true,
+            ..PaneDragAndDrop::default()
+        };
+        let bytes = state.abandon(Some(4));
+        let mut decoder = EventDecoder::default();
+        let events: Vec<_> = tui_lipan::dnd::OscScanner::default()
+            .scan(&bytes)
+            .into_iter()
+            .flat_map(|(_, body)| decoder.push_body(&body))
+            .map(|tagged| (tagged.client_id, tagged.event))
+            .collect();
+        assert_eq!(
+            events,
+            [
+                (Some(4), TerminalEvent::DragLeave),
+                (Some(4), TerminalEvent::DragFinished { canceled: true }),
+            ]
+        );
+        assert!(!state.busy());
+        assert!(state.abandon(None).is_empty(), "nothing left to end");
+    }
+
+    #[test]
+    fn an_unowned_program_is_refused_what_the_protocol_refuses() {
+        let request = TaggedCommand {
+            client_id: Some(2),
+            command: ProgramCommand::RequestData(DataTarget::Mime { index: 1 }),
+        };
+        assert!(matches!(
+            unowned_reply(&request),
+            Some(TerminalEvent::DataError { error, .. }) if error.code == ErrorCode::PermissionDenied
+        ));
+        let status = TaggedCommand {
+            client_id: None,
+            command: ProgramCommand::DropStatus {
+                operation: tui_lipan::dnd::DropOperation::Copy,
+                mimes: None,
+            },
+        };
+        assert_eq!(unowned_reply(&status), None);
+    }
+}

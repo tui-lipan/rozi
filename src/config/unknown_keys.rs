@@ -288,6 +288,7 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
             "middle_click_paste",
             "right_click",
             "enable_osc52",
+            "drag_and_drop",
             "copy_feedback",
             "copy_feedback_on_select",
             "clear_selection_after_copy",

@@ -1,4 +1,5 @@
 mod attach;
+pub(crate) mod drag_and_drop;
 pub(crate) mod host_title;
 mod hosts;
 mod local_agents;
@@ -953,6 +954,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         } => session::pane_logging_changed(
             ctx, epoch, pane_id, local, generation, enabled, path, error,
         ),
+        Msg::DragAndDrop(msg) => drag_and_drop::handle(ctx, msg),
         Msg::SessionProgramStatusChanged {
             epoch,
             pane_id,
@@ -1327,6 +1329,8 @@ fn post_update_sync(
     sync_modifier_key_reporting(ctx);
     // Repairs: the host terminal's window title, after the focused pane or session changes.
     host_title::sync(ctx);
+    // Repairs: drag-and-drop registration with the host, and drags over panes that have gone.
+    crate::ops::drag_and_drop::sync(ctx);
 
     // Before the layout diff below, so a pinned pane gathered onto this client's workspace (after a
     // takeover, an attach, or a scripted move) is published with everything else.

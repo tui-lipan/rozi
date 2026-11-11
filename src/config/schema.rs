@@ -1008,6 +1008,9 @@ pub struct ClipboardConfig {
     pub middle_click_paste: MiddleClickPaste,
     pub right_click: RightClickClipboardAction,
     pub enable_osc52: bool,
+    /// Take drops from, and start drags to, other applications through a host terminal that
+    /// supports drag and drop.
+    pub drag_and_drop: bool,
     /// How a successful copy highlights the copied text.
     pub copy_feedback: CopyFeedback,
     /// Whether copy-on-select highlights too.
@@ -1032,6 +1035,7 @@ impl Default for ClipboardConfig {
             },
             right_click: RightClickClipboardAction::Disabled,
             enable_osc52: true,
+            drag_and_drop: true,
             copy_feedback: CopyFeedback::Flash,
             copy_feedback_on_select: false,
             clear_selection_after_copy: false,

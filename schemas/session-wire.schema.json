@@ -1911,6 +1911,39 @@
           "type": "object"
         },
         {
+          "description": "Drag-and-drop escape codes (OSC 72) for a pane's program, from the client running the drag\nover it. Sending them makes this client the one the pane's answers go to, as\n[`ServerMessage::PaneDragAndDrop`], until the drag is over.",
+          "properties": {
+            "escape_codes": {
+              "type": "string"
+            },
+            "generation": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "local": {
+              "type": "boolean"
+            },
+            "pane_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "drag-and-drop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "local",
+            "generation",
+            "escape_codes"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Upload a regular file and paste its server-side path into a fixed pane generation.",
           "properties": {
             "operation": {
@@ -4459,6 +4492,83 @@
         }
       ]
     },
+    "PaneDragAndDrop": {
+      "description": "What a pane's program registered for drag and drop (OSC 72).",
+      "properties": {
+        "drags": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneDragRegistration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set while the program offers drags."
+        },
+        "drops": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneDropRegistration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set while the program accepts drops."
+        }
+      },
+      "type": "object"
+    },
+    "PaneDragRegistration": {
+      "properties": {
+        "client_id": {
+          "description": "The `i` key the program registered with.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "machine_id": {
+          "description": "The protocol machine id of the host running the program.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PaneDropRegistration": {
+      "properties": {
+        "client_id": {
+          "description": "The `i` key the program registered with.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "machine_id": {
+          "description": "The protocol machine id of the host running the program.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mimes": {
+          "description": "Extra MIME types the program asked for.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "PaneInfo": {
       "description": "One pane as `list-panes` reports it.\n\nBoth control surfaces fill this same type. A UI endpoint reads it out of the client's `State`\nand a session server reads it out of its own authoritative runtime, but the document a script\nparses is the contract, not either implementation - so there is one type describing it rather\nthan two that have to be kept in step by hand.",
       "properties": {
@@ -4884,6 +4994,10 @@
             "string",
             "null"
           ]
+        },
+        "drag_and_drop": {
+          "$ref": "#/$defs/PaneDragAndDrop",
+          "description": "What the pane's program registered for drag and drop (OSC 72), so a client knows where a\ndrag goes before it reaches the pane."
         },
         "foreground_arguments": {
           "description": "Arguments [`Self::foreground_program`] was launched with, `argv[0]` excluded.\n\nA name says which program a pane is running; only the arguments say what it is doing with\nit, which is why a captured profile replays them - `claude` and `claude\n--dangerously-skip-permissions` are the same executable and different panes. Empty while the\npane sits at a prompt with nothing running, when the platform cannot read another process's\narguments (macOS, Windows), when the inspected process is not the program the pane reports\nrunning, or when an argument could not survive being typed back at a prompt.",
@@ -6487,6 +6601,39 @@
             "local",
             "generation",
             "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Drag-and-drop escape codes (OSC 72) a pane's program wrote, for the client that owns the\npane's drag: the last one to send [`ClientMessage::DragAndDrop`] to it.",
+          "properties": {
+            "escape_codes": {
+              "type": "string"
+            },
+            "generation": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "local": {
+              "type": "boolean"
+            },
+            "pane_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "pane-drag-and-drop",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "pane_id",
+            "local",
+            "generation",
+            "escape_codes"
           ],
           "type": "object"
         },
@@ -8538,6 +8685,7 @@
   "x-rozi-capabilities": [
     "agent-summaries",
     "client-handoff",
+    "drag-and-drop",
     "graphics-root-frame-edits",
     "project-summaries",
     "runtime-metrics"

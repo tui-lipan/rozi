@@ -1706,6 +1706,7 @@ fn runtime_state_changed(candidate: &PaneRuntimeState, current: &PaneRuntimeStat
         || candidate.agent_launch != current.agent_launch
         || candidate.work_started_at != current.work_started_at
         || candidate.integration != current.integration
+        || candidate.drag_and_drop != current.drag_and_drop
 }
 
 /// Whether runtime metadata used to reconstruct an observed foreground command changed.
@@ -1823,6 +1824,7 @@ fn compute_runtime_state(
         integration,
         // Owned by the recorder; a recompute carries it.
         recording: pane.runtime.recording,
+        drag_and_drop: pane.screen().drag_and_drop_registration().into(),
         sequence: pane.runtime.sequence,
     };
     let changed = runtime_state_changed(&candidate, &pane.runtime);
@@ -3194,6 +3196,7 @@ mod tests {
             log: None,
             runtime: PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,

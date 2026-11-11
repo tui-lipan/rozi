@@ -557,6 +557,7 @@ impl SessionServer {
         self.remove_agent_waits(id);
         self.capture_waits.remove(&id);
         self.cancel_client_attachments(id);
+        self.drop_client_drags(id);
         self.release_recording_replies(id);
         self.session_subscribers.remove(&id);
         if self.origin_seed_client == Some(id) {

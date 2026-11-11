@@ -368,6 +368,15 @@ pub enum ClientMessage {
         bytes: Vec<u8>,
         token: u64,
     },
+    /// Drag-and-drop escape codes (OSC 72) for a pane's program, from the client running the drag
+    /// over it. Sending them makes this client the one the pane's answers go to, as
+    /// [`ServerMessage::PaneDragAndDrop`], until the drag is over.
+    DragAndDrop {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: String,
+    },
     /// Upload a regular file and paste its server-side path into a fixed pane generation.
     Attachment {
         transfer_id: u64,
@@ -756,6 +765,14 @@ pub enum ServerMessage {
         path: Option<String>,
         error: Option<String>,
     },
+    /// Drag-and-drop escape codes (OSC 72) a pane's program wrote, for the client that owns the
+    /// pane's drag: the last one to send [`ClientMessage::DragAndDrop`] to it.
+    PaneDragAndDrop {
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: String,
+    },
     /// Authoritative terminal program records. Revision and generation fence stale snapshots;
     /// attach baselines initialize presentation without replaying historical alerts.
     ProgramStatusChanged {
@@ -958,6 +975,7 @@ impl ClientMessage {
             | ClientMessage::CommitHandoff { .. }
             | ClientMessage::DepartForHandoff { .. }
             | ClientMessage::AbortHandoff { .. } => Some(super::Capability::ClientHandoff),
+            ClientMessage::DragAndDrop { .. } => Some(super::Capability::DragAndDrop),
             ClientMessage::Unknown => {
                 debug_assert!(false, "ClientMessage::Unknown is never sent");
                 None
@@ -1014,6 +1032,7 @@ impl ServerMessage {
             ServerMessage::HandoffPrepared { .. }
             | ServerMessage::HandoffCommitted { .. }
             | ServerMessage::HandoffAborted { .. } => Some(super::Capability::ClientHandoff),
+            ServerMessage::PaneDragAndDrop { .. } => Some(super::Capability::DragAndDrop),
             ServerMessage::Unknown => {
                 debug_assert!(false, "ServerMessage::Unknown is never sent");
                 None

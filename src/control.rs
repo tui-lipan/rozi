@@ -2967,7 +2967,11 @@ mod tests {
         let baseline: ControlRequest = serde_json::from_str(r#"{"cmd":"list-panes"}"#).unwrap();
         assert_eq!(baseline.command.required_session_capability(), None);
         for cap in crate::session::protocol::Capability::ALL {
-            assert_eq!(cap.introduced_in(), "0.0.44");
+            let expected = match cap {
+                crate::session::protocol::Capability::DragAndDrop => "0.0.46",
+                _ => "0.0.44",
+            };
+            assert_eq!(cap.introduced_in(), expected, "{cap}");
         }
     }
 

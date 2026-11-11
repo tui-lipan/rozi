@@ -42,13 +42,17 @@ pub enum Capability {
     /// ([`super::ClientMessage::PrepareHandoff`]) and the replacement claims it on attach, keeping
     /// the layout-control lease and parked state across a client relaunch.
     ClientHandoff,
+    /// The server routes each pane's drag-and-drop conversation (OSC 72) to the client that owns
+    /// it: [`super::ClientMessage::DragAndDrop`] and [`super::ServerMessage::PaneDragAndDrop`].
+    DragAndDrop,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 5] = [
+    pub const ALL: [Capability; 6] = [
         Capability::AgentSummaries,
         Capability::ClientHandoff,
+        Capability::DragAndDrop,
         Capability::GraphicsRootFrameEdits,
         Capability::ProjectSummaries,
         Capability::RuntimeMetrics,
@@ -62,6 +66,7 @@ impl Capability {
             Capability::ProjectSummaries => "project-summaries",
             Capability::GraphicsRootFrameEdits => "graphics-root-frame-edits",
             Capability::ClientHandoff => "client-handoff",
+            Capability::DragAndDrop => "drag-and-drop",
         }
     }
 
@@ -73,6 +78,7 @@ impl Capability {
             | Self::ProjectSummaries
             | Self::GraphicsRootFrameEdits
             | Self::ClientHandoff => "0.0.44",
+            Self::DragAndDrop => "0.0.46",
         }
     }
 

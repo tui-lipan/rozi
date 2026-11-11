@@ -183,6 +183,7 @@ pub fn attached_message() -> ServerMessage {
                     rows: Vec::new(),
                     integration: None,
                     recording: false,
+                    drag_and_drop: Default::default(),
                     sequence: u64::from(pane.pane_id),
                 },
             })

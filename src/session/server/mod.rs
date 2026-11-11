@@ -33,6 +33,7 @@ mod connection;
 mod create;
 mod deployment_worker;
 mod deployments;
+mod drag_and_drop;
 mod events;
 mod graphics;
 mod graphics_pacer;
@@ -448,6 +449,8 @@ pub struct ServerPane {
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
     program_status_sync: program_status::ProgramStatusSync,
+    /// Who this pane's drag belongs to; see [`drag_and_drop`].
+    drag_and_drop: drag_and_drop::PaneDragAndDrop,
     /// Agent-detection scratch: never persisted, never on the wire, and reset as a unit whenever
     /// the program behind this pane is replaced.
     pub agent: AgentScratch,
@@ -2280,6 +2283,7 @@ impl ServerPane {
         debug_assert!(!self.output_seen);
         self.content_generation = self.content_generation.saturating_add(1);
         screen.set_program_status_enabled(true);
+        screen.set_drag_and_drop_enabled(true);
         screen.set_output_transaction_recording(true);
         self.terminal = screen;
     }

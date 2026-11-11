@@ -323,12 +323,18 @@ pub(crate) fn pane_frame_chrome(
     } else {
         ctx.state.alert_pulse_phase
     };
+    // Another client carrying the pane, or a drag from another application over it: either way the
+    // border says this pane is where a drag lands.
     let carried_by_other_client = !matches!(kind, PaneKind::Scratch | PaneKind::Popup)
         && ctx
             .state
             .current()
             .remote_drag
-            .is_some_and(|drag| drag.pane_id == pane.id);
+            .is_some_and(|drag| drag.pane_id == pane.id)
+        || ctx.state.drag_and_drop.hovered.is_some_and(|hovered| {
+            hovered.pane_id == pane.id
+                && hovered.local == matches!(kind, PaneKind::Scratch | PaneKind::Popup)
+        });
     // A breathing border is drawn at its peak colour and moved toward its trough by a pulse
     // anchored where the chain's beat is, so its colour is a function of the clock, as the content
     // tint's is. The chain's turns never retarget it, so it cannot lag them, fall out of step with

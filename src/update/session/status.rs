@@ -177,6 +177,7 @@ pub(crate) fn apply_pane_runtime_state(
     pane.terminal.last_exit_status = state.last_exit_status;
     pane.terminal.reported_status = state.status;
     pane.terminal.recording = state.recording;
+    pane.terminal.drag_and_drop = state.drag_and_drop;
     pane.terminal.detected_agent = state.detected_agent;
     pane.terminal.work_started_at = state.work_started_at;
     let mut finished_rows = pane.terminal.apply_rows(state.rows, state.integration);

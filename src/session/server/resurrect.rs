@@ -4220,6 +4220,7 @@ mod tests {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,

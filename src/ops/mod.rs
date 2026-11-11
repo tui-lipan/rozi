@@ -8,6 +8,7 @@ pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;
 pub(crate) mod control_listener;
+pub(crate) mod drag_and_drop;
 pub(crate) mod exit;
 pub(crate) mod extension_workers;
 pub(crate) mod extensions;

@@ -846,6 +846,26 @@ impl SessionClient {
         }
     }
 
+    /// Write drag-and-drop escape codes to a pane, making this client the owner of its drag.
+    /// Nothing is sent to a server without drag-and-drop routing.
+    pub fn send_drag_and_drop(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        local: bool,
+        escape_codes: String,
+    ) {
+        if !self.supports(protocol::Capability::DragAndDrop) {
+            return;
+        }
+        let _ = self.send_control(protocol::ClientMessage::DragAndDrop {
+            pane_id,
+            local,
+            generation,
+            escape_codes,
+        });
+    }
+
     pub fn send_input(&self, pane_id: PaneId, generation: u64, local: bool, bytes: Vec<u8>) {
         self.send(ClientOutbound::PaneInput {
             latency_sensitive: true,

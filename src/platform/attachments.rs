@@ -108,6 +108,39 @@ pub(crate) fn drop_path(text: &str) -> Option<PathBuf> {
     Some(PathBuf::from(text))
 }
 
+/// A dropped local path as text for a pane: quoted when a shell would split or expand it, and
+/// followed by a space so successive paths stay apart.
+#[cfg(unix)]
+pub(crate) fn quote_dropped_path(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let text = String::from_utf8_lossy(path.as_os_str().as_bytes());
+    let plain = text
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"/._-+,:@%=".contains(&b) || b >= 0x80);
+    if plain && !text.is_empty() {
+        return format!("{text} ");
+    }
+    if !text.contains(['\'', '"', '`', '$', '\\', '!']) && !text.chars().any(char::is_control) {
+        return format!("\"{text}\" ");
+    }
+    format!("'{}' ", text.replace('\'', "'\\''"))
+}
+
+/// A dropped local path as text for a pane, quoted when it holds spaces. Windows paths cannot hold
+/// a double quote.
+#[cfg(not(unix))]
+pub(crate) fn quote_dropped_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if text
+        .chars()
+        .any(|c| c.is_whitespace() || "&()[]{}^=;!'+,`~".contains(c))
+    {
+        format!("\"{text}\" ")
+    } else {
+        format!("{text} ")
+    }
+}
+
 /// Keep successive pasted paths separate and quote whitespace for terminal composers.
 pub(crate) fn paste_path(path: &str) -> Result<String, String> {
     if path
@@ -127,6 +160,17 @@ pub(crate) fn paste_path(path: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::io::Write;
+    #[cfg(unix)]
+    #[test]
+    fn dropped_paths_are_quoted_only_as_much_as_a_shell_needs() {
+        let quote = |path: &str| quote_dropped_path(std::path::Path::new(path));
+        assert_eq!(quote("/tmp/photo.png"), "/tmp/photo.png ");
+        assert_eq!(quote("/tmp/Zdjęcia/ok.png"), "/tmp/Zdjęcia/ok.png ");
+        assert_eq!(quote("/tmp/my photo.png"), "\"/tmp/my photo.png\" ");
+        assert_eq!(quote("/tmp/it's $HOME"), "'/tmp/it'\\''s $HOME' ");
+        assert_eq!(quote("/tmp/a(b)"), "\"/tmp/a(b)\" ");
+    }
+
     #[test]
     fn staged_files_are_private_regular_and_removed_with_their_owner() {
         let (staged, mut file) = StagedFile::create("../../notes $x.txt", 3).unwrap();

@@ -224,7 +224,7 @@ instead on Linux with a systemd user session.
 | `prefix` | string | `"ctrl-a"` | One key step in [config key syntax](keybindings.md#key-notation), such as `"ctrl-b"`. |
 | `modifier_shortcuts` | bool | `true` | Mirrors the generated prefix bindings onto held-modifier chords. |
 | `which_key` | string | `"short"` | Delay before the which-key strip appears: `"off"`, `"instant"`, `"short"` (500 ms), or `"long"` (1000 ms). |
-| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends across panes, workspace tabs, sidebar tabs, and pickers, `1` to `50`. It stacks with the terminal's own multiplier. |
+| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends in panes and scrollable lists, `1` to `50`. It stacks with the terminal's own multiplier. |
 
 See [Keybindings](keybindings.md), and
 [Prefix and held modifier](keybindings.md#prefix-and-held-modifier) for the which-key strip.
@@ -858,8 +858,7 @@ its lower-priority items disappear too.
 | `title` | `20` |
 
 Workspace tabs shrink to a scrolling strip before disappearing. Use the wheel or click `❮` and
-`❯` to reach hidden tabs. Switching workspaces brings the active tab into view. Wheel scrolling
-uses `[input] scroll_multiplier`, shared with sidebar tabs and pickers.
+`❯` to reach hidden tabs. Switching workspaces brings the active tab into view.
 
 Click `title` to open the command palette. Click `location` or `session` to open Sessions.
 

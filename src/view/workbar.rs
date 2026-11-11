@@ -235,13 +235,35 @@ fn fit_sides(
         );
     }
     // Without a center, both sections share the full budget, in retention-priority order.
-    let sizes: Vec<_> = left
+    let mut sizes: Vec<_> = left
         .iter()
         .map(|entry| entry.size)
         .chain(right.iter().map(|entry| entry.size))
         .collect();
-    let widths = StatusBar::allocate_items(&sizes, width, 1);
     let split = left.len();
+    // Reserve minimum widths in global priority order, charging a gap only when
+    // another item in the same section survived. The sections themselves abut.
+    let mut order: Vec<_> = (0..sizes.len()).collect();
+    order.sort_by_key(|&index| std::cmp::Reverse(sizes[index].priority));
+    let mut remaining = width;
+    let mut retained = [false; 2];
+    let gaps = [1, u16::from(!powerline)];
+    let mut spacing = 0;
+    for index in order {
+        let section = usize::from(index >= split);
+        let gap = if retained[section] { gaps[section] } else { 0 };
+        let minimum = sizes[index].minimum.max(1).min(sizes[index].preferred);
+        let cost = u32::from(minimum) + u32::from(gap);
+        if minimum > 0 && cost <= u32::from(remaining) {
+            remaining -= cost as u16;
+            spacing += gap;
+            retained[section] = true;
+        } else {
+            sizes[index].preferred = 0;
+        }
+    }
+    // The shared allocator distributes spare cells to the retained flexible items.
+    let widths = StatusBar::allocate_items(&sizes, width - spacing, 0);
     (
         apply_widths(left, &widths[..split]),
         apply_widths(right, &widths[split..]),

@@ -423,6 +423,70 @@ fn narrow_workbar_keeps_modes_and_session_before_optional_badges() {
 }
 
 #[test]
+fn uncentered_workbar_charges_only_visible_section_gaps() {
+    rozi::test_support::on_deeper_stack(|| {
+        // Powerline chips abut; separate chips and left entries have one-cell gaps.
+        // The left and right sections never require a gap between them.
+        for (powerline, left_labels, width) in [
+            (true, vec![], 13),
+            (false, vec![], 14),
+            (true, vec!["L"], 16),
+            (false, vec!["L"], 17),
+            (true, vec!["L", "M"], 20),
+        ] {
+            let mut b = backend();
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width,
+                h: 8,
+            });
+            {
+                let state = b.state_mut();
+                state.config.pane.workbar_powerline = powerline;
+                state.config.workbar.left = left_labels
+                    .iter()
+                    .map(|label| WorkbarItem {
+                        segment: WorkbarSegment::Text((*label).into()),
+                        color: None,
+                        priority: None,
+                    })
+                    .collect();
+                state.config.workbar.center.clear();
+                state.mode = rozi::state::Mode::Resize;
+                state.do_not_disturb = true;
+            }
+            let cells = row(&mut b);
+            let text: String = cells.iter().map(|cell| cell.symbol.as_str()).collect();
+            for label in left_labels.into_iter().chain(["RESIZE", "DND"]) {
+                assert!(
+                    find_run(&cells, label).is_some(),
+                    "{label} missing at {width} cells: {text}"
+                );
+            }
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width - 1,
+                h: 8,
+            });
+            let cells = row(&mut b);
+            let omitted = if width <= 14 {
+                "DND"
+            } else if width == 20 {
+                "M"
+            } else {
+                "L"
+            };
+            assert!(
+                find_run(&cells, omitted).is_none(),
+                "{omitted} must yield below exact fit"
+            );
+        }
+    });
+}
+
+#[test]
 fn explicit_priority_keeps_a_later_badge_whole() {
     rozi::test_support::on_deeper_stack(|| {
         for (width, centered) in [(30, true), (15, false)] {

@@ -107,8 +107,20 @@ pub(crate) fn run_ssh_command_capturing(
     timeout: std::time::Duration,
     capture_limit: usize,
 ) -> io::Result<crate::platform::command::CommandOutput> {
-    let output =
-        crate::platform::command::run_bounded_command(command, input, timeout, capture_limit)?;
+    // An ssh told it may prompt, with no UI to ask through, asks on the terminal itself.
+    let asks_on_terminal = super::askpass::SshPrompts::interactive()
+        == super::askpass::SshPrompts::Terminal
+        && command.get_args().any(|arg| arg == "BatchMode=no");
+    let output = if asks_on_terminal {
+        crate::platform::command::run_bounded_terminal_command(
+            command,
+            input,
+            timeout,
+            capture_limit,
+        )?
+    } else {
+        crate::platform::command::run_bounded_command(command, input, timeout, capture_limit)?
+    };
     if output.timed_out {
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,

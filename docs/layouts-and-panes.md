@@ -46,7 +46,7 @@ otherwise in the configured `cwd`. See
 | Layout | Arrangement | Resizable |
 | --- | --- | --- |
 | Dwindle | Each new tiled pane splits the focused pane. | Split ratios |
-| Master | One master pane on the left, with the rest stacked on the right. | Master width |
+| Master | One master pane on the left, with the rest stacked on the right in as many columns as they need. | Master width |
 | Grid | Near-square, row-major grid. | No |
 | Columns | Equal full-height columns. | No |
 | Rows | Equal full-width rows. | No |
@@ -78,6 +78,12 @@ or drag a split boundary.
 
 The first tiled pane is the master. Press `.` to promote the focused pane. To change the master
 width, use `=` and `-`, resize mode, or drag the master boundary.
+
+The other panes share one column beside the master while each stays at least 10 rows tall. When
+another pane would make them shorter, the stack adds a column, filling each one top to bottom
+starting next to the master. A column is never narrower than 40 cells, so a narrow stack stays in
+one column and its panes get shorter instead. Widening the master can therefore fold the stack back
+into fewer columns.
 
 Promoting works in every layout: it swaps the focused pane into the first tiled position. The
 command palette lists **Promote to master** only when that would move the focused pane, so not

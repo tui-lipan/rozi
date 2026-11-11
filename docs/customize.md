@@ -108,7 +108,7 @@ Dwindle.
 | Layout | Arrangement |
 | --- | --- |
 | `dwindle` | Each new pane splits the focused one along its longer side. |
-| `master` | One large pane on the left, the rest stacked on the right. |
+| `master` | One large pane on the left, the rest stacked on the right, in more columns when they get short. |
 | `grid` | A near-square grid. |
 | `columns` | Equal full-height columns. |
 | `rows` | Equal full-width rows. |

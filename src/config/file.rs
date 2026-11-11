@@ -440,7 +440,7 @@ pub(super) struct WorkbarAlertFileConfig {
 }
 
 /// A `[workbar]` list entry: either a bare segment name (`"clock"`, `"text:.."`, `"command:.."`)
-/// or a table `{ segment = "..", color = "info" }` that overrides the badge color by theme role.
+/// or a table with optional `color` and `priority` overrides.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(super) enum WorkbarSegmentSpec {
@@ -449,6 +449,8 @@ pub(super) enum WorkbarSegmentSpec {
         segment: String,
         #[serde(default)]
         color: Option<String>,
+        #[serde(default)]
+        priority: Option<u8>,
     },
 }
 

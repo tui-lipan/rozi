@@ -7,9 +7,8 @@ use crate::{AppRoot, Msg};
 
 use super::animation;
 
-pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
+pub(crate) fn workbar(ctx: &Context<AppRoot>, width: u16) -> Element {
     let state = &ctx.state;
-    let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
 
     let panel_bg = workbar_fill(ctx);
@@ -23,120 +22,254 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
         .gap(1)
         .style(Style::new().bg(panel_bg));
 
-    // Track the background color of the elements landing on each outer edge so the whole-workbar
-    // end caps can adopt it: a leading/trailing badge (the `rozi` title chip, session chip, or
-    // a mode chip) rounds off in its own color, while a plain segment leaves the cap panel-colored.
-    let mut left_cap_color: Option<Color> = None;
+    let left = configured_entries(ctx, &workbar_cfg.left);
+    let center = fit_entries(configured_entries(ctx, &workbar_cfg.center), width, 1);
+    let center_width = entries_width(&center, 1);
 
-    for item in &workbar_cfg.left {
-        if let Some(element) = left_segment_element(ctx, item) {
-            bar = bar.left(element);
-            left_cap_color.get_or_insert(segment_edge_color(ctx, item));
-        }
-    }
-
-    for item in &workbar_cfg.center {
-        if let Some(element) = center_segment_element(ctx, item) {
-            bar = bar.center(element);
-        }
-    }
-
-    // Trailing cluster: transient mode chips first, then the configured right segments, so the
-    // session badge - usually the last right segment, and the one that stays visible - is pinned
-    // to the far edge and mode chips like PREFIX land to its left. Chips are collected first so
-    // the cluster can decide how to lay them out.
-    let chip_fg = |bg| crate::ops::theme::chrome_label_fg(theme, bg);
-    let mut trailing: Vec<TrailingChip> = Vec::new();
-    if ctx.command_chord_pending() {
-        trailing.push(TrailingChip::badge(
-            " PREFIX ",
-            chip_fg(theme.status.warning),
-            theme.status.warning,
-        ));
-    }
-    if state.mode == Mode::Resize {
-        trailing.push(TrailingChip::badge(
-            " RESIZE ",
-            chip_fg(theme.status.success),
-            theme.status.success,
-        ));
-    } else if state.mode == Mode::Copy {
-        trailing.push(TrailingChip::badge(
-            " COPY ",
-            chip_fg(theme.status.info),
-            theme.status.info,
-        ));
-    } else if state.mode == Mode::Hint {
-        trailing.push(TrailingChip::badge(
-            " HINT ",
-            chip_fg(theme.status.info),
-            theme.status.info,
-        ));
-    }
-    // Not a `Mode`: the sidebar owning the keyboard is ordinary widget focus, and the framework is
-    // the authority on that. Mirroring it into a mode would be a second source of truth that goes
-    // stale the moment a click moves focus somewhere else.
-    if state.sidebar.focused {
-        trailing.push(TrailingChip::badge(
-            " SIDEBAR ",
-            chip_fg(theme.status.info),
-            theme.status.info,
-        ));
-    }
-    // Synchronization silently sends every keystroke to every pane on the workspace, and nothing
-    // else on screen says so. It gets warning color for the same reason it gets a permanent chip:
-    // typing into what looks like one pane while hitting several is the costly surprise.
-    if state.current().workspaces[state.current().active_workspace].synchronized {
-        trailing.push(TrailingChip::badge(
-            " SYNC ",
-            chip_fg(theme.status.warning),
-            theme.status.warning,
-        ));
-    }
-    if state.do_not_disturb {
-        trailing.push(TrailingChip::badge(
-            " DND ",
-            chip_fg(theme.status.warning),
-            theme.status.warning,
-        ));
-    }
-    // Keep session identity in the configured session badge and collaboration state in one chip.
-    // A normal solo client needs no status; read-only remains visible because it explains why
-    // typing is blocked.
-    if let Some((label, color)) = collaboration_status(state, theme) {
-        trailing.push(TrailingChip::badge(label, chip_fg(color), color));
-    }
-    // Last before the configured segments, so a mode chip appearing on its left never moves it.
-    if ui_recording_chip(state) == Some(UiRecordingChip::Workbar)
-        && let Some(label) = ui_recording_label(state)
-    {
-        let color = theme.status.error;
-        trailing.push(TrailingChip::badge(label, chip_fg(color), color));
-    }
-    for item in &workbar_cfg.right {
+    let mut trailing: Vec<WorkbarEntry<TrailingChip>> = transient_chips(ctx)
+        .into_iter()
+        .enumerate()
+        .map(|(key, chip)| WorkbarEntry {
+            size: chip_size(ctx, &chip, 255),
+            item: chip,
+            key,
+        })
+        .collect();
+    for (key, item) in workbar_cfg.right.iter().enumerate() {
         if let Some(chip) = trailing_chip(ctx, item) {
-            trailing.push(chip);
+            trailing.push(WorkbarEntry {
+                size: chip_size(ctx, &chip, item.retention_priority()),
+                item: chip,
+                key: 1000 + key,
+            });
         }
     }
-
+    let powerline = state.config.pane.workbar_powerline;
+    let (left, trailing) = fit_sides(left, trailing, width, center_width, powerline);
+    // When the center reaches an outer edge, the decorative bar cap belongs to
+    // that center pill rather than an empty side lane.
+    let center_left_color = center
+        .first()
+        .filter(|_| width.saturating_sub(center_width) < 2)
+        .map_or(panel_bg, |entry| segment_edge_color(ctx, entry.item));
+    let center_right_color = center
+        .last()
+        .filter(|_| center_width == width)
+        .map_or(panel_bg, |entry| segment_edge_color(ctx, entry.item));
+    let left_cap_color = left.first().map_or(center_left_color, |entry| {
+        segment_edge_color(ctx, entry.item)
+    });
     let right_cap_color = trailing
         .last()
-        .map_or(panel_bg, |last| last.edge_color(panel_bg));
+        .map_or(center_right_color, |entry| entry.item.edge_color(panel_bg));
+    for entry in left {
+        if let Some(element) = left_segment_element(ctx, entry.item) {
+            bar = bar.left(sized_workbar_element(
+                element,
+                entry.size.preferred,
+                "left",
+                entry.key,
+            ));
+        }
+    }
+    for entry in center {
+        if let Some(element) = center_segment_element(ctx, entry.item) {
+            bar = bar.center(sized_workbar_element(
+                element,
+                entry.size.preferred,
+                "center",
+                entry.key,
+            ));
+        }
+    }
+
     let badge_style = ctx
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_badge_style);
-    let powerline = ctx.state.config.pane.workbar_powerline;
     if let Some(cluster) = trailing_cluster(ctx, trailing, badge_style, powerline, panel_bg) {
         bar = bar.right(cluster);
     }
 
-    workbar_with_caps(
-        ctx,
-        bar.into(),
-        left_cap_color.unwrap_or(panel_bg),
-        right_cap_color,
+    workbar_with_caps(ctx, bar.into(), left_cap_color, right_cap_color)
+}
+
+fn transient_chips(ctx: &Context<AppRoot>) -> Vec<TrailingChip> {
+    let state = &ctx.state;
+    let theme = &state.theme;
+    let badge = |label, color| {
+        TrailingChip::badge(
+            label,
+            crate::ops::theme::chrome_label_fg(theme, color),
+            color,
+        )
+    };
+    let mut chips = Vec::new();
+    if ctx.command_chord_pending() {
+        chips.push(badge(" PREFIX ", theme.status.warning));
+    }
+    if let Some((label, color)) = mode_chip(state.mode, theme) {
+        chips.push(badge(label, color));
+    }
+    for (shown, label, color) in [
+        (state.sidebar.focused, " SIDEBAR ", theme.status.info),
+        (
+            state.active_workspace_ref().synchronized,
+            " SYNC ",
+            theme.status.warning,
+        ),
+        (state.do_not_disturb, " DND ", theme.status.warning),
+    ] {
+        if shown {
+            chips.push(badge(label, color));
+        }
+    }
+    if let Some((label, color)) = collaboration_status(state, theme) {
+        chips.push(badge(label, color));
+    }
+    if let Some(label) = ui_recording_label(state)
+        .filter(|_| ui_recording_chip(state) == Some(UiRecordingChip::Workbar))
+    {
+        chips.push(TrailingChip::badge(
+            label,
+            crate::ops::theme::chrome_label_fg(theme, theme.status.error),
+            theme.status.error,
+        ));
+    }
+    chips
+}
+
+fn mode_chip(mode: Mode, theme: &Theme) -> Option<(&'static str, Color)> {
+    match mode {
+        Mode::Resize => Some((" RESIZE ", theme.status.success)),
+        Mode::Copy => Some((" COPY ", theme.status.info)),
+        Mode::Hint => Some((" HINT ", theme.status.info)),
+        _ => None,
+    }
+}
+
+/// One item before fitting; retained entries carry their allocated width in `preferred`.
+struct WorkbarEntry<T> {
+    item: T,
+    size: StatusBarItemSize,
+    key: usize,
+}
+
+fn configured_entries<'a>(
+    ctx: &Context<AppRoot>,
+    items: &'a [WorkbarItem],
+) -> Vec<WorkbarEntry<&'a WorkbarItem>> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(key, item)| {
+            let size = if matches!(item.segment, WorkbarSegment::Workspaces) {
+                workspace_strip_size(ctx, item.retention_priority())
+            } else {
+                badge_size(
+                    &segment_label(ctx, &item.segment)?,
+                    item.retention_priority(),
+                )
+            };
+            Some(WorkbarEntry { item, size, key })
+        })
+        .collect()
+}
+
+fn badge_size(label: &str, priority: u8) -> StatusBarItemSize {
+    let preferred = RichText::from(label.to_string())
+        .width()
+        .min(u16::MAX as usize) as u16;
+    StatusBarItemSize {
+        preferred,
+        minimum: preferred,
+        priority,
+    }
+}
+
+fn workspace_strip_size(ctx: &Context<AppRoot>, priority: u8) -> StatusBarItemSize {
+    let element = workspace_tabs_element(ctx);
+    let preferred = StatusBarItemSize::measure(&element, priority).preferred;
+    StatusBarItemSize {
+        preferred,
+        minimum: preferred.min(9),
+        priority,
+    }
+}
+
+fn chip_size(ctx: &Context<AppRoot>, chip: &TrailingChip, priority: u8) -> StatusBarItemSize {
+    match chip {
+        TrailingChip::Badge { label, .. } => badge_size(label, priority),
+        TrailingChip::Flex(_) => workspace_strip_size(ctx, priority),
+    }
+}
+
+fn fit_entries<T>(entries: Vec<WorkbarEntry<T>>, width: u16, gap: u16) -> Vec<WorkbarEntry<T>> {
+    let sizes: Vec<_> = entries.iter().map(|entry| entry.size).collect();
+    let widths = StatusBar::allocate_items(&sizes, width, gap);
+    apply_widths(entries, &widths)
+}
+
+fn entries_width<T>(entries: &[WorkbarEntry<T>], gap: u16) -> u16 {
+    entries
+        .iter()
+        .fold(0u16, |sum, entry| sum.saturating_add(entry.size.preferred))
+        .saturating_add(gap.saturating_mul(entries.len().saturating_sub(1) as u16))
+}
+
+fn fit_sides(
+    left: Vec<WorkbarEntry<&WorkbarItem>>,
+    right: Vec<WorkbarEntry<TrailingChip>>,
+    width: u16,
+    center_width: u16,
+    powerline: bool,
+) -> (
+    Vec<WorkbarEntry<&WorkbarItem>>,
+    Vec<WorkbarEntry<TrailingChip>>,
+) {
+    if center_width > 0 {
+        let (left_width, right_width) = StatusBar::side_widths(width, center_width, 1);
+        return (
+            fit_entries(left, left_width, 1),
+            fit_entries(right, right_width, u16::from(!powerline)),
+        );
+    }
+    // Without a center, both sections share the full budget, in retention-priority order.
+    let sizes: Vec<_> = left
+        .iter()
+        .map(|entry| entry.size)
+        .chain(right.iter().map(|entry| entry.size))
+        .collect();
+    let widths = StatusBar::allocate_items(&sizes, width, 1);
+    let split = left.len();
+    (
+        apply_widths(left, &widths[..split]),
+        apply_widths(right, &widths[split..]),
     )
+}
+
+fn apply_widths<T>(entries: Vec<WorkbarEntry<T>>, widths: &[u16]) -> Vec<WorkbarEntry<T>> {
+    entries
+        .into_iter()
+        .zip(widths)
+        .filter_map(|(mut entry, &width)| {
+            if width == 0 {
+                return None;
+            }
+            entry.size.preferred = width;
+            Some(entry)
+        })
+        .collect()
+}
+
+fn sized_workbar_element(element: Element, width: u16, section: &str, key: usize) -> Element {
+    Frame::new()
+        .border(false)
+        .padding(0)
+        .width(Length::Px(width))
+        .height(Length::Px(1))
+        .child(element)
+        .key(format!("rozi-workbar-{section}-{key}"))
 }
 
 /// Where the `● REC` that says this UI is recording itself goes: on the chrome in view that can
@@ -295,7 +428,7 @@ fn trailing_chip(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<TrailingC
 /// to the trailing edge.
 fn trailing_cluster(
     ctx: &Context<AppRoot>,
-    chips: Vec<TrailingChip>,
+    chips: Vec<WorkbarEntry<TrailingChip>>,
     cap_style: CapStyle,
     powerline: bool,
     panel_bg: Color,
@@ -312,8 +445,8 @@ fn trailing_cluster(
     // (caps on both sides), and chips keep a gap.
     let mut prev_bg = panel_bg;
     let mut prev_was_badge = false;
-    for chip in chips {
-        match chip {
+    for entry in chips {
+        let element = match entry.item {
             TrailingChip::Badge {
                 label,
                 text_fg,
@@ -330,16 +463,22 @@ fn trailing_cluster(
                 let badge = workbar_badge(
                     ctx, &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color, on_click,
                 );
-                cluster = cluster.child(badge);
                 prev_bg = if powerline { bg } else { panel_bg };
                 prev_was_badge = true;
+                badge
             }
             TrailingChip::Flex(element) => {
-                cluster = cluster.child(*element);
                 prev_bg = panel_bg;
                 prev_was_badge = false;
+                *element
             }
-        }
+        };
+        cluster = cluster.child(sized_workbar_element(
+            element,
+            entry.size.preferred,
+            "right",
+            entry.key,
+        ));
     }
     Some(cluster.into())
 }
@@ -803,6 +942,18 @@ fn workbar_hostname() -> String {
 }
 
 fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
+    // Outer workbar caps may occupy the strip's edge cells. Keep the scrolling
+    // arrows inside that decoration, including when the title badge has yielded.
+    Frame::new()
+        .border(false)
+        .padding((0, 1))
+        .width(Length::Auto)
+        .height(Length::Px(1))
+        .child(workspace_tabs(ctx))
+        .into()
+}
+
+fn workspace_tabs(ctx: &Context<AppRoot>) -> DraggableTabBar {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
@@ -908,7 +1059,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     let fill = workbar_fill(ctx);
 
-    DraggableTabBar::new()
+    super::scrolling_tab_bar(theme, fill)
         .tabs(tabs)
         .active(
             state
@@ -921,7 +1072,6 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .divider(' ')
         .caps(tab_caps)
         .show_close_buttons(false)
-        .show_overflow_controls(false)
         // Dropping a tab moves its workspace to that slot. The bar previews the move while dragging,
         // and the workspaces themselves only move once the button is released.
         .reorder_mode(DragReorderMode::OnDrop)
@@ -959,7 +1109,6 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
         .on_reorder(ctx.link().callback(|event: DraggableTabReorderEvent| {
             Msg::RunAction(Action::MoveWorkspace(event.from, event.to))
         }))
-        .into()
 }
 
 /// Whether a workspace tab carries the recording dot: its workspace holds a recorded pane that the
@@ -1771,10 +1920,12 @@ mod tests {
             crate::config::WorkbarItem {
                 segment: crate::config::WorkbarSegment::Clock,
                 color: None,
+                priority: None,
             },
             crate::config::WorkbarItem {
                 segment: crate::config::WorkbarSegment::Session,
                 color: None,
+                priority: None,
             },
         ];
         state.current_mut().session_name = Some("dev".into());

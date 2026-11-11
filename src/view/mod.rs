@@ -78,6 +78,19 @@ pub(crate) fn hover_lift() -> ColorTransform {
     ColorTransform::elevate(HOVER_LIFT)
 }
 
+/// Scrolling controls shared by workspaces, sidebar tabs, and picker tabs.
+pub(crate) fn scrolling_tab_bar(theme: &Theme, strip: Color) -> DraggableTabBar {
+    DraggableTabBar::new()
+        .overflow_left_label(|_| std::sync::Arc::from("❮ "))
+        .overflow_right_label(|_| std::sync::Arc::from(" ❯"))
+        .overflow_style(Style::new().fg(theme.border_active))
+        .overflow_hover_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(strip.elevate_by(0.08)),
+        )
+}
+
 pub(crate) const STRIP_LIFT: f32 = 0.05;
 
 pub(crate) fn strip_background(theme: &Theme, follow_terminal: bool, host: Color) -> Color {
@@ -137,7 +150,7 @@ fn session_content(
                 h: f32::from(WORKBAR_HEIGHT),
             }
         };
-        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
+        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx, content_viewport.w));
     }
 
     workspace::workspace_pages(ctx, canvas, viewport_changed)

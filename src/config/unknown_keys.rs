@@ -231,7 +231,7 @@ const WORKBAR_ALERT_KEYS: &[&str] = &[
     "bell", "blocked", "error", "finished", "working", "idle", "mode", "paint",
 ];
 
-const WORKBAR_SEGMENT_KEYS: &[&str] = &["segment", "color"];
+const WORKBAR_SEGMENT_KEYS: &[&str] = &["segment", "color", "priority"];
 
 const RULE_KEYS: &[&str] = &[
     "match",

@@ -81,7 +81,7 @@
 # "instant", "short", or "long". Held <modifier>+<key> chords resolve in one press and never go
 # pending, so this is prefix-only, and the PREFIX badge is never delayed.
 #which_key = "short"
-# Multiplies the wheel scrolling your terminal sends across panes, sidebar tabs, and pickers,
+# Multiplies the wheel scrolling your terminal sends across panes, workspace tabs, sidebar tabs, and pickers,
 # from 1 to 50. It stacks with the terminal's own multiplier (Ghostty at 3 and rozi at 3 scroll
 # 9 lines per notch). Programs that track the mouse, such as editors, apply their own scroll step.
 #scroll_multiplier = 3
@@ -516,7 +516,9 @@
 # command:<cmd> / command:<interval_secs>:<cmd>.
 # A segment may also be a table overriding its badge color by theme role - accent, info,
 # success, warning, error, neutral, panel:
-#   right = [{ segment = "clock", color = "info" }, "session"]
+#   right = [{ segment = "clock", color = "info", priority = 60 }, "session"]
+# Higher priority (0..255) keeps a segment visible longer on narrow terminals.
+# Defaults favor mode indicators, session identity, and scrolling workspace tabs.
 #left = ["title", "workspaces"]
 #center = []
 #right = ["location", "session"]

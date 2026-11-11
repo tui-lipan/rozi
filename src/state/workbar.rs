@@ -41,6 +41,7 @@ mod tests {
                 interval_secs,
             },
             color: None,
+            priority: None,
         }
     }
 

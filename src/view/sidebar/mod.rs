@@ -234,7 +234,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .config
         .effective_cap_style(ctx.state.config.sidebar.tab_style)
         .chars();
-    let tab_bar = DraggableTabBar::new()
+    let tab_bar = super::scrolling_tab_bar(theme, strip)
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
         .bar_id(bar_id)
@@ -245,9 +245,6 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .divider(' ')
         .caps(tab_caps)
         .show_close_buttons(false)
-        .show_overflow_controls(true)
-        .overflow_left_label(|_| std::sync::Arc::from("❮ "))
-        .overflow_right_label(|_| std::sync::Arc::from(" ❯"))
         .height(Length::Px(1))
         // An empty bar is still a drop target for the shared drag group, so the hint lives on the
         // bar row itself rather than in the body below it. The leading space matches the pad a real
@@ -267,12 +264,6 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
                 .bold()
         })
         .tab_hover_style(hover_style)
-        .overflow_style(Style::new().fg(ctx.state.theme.border_active))
-        .overflow_hover_style(
-            Style::new()
-                .fg(ctx.state.theme.border_active)
-                .bg(strip.elevate_by(0.08)),
-        )
         .on_change(crate::view::sidebar::callback(
             ctx,
             move |event: TabsEvent| Msg::SidebarTabSelected {

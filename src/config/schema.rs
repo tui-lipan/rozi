@@ -2730,19 +2730,36 @@ impl BadgeColor {
     }
 }
 
-/// A configured workbar segment plus an optional badge color override. `color: None` uses the
-/// segment's curated default color (see the view's `curated_color`).
+/// A configured workbar segment with optional badge color and retention-priority overrides.
+/// An unset override uses the segment's curated default.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkbarItem {
     pub segment: WorkbarSegment,
     pub color: Option<BadgeColor>,
+    /// Larger values keep this segment visible longer when space is limited.
+    pub priority: Option<u8>,
 }
 
 impl WorkbarItem {
+    /// Effective retention priority for space-limited workbars.
+    pub fn retention_priority(&self) -> u8 {
+        self.priority.unwrap_or(match self.segment {
+            WorkbarSegment::Session => 200,
+            WorkbarSegment::Workspaces => 180,
+            WorkbarSegment::Activity => 120,
+            WorkbarSegment::Layout => 100,
+            WorkbarSegment::Location => 80,
+            WorkbarSegment::Clock => 60,
+            WorkbarSegment::Text(_) | WorkbarSegment::Command { .. } => 50,
+            WorkbarSegment::Title => 20,
+        })
+    }
+
     fn new(segment: WorkbarSegment) -> Self {
         Self {
             segment,
             color: None,
+            priority: None,
         }
     }
 }
@@ -2990,10 +3007,12 @@ mod tests {
                 WorkbarItem {
                     segment: WorkbarSegment::Location,
                     color: None,
+                    priority: None,
                 },
                 WorkbarItem {
                     segment: WorkbarSegment::Session,
                     color: None,
+                    priority: None,
                 },
             ]
         );

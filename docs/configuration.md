@@ -40,8 +40,8 @@ name = "lipan"
 ## Edit settings in rozi
 
 Changes made in rozi's Settings, Appearance, Profiles, or Themes UI are written to `config.toml`
-and take effect at once. rozi replaces the whole file on save, so an interrupted write cannot leave
-it truncated. If `config.toml` is a symlink, rozi writes the file it points to and keeps the link.
+and take effect at once. If `config.toml` is a symlink, rozi writes the file it points to and keeps
+the link.
 
 **Settings…** in the command palette browses options by category and previews static appearance
 choices. Behavior and animation choices apply when confirmed with `Enter`. It has no
@@ -56,10 +56,8 @@ The `open-config` action opens the config file in `EDITOR`, then `VISUAL`, then 
 rozi run-action open-config
 ```
 
-The editor runs directly, not through a shell. rozi splits the variable into a program and its
-arguments, honoring quotes around a path that contains spaces (`"/opt/my editor/bin/edit" --wait`),
-and passes the config path as a separate argument. Shell syntax in `EDITOR` — pipes, redirection,
-variable expansion — is not interpreted.
+The editor runs directly, not through a shell. Quotes around a path that contains spaces
+(`"/opt/my editor/bin/edit" --wait`) are honored, and shell syntax in `EDITOR` is not interpreted.
 
 ## Cursor blinking
 
@@ -70,11 +68,9 @@ Changes apply immediately to pickers, prompts, text editors, and terminal panes.
 | --- | --- | --- | --- |
 | `cursor.blink` | string | `"inherit"` | `inherit`, `static`, or `blinking`. |
 
-`inherit` uses the host terminal's startup blink preference for editable controls. Terminal panes
-inherit the host default until a program requests its own cursor style. If the host does not report
-its preference, editable controls use the theme default and panes use the framework default.
-`static` and `blinking` override blink requests throughout rozi. Programs still control cursor
-shape and visibility. This preference is independent of the animation switch.
+`inherit` uses the host terminal's blink preference, and panes follow it until a program requests
+its own cursor style. `static` and `blinking` override blink requests throughout rozi. Programs
+still control cursor shape and visibility.
 
 ## Mouse pointer
 
@@ -89,10 +85,9 @@ clicks, selection, and dragging enabled. The host terminal must support mouse po
 | --- | --- | --- |
 | Off | `off` | Keep the normal arrow throughout rozi. |
 | Pane apps only | `panes` | Follow mouse pointer requests from the pane application under the mouse. |
-| Rozi and pane apps | `all` | Also show text pointers in editable fields, hands over actionable rows, files, tabs, and controls, and resize or grab pointers for pane and divider gestures. |
+| Rozi and pane apps | `all` | Also show rozi's own pointers over editable fields, controls, and pane and divider gestures. |
 
-Blank space, borders, headings, and disabled items keep the normal arrow. Terminal support varies;
-some hosts accept hover shapes but do not display shape changes during a held mouse drag.
+Terminal support varies.
 
 ## Reloading
 
@@ -117,11 +112,11 @@ session's panes.
 | --- | --- |
 | `shell`, `shell_integration.mode`, `cwd`, `environment.forward` | New panes only. |
 | `command_shell` | New command, hook, service, sidebar, and workbar executions. |
-| `scrollback` | New terminal screens. Existing screens never resize; restart an existing session server before creating panes that should use the new capacity. |
+| `scrollback` | New terminal screens. Restart an existing session server for its new panes to use it. |
 | `window_title` | On save. Changing it to `""` keeps the last title until rozi exits. |
-| `frame_rate` | Next client launch or reattach. The active client keeps its startup cadence, including animation timing. |
-| `updates.interval_hours` | The next re-check. A check already waiting keeps the old interval. |
-| `sidebar.startup` | Boolean, default `false`. Open the remembered dock combination at client startup. Reload never opens or closes the sidebar. |
+| `frame_rate` | Next client launch or reattach. |
+| `updates.interval_hours` | The next re-check. |
+| `sidebar.startup` | Next client launch. Reload never opens or closes the sidebar. |
 | `session.startup` | Next bare launch. |
 | `session.on_attach` | Next writable attach by this client after reload. |
 | `session.resurrect`, `session.resurrect_foreground`, `session.resurrect_agents`, `session.allow_takeover` | Session servers started after the change. |
@@ -154,10 +149,8 @@ into range rather than skipped; their rows below say so.
 
 rozi shows a toast for failures, rejected actions, destructive confirmations, and results that
 have no other visible feedback. Changes that already show up in the workbar, pane layout, a picker,
-or the sidebar do not add a toast. A repeated message renews the existing toast instead of stacking
-copies. A new layout name or similar update replaces the toast before it; when that toast is the
-newest one, the update takes over its place without arriving again. Otherwise the update arrives
-at the bottom of the stack. [`animations.toast`](#animations) sets how toasts arrive and leave.
+or the sidebar do not add a toast. A repeated message renews the existing toast instead of stacking copies.
+[`animations.toast`](#animations) sets how toasts arrive and leave.
 
 Scripts can show their own result with [`rozi notify`](control.md#actions-status-and-notifications).
 Release notices are described in [Update notices](#update-notices).
@@ -176,8 +169,7 @@ Release notices are described in [Update notices](#update-notices).
 
 `XDG_RUNTIME_DIR` is often unset under Tailscale SSH, `su`, or cron. rozi then uses
 `/run/user/<uid>` if that directory exists, belongs to you, and is private, so a session server
-started there is visible to your desktop clients. Otherwise its sessions would be invisible to
-those clients and would appear only as restorable.
+started there is visible to your desktop clients.
 
 ## Top-level keys
 
@@ -189,19 +181,14 @@ those clients and would appear only as restorable.
 | `scrollback` | integer | `5000` | Minimum `1`. |
 | `frame_rate` | integer | `120` | Clamped to `15..=480` with a warning. |
 | `nerd_icons` | bool | `true` | Uses [Nerd Font](https://www.nerdfonts.com/) glyphs in rozi's chrome. |
-| `window_title` | string | `"rozi · {session} · {pane}"` | Title rozi gives your terminal window. `{session}` is the session name, empty for a temporary session; `{pane}` is the focused pane's title; `{cwd}` is its working directory; `{host}` is this machine's name. An empty placeholder drops the text after it, and a separator left at either end is trimmed. `""` leaves the window title alone. |
+| `window_title` | string | `"rozi · {session} · {pane}"` | Terminal window title. Placeholders: `{session}` (empty for a temporary session), `{pane}` (the focused pane's title), `{cwd}`, `{host}`. An empty placeholder drops the text after it. `""` leaves the title alone. |
 
 With `nerd_icons` on, rozi draws private-use glyphs for pane title icons, workbar location and
 named-session badges, the Sessions sidebar client-count badge, directory chevrons, the Files
-explorer search prefix, and `round` and `arrow` caps. With it off, those badges use `⌁`, `∞`, and
-`⋈`, directory chevrons use `▶` and `▼`, the explorer prefix uses `⌕`, and pane titles drop the
-icon. Files and Git use colored file icons and Nerd Font Git marks without expansion arrows
-when enabled. With it off, these trees hide file icons, use Unicode expansion arrows and text Git
-marks, and reduce indentation from two cells to one. Both modes use Branch guides, no gap after
-guides or arrows, and one cell between file icons and labels.
-
-Migration: remove `icons` from Files/Git tab tables. The global `nerd_icons` switch now controls
-file icons and Git marks.
+explorer search prefix, and `round` and `arrow` caps, and Files and Git use colored file icons and
+Nerd Font Git marks. With it off, those badges use `⌁`, `∞`, and `⋈`, directory chevrons use `▶` and
+`▼`, the explorer prefix uses `⌕`, pane titles drop the icon, and Files and Git use Unicode
+expansion arrows and text Git marks.
 
 New local panes receive `ROZI=1`, `ROZI_PANE`, `ROZI_SESSION_INSTANCE`, `TERM_PROGRAM=rozi`,
 `TERM_PROGRAM_VERSION`, and, when available, `ROZI_SOCKET` and `ROZI_BIN`.
@@ -223,11 +210,11 @@ output (OSC 133). See
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `forward` | array of strings | `[]` | Extra client environment variables to copy into new local panes. Empty names are removed and duplicates collapsed. Values are not persisted or forwarded through remote attachments. |
+| `forward` | array of strings | `[]` | Extra client environment variables to copy into new local panes. Values are not forwarded through remote attachments. |
 
 rozi already forwards the desktop session variables that Wayland, X11, D-Bus, and Hyprland need. A
 client with no display of its own, such as one attached over SSH, gets the host's current desktop
-instead on Linux with a systemd user session. Existing panes keep their original environment.
+instead on Linux with a systemd user session.
 
 ## `[input]`
 
@@ -237,7 +224,7 @@ instead on Linux with a systemd user session. Existing panes keep their original
 | `prefix` | string | `"ctrl-a"` | One key step in [config key syntax](keybindings.md#key-notation), such as `"ctrl-b"`. |
 | `modifier_shortcuts` | bool | `true` | Mirrors the generated prefix bindings onto held-modifier chords. |
 | `which_key` | string | `"short"` | Delay before the which-key strip appears: `"off"`, `"instant"`, `"short"` (500 ms), or `"long"` (1000 ms). |
-| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends across panes, workspace tabs, sidebar tabs, and pickers, `1` to `50`. It stacks with the terminal's own scroll multiplier: Ghostty at `3` and rozi at `3` scroll nine lines per notch. A program that tracks the mouse, such as an editor, receives the wheel and applies its own step. |
+| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends across panes, workspace tabs, sidebar tabs, and pickers, `1` to `50`. It stacks with the terminal's own multiplier. |
 
 See [Keybindings](keybindings.md), and
 [Prefix and held modifier](keybindings.md#prefix-and-held-modifier) for the which-key strip.
@@ -256,7 +243,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `resize_debounce_ms` | integer | `16` | Minimum delay between batches of terminal resize reports. `0` forwards each report. |
-| `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. In a Scrollable layout, a clipped column scrolls into view on the next key or click, not on hover. |
+| `focus_on_hover` | bool | `true` | Focuses a pane when the pointer enters it. In a Scrollable layout, a clipped column scrolls into view on the next key or click. |
 | `focus_on_hover_pause_modifier` | string | `"shift"` | Holding this modifier pauses hover focus; click focus still works. `"shift"`, `"ctrl"`, `"alt"`, or `"none"` for no pause. Other modifiers may be held too. |
 | `hold_on_exit` | bool | `false` | Keeps shell panes open after they exit on their own. Command panes use their `keep_open` value. |
 | `highlight_focused_background` | bool | `false` | Uses the panel background for the focused pane. |
@@ -264,19 +251,19 @@ See [Layouts and panes](layouts-and-panes.md).
 | `highlight_focused_titlebar` | bool | `true` | Uses focused titlebar styling. |
 | `show_workbar` | bool | `true` | Shows the workbar. |
 | `workbar_gap` | bool | `true` | Keeps one row between the workbar and panes. |
-| `workbar_background` | bool | `true` | Paints the workbar as a distinct strip: `panel` on a solid canvas, `element` when the canvas follows the terminal. Off, the bar matches the canvas. |
+| `workbar_background` | bool | `true` | Paints the workbar as a distinct strip. Off, the bar matches the canvas. |
 | `workbar_at_bottom` | bool | `false` | Places the workbar below panes. |
 | `show_titles` | bool | `true` | Shows pane titles without changing `titlebar`. |
 | `titlebar` | string | `"bar"` | `"bar"`, `"border"`, `"integrated"`, or `"inset"`. |
 | `border_mode` | string | `"separate"` | `"separate"`, `"merged"`, `"none"`, or `"dividers"`. |
-| `alert_border` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. Sets whether pane alerts show and whether they breathe, for every surface `alert_paint` picks. |
-| `alert_paint` | string | `"both"` | `"border"`, `"content"`, or `"both"`. `content` lays a faint wash of the alert color over the terminal text and background, breathing on the border's beat. It works in every `border_mode`, including `none`. Inline images keep their own colors. Themes that use terminal palette colors skip the wash. |
+| `alert_border` | string | `"pulse"` | `"off"`, `"static"`, or `"pulse"`. Whether pane alerts show and whether they breathe. |
+| `alert_paint` | string | `"both"` | `"border"`, `"content"`, or `"both"`. `content` lays a faint wash of the alert color over the pane; it works in every `border_mode`. |
 | `border_style` | string | `"rounded"` | Frame glyphs for tiled panes in framed modes. See the token list below. |
 | `float_border_style` | string | `"double"` | Same tokens as `border_style`. Floating panes and popups. |
 | `scratch_border_style` | string | `float_border_style` | Same tokens as `border_style`. Scratchpad panes. |
 | `fullscreen_border_style` | string | `border_style` | Same tokens as `border_style`. Fullscreen panes. |
 | `picker_border_style` | string | `"rounded"` | Same tokens as `border_style`. The command palette, Settings, Help, Search, and other pickers. |
-| `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip, lifted like the sidebar tab strip. Off, the tabs share the picker body. |
+| `picker_tab_background` | bool | `true` | Paints picker category tabs as a distinct strip. Off, the tabs share the picker body. |
 | `picker_tab_style` | string | `workbar_tab_style` | `"padded"`, `"round"`, or `"arrow"`. |
 | `picker_selection_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Caps at the start and end of the selected picker row. |
 | `keep_special_borders` | bool | `true` | Keeps frames on floating panes, popups, and scratchpads in borderless modes. |
@@ -287,7 +274,7 @@ See [Layouts and panes](layouts-and-panes.md).
 | `workbar_style` | string | `"padded"` | `"padded"`, `"half"`, `"round"`, or `"arrow"`. |
 | `workbar_powerline` | bool | `true` | Joins trailing workbar badges. |
 | `toast_opacity` | float | `0.8` | Finite value in `0.0..=1.0`. Invalid values are ignored. |
-| `unfocused_dim` | float | `0.0` | How far an unfocused pane's content, images included, fades toward the canvas. Finite value in `0.0..=1.0`; `0.0` is off. Invalid values are ignored. [Described in Dim unfocused panes.](layouts-and-panes.md#dim-unfocused-panes) |
+| `unfocused_dim` | float | `0.0` | How far an unfocused pane's content fades toward the canvas, `0.0..=1.0`; `0.0` is off. [Described in Dim unfocused panes.](layouts-and-panes.md#dim-unfocused-panes) |
 | `background_follows_terminal` | bool | `false` | Uses the host terminal's background for the canvas. |
 
 The border style tokens are `"rounded"`, `"plain"`, `"double"`, `"thick"`, `"light-double-dashed"`,
@@ -314,9 +301,8 @@ The focused pane still shows a finished run, and an agent waiting on you in any 
 conversations. That blocked alert holds still instead of breathing, and clears once you answer the
 agent. A plain `rozi status blocked` marks a pane only while it is not focused.
 
-An error alert appears when an agent or one of its conversations fails, and clears once you use the
-pane, even while the failure lasts. The sidebar keeps showing the failed row. Another failure in the
-pane raises the alert again.
+An error alert clears once you use the pane, even while the failure lasts; the sidebar keeps showing
+the failed row.
 
 ## `[animations]`
 
@@ -334,12 +320,12 @@ pane raises the alert again.
 | `session` | string or bool | `"portal"` | `"portal"`, `"wave"`, `"fade"`, or `"off"`; `true` means `"portal"` and `false` means `"off"`. Described below. In Settings: General › Animations › Session switching. |
 | `focus_chrome` | bool | `true` | Animates focus color changes and enables alert pulses. |
 | `cursor_trail` | table | | A smear that follows the cursor when it jumps. See [Cursor trail](#cursor-trail). |
-| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Fade opens in 150 ms and closes in 100 ms; Portal opens in 240 ms and closes in 100 ms; Scan opens in 240 ms and closes in 220 ms. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. The animation master switch also disables it. |
-| `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge in 280 ms and sends it back out in 180 ms; Fade fades it in place in 150 ms and out in 100 ms. With either, the other toasts glide to make room or close a gap. Off shows and removes toasts at once. In Settings: General › Animations › Toasts. The animation master switch also disables it. |
-| `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
-| `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. Unknown values fall back to `"scale"` with a warning. |
-| `geometry_ms` | integer | `220` | Base geometry duration in milliseconds; Particles opening uses this duration and closing takes four times it. |
-| `close_ms` | integer | `120` | Scale close duration in milliseconds. Tiled Slide, Portal, and Scan use `geometry_ms`; floating Slide uses Scale timing. Particles uses four times `geometry_ms`. |
+| `picker` | string | `"fade"` | `"off"`, `"fade"`, `"portal"`, or `"scan"`, case-insensitive. Applies to searchable pickers, Settings, and their nested cards. In Settings: General › Animations › Pickers. |
+| `toast` | string | `"slide"` | `"off"`, `"fade"`, or `"slide"`, case-insensitive. Slide brings a toast in from the right edge; Fade fades it in place. In Settings: General › Animations › Toasts. |
+| `pane_open_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
+| `pane_close_style` | string | `"scale"` | `"off"`, `"scale"`, `"slide"`, `"portal"`, `"scan"`, or `"particles"`, case-insensitive. |
+| `geometry_ms` | integer | `220` | Base duration of pane geometry animations, in milliseconds. |
+| `close_ms` | integer | `120` | Scale close duration in milliseconds. |
 | `focus_chrome_ms` | integer | `160` | Focus color duration in milliseconds. |
 | `alert_pulse_ms` | integer | `1600` | Alert pulse period. The half-period is at least 400 ms. |
 | `open_delay_ms` | integer | `36` | Spawn animation delay in milliseconds. |
@@ -348,39 +334,27 @@ pane raises the alert again.
 switch sessions, when a session finishes connecting, or when you drop to the launcher.
 
 - `"portal"` opens a portal from the center onto the new session while the previous one recedes
-  behind it, over `geometry_ms`. The ring uses the theme's accent colors.
-- `"wave"` sweeps a glowing wave from left to right that wipes the previous session away, with the
-  new session resolving in its wake, over four times `geometry_ms` (880 ms by default). The wave
-  uses the theme's focused-border and informational colors; with a theme that follows the
-  terminal palette, it draws a solid band instead of a gradient. Pictures in panes appear as the
-  front passes them.
+  behind it, over `geometry_ms`.
+- `"wave"` sweeps a glowing wave from left to right that wipes the previous session away, over four
+  times `geometry_ms` (880 ms by default).
 - `"fade"` crossfades from the previous session to the new one in place, over one and a half
-  times `geometry_ms` (330 ms by default). Images in panes appear at full strength rather than
-  fading with the text.
+  times `geometry_ms` (330 ms by default).
 - `"off"` switches at once.
 
-Pane geometry always snaps and the sidebar stays still. The value is case-insensitive; an unknown
-value keeps the portal and warns.
+Pane geometry always snaps and the sidebar stays still. The value is case-insensitive.
 
 Choose opening and closing independently with `pane_open_style` and `pane_close_style`, or use
 **General › Animations › Pane open** and **Pane close** in Settings. For example, use `slide` to
 open and `particles` to close. Both default to `scale`.
 
-With Kitty graphics, Portal and Scan reveal and hide pictures along with the text, leaving their
-moving edge visible. Scale and Slide clip pictures to the pane's moving window.
-
 An `off` style shows or hides a pane at once, with no fade. Opening with `off` also skips the spawn
-delay. `spawn`, `close`, and `enabled` still decide whether neighboring panes animate, and they
-still reflow over `geometry_ms`.
+delay.
 
-`particles` assembles panes from nearby motes that curve into place, revealing patches as they
-land. Opening takes `geometry_ms` (220 ms by default). Closing bursts fragments outward before
-gravity pulls them down. Sparks cool and disappear individually, with a few lasting longer.
-Closing takes four times `geometry_ms` (880 ms by default). Fragments can travel over neighboring
-panes; the terminal screen stays at its final size throughout. With Kitty graphics, pictures
-reveal and dissolve in the same patches as the pane contents. This style also applies to floating
-panes, popups, and scratch panes. Particles run at up to 30 FPS; a lower `frame_rate` also lowers
-that cadence. Pane movement still follows `frame_rate`.
+`particles` assembles panes from nearby motes that curve into place; closing bursts fragments
+outward before gravity pulls them down. Opening takes `geometry_ms` (220 ms by default) and closing
+four times that (880 ms). Fragments can travel over neighboring panes. This style also applies to
+floating panes, popups, and scratch panes. Particles run at up to 30 FPS; a lower `frame_rate` also
+lowers that.
 
 ### Pane animation curves and effect settings
 
@@ -411,26 +385,21 @@ easing: `linear`, `ease_in_quad`, `ease_out_quad`, `ease_in_out_cubic`, or `ease
 x coordinates must be in `[0, 1]`. The y coordinates must be finite and in `[-4, 4]`; a value above
 `1` overshoots and settles back. Without `close_curve`, closing runs `curve` backwards.
 
-A config can set all three geometry keys at once; only the one for the selected open or close style is
-used. Slide has no geometry key: a pane slides in from the side its split placed it on. `fade` has
-no effect on Slide, which stays inside its tile and is always fully opaque.
+Only the geometry key for the selected open or close style is used. Slide has no geometry key, and
+`fade` has no effect on it.
 
-A value outside its range is dropped with a warning, not clamped. Each key is checked on its own, so
-one bad value does not affect the others.
+A value outside its range is dropped with a warning, not clamped.
 
-These keys cover only a pane arriving and leaving: its effect, its opacity, the spawn delay, and how
-long a closing pane stays visible. Tiles rearranging around that pane, and fullscreen, tile/float,
-and axis-change transitions, use `geometry_ms`. The sidebar, scratchpad, and focus colors keep
-their own settings. A config change does not alter an animation that is already running.
+These keys cover only a pane arriving and leaving. Tiles rearranging around that pane, and
+fullscreen, tile/float, and axis-change transitions, use `geometry_ms`.
 
 See [Pane open and close animation styles](layouts-and-panes.md#pane-open-and-close-animation-styles).
 
 ### Cursor trail
 
-`[animations.cursor_trail]` draws a smear that follows the cursor when it jumps: the cursor's own
-shape (block, bar, or underline) stretched from the cell it left to the cell it landed on, and
-pulled back into it. It is off until you set `mode`. In Settings, **General › Cursor › Trail**
-chooses when it shows and **Trail style** how it looks.
+`[animations.cursor_trail]` draws a smear that follows the cursor when it jumps. It is off until you
+set `mode`. In Settings, **General › Cursor › Trail** chooses when it shows and **Trail style** how
+it looks.
 
 ```toml
 [animations.cursor_trail]
@@ -438,50 +407,40 @@ mode = "jump"
 style = "sparks"
 ```
 
-With `"jump"`, a jump along one line, such as deleting whole words, draws at once and follows the
-cursor as it keeps moving. A jump to another line, or to the start of the line, is drawn once the
-cursor has held still for `settle_ms`, so a cursor that lands in steps, such as a shell's newline
-and then its prompt, gets one smear straight to where it settled. A move to another pane draws at
-once. A pane that moves, such as one sliding
-with its workspace or a floating pane you drag, carries its cursor along without a trail. Resizing a
-pane or the whole window draws no trail while the program in it redraws for the new size, even
-though its prompt moves. Switching to another workspace or session, or creating a session, draws no
-trail either: the cursor arrives with the new screen.
+With `"jump"`, every jump starts its smear at once. A positive `settle_ms` makes jumps to another
+line or to the start of the line wait for the cursor to hold still. A move to another pane always
+draws at once.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or a prompt on the same screen; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows at once inside one pane. In Settings: General › Cursor › Trail. The animation master switch also disables it. |
-| `style` | string | `"smear"` | `"smear"` draws a solid smear in the trail color, with smooth edges drawn in the characters `glyphs` allows, and draws the cursor itself while it moves; cells it covers fully keep their text in inverse colors. `"sparks"` is the smear throwing sparks. `"tint"` is a fainter smear that never covers text or the cursor: it colors the background behind text and draws smooth edges only where there is none. In Settings: General › Cursor › Trail style. |
-| `motion` | string | `"spring"` | `"spring"` pulls the front of the smear after the cursor, and its tail after the front along the way it went, with the spring values below, so it stretches out behind the cursor and snaps in, and a new jump mid-flight bends it along the turn in a smooth arc. `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
-| `color` | string | `"cursor"` | `"cursor"` uses the color Rozi draws the cursor in: the theme's [`caret`](themes.md#top-level-fields) color, then the terminal's cursor color, then its text color. `"accent"` uses the theme's focused-border color. A `"#rrggbb"` value sets it outright. |
+| `mode` | string | `"off"` | `"off"`, `"focus"`, or `"jump"`, case-insensitive. `"focus"` draws a smear when focus moves to another pane or prompt; `"jump"` also draws one when the cursor moves at least 8 columns or 2 rows inside a pane. In Settings: General › Cursor › Trail. |
+| `style` | string | `"smear"` | `"smear"` is a solid smear in the trail color; `"sparks"` is the smear throwing sparks; `"tint"` is a fainter smear that never covers text or the cursor. In Settings: General › Cursor › Trail style. |
+| `motion` | string | `"spring"` | `"spring"` stretches the smear out behind the cursor and snaps it in; `"glide"` keeps the front on the cursor and eases the tail in over `glide_ms`. |
+| `color` | string | `"cursor"` | `"cursor"` uses the cursor's color (the theme's [`caret`](themes.md#top-level-fields), else the terminal's cursor color, else its text color); `"accent"` uses the theme's focused-border color; or give a `"#rrggbb"` value. |
 | `stiffness` | float | `0.5` | Spring pull on the front of the smear, from 0 to 1. |
 | `trailing_stiffness` | float | `0.28` | Spring pull on its tail, from 0 to 1. Lower than `stiffness` stretches the smear. |
-| `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10: `0.3` tapers it to about a quarter of the cursor, `3.0` keeps three quarters. It stays full near the cursor and thins mostly at its end. |
+| `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10; higher keeps it fuller. |
 | `damping` | float | `0.82` | How much speed the smear loses each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
-| `settle_ms` | integer | `50` | How long, in milliseconds, the cursor must hold still after a jump to another line or to the start of the line before its smear starts, from 0 to 1000. Raise it if a prompt that arrives in several writes still gets a smear through the start of a line; `0` starts every jump at once. |
+| `settle_ms` | integer | `0` | How long, in milliseconds, the cursor must hold still after a jump to another line or to the start of the line before its smear starts, from 0 to 1000. `0` starts every jump at once. |
 | `settle_max_ms` | integer | `200` | The longest, in milliseconds, such a jump waits for a cursor that keeps moving, from 0 to 1000. |
-| `max_length` | float | `0.0` | The smear's tail trails the cursor by no more than this along its way, from the start of a jump, up to 500, in cell widths as they look on screen: a row counts for as many as a cell is taller than wide. `0` leaves it unbounded, so a long jump's smear starts where the cursor was. |
+| `max_length` | float | `0.0` | Caps how far the smear's tail trails the cursor, up to 500, in cell widths as they look on screen. `0` leaves it unbounded. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |
 | `taper` | float | `0.0` | How much the smear fades toward its tail, from 0 (evenly) to 1 (to nothing). |
-| `glyphs` | string | `"auto"` | The characters the smear's edges are drawn with. `"blocks"` uses half, eighth, and quadrant blocks, which every terminal draws. `"sextants"` adds the sextants, diagonal wedges, and triangles of Symbols for Legacy Computing, which follow a diagonal far more closely, and `"octants"` adds its octants too. `"auto"` picks the richest set your terminal draws itself: octants in Ghostty; sextants in Kitty, WezTerm, and foot; blocks anywhere else. Choose a richer set by hand only if your font has those characters. |
+| `glyphs` | string | `"auto"` | The characters the smear's edges use: `"blocks"`, `"sextants"`, `"octants"` (the last two need a font with Symbols for Legacy Computing), or `"auto"`, which picks the richest set your terminal draws itself. |
 
 `stiffness`, `trailing_stiffness`, and `damping` work as the settings of the same name in
-smear-cursor.nvim, so a setup tuned for it feels the same, and a higher `trailing_exponent` keeps the
-smear fuller toward its tail there too. Its own defaults (`stiffness = 0.6`,
-`trailing_stiffness = 0.45`, `trailing_exponent = 3.0`, `damping = 0.85`) give a quicker, more
-compact smear that keeps most of the cursor's size to its tail. A value out of range is ignored
-with a warning.
+smear-cursor.nvim. A value out of range is ignored with a warning.
 
 `[animations.cursor_trail.particles]` tunes the sparks `style = "sparks"` throws off the moving
-smear, drawn as braille dots that scatter, fall, and fade without covering text.
+smear.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `per_cell` | float | `1.5` | Sparks per cell the smear travels, up to 20. |
 | `max` | integer | `100` | The most sparks alive at once, at least 1. |
-| `lifetime_ms` | integer | `300` | How long a spark lives at most, in milliseconds; each lives between 60% and all of it. |
-| `spread` | float | `6.0` | How fast a spark flies off in a random direction at most, in cells per second, up to 200. |
+| `lifetime_ms` | integer | `300` | The longest a spark lives, in milliseconds. |
+| `spread` | float | `6.0` | The top speed of a spark flying off in a random direction, in cells per second, up to 200. |
 | `inherit` | float | `0.25` | How much of the smear's own speed a spark keeps, from 0 to 1. |
 | `gravity` | float | `20.0` | Downward pull in cells per second squared, from -500 to 500. Negative values make sparks rise. |
 | `drag` | float | `3.0` | How quickly a spark slows, per second, up to 100. |
@@ -524,22 +483,19 @@ Without `directory`, checkouts go beside the repository in `<repo>-worktrees/<br
   warning. Use an absolute path for a location outside the repository.
 
 While Git does not ignore that directory, rozi warns and offers to add it to `.git/info/exclude`.
-`directory` is read on the session host: a running session server uses the value it started with,
-and a remote session uses the remote host's config.
+`directory` is read on the session host.
 
 With `profile` set, pane directories inside any checkout of the repository move to the new
 checkout, directories outside it are kept, and panes without a directory start in the checkout. For
 a worktree on a remote host, the profile applies only when every pane directory it names is inside
-the repository, since an outside path names a directory on this machine. Otherwise the session
-starts as one shell in its checkout. rozi reports why a profile failed to load or was skipped.
+the repository; otherwise the session starts as one shell in its checkout. rozi reports why a
+profile failed to load or was skipped.
 
 With `delete_branch`, `"local"` deletes the branch with `git branch -d` and `"remote"` deletes the
-branch on the remote it tracks, when its fetched tip is merged into the primary checkout, or a merged
-GitHub pull request ended at it, and has not moved since. An unmerged branch, a branch another checkout still has checked out, and a detached
-checkout are left alone, and rozi says when a branch was kept. An unknown entry ignores the whole
-setting with a warning. A running Rozi UI sends its own `delete_branch` with each removal;
-`rozi worktrees remove` reads the value on the host that owns the repository, and
-`--delete-branch` or `--keep-branch` overrides it. See
+branch on the remote it tracks. An unmerged branch, a branch another checkout still has checked out,
+and a detached checkout are left alone, and rozi says when a branch was kept. An unknown entry
+ignores the whole setting with a warning. `rozi worktrees remove` reads the value on the host that
+owns the repository, and `--delete-branch` or `--keep-branch` overrides it. See
 [Delete the branch too](worktrees.md#delete-the-branch-too).
 
 See [Worktrees](worktrees.md#configuration).
@@ -551,19 +507,19 @@ See [Worktrees](worktrees.md#configuration).
 | `copy_on_select` | string | `"both"` on Linux, `"clipboard"` elsewhere | Where a finished mouse selection is copied: `"off"`, `"primary"`, `"clipboard"`, or `"both"`. |
 | `middle_click_paste` | string | `"primary"` on Linux, `"off"` elsewhere | What a middle click pastes: `"off"`, `"primary"`, or `"clipboard"`. |
 | `right_click` | string | `"off"` | What an otherwise unhandled right click does: `"off"`, `"paste"` from the clipboard, or `"copy-or-paste"`. |
-| `enable_osc52` | bool | `true` | Lets programs in panes set the system clipboard with OSC 52, a terminal escape sequence for clipboard access. |
-| `copy_feedback` | string | `"flash"` | How copied text lights up: `"off"`, `"flash"` (lights up for 150 ms), `"fade"` (lights up, then fades over 300 ms), `"scan"` (a soft line sweeps across it from left to right over 450 ms), or `"pulse"` (lights up twice over 420 ms). With the animation master switch off, Fade, Scan, and Pulse flash instead. |
+| `enable_osc52` | bool | `true` | Lets programs in panes set the system clipboard with OSC 52. |
+| `copy_feedback` | string | `"flash"` | How copied text lights up: `"off"`, `"flash"`, `"fade"`, `"scan"`, or `"pulse"`. With the animation master switch off, all but `"off"` flash. |
 | `copy_feedback_on_select` | bool | `false` | Also lights up text that `copy_on_select` copies when a mouse selection ends. |
-| `clear_selection_after_copy` | bool | `false` | Clears a copied selection once the highlight ends, or at once when `copy_feedback` is `"off"`. A selection you change in the meantime stays. |
+| `clear_selection_after_copy` | bool | `false` | Clears a copied selection once the highlight ends, or at once when `copy_feedback` is `"off"`. |
 
-PRIMARY is the Linux selection clipboard. Where PRIMARY is unsupported, `copy_on_select` stops
-using it but keeps copying to the regular clipboard, and a middle click that pastes PRIMARY does
-nothing.
+PRIMARY is the Linux selection clipboard. Where it is unsupported, `copy_on_select = "both"` copies
+only to the regular clipboard, `"primary"` copies nowhere, and a middle click that pastes PRIMARY
+does nothing.
 
 Middle-click and right-click paste go to the pane or text field under the pointer, which takes
-focus first. A click anywhere else pastes nothing. `"copy-or-paste"` copies the selection in the
-clicked pane, flashing it as `Ctrl+C` does, and pastes when there is no selection. Handlers in
-rozi's widgets and in the program running in the pane take priority over `right_click`.
+focus first. `"copy-or-paste"` copies the selection in the clicked pane, and pastes when there is
+none. Handlers in rozi's widgets and in the program running in the pane take priority over
+`right_click`.
 
 These settings apply on reload and are also in the General category of Settings. See
 [Select, copy, and paste](terminal.md#select-copy-and-paste).
@@ -577,17 +533,14 @@ These settings apply on reload and are also in the General category of Settings.
 | `count_usage` | bool | `true` | Adds this install to the anonymous weekly [usage count](usage-count.md) during these checks. Has no effect while `check` is off. |
 | `release_notes` | bool | `true` | Shows the release notes once, the first time rozi starts after an update. Works offline and while `check` is off. See [Release notes](#release-notes). |
 
-`rozi update --check` checks on demand, whether or not `check` is on. Turning `check` back on
-schedules the next check one interval later, not immediately.
+`rozi update --check` checks on demand, whether or not `check` is on.
 
 ### Update notices
 
 When a newer release exists, rozi shows a toast titled `rozi vX.Y.Z available` with the version
-change and how to update. It stays up for 15 seconds; click it to dismiss it sooner, and it goes
-away when you start the update. If the release
-raises the extension API, the toast uses warning colors and names the new version. If running
-sessions must be restarted after the update, the toast uses warning colors and says so. Each
-release is announced only once across clients, and a failed check shows nothing.
+change and how to update; click it to dismiss it. The toast uses warning colors when the release
+raises the extension API, or when running sessions must be restarted after the update, and says
+so. Each release is announced only once across clients.
 
 Every client that finds the release also lists **Update rozi to vX.Y.Z** (`update-rozi`) in the
 command palette for as long as it runs:
@@ -595,17 +548,15 @@ command palette for as long as it runs:
 1. Choosing it opens the `Updating rozi` dialog. For a rozi you installed with its installer, it
    shows the download and then the install. For one a package manager installed, it runs that
    manager's upgrade command and shows the last lines it prints. The command runs without a
-   terminal, so one that stops to ask a question fails instead of waiting. The update counts as
-   done only once the rozi that package manager installed reports a newer release than the one you
-   are running.
+   terminal, so one that stops to ask a question fails.
 2. **Run in background** puts the dialog away while the update keeps going; choose **Update rozi**
    again to see it. **Restart rozi** waits until the update is done, and leaving rozi stops an
    update a package manager is still running.
 3. On success, the dialog becomes the `rozi vX.Y.Z installed` dialog, which offers to
    [restart rozi on the new build](installation.md#restart-rozi-on-the-new-build), coming back to
-   the same sessions. **Later** keeps the old build running until you choose **Restart rozi**. An
-   update in the background never opens a dialog by itself: a `rozi vX.Y.Z installed` toast says it
-   is done instead. Click it to restart now, or choose **Restart rozi** when you are ready.
+   the same sessions. **Later** keeps the old build running until you choose **Restart rozi**. For
+   an update in the background, a `rozi vX.Y.Z installed` toast says it is done; click it to
+   restart now.
 4. On failure, the dialog says what stopped the update, and **Try again** runs it again. For an
    update in the background, a toast says it failed and the command stays listed so you can retry.
 
@@ -615,14 +566,12 @@ does not recognize.
 
 ### Release notes
 
-The first time rozi starts after an update, a `What's new · rozi` dialog shows the release notes
-at startup, and only one client shows it. A first install skips it, and so does going back to an
-older version.
+The first time rozi starts after an update, a `What's new · rozi` dialog shows the release notes,
+in one client only. A first install skips it, and so does going back to an older version.
 
-The dialog has a tab for each of the latest 20 releases that have notes, newest first, and
-opens on the newest. A release with nothing user-facing has no tab. The header names the newest
-older version that ran on this machine, such as `updated from v0.0.37`, so every tab with a newer
-version is a release you skipped. Releases older than those are on the GitHub releases page.
+The dialog has a tab for each of the latest 20 releases that have notes, newest first. The header
+names the version you updated from, such as `updated from v0.0.37`, so every newer tab is a release
+you skipped.
 
 | Key | Action |
 | --- | --- |
@@ -647,21 +596,18 @@ with `cargo install rozi`, has none, so it shows neither the dialog nor the comm
 | `pane_blocked` | bool | `true` | Notifies when an unattended pane becomes blocked. |
 | `pane_done` | bool | `false` | Notifies when a pane you have not looked at goes from working to finished. |
 | `pane_error` | bool | `true` | Notifies when an agent, one of its conversations, or a pane's own status fails in a pane you are not looking at. |
-| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless the pane is running an agent, whose finished or blocked mark covers it. Works even when `enabled` is off. |
+| `bell` | bool | `true` | Marks an unattended pane urgent when it rings the terminal bell (BEL), unless it is running an agent. Works even when `enabled` is off. |
 
 Desktop notifications go through the platform's notification service and are best effort.
 
 `pane_blocked`, `pane_done`, and `pane_error` also cover agents in other local sessions and in sessions on a
 [connected remote host](remote.md#agents-on-a-machine-you-are-not-in) that this client is not
-attached to. Because nothing on screen shows those panes, their alerts skip the checks for who
-controls the pane and whether you are looking at it.
+attached to.
 
 `pane_done` and `pane_error` also cover [published Activity rows](control.md#published-activity) a
 pane is not showing, such as a background conversation behind a Claude Code client. Looking at the
 pane does not count as having seen such a row, and the notification names the row, for example
-`fix login redirect in pane 23 is done` or `fix login redirect in pane 23 failed`, rather than the
-pane, whose title is the conversation on screen. A failure that lasts is announced once; another
-failure is announced again.
+`fix login redirect in pane 23 is done`, rather than the pane.
 
 ## `[sounds]`
 
@@ -686,8 +632,8 @@ failure is announced again.
 | `editors` | array of strings | Built-in and extension targets | Programs that receive split-aware navigation keys. Setting it replaces the whole list; `[]` turns split-aware detection off. |
 
 When `editors` is omitted, rozi uses its built-in list of foreground programs plus any targets from
-enabled extensions. Empty names are removed. Names are matched against the program's executable
-name, ignoring case and a Windows `.exe` suffix.
+enabled extensions. Names are matched against the program's executable name, ignoring case and a
+Windows `.exe` suffix.
 
 See [Split-aware navigation](keybindings.md#split-aware-navigation).
 
@@ -712,13 +658,13 @@ Each switch controls whether rozi asks before a destructive action. They apply t
 | `keep_awake_while_agents_work` | bool | `false` | Keeps the host awake while an agent is working; activities such as `rozi status` and generic published rows do not count. See [sleep policy](sessions.md#keep-the-system-awake). |
 | `autosave` | bool | `false` | Saves and restores the local layout, not running programs. |
 | `resurrect` | bool | `true` | Saves each named session's layout, commands, scrollback, and what to restart. |
-| `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was seen running, or an agent conversation it reported: `"auto"` runs it again, `"hold"` types it at the prompt without submitting it, `"never"` restores only the shell and records neither. |
-| `resurrect_agents` | bool | `true` | Saves agents' native session references in named-session snapshots and reopens those conversations on restore. Set `false` to keep these references out of state storage. |
-| `picker_open_on` | string | `"current-host"` | Initial Sessions tab: `"current-host"` uses the current session’s host, the launcher-selected host, or Local; `"all"` opens All sessions. Explicitly opening a remote host still selects its tab. |
+| `resurrect_foreground` | string | `"hold"` | What a restore does with a command a pane was running or an agent conversation it reported: `"auto"` runs it, `"hold"` types it at the prompt, `"never"` restores only the shell. |
+| `resurrect_agents` | bool | `true` | Saves agents' native session references in named-session snapshots and reopens those conversations on restore. |
+| `picker_open_on` | string | `"current-host"` | Initial Sessions tab: `"current-host"` opens the current session’s host, the launcher's host, or Local; `"all"` opens All sessions. |
 | `startup` | string | `"picker"` | What a bare `rozi` launch opens: `"picker"`, `"ephemeral"` (a temporary session), `"last"`, or `"profile"`. |
-| `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is written with mode `0600` in rozi's state directory; a path you choose keeps ordinary permissions. |
+| `path` | path string | `session.toml` in the state directory | Autosave file. `~` expands. The default file is private (mode `0600`); a path you choose gets ordinary permissions. |
 | `allow_takeover` | bool | `true` | Lets a writable follower take layout control immediately. |
-| `on_attach` | string | `"ask"` | When another client controls the session: `"ask"` offers Follow, control, or Cancel; `"follow"` follows without prompting; `"take"` requests control without prompting, subject to the running session's takeover policy. `sessions attach --follow` or `--take-control` overrides it for one attach. |
+| `on_attach` | string | `"ask"` | When another client controls the session: `"ask"` offers Follow, control, or Cancel; `"follow"` and `"take"` choose without prompting. `sessions attach --follow` or `--take-control` overrides it for one attach. |
 
 See [Sessions](sessions.md).
 
@@ -728,11 +674,11 @@ See [Sessions](sessions.md).
 | --- | --- | --- | --- |
 | `default_host` | string | none | Host used by `--remote` without a value. |
 | `reconnect_on_launch` | bool | `true` | Reconnect hosts you deliberately connected, without SSH prompts or installation. Disconnecting a host removes it from future launches. |
-| `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. Also sets how long each probe, install step, and remote `sessions` command may run before rozi stops it. Uploads get extra time for the binary's size. Answering an SSH prompt has a separate allowance. Raise this value if commands on a slow host time out. `0` turns off `ConnectTimeout` and uses the default command limit. |
+| `connection_timeout_secs` | integer | `15` | SSH `ConnectTimeout`. Also sets how long each probe, install step, and remote `sessions` command may run before rozi stops it. `0` turns off `ConnectTimeout` and uses the default command limit. |
 | `server_alive_interval_secs` | integer | `15` | Minimum `1`. |
 | `server_alive_count_max` | integer | `3` | Minimum `1`. |
 | `install` | string | `"prompt"` | Whether to install rozi on the remote host: `"prompt"`, `"always"`, or `"never"`. Noninteractive runs never install. |
-| `batch_mode` | bool | `false` | When `true`, refuses SSH prompts. By default, a running client answers prompts in a dialog and interactive CLI commands use the terminal. Unattended commands always use batch mode; see [Remote sessions](remote.md#prompts-inside-the-ui). |
+| `batch_mode` | bool | `false` | When `true`, refuses SSH prompts. By default, a running client answers them in a dialog. See [Remote sessions](remote.md#prompts-inside-the-ui). |
 
 ### `[remote.hosts.<alias>]`
 
@@ -753,7 +699,7 @@ See [Remote sessions](remote.md).
 | --- | --- | --- | --- |
 | `command` | string | Normal shell | Command for the first scratch pane. |
 | `cwd` | path string | Focused local pane's directory, then the configured `cwd` | `~` expands. Read when the scratchpad is first created. |
-| `height` | float | `0.4` | Docked height as a fraction of the pane area. Clamped to `0.1..=0.9` with a warning. Does not limit floating or fullscreen scratch panes. |
+| `height` | float | `0.4` | Docked height as a fraction of the pane area. Clamped to `0.1..=0.9` with a warning. |
 
 See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 
@@ -764,19 +710,18 @@ See [Popups and scratch panes](layouts-and-panes.md#popups-and-scratch-panes).
 | `tabs` | array | `["activity", "agents", "panes", "sessions", "files", "git", "worktrees", "projects"]` | Tab definitions. IDs must be unique; hiding a tab does not remove its definition. |
 | `layout.left`, `layout.right` | table | See below | Independent dock preferences. |
 | `layout.hidden` | string array | `[]` | Hidden tab IDs; placement and definitions remain saved. |
-| `startup` | bool | `false` | Open the remembered dock combination at client launch. When false, start hidden and restore with `b` or `B`. Memory is saved on exit or detach; toggles stay client-local. |
+| `startup` | bool | `false` | Open the remembered docks at client launch. When false, start hidden; `b` or `B` brings them back. |
 | `layout.<dock>.width` | integer | `32` | Clamped to `16..=80`; both docks share the available width. |
 | `layout.<dock>.panel_count` | integer | left `2`, right `1` | `1..=3`; reducing the count retains saved panels. |
 | `layout.<dock>.panels` | table array | left session/repository groups, right empty | Each table contains `weight` (finite, positive) and ordered `tabs` (IDs). Unknown IDs retain their placement. |
 | `background_follows_canvas` | bool | `false` | Paints the sidebar with the canvas background instead of the raised panel fill. |
 | `gap` | bool | `true` | Keeps one row between each panel's tab bar and its list. |
-| `background` | bool | `true` | Paints the tab strip as a distinct bar: a raised sidebar fill, or `element` when the sidebar follows the canvas. Off, the strip matches the body. |
+| `background` | bool | `true` | Paints the tab strip as a distinct bar. Off, the strip matches the body. |
 | `tab_style` | string | `"padded"` | `"padded"`, `"round"`, or `"arrow"`. Round and arrow need `nerd_icons`. |
 | `settings.<tab>` | table | none | A built-in tab's settings. See [Built-in tab settings](#built-in-tab-settings). |
 
 Unplaced tabs join the first panel of the left dock, or of the right dock when only it holds tabs;
-Files, Git, Worktrees, and Projects join that dock's second panel. Extension
-suggestions apply only to tabs without a saved placement. The default left panel weights are `0.4`
+Files, Git, Worktrees, and Projects join that dock's second panel. The default left panel weights are `0.4`
 and `0.6`; the right panel weight is `1.0`. See [Sidebar](sidebar.md#configure-tabs-and-panels)
 for arranging tabs and panels.
 
@@ -834,14 +779,10 @@ show_hidden = false
 | `files`, `git` | `max_entries` | integer | `2000` | Clamped to `1..=10000`. |
 | `files`, `git` | `on_click` | action table | `{ send = "{path}" }` | What activating a file does. Not shown in **Sidebar tabs…**. |
 
-A key a tab does not have, a value of the wrong type, or an unknown choice is reported and the
-setting keeps its default.
-
 ### Grouping rows into sections
 
 A launcher entry's `group` puts it under a section header. Sections appear in the order their group
-first appears, and entries keep their order within a section. Entries without a `group` come first,
-with no header.
+first appears; entries without a `group` come first, with no header.
 
 ```toml
 [sidebar]
@@ -854,15 +795,11 @@ tabs = [
 ]
 ```
 
-A command tab groups its own output instead. With `group_prefix` set, an output line starting with
-the prefix becomes a section header showing the rest of the line. A line holding only the prefix is
-dropped, like a blank line. Headers cannot be selected, so `on_click` applies to every other row.
-
-A command tab runs in the focused pane's working directory and lists again when that directory
-changes. The command runs on this machine, so in a session attached with `--remote` it runs in
-`rozi`'s own directory rather than in the remote pane's. Its `on_click` `send` action may use
-`{line}` for the row's text. `run`, `popup`, and `exec` receive the row in `ROZI_ROW` instead of
-having it inserted into the command.
+A command tab groups its own output with `group_prefix`: an output line starting with the prefix
+becomes a section header showing the rest of the line. Headers cannot be selected, so `on_click`
+applies to every other row. Its `on_click` `send` action may use `{line}` for the row's text;
+`run`, `popup`, and `exec` receive the row in `ROZI_ROW` instead. See
+[Command tabs](sidebar.md#command-tabs).
 
 ### Opening a diff viewer or editor from a row
 
@@ -924,8 +861,7 @@ Workspace tabs shrink to a scrolling strip before disappearing. Use the wheel or
 `❯` to reach hidden tabs. Switching workspaces brings the active tab into view. Wheel scrolling
 uses `[input] scroll_multiplier`, shared with sidebar tabs and pickers.
 
-Click `title` to open the command palette. Click `location` or `session` to open Sessions. Those
-badges lift under the pointer, the same way a workspace tab does.
+Click `title` to open the command palette. Click `location` or `session` to open Sessions.
 
 A command segment times out after 5 seconds and keeps at most 64 KiB from each output stream.
 
@@ -962,10 +898,9 @@ See [Take a screenshot](terminal.md#take-a-screenshot).
 
 ## `[recording]`
 
-Defaults for [recordings](recording.md). For a pane recording the session server reads these from
-the configuration on its own host each time a recording starts, so for a remote session they come
-from that host. A [UI recording](recording.md#record-the-whole-ui) uses the UI's own configuration
-and writes on the UI's machine.
+Defaults for [recordings](recording.md). A pane recording reads these on the session's host, so for a
+remote session they come from that host. A [UI recording](recording.md#record-the-whole-ui) uses the
+UI's own configuration.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
@@ -1008,7 +943,7 @@ The control command `split --workspace` and `--focus` override `workspace` and `
 | `match.names` | array of strings | `[]` | Executable names. |
 | `match.paths` | array of strings | `[]` | Lowercase substrings of the path or arguments. |
 | `states` | array of state tables | `[]` | State rules. |
-| `history` | string | `"mouse-scroll"` | `"mouse-scroll"` lets `agents prompt --result` scroll the agent's transcript with the mouse wheel to read its [alternate-screen history](agents.md#read-the-agents-response). `"none"` never sends it input for that, and the response is its visible screen. Set `"none"` for an agent whose mouse wheel does anything other than scroll its transcript. A built-in override keeps the built-in's setting when omitted. |
+| `history` | string | `"mouse-scroll"` | `"mouse-scroll"` lets `agents prompt --result` scroll the agent's transcript with the mouse wheel to read its [alternate-screen history](agents.md#read-the-agents-response); `"none"` never does. Use `"none"` if the wheel does anything else in this agent. |
 
 A new definition needs at least one match name or path. A definition that replaces a built-in may
 omit `match` and keep the built-in's process match.
@@ -1032,9 +967,8 @@ Choose what happens when you `Ctrl`-click a link or select a hint with an upperc
 label character. The first handler matching the URI scheme wins. Unmatched URLs keep the
 system opener, which supports `http`, `https`, and `mailto`; other schemes require a handler.
 A `file` handler also enables opening plain path hints. Installed extensions can contribute
-handlers automatically. User handlers run first; extension handlers follow in installation-directory
-name order, and declaration order within each extension. Disable an extension in **Extensions…**
-to remove its handlers.
+handlers automatically; user handlers run first. Disable an extension in **Extensions…** to remove
+its handlers.
 
 ```toml
 [[links.handlers]]
@@ -1049,14 +983,11 @@ keep_open = false
 ```
 
 To reuse a terminal-browser, replace `run` with `exec = 'terminal-browser new-tab "$ROZI_URL"'`.
-Its pane discovery and splitting must support the terminal environment you use. With multiple
-browsers, terminal-browser requires a `--browser` key; a wrapper script can choose one using
-`terminal-browser ls --json`.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `schemes` | string array | required | Nonempty URI schemes, matched without case sensitivity. |
-| `command` | string | unset | Stable configured or extension command ID. Preserves the command's settings, environment, generation, and placement. Cannot be combined with inline action fields. |
+| `command` | string | unset | Configured or extension command ID. Cannot be combined with inline action fields. |
 | `run` | string | unset | Shell command in a new pane. Set exactly one of `command`, `run`, `popup`, or `exec`. |
 | `popup` | string | unset | Shell command in a floating popup. |
 | `exec` | string | unset | Shell command without a pane, with output discarded. |
@@ -1071,10 +1002,9 @@ command = "terminal-browser.open"
 ```
 
 The [terminal-browser extension](https://github.com/tui-lipan/rozi-terminal-browser) contributes
-HTTP and HTTPS handlers on installation, handles browser reuse and selection, and requires no
-handler configuration. Explicit command references are useful for overriding its default behavior.
-A missing, disabled, or non-process command reports an error rather than falling through to another
-handler. References resolve against the current commands after each config/extension reload.
+HTTP and HTTPS handlers on installation and requires no handler configuration. Explicit command
+references are useful for overriding its default behavior. A missing, disabled, or non-process
+command reports an error rather than falling through to another handler.
 
 Commands receive the following variables. Quote their expansions in shell commands; for PowerShell,
 use `$env:ROZI_URL`, `$env:ROZI_FILE`, and so on. The examples above use POSIX shell syntax.
@@ -1089,16 +1019,15 @@ use `$env:ROZI_URL`, `$env:ROZI_FILE`, and so on. The examples above use POSIX s
 | `ROZI_SOURCE_SESSION` | Opaque session-server instance ID containing the source pane. |
 | `ROZI_REMOTE_HOST` | Remote session host, or empty for local sessions. |
 
-Referenced commands run at their declared placement; `active-session` commands receive the same
-link context on the session host. `send` commands cannot be used as handlers. Custom hint actions
-can also reference commands, for example `on_open = { command = "my-extension.inspect" }`.
+Referenced commands run at their declared placement. `send` commands cannot be used as handlers.
+Custom hint actions can also reference commands, for example
+`on_open = { command = "my-extension.inspect" }`.
 
 `run` and `popup` execute on the session host in the source pane's working directory.
 `exec` executes on the client; it inherits the source directory only for a local session and
 receives `ROZI_PANE` identifying the source pane. Remote file paths are not fetched or translated.
-File URIs must be representable as paths on the client platform; foreign authorities that cannot
-be converted produce an error. A filename ending in `:123` is interpreted as a hint position;
-use a file URI to preserve that suffix as part of the filename.
+A filename ending in `:123` is interpreted as a hint position; use a file URI to preserve that
+suffix as part of the filename.
 
 ## `[[hints]]`
 
@@ -1142,7 +1071,7 @@ Named commands have stable IDs, so you can bind them under `[keys]` and run them
 | `run` | string | none | Opens a pane running the command through `command_shell`. |
 | `send` | string | none | Sends literal text to the focused pane. |
 | `popup` | string | none | Opens a centered popup running the command through `command_shell`. |
-| `exec` | string | none | Runs the command in the background through `command_shell` and discards its output. Shares the 32-job limit with hooks. It runs on this machine, in the focused pane's directory only when that pane is local. |
+| `exec` | string | none | Runs the command in the background through `command_shell` and discards its output. Runs on this machine, in the focused pane's directory when that pane is local. Shares the 32-job limit with hooks. |
 | `keep_open` | bool | `true` | For `run` and `popup`: keeps the pane or popup open after the command exits. |
 
 Set exactly one of `run`, `send`, `popup`, or `exec`.
@@ -1161,7 +1090,7 @@ branches = "i"
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
-| `disabled` | array of strings | `[]` | Manifest IDs of extensions to disable. Directory names are not extension IDs. The Extensions overlay updates this key when you enable or disable an extension. |
+| `disabled` | array of strings | `[]` | Manifest IDs of extensions to disable; the Extensions overlay edits this key. |
 
 An `[extensions.<id>]` table configures one installed extension, using the settings that extension
 declares. rozi reports and ignores an undeclared key, a value of the wrong type, and a table for an
@@ -1201,11 +1130,6 @@ Services receive `ROZI=1`, `ROZI_SERVICE`, `ROZI_BIN`, and, when control is avai
 A restarting service waits 1, 2, 4, 8, 16, then 30 seconds between attempts. After five consecutive
 failures within 60 seconds, the service stays stopped until you change its definition. rozi stops
 each service's process group when the client exits.
-
-A service's stdin is a pipe that rozi holds open and never writes to. If the client ends without
-stopping its services — for example, it is killed or crashes — stdin reaches end of file, so a
-service that reads stdin can exit on its own. In that case, Linux also kills the service process,
-but not processes it started, and Windows kills the service with everything it started.
 
 For packaged automation, use extension services instead. See [Services](writing-extensions.md#services).
 

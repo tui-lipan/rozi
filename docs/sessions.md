@@ -6,20 +6,16 @@ restores sessions after the server stops.
 
 By default, a bare `rozi` opens the session picker without creating or attaching to a session. From
 there you choose a running session, restore a saved one, create a named session, or start a
-temporary shell. The rozi window is a client of the session server, even for temporary work, which
-is why a named session keeps its shells running after you leave. See
-[Core concepts](core-concepts.md).
+temporary shell. See [Core concepts](core-concepts.md).
 
 ## Temporary and named sessions
 
 | | Temporary | Named |
 | --- | --- | --- |
 | Typical use | Short work without choosing a name | Work you plan to return to |
-| Leaving untouched | Closes | Keeps running |
 | Leaving after use | Asks whether to name or close it | Keeps running |
 | No clients attached | Closes after 45 seconds | Persists until killed |
 | Picker label | `ephemeral` | Session name |
-| Reattach after a client crash | During the 45-second recovery window | Until the session is killed |
 
 Naming a temporary session renames its existing server. Panes and processes keep running.
 
@@ -55,24 +51,23 @@ or request control. Set it in **Settings**, **Sessions**, **On shared attach**. 
 
 `rozi dev` attaches to a running session named `dev`. If there is none, it restores a saved
 session named `dev`, or launches the profile named `dev` when nothing is saved. If none of these
-exists, it reports an error; it never creates an empty session with an unknown name. `rozi sessions kill <NAME>` also reports an error when no live or restorable session
-has that name.
+exists, it reports an error. `rozi sessions kill <NAME>` also reports an error when no live or
+restorable session has that name.
 
 `--cwd` applies only to `sessions new` and cannot be combined with `--profile`. With `--remote`, it
 names a directory on the remote host and is passed through unchanged, so use an absolute path.
 
-Write each option after the command it belongs to. `--follow` and `--take-control` work only with
-`sessions attach`, `--profile`, `--cwd`, and `--detach` only with `sessions new`, and
-`--no-resurrect` only with `sessions new --detach`; anywhere else they are reported as errors. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after the
-session command.
+Write each option after its command: `--follow` and `--take-control` belong to `sessions attach`,
+`--profile`, `--cwd`, and `--detach` to `sessions new`, and `--no-resurrect` to
+`sessions new --detach` and `sessions restart`. `--read-only`, `--remote`, `--config`, and `--pick` can go before or after
+the session command.
 
 Subcommand names cannot be bare session or profile targets. For a session or profile literally
 named `attach`, use `rozi --session attach`.
 
 `rozi sessions list` shows the rozi release and protocol generation each running session runs on;
-`--format json` reports them as `rozi_version` and `effective_protocol`. The JSON also includes an
-`origin` object for a session created from a profile or a Git worktree. A worktree origin holds the
-checkout path on the session host. Restorable sessions keep their origin.
+`--format json` reports them as `rozi_version` and `effective_protocol`, and adds an `origin` object
+for a session created from a profile or a Git worktree.
 
 Remote hosts use the same session commands. See [Remote sessions](remote.md).
 
@@ -109,19 +104,17 @@ The marker before each name shows how the session stands with this client:
 
 Rows are listed in that order: the session you are in, the others this client holds, running
 sessions, saved sessions, then remembered ones. Within each group, local sessions come first, then
-each host's by name. Each tab keeps its own selection while Sessions is open, starting on its top
-row.
+each host's by name.
 
 A session with nothing running to attach to says so first — `Restorable`, `Unreadable`, `Last seen`,
-`Busy`, or `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how many other
-clients share it, and the profile it was created from.
+`Busy`, or `Unavailable`. The rest of the row shows its pane count, what its agents are doing, how
+many other clients share it, and the profile it was created from.
 
 Opening Sessions does not start a remote connection. With `[remote] reconnect_on_launch = true`,
-remembered hosts reconnect in the background when rozi starts, and their tabs appear immediately.
-Sessions on remote hosts are listed from the last time each host answered. A host's tab shows the
-host's state in the picker's top-right corner, and
-rows on a host this client is not attached to are marked `Last seen`, with the pane count the host
-last reported:
+remembered hosts reconnect in the background when rozi starts. Sessions on remote hosts are listed
+from the last time each host answered: a host's tab shows its state in the picker's top-right
+corner, and rows on a host this client is not attached to are marked `Last seen`, with the pane
+count the host last reported:
 
 ```text
 ╭Sessions────────────────────────────────────Disconnected╮
@@ -140,9 +133,7 @@ On a `Last seen` row:
   the session later, it is listed again.
 
 To kill or restart a session on a remote host, connect the host first: press `Ctrl+R`, then connect
-the host and open its Sessions tab, or expand it in the Sessions sidebar. In the Sessions picker,
-a remote session awaiting shutdown shows a spinner and `Killing…`. Its row disappears when shutdown succeeds; a failed
-shutdown keeps the row and reports the error.
+the host and open its Sessions tab, or expand it in the Sessions sidebar.
 
 ## Scope: where an action happens
 
@@ -159,17 +150,15 @@ Attached to `backend@workbox`, Sessions opens on the `workbox` tab, so `Ctrl+N` 
 
 ## Switch sessions
 
-Switching to another session keeps the previous one connected in the background. Its panes keep
-receiving output, so its screens and scrollback are current when you return. A background session
-gives up layout control; returning to it takes control again when no other client has claimed it.
-`Ctrl+W` in the picker disconnects a background session.
+Switching to another session keeps the previous one connected in the background, and its panes keep
+receiving output. A background session gives up layout control; returning to it takes control again
+when no other client has claimed it. `Ctrl+W` in the picker disconnects a background session.
 
 An untouched temporary session is discarded when you switch away. A temporary session you have used
 stays in the background.
 
-When you switch sessions, a portal opens onto the incoming one. To use a wave or a fade instead, or turn the effect off, change
-**Settings** › General › Animations › Session switching, or `session` in
-[`[animations]`](configuration.md#animations).
+Change the switch animation in **Settings** › General › Animations › Session switching, or with
+`session` in [`[animations]`](configuration.md#animations).
 
 ## Go to an agent
 
@@ -194,37 +183,31 @@ The frame names the session you are in, as `session` or `session@host`. **Agents
 with the agent you are in highlighted and marked **Current**: the agent in the focused pane, or for
 a program running several agents there, the one it shows. When you are not in one, it opens on the
 top row. Each session with agents also gets its own tab; switch tabs with `Tab`, `Shift+Tab`, the
-arrow keys, or a click, and type to filter. Each tab keeps its own selection while Agents is open,
-starting on its top row.
+arrow keys, or a click, and type to filter.
 
 Each row leads with the agent's task when it names one, or else its terminal title, followed by the
-agent's name; two rows that would read the same are numbered. The glyph shows the agent's state. The
-right side adds, in order, the state with how long it has held or what its run took, such as
-`Working 4m00s`, the reason an agent gave for waiting or failing, **Current** on the agent you are
-in, the session it runs in, and the project and branch it works in. An agent with no time shows its
-state by the glyph alone. The session appears only on **All** once agents run outside the
-session you are in: the session name for local agents and `session@host` for remote agents. When a
-row is short of room, the right side gives way from its end, so the project and branch go first
-and the agent's state last. A run its program keeps behind the one it shows, in a session this
-client is attached to, has an italic task.
+agent's name. The glyph shows the agent's state. The right side adds, in order, the state with how
+long it has held or what its run took, such as `Working 4m00s`, the reason an agent gave for waiting
+or failing, **Current** on the agent you are in, the session it runs in, and the project and branch
+it works in. The session appears only on **All** once agents run outside the session you are in: the
+session name for local agents and `session@host` for remote agents. A run its program keeps in the
+background has an italic task.
 
 Search matches all of it — the task, the agent, the session, the host, the project and branch, and
 the reason — so typing a branch or a host name narrows the list to the agents there.
 
 `Enter` goes to the highlighted agent. In the session on screen, it moves focus to the agent's pane;
-on the agent you are in, it only closes Agents.
-Anywhere else, rozi attaches to that session first and then focuses the pane — and, for a program
-running several agents, the agent's own row inside it. The host and session do not have to be open
-already. A session already in the background switches in immediately.
+on the agent you are in, it only closes Agents. Anywhere else, rozi attaches to that session first
+and then focuses the pane — and, for a program running several agents, the agent's own row inside
+it. The host and session do not have to be open already.
 
-Only agents in the session on screen have a time. What an agent's terminal shows, as the
+Only agents in sessions this client holds, the one on screen or in the background, have a time. What an agent's terminal shows, as the
 [Activity tab](sidebar.md#activity) reads it, needs an attached session; see
 [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
-To keep every agent in sight while you work, listed under the checkout it works in, show the
-sidebar's [Agents tab](sidebar.md#agents). To go to the next agent that needs you without opening
-Agents, bind `focus-next-agent-needing-attention`; each press goes to the next one after the agent
-on screen, in this list's order.
+To keep every agent in sight, show the sidebar's [Agents tab](sidebar.md#agents). To go to the next
+agent that needs you without opening Agents, bind `focus-next-agent-needing-attention`; each press
+goes to the next one after the agent on screen, in this list's order.
 
 ## Name or rename a session
 
@@ -233,9 +216,8 @@ processes, and scrollback continue under the new name.
 
 rozi rejects a name already used by a running session and names reserved for temporary sessions.
 
-A profile is a launch recipe; a session is what is running. A session created from a profile
-records that profile as its origin, but later edits to the profile do not change the running
-session. See [Profiles](profiles.md).
+Later edits to the profile a session was created from do not change the running session. See
+[Profiles](profiles.md).
 
 ## Leave rozi
 
@@ -279,8 +261,8 @@ startup values apply locally. `rozi --remote workbox` applies the setting on `wo
 An explicit `--remote` uses that host's own last session. A bare launch reopens a remote last session
 only when the host is remembered for reconnecting and `[remote] reconnect_on_launch = true`.
 Otherwise it opens Sessions without contacting that host. Remote sessions resume only when they are
-still running, without SSH prompts or installation during an automatic reconnect. The host's tab
-and last-seen rows appear before it answers. `profile` creates its session when needed.
+still running, without SSH prompts or installation during an automatic reconnect. `profile` creates
+its session when needed.
 
 A session you name explicitly — as a target, with `sessions attach` or `sessions new`, or through
 `--pick` — overrides `[session] startup`. If `last` or `profile` cannot find its session, rozi opens
@@ -306,18 +288,15 @@ or close **Sessions** on the **workbox** tab with nothing attached. `Enter` then
 shell on `workbox`. Sessions opened from this launcher starts on the `workbox` tab, and switching
 tabs there moves the launcher's scope with it.
 
-The scope follows the session you work in, so killing a remote session leaves you in that host's
-launcher. Opening another host, switching tabs in Sessions, disconnecting the host with `Ctrl+X`,
-or forgetting it changes the scope. Browsing the host list or closing a picker without choosing does
-not.
+Killing a remote session leaves you in that host's launcher. Opening another host, switching tabs in
+Sessions, disconnecting the host with `Ctrl+X`, or forgetting it changes the launcher's scope;
+browsing the host list or closing a picker without choosing does not.
 
 ## Recover a temporary session
 
 If the client crashes or disconnects abnormally, a temporary session server waits 45 seconds after
 its last client leaves. During that time, it appears as `ephemeral` in the picker and you can
 reattach to it. After 45 seconds with no client, it shuts down, even if panes were still running.
-
-Named sessions have no such timer. They persist until you kill them.
 
 ## Resurrection
 
@@ -337,20 +316,13 @@ server stopped before saving anything, so that you can find it and reopen or del
 - saved terminal history, including its colors and text styling
 
 Processes themselves are not saved. Each command starts again in a fresh terminal, with the saved
-history shown above the new output. A missing directory or a command that fails to start affects
-only its own pane. If a pane's saved history cannot be read, that pane starts with empty history
-and a recovery notification identifies it. If the saved layout cannot be read, the panes restore
-without their saved placement.
+history shown above the new output. If a snapshot is damaged and a complete backup is available,
+rozi restores the backup. When part of a snapshot cannot be read, rozi restores the rest and reports
+a recovery warning in session notifications, and on stderr when restoring from the command line.
 
-If the latest snapshot's metadata or pane history is damaged and a complete backup is available,
-rozi restores that backup. rozi keeps damaged snapshots separately until you delete the session or
-discard its snapshot.
-Recovery warnings appear in session notifications and on stderr when restoring from the command line.
-
-A snapshot whose metadata rozi cannot read, because another rozi version saved it in another format
-or because it is damaged and has no usable backup, is listed as `Unreadable`, and as `unreadable`
-by `rozi sessions list`. It is kept but not restored: Enter says why, and opening the session by name is refused rather than starting it
-empty.
+A snapshot rozi cannot read at all — saved by another rozi version in another format, or damaged
+with no usable backup — is listed as `Unreadable` (`unreadable` in `rozi sessions list`). It is
+kept but not restored: `Enter` says why, and opening the session by name is refused.
 
 To discard a snapshot, press `Ctrl+K` twice on its `Restorable` or `Unreadable` row. `rozi sessions new <name>` also
 starts fresh instead of restoring a snapshot with that name, and keeps any
@@ -363,10 +335,7 @@ running that command again.
 
 A plain shell pane restores as a shell. If a command was running in it when the snapshot was taken —
 an agent, an editor, a log tail, or a build typed at the prompt — rozi records the command with its
-arguments and types it back when the new shell's prompt is ready. When the command exits, you are
-left at the shell.
-A pane sitting at a prompt records nothing, and prompt hooks such as directory jumpers are not
-recorded as commands.
+arguments and types it back when the new shell's prompt is ready.
 
 Commands launched through a Node wrapper script, such as Cursor's `agent`, restore with their
 arguments too. Commands under other interpreters restore by name only.
@@ -379,18 +348,13 @@ arguments too. Commands under other interpreters restore by name only.
 | `hold` (default) | Types the command back and leaves it at the prompt. `Enter` runs it. |
 | `never` | Restores the shell and its scrollback. No command is written to the snapshot. |
 
-The default, `hold`, leaves the command ready for you to confirm with `Enter`. Set `auto` to run
-recorded commands automatically. A running session keeps the value it started with; restart it to
-apply a change.
+A running session keeps the value it started with; restart it to apply a change.
 
 ### Reopen an agent conversation
 
 An agent that reports a native session reference (`rozi agents report --native-session`), and whose
 definition declares `[agents.resume]`, restores into its previous conversation instead of starting a
 new one.
-
-The resume command comes from the agent's current definition, so a change to its resume flags
-applies to sessions saved earlier.
 
 A pane restores the first of these that applies: a conversation to reopen, a command it was
 running, the command it was created with, or a plain shell. Only one pane reopens a given
@@ -406,21 +370,16 @@ conversation.
 
 If the resume command fails, the pane keeps the agent's error on screen, names the failure, and
 leaves a usable shell below it. rozi never starts a new conversation in place of one it could not
-reopen. From then on, that pane is saved and restored as a plain shell. A pane whose command simply
-exited still restores by running the command again.
+reopen, and from then on that pane is saved and restored as a plain shell.
 
 Set `[session] resurrect_agents = false` to keep agent session references out of snapshots. It
-defaults to `true`. Only references reported by a live agent integration are saved, never values
-read from terminal output.
+defaults to `true`.
 
 ## Scratch panes
 
-The scratchpad belongs to the client, not to the attached session. Its panes run on a private
-session server that lasts as long as the client, so scratch panes stay available while you switch
-between local and remote sessions.
-
-Scratch panes do not appear as a session. They are not shared with collaborators, saved in
-profiles, or included in resurrection snapshots. Exiting rozi shuts down their server.
+The scratchpad belongs to the client, not to the attached session, so scratch panes stay available
+while you switch between local and remote sessions. They are not shared with collaborators, saved in
+profiles, or included in resurrection snapshots, and exiting rozi ends them.
 
 ## Script a session with no client attached
 
@@ -434,8 +393,7 @@ rozi --session dev send-keys --target 3 'cargo test' Enter
 rozi --session dev split --argv cargo watch -x test
 ```
 
-This does not attach a client, so the session's client count and layout control are unchanged. A
-pane opened this way is already in place when a client attaches.
+This does not attach a client, so the session's client count and layout control are unchanged.
 
 To give a script or a coding agent a session of its own, so its panes stay out of the sessions you
 work in, start one with `rozi sessions new <NAME> --detach`. The command returns once the session
@@ -443,10 +401,9 @@ is running. The session starts with no panes, and its first `split` opens one. I
 combined with `--profile` or `--cwd`; pass `--cwd` to `split` instead. Add `--remote <HOST>` to start
 it on another machine. Stop the session with `rozi sessions kill <NAME>` when the work is done.
 
-Like any named session, a detached session is saved for [resurrection](#resurrection), so if the
-machine shuts down or the server stops before `sessions kill`, it appears in the picker as
-`Restorable`. Add `--no-resurrect` for throwaway work: the session is never saved, and once its
-server stops there is nothing left to restore.
+Like any named session, a detached session is saved for [resurrection](#resurrection) and appears
+in the picker as `Restorable` if its server stops before `sessions kill`. Add `--no-resurrect` for
+throwaway work: the session is never saved.
 
 `rozi sessions restart <NAME>` ends a running session's panes and starts it again without a UI, on
 the build you ran it with. It keeps [deployed extensions](extensions.md#deploy-to-a-session), and
@@ -457,10 +414,8 @@ needs the option again here to stay unsaved. A session that isn't running is ref
 A session whose server runs an [incompatible rozi version](troubleshooting.md#runs-an-incompatible-rozi-version)
 restarts from its snapshot instead of with fresh panes: its layout and terminal history come back
 as [resurrection](#resurrection) restores them, while the programs in its panes end. In Sessions,
-`Ctrl+E` on such a row [upgrades](#upgrade-a-session) it, which refuses a session on a newer rozi. The old server
-saves a final snapshot as it stops; if that takes longer than about ten seconds, or on Windows,
-where the server is stopped at once, the restart uses the last snapshot it saved instead, so output
-from the final moments before the restart can be missing.
+`Ctrl+E` on such a row [upgrades](#upgrade-a-session) it. Output from the final moments before the
+restart can be missing.
 
 If this rozi cannot read the snapshot, the session is not started and its snapshot is kept, listed
 as [`Unreadable`](#resurrection). For a snapshot in another format, start the session with the rozi
@@ -522,9 +477,6 @@ and removing collaborators.
   generation; the release notes say when a release starts a new one. A session on an older
   generation is listed as incompatible: [upgrade it](#upgrade-a-session), which reopens it from its
   snapshot, or update the other end.
-- Restarting a session kills its processes and keeps its deployed extensions. A compatible session
-  starts with fresh panes; an incompatible one restores its snapshot. It is not the same as
-  detaching and reattaching.
 - A session name belongs to one host. The same name on the local machine and on a remote host
   refers to two different sessions.
 
@@ -533,27 +485,16 @@ See also [Troubleshooting](troubleshooting.md).
 ## Keep the system awake
 
 Enable **Settings → Sessions → Keep awake while agents work**, or set
-`[session] keep_awake_while_agents_work = true`. The default is disabled. Each session
-server keeps its host awake while any agent is Working, including agents in local panes
-and sessions whose UI has detached. Agents are the ones listed by `rozi agents list`: detected
-agents, [agent reports](agents.md#report-state-from-agent-hooks), and rows from a publisher that
-declared itself an agent. A `rozi status` or a generic published row is an activity and does not
-keep the host awake. Blocked, Idle, Done, exited panes, and no agents
-allow sleep after a five-second grace period. Working again during that grace period
-keeps the existing lock. Disabling the setting releases it immediately.
+`[session] keep_awake_while_agents_work = true`. The default is disabled. Each session server keeps
+its host awake while any agent is Working, including agents in local panes and sessions whose UI has
+detached. Agents are the ones listed by `rozi agents list`: detected agents,
+[agent reports](agents.md#report-state-from-agent-hooks), and rows from a publisher that declared
+itself an agent. A `rozi status` or a generic published row does not keep the host awake. Sleep is
+allowed again five seconds after the last agent stops working.
 
-Screen blanking and locking remain allowed, and this setting adds no lid-switch lock.
-Linux requires `systemd-inhibit` and logind and blocks sleep requests while held.
-Older systemd helpers are supported; authentication prompts are disabled when the
-installed helper supports that option.
-macOS uses `caffeinate` to prevent idle system sleep; Windows uses a system power
-request to prevent automatic sleep. Explicit sleep and lid handling remain controlled
-by the OS on macOS and Windows. Unsupported hosts allow sleep and log an error.
+Screen blanking and locking remain allowed, and there is no lid-switch lock. Linux requires
+`systemd-inhibit` and logind; macOS uses `caffeinate`; Windows uses a system power request.
+Unsupported hosts allow sleep and log an error.
 
-Saving the setting or reloading config asks attached servers to read their own host
-config; only a writable controller can do this. Remote servers use the remote host's
-setting. While attached remotely, this Settings row is disabled and shows
-**Configure on remote host**; edit the remote host's config and reload it instead.
-Detached servers pick it up at their next controller reload or restart.
-If acquisition fails, the server allows sleep and logs once until the next working
-epoch rather than retrying continuously.
+Remote servers use the remote host's setting. While attached remotely, the Settings row is disabled
+and shows **Configure on remote host**; edit the remote host's config and reload it instead.

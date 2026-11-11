@@ -15,6 +15,9 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
   integration test that builds `AppRoot` calls `rozi::test_support::isolate_user_dirs()` first.
 - Test production behavior. Do not reproduce application logic in test-only stand-ins. Read
   `.agents/instructions/testing.md` before adding, changing, or removing tests.
+- Add a test only when it would catch a bug someone could plausibly introduce and no existing test
+  already does. Most changes need one test or an extra assertion in an existing one; some need
+  none. Do not test wiring, defaults, styling, or the same branch twice.
 - Do not run Cargo commands concurrently in this workspace; they only contend on build locks.
 - New OS-specific behavior belongs behind `src/platform/`. Existing exceptions are not precedent.
 - Reusable framework behavior and framework defects belong in the sibling `../tui-lipan`
@@ -23,6 +26,9 @@ tiling layout and keyboard flow take their cues from the Hyprland window manager
 - Keep user-facing docs in sync with behavior, CLI, configuration, and workflow changes. Docs
   describe current behavior for users: no change history, migration notes, or implementation
   detail. The rules are in `.agents/instructions/documentation.md`.
+- Keep docs short. Write as much as a user needs to use the thing, not as much as it took to
+  build: a setting is one reference row, a small behavior change is one edited sentence, and a fix
+  that makes rozi match its docs is nothing.
 - After a change users can see, show it: capture the UI with rozi (`rozi capture-ui --render png`,
   or `capture-pane --render png` for one pane) in an isolated session, and attach the image to the
   pull request or your hand-off. The `rozi-visual` skill covers the setup. Keep personal paths and

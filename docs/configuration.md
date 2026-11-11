@@ -407,10 +407,9 @@ mode = "jump"
 style = "sparks"
 ```
 
-With `"jump"`, a jump along one line, such as deleting whole words, draws at once. A jump to another
-line, or to the start of the line, is drawn once the cursor has held still for `settle_ms`, so a
-cursor that lands in steps gets one smear straight to where it settled. A move to another pane draws
-at once.
+With `"jump"`, every jump starts its smear at once. A positive `settle_ms` makes jumps to another
+line or to the start of the line wait for the cursor to hold still. A move to another pane always
+draws at once.
 
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
@@ -423,7 +422,7 @@ at once.
 | `trailing_exponent` | float | `0.3` | How full the smear stays toward its tail, from 0.1 to 10; higher keeps it fuller. |
 | `damping` | float | `0.82` | How much speed the smear loses each step, from 0 (bouncy) to 1 (no momentum). |
 | `glide_ms` | integer | `160` | How long the tail of a `"glide"` takes to reach the cursor, in milliseconds. `0` turns the glide off. |
-| `settle_ms` | integer | `50` | How long, in milliseconds, the cursor must hold still after a jump to another line or to the start of the line before its smear starts, from 0 to 1000. `0` starts every jump at once. |
+| `settle_ms` | integer | `0` | How long, in milliseconds, the cursor must hold still after a jump to another line or to the start of the line before its smear starts, from 0 to 1000. `0` starts every jump at once. |
 | `settle_max_ms` | integer | `200` | The longest, in milliseconds, such a jump waits for a cursor that keeps moving, from 0 to 1000. |
 | `max_length` | float | `0.0` | Caps how far the smear's tail trails the cursor, up to 500, in cell widths as they look on screen. `0` leaves it unbounded. |
 | `opacity` | float | `1.0` | The smear's strength at the cursor, from 0 to 1. |

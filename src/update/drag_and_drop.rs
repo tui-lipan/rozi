@@ -43,7 +43,7 @@ fn host_event(ctx: &mut Context<AppRoot>, event: HostEvent) -> Update {
     if !ctx.state.config.clipboard.drag_and_drop {
         return Update::none();
     }
-    crate::ops::drag_and_drop::forget_other_attachment(&mut ctx.state);
+    let reset = crate::ops::drag_and_drop::forget_other_attachment(ctx);
     let hit = event.targets.iter().find_map(|target| {
         let pane = crate::ops::drag_and_drop::pane_by_terminal_key(&ctx.state, &target.key)?;
         Some(Hit {
@@ -53,7 +53,7 @@ fn host_event(ctx: &mut Context<AppRoot>, event: HostEvent) -> Update {
         })
     });
     let dropped_on = matches!(event.event, tui_lipan::dnd::TerminalEvent::Drop { .. })
-        .then(|| hit.as_ref().map(|hit| hit.key.pane_id))
+        .then(|| hit.as_ref().map(|hit| hit.key))
         .flatten();
     let tagged = tui_lipan::dnd::TaggedEvent {
         client_id: event.client_id,
@@ -65,8 +65,22 @@ fn host_event(ctx: &mut Context<AppRoot>, event: HostEvent) -> Update {
         .router
         .host_event(tagged, |_| hit.clone());
     // What the user dropped on is what they work on next.
-    let focused = dropped_on.is_some_and(|id| crate::ops::focus::focus_pane_anywhere(ctx, id));
-    let update = crate::ops::drag_and_drop::perform(ctx, outputs);
+    let focused = dropped_on.is_some_and(|target| {
+        if target.local {
+            ctx.state.scratch.focused_pane = Some(target.pane_id);
+        } else {
+            crate::ops::focus::focus_pane_anywhere(ctx, target.pane_id);
+        }
+        if let Some(pane) =
+            crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, target.pane_id, target.local)
+        {
+            let key = pane.keys.terminal.clone();
+            ctx.state.sidebar.focused = false;
+            ctx.request_focus(key);
+        }
+        true
+    });
+    let update = reset.merge(crate::ops::drag_and_drop::perform(ctx, outputs));
     if focused {
         update.merge(Update::full())
     } else {
@@ -85,11 +99,12 @@ fn pane_commands(
     if epoch != ctx.state.runtime_epoch && !local {
         return Update::none();
     }
-    crate::ops::drag_and_drop::forget_other_attachment(&mut ctx.state);
+    let reset = crate::ops::drag_and_drop::forget_other_attachment(ctx);
     let key = DropPane {
         pane_id,
         local,
         generation,
+        attachment_epoch: ctx.state.runtime_epoch,
     };
     let Some(pane) = crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, pane_id, local)
         .filter(|pane| pane.pty_generation == generation)
@@ -112,7 +127,7 @@ fn pane_commands(
                 .child_command(&key, &registration, command),
         );
     }
-    crate::ops::drag_and_drop::perform(ctx, outputs)
+    reset.merge(crate::ops::drag_and_drop::perform(ctx, outputs))
 }
 
 #[cfg(test)]
@@ -272,11 +287,21 @@ mod tests {
                 h.sent_to_host(),
                 [ProgramCommand::RequestData(DataTarget::Mime { index: 1 })]
             );
+            #[cfg(unix)]
+            let (uris, pasted) = (
+                b"file:///tmp/my%20photo.png\r\nfile:///tmp/notes.txt\r\n".as_slice(),
+                "\"/tmp/my photo.png\" /tmp/notes.txt ",
+            );
+            #[cfg(windows)]
+            let (uris, pasted) = (
+                b"file:///C:/tmp/my%20photo.png\r\nfile:///C:/tmp/notes.txt\r\n".as_slice(),
+                "\"C:\\tmp\\my photo.png\" C:\\tmp\\notes.txt ",
+            );
             h.host(TerminalEvent::Data {
                 target: DataTarget::Mime { index: 1 },
                 kind: None,
                 remote: false,
-                bytes: b"file:///tmp/my%20photo.png\r\nfile:///tmp/notes.txt\r\n".to_vec(),
+                bytes: uris.to_vec(),
                 end: true,
             });
             let modes = h.backend.state().current().workspaces[0].panes[0]
@@ -293,10 +318,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(
-                input,
-                [encode_paste("\"/tmp/my photo.png\" /tmp/notes.txt ", modes)]
-            );
+            assert_eq!(input, [encode_paste(pasted, modes)]);
             assert_eq!(
                 h.sent_to_host(),
                 [ProgramCommand::FinishDrop {
@@ -369,6 +391,77 @@ mod tests {
                     operation: DropOperation::Copy
                 }]
             );
+        });
+    }
+
+    #[test]
+    fn late_drop_data_cannot_cross_an_attachment_switch() {
+        crate::test_support::on_large_stack(|| {
+            let mut h = harness();
+            h.host(TerminalEvent::Drop {
+                position: h.at(2, 1),
+                operations: DropOperations::COPY,
+                mimes: files(),
+            });
+            h.sent_to_host();
+            h.backend.state_mut().runtime_epoch += 1;
+            h.host(TerminalEvent::Data {
+                target: DataTarget::Mime { index: 1 },
+                kind: None,
+                remote: false,
+                bytes: b"file:///tmp/old-session.txt".to_vec(),
+                end: true,
+            });
+            assert!(h.outbound.try_iter().all(|message| !matches!(
+                message,
+                ClientOutbound::PaneInput { .. }
+                    | ClientOutbound::Control(ClientMessage::DragAndDrop { .. })
+            )));
+            assert!(h.sent_to_host().contains(&ProgramCommand::FinishDrop {
+                operation: DropOperation::None,
+            }));
+        });
+    }
+
+    #[test]
+    fn a_shared_drop_keeps_its_namespace_when_a_local_pane_has_the_same_id() {
+        crate::test_support::on_large_stack(|| {
+            let mut h = harness();
+            let local = crate::state::Pane::new_local(h.pane, 100, FloatRect::default());
+            h.backend.state_mut().scratch.panes.push(local);
+            let pane = &h.backend.state().current().workspaces[0].panes[0];
+            assert!(!crate::ops::drag_and_drop::drop_pane(h.backend.state(), pane).local);
+            h.host(TerminalEvent::Drop {
+                position: h.at(2, 1),
+                operations: DropOperations::COPY,
+                mimes: vec!["text/plain".into()],
+            });
+            h.host(TerminalEvent::Data {
+                target: DataTarget::Mime { index: 1 },
+                kind: None,
+                remote: false,
+                bytes: b"shared".to_vec(),
+                end: true,
+            });
+            assert!(h.outbound.try_iter().any(|message| matches!(message,
+                ClientOutbound::PaneInput { local: false, bytes, .. } if bytes == b"shared"
+            )));
+            h.register(PaneDragAndDrop {
+                drops: Some(PaneDropRegistration {
+                    client_id: Some(5),
+                    ..Default::default()
+                }),
+                drags: None,
+            });
+            h.host(TerminalEvent::DragOver {
+                position: h.at(2, 1),
+                operations: DropOperations::COPY,
+                mimes: Some(files()),
+            });
+            assert!(h.outbound.try_iter().any(|message| matches!(
+                message,
+                ClientOutbound::Control(ClientMessage::DragAndDrop { local: false, .. })
+            )));
         });
     }
 

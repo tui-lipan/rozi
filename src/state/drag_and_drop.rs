@@ -13,6 +13,7 @@ pub struct DropPane {
     /// A client-local pane (scratchpad, popup) rather than one the session shares.
     pub local: bool,
     pub generation: u64,
+    pub attachment_epoch: u64,
 }
 
 /// What this client registered with the host terminal.

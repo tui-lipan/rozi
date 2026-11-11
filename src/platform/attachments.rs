@@ -111,33 +111,46 @@ pub(crate) fn drop_path(text: &str) -> Option<PathBuf> {
 /// A dropped local path as text for a pane: quoted when a shell would split or expand it, and
 /// followed by a space so successive paths stay apart.
 #[cfg(unix)]
-pub(crate) fn quote_dropped_path(path: &std::path::Path) -> String {
+pub(crate) fn quote_dropped_path(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
-    let text = String::from_utf8_lossy(path.as_os_str().as_bytes());
+    let text = path.as_os_str().as_bytes();
     let plain = text
-        .bytes()
+        .iter()
+        .copied()
         .all(|b| b.is_ascii_alphanumeric() || b"/._-+,:@%=".contains(&b) || b >= 0x80);
     if plain && !text.is_empty() {
-        return format!("{text} ");
+        return [text, b" "].concat();
     }
-    if !text.contains(['\'', '"', '`', '$', '\\', '!']) && !text.chars().any(char::is_control) {
-        return format!("\"{text}\" ");
+    if !text
+        .iter()
+        .any(|b| b.is_ascii_control() || b"'\"\x60$\\!".contains(b))
+    {
+        return [b"\"".as_slice(), text, b"\" "].concat();
     }
-    format!("'{}' ", text.replace('\'', "'\\''"))
+    let mut quoted = vec![b'\''];
+    for byte in text {
+        if *byte == b'\'' {
+            quoted.extend_from_slice(b"'\\''");
+        } else {
+            quoted.push(*byte);
+        }
+    }
+    quoted.extend_from_slice(b"' ");
+    quoted
 }
 
 /// A dropped local path as text for a pane, quoted when it holds spaces. Windows paths cannot hold
 /// a double quote.
 #[cfg(not(unix))]
-pub(crate) fn quote_dropped_path(path: &std::path::Path) -> String {
+pub(crate) fn quote_dropped_path(path: &std::path::Path) -> Vec<u8> {
     let text = path.to_string_lossy();
     if text
         .chars()
         .any(|c| c.is_whitespace() || "&()[]{}^=;!'+,`~".contains(c))
     {
-        format!("\"{text}\" ")
+        format!("\"{text}\" ").into_bytes()
     } else {
-        format!("{text} ")
+        format!("{text} ").into_bytes()
     }
 }
 
@@ -163,7 +176,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dropped_paths_are_quoted_only_as_much_as_a_shell_needs() {
-        let quote = |path: &str| quote_dropped_path(std::path::Path::new(path));
+        let quote =
+            |path: &str| String::from_utf8(quote_dropped_path(std::path::Path::new(path))).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            quote_dropped_path(Path::new(std::ffi::OsStr::from_bytes(b"/tmp/a\xff '$b"))),
+            b"'/tmp/a\xff '\\''$b' "
+        );
         assert_eq!(quote("/tmp/photo.png"), "/tmp/photo.png ");
         assert_eq!(quote("/tmp/Zdjęcia/ok.png"), "/tmp/Zdjęcia/ok.png ");
         assert_eq!(quote("/tmp/my photo.png"), "\"/tmp/my photo.png\" ");

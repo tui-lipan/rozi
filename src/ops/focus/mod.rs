@@ -72,10 +72,13 @@ pub(crate) fn acknowledge_pane_input(state: &mut State, pane_id: PaneId) -> bool
     acknowledge_pane(state, pane_id)
 }
 
-/// Clear one pane's attention marks. Resolved across every namespace, so a popup or scratchpad pane
-/// answers input the same way a workspace pane does.
-fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
-    let Some(pane) = crate::pane::lifecycle::find_pane_mut(state, pane_id) else {
+/// Clear attention in the namespace that received input.
+pub(crate) fn acknowledge_pane_input_in_namespace(
+    state: &mut State,
+    id: PaneId,
+    local: bool,
+) -> bool {
+    let Some(pane) = crate::pane::lifecycle::find_pane_in_namespace_mut(state, id, local) else {
         return false;
     };
     // The agents the pane shows have been seen; one behind another tab of the same program has not.
@@ -115,6 +118,11 @@ fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
             .acknowledge(&runtime.reference, runtime.completions);
     }
     changed || agent_cleared
+}
+
+fn acknowledge_pane(state: &mut State, pane_id: PaneId) -> bool {
+    let local = crate::pane::lifecycle::pane_is_local(state, pane_id);
+    acknowledge_pane_input_in_namespace(state, pane_id, local)
 }
 
 /// Whether focus is pinned to the pane currently covering the workspace.

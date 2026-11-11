@@ -498,6 +498,48 @@ impl SessionServer {
         read.mutations.push(mutation);
     }
 
+    pub(super) fn defer_history_drag_and_drop(
+        &mut self,
+        client: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: &str,
+    ) -> bool {
+        if local {
+            return false;
+        }
+        let Some(read) = self.agent_history.get_mut(&pane_id) else {
+            return false;
+        };
+        if read.reference().pane.generation != generation {
+            return false;
+        }
+        // A refused drop must still release the host's pending conversation.
+        if read.input_bytes.saturating_add(escape_codes.len()) > MAX_QUEUED_INPUT
+            || read.mutations.len() >= 4096
+        {
+            self.refuse_drag_and_drop(client, pane_id, local, generation, escape_codes);
+            return true;
+        }
+        read.cancel();
+        self.queue_history_mutation(
+            pane_id,
+            client,
+            escape_codes.len(),
+            DeferredMutation::Control(
+                client,
+                Box::new(ClientMessage::DragAndDrop {
+                    pane_id,
+                    local,
+                    generation,
+                    escape_codes: escape_codes.to_owned(),
+                }),
+            ),
+        );
+        true
+    }
+
     pub(super) fn defer_history_marked_input(
         &mut self,
         client: ClientId,

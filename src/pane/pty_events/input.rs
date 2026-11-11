@@ -145,9 +145,10 @@ pub(crate) fn handle_pane_input(
 /// Admit a user paste before changing engagement, attention, or the visible scroll position.
 /// Focus reports do not pass through this path because they are not user input.
 /// Returns the connected client and whether attention or scrollback changed.
-pub(crate) fn prepare_pane_paste(
+pub(crate) fn prepare_pane_paste_in_namespace(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
+    local: bool,
 ) -> std::result::Result<(crate::session::client::SessionClient, bool), Update> {
     // Copy mode owns the pane: like its keys, a middle-click or right-click paste reaches neither
     // the program nor the live view.
@@ -162,37 +163,46 @@ pub(crate) fn prepare_pane_paste(
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.notified.update());
     }
-    if crate::pane::lifecycle::find_pane(&ctx.state, id).is_none() {
+    if crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, id, local).is_none() {
         return Err(Update::none());
     }
-    let Some(client) = ctx.state.pty_client_for_pane(id) else {
-        pane_disconnected(ctx, id);
+    let Some(client) = ctx.state.pty_client_in_namespace(id, local) else {
+        if let Some(pane) =
+            crate::pane::lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
+        {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+        }
+        crate::pane::pty_events::notify_error(ctx, "Paste failed", "session disconnected");
         return Err(Update::full());
     };
     // Only accepted input in the session itself counts; scratch panes are client-local.
-    if !crate::scratchpad::contains(&ctx.state, id) {
+    if !local {
         ctx.state.current_mut().engaged = true;
     }
-    let acknowledged = crate::ops::focus::acknowledge_pane_input(&mut ctx.state, id);
-    let scrolled =
-        find_pane_mut(&mut ctx.state, id).is_some_and(|pane| pane.terminal.set_scrollback(0));
+    let acknowledged =
+        crate::ops::focus::acknowledge_pane_input_in_namespace(&mut ctx.state, id, local);
+    let scrolled = crate::pane::lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
+        .is_some_and(|pane| pane.terminal.set_scrollback(0));
     Ok((client, acknowledged || scrolled))
 }
 
-fn pane_disconnected(ctx: &mut Context<AppRoot>, id: PaneId) {
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-    }
-    crate::pane::pty_events::notify_error(ctx, "Paste failed", "session disconnected");
+pub(crate) fn paste_pane_bytes(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
+    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
+    paste_pane_bytes_in_namespace(ctx, id, local, bytes)
 }
 
-pub(crate) fn paste_pane_bytes(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
-    let (client, repaint) = match prepare_pane_paste(ctx, id) {
+pub(crate) fn paste_pane_bytes_in_namespace(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    local: bool,
+    bytes: Vec<u8>,
+) -> Update {
+    let (client, repaint) = match prepare_pane_paste_in_namespace(ctx, id, local) {
         Ok(accepted) => accepted,
         Err(update) => return update,
     };
-    let local = crate::pane::lifecycle::pane_is_local(&ctx.state, id);
-    let pane = find_pane_mut(&mut ctx.state, id).expect("accepted paste has a pane");
+    let pane = crate::pane::lifecycle::find_pane_in_namespace_mut(&mut ctx.state, id, local)
+        .expect("accepted paste has a pane");
     client.send_input(id, pane.pty_generation, local, bytes);
     if repaint {
         Update::full()

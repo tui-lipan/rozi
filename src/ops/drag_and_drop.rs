@@ -7,7 +7,6 @@ use tui_lipan::dnd::{Output, ProgramCommand, TEXT_PLAIN, TEXT_PLAIN_UTF8, URI_LI
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
-use crate::pane::lifecycle::pane_is_local;
 use crate::state::{DropPane, HostRegistration, Pane, State};
 
 /// The pane whose terminal widget carries `key`.
@@ -29,20 +28,36 @@ pub(crate) fn pane_by_terminal_key<'a>(state: &'a State, key: &Key) -> Option<&'
 pub(crate) fn drop_pane(state: &State, pane: &Pane) -> DropPane {
     DropPane {
         pane_id: pane.id,
-        local: pane_is_local(state, pane.id),
+        local: state
+            .popup
+            .iter()
+            .chain(state.scratch.panes.iter())
+            .any(|local| std::ptr::eq(local, pane)),
         generation: pane.pty_generation,
+        attachment_epoch: state.runtime_epoch,
     }
 }
 
 /// Start afresh when another attachment is on screen: the panes the router knew are gone.
-pub(crate) fn forget_other_attachment(state: &mut State) {
-    let epoch = state.runtime_epoch;
-    let drag_and_drop = &mut state.drag_and_drop;
+pub(crate) fn forget_other_attachment(ctx: &mut Context<AppRoot>) -> Update {
+    let epoch = ctx.state.runtime_epoch;
+    let drag_and_drop = &mut ctx.state.drag_and_drop;
+    let mut outputs = Vec::new();
     if drag_and_drop.attachment_epoch != epoch {
+        for child in drag_and_drop.router.children() {
+            outputs.extend(drag_and_drop.router.forget_child(&child));
+        }
         drag_and_drop.attachment_epoch = epoch;
         drag_and_drop.decoders.clear();
         drag_and_drop.hovered = None;
     }
+    perform(ctx, outputs)
+}
+
+fn valid_target(state: &State, pane: DropPane) -> bool {
+    (pane.local || pane.attachment_epoch == state.runtime_epoch)
+        && crate::pane::lifecycle::find_pane_in_namespace(state, pane.pane_id, pane.local)
+            .is_some_and(|found| found.pty_generation == pane.generation && !found.closing)
 }
 
 /// Carry out what the router asked for.
@@ -71,7 +86,10 @@ pub(crate) fn perform(ctx: &mut Context<AppRoot>, outputs: Vec<Output<DropPane>>
 }
 
 fn send_to_pane(ctx: &mut Context<AppRoot>, pane: DropPane, bytes: Vec<u8>) {
-    let Some(client) = ctx.state.pty_client_for_pane(pane.pane_id) else {
+    if !valid_target(&ctx.state, pane) {
+        return;
+    }
+    let Some(client) = ctx.state.pty_client_in_namespace(pane.pane_id, pane.local) else {
         return;
     };
     if !client.supports(crate::session::protocol::Capability::DragAndDrop) {
@@ -90,6 +108,9 @@ fn send_to_pane(ctx: &mut Context<AppRoot>, pane: DropPane, bytes: Vec<u8>) {
 /// machine cannot open this machine's paths, so the files are uploaded and their copies' paths
 /// pasted instead, as pasting copied files does.
 fn paste_drop(ctx: &mut Context<AppRoot>, pane: DropPane, mime: &str, data: Vec<u8>) -> Update {
+    if !valid_target(&ctx.state, pane) {
+        return Update::none();
+    }
     let Some(target) =
         crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, pane.pane_id, pane.local)
             .filter(|target| target.pty_generation == pane.generation)
@@ -98,54 +119,73 @@ fn paste_drop(ctx: &mut Context<AppRoot>, pane: DropPane, mime: &str, data: Vec<
     };
     let modes = target.terminal.snapshot().key_modes;
     if mime.eq_ignore_ascii_case(URI_LIST) {
-        let uris = tui_lipan::dnd::parse_uri_list(&data);
-        let files: Vec<PathBuf> = uris
-            .iter()
-            .filter_map(|uri| tui_lipan::dnd::file_uri_path(uri))
-            .collect();
-        if !files.is_empty()
-            && files.len() == uris.len()
-            && crate::ops::attachments::bridge_enabled(&ctx.state, pane.pane_id)
-        {
-            return crate::ops::attachments::paste(
-                ctx,
-                pane.pane_id,
-                TerminalPasteEvent {
-                    content: ClipboardContent::Files(files),
-                    origin: PasteOrigin::Clipboard,
-                },
-            );
-        }
-        let text: String = uris
-            .iter()
-            .map(|uri| match tui_lipan::dnd::file_uri_path(uri) {
-                Some(path) => crate::platform::attachments::quote_dropped_path(&path),
-                None => format!("{uri} "),
-            })
-            .collect();
-        crate::pane::pty_events::paste_pane_bytes(ctx, pane.pane_id, encode_paste(&text, modes))
+        paste_uri_list(ctx, pane, &data, modes)
     } else if mime.eq_ignore_ascii_case(TEXT_PLAIN) || mime.eq_ignore_ascii_case(TEXT_PLAIN_UTF8) {
         let text = String::from_utf8_lossy(&data);
-        crate::pane::pty_events::paste_pane_bytes(ctx, pane.pane_id, encode_paste(&text, modes))
+        crate::pane::pty_events::paste_pane_bytes_in_namespace(
+            ctx,
+            pane.pane_id,
+            pane.local,
+            encode_paste(&text, modes),
+        )
     } else {
         Update::none()
     }
 }
 
+fn paste_uri_list(
+    ctx: &mut Context<AppRoot>,
+    pane: DropPane,
+    data: &[u8],
+    modes: TerminalKeyModes,
+) -> Update {
+    let uris = tui_lipan::dnd::parse_uri_list(data);
+    let files: Vec<PathBuf> = uris
+        .iter()
+        .filter_map(|uri| tui_lipan::dnd::file_uri_path(uri))
+        .collect();
+    if !files.is_empty()
+        && files.len() == uris.len()
+        && !pane.local
+        && ctx.state.current().remote_target.is_some()
+    {
+        return crate::ops::attachments::paste_in_namespace(
+            ctx,
+            pane.pane_id,
+            pane.local,
+            TerminalPasteEvent {
+                content: ClipboardContent::Files(files),
+                origin: PasteOrigin::Clipboard,
+            },
+        );
+    }
+    let bytes: Vec<u8> = uris
+        .iter()
+        .flat_map(|uri| match tui_lipan::dnd::file_uri_path(uri) {
+            Some(path) => crate::platform::attachments::quote_dropped_path(&path),
+            None => format!("{uri} ").into_bytes(),
+        })
+        .collect();
+    let bytes = if modes.bracketed_paste {
+        let (start, end) = paste_sequences();
+        [start, bytes.as_slice(), end].concat()
+    } else {
+        bytes
+    };
+    crate::pane::pty_events::paste_pane_bytes_in_namespace(ctx, pane.pane_id, pane.local, bytes)
+}
+
 /// Repairs after every update: what rozi has registered with the host, and the router's hold on
 /// panes that have gone.
 pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
-    forget_other_attachment(&mut ctx.state);
+    let _ = forget_other_attachment(ctx);
     let gone: Vec<DropPane> = ctx
         .state
         .drag_and_drop
         .router
         .children()
         .into_iter()
-        .filter(|pane| {
-            crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, pane.pane_id, pane.local)
-                .is_none_or(|found| found.pty_generation != pane.generation || found.closing)
-        })
+        .filter(|pane| !valid_target(&ctx.state, *pane))
         .collect();
     let mut outputs = Vec::new();
     for pane in gone {

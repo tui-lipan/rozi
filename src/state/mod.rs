@@ -935,6 +935,18 @@ impl State {
         }
     }
 
+    pub(crate) fn pty_client_in_namespace(
+        &self,
+        pane_id: PaneId,
+        local: bool,
+    ) -> Option<crate::session::client::SessionClient> {
+        if local && self.popup.as_ref().is_none_or(|pane| pane.id != pane_id) {
+            self.scratch_client()
+        } else {
+            self.current().session_client.clone()
+        }
+    }
+
     pub fn popup_is_present(&self) -> bool {
         self.popup.is_some()
     }

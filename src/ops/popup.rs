@@ -51,7 +51,7 @@ pub(crate) fn open(
     );
     let generation = ctx.state.current().next_pty_generation;
     ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
-    let mut pane = Pane::new(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
+    let mut pane = Pane::new_local(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
         launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
@@ -317,7 +317,7 @@ mod tests {
                 state.config.animations.open_delay = std::time::Duration::ZERO;
                 state.config.pane.show_titles = false;
                 state.config.pane.show_workbar = false;
-                let mut popup = crate::state::Pane::new(POPUP_PANE_ID, 5_000, full);
+                let mut popup = crate::state::Pane::new_local(POPUP_PANE_ID, 5_000, full);
                 popup.opening = true;
                 popup.terminal_active = true;
                 popup.begin_open_animation(state.config.animations);
@@ -385,7 +385,7 @@ mod tests {
                     crate::layout::anim::PaneAnimationStyle::Portal;
                 state.config.pane.show_titles = false;
                 state.config.pane.show_workbar = false;
-                let mut popup = crate::state::Pane::new(POPUP_PANE_ID, 5_000, full);
+                let mut popup = crate::state::Pane::new_local(POPUP_PANE_ID, 5_000, full);
                 popup.opening = true;
                 popup.terminal_active = true;
                 popup.begin_open_animation(state.config.animations);

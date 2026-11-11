@@ -8,10 +8,11 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
     if ctx.state.has_modal_overlay() {
         return;
     }
-    if crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
-        .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
+    if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
+        .filter(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
-        focus_key(ctx, view::pane_terminal_key(id));
+        let key = pane.keys.terminal.clone();
+        focus_key(ctx, key);
     }
 }
 

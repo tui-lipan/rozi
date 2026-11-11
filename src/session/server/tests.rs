@@ -9891,6 +9891,35 @@ fn a_pane_program_registers_for_drops_and_answers_only_the_client_dropping_on_it
 }
 
 #[test]
+fn a_competing_drop_is_finished_without_stealing_the_first_clients_conversation() {
+    let mut server = SessionServer::new_named("dnd");
+    let (first, _a) = attach_client(&mut server);
+    let (second, _b) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(&mut server, r"printf '\033]72;t=a:i=9;\033\\'; read x");
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drops.is_some()
+    });
+    clear_outboxes(&mut server, &[first, second]);
+    drop_on_pane(&mut server, first);
+    drop_on_pane(&mut server, second);
+    assert_eq!(
+        routed_drag_and_drop(&server, second),
+        [tui_lipan::dnd::TaggedCommand {
+            client_id: Some(9),
+            command: tui_lipan::dnd::ProgramCommand::FinishDrop {
+                operation: tui_lipan::dnd::DropOperation::None,
+            },
+        }]
+    );
+    assert!(routed_drag_and_drop(&server, first).is_empty());
+    server.remove_client(second);
+    server.remove_client(first);
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+    });
+}
+
+#[test]
 fn a_program_no_client_owns_is_refused_and_its_query_answered() {
     let mut server = SessionServer::new_named("dnd");
     let (_client, _stream) = attach_client(&mut server);
@@ -9917,6 +9946,35 @@ fn a_client_that_leaves_mid_drop_leaves_the_program_told_it_is_over() {
     server.remove_client(dropping);
     wait_until(&mut server, |server| {
         pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+    });
+}
+
+#[test]
+fn outgoing_drag_disconnect_uses_the_drag_registration_id() {
+    let mut server = SessionServer::new_named("dnd");
+    let (client, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(
+        &mut server,
+        r"printf '\033]72;t=a:i=1;\033\\\033]72;t=o:x=1:i=2;\033\\'; read -r x; printf '\033]72;t=P:x=-1:i=2\033\\'; read -r y",
+    );
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drags.is_some()
+    });
+    let mut codes = Vec::new();
+    tui_lipan::dnd::TerminalEvent::DragGesture {
+        position: Default::default(),
+    }
+    .encode(Some(2), &mut codes);
+    server.accept_drag_and_drop(client, 1, false, 1, String::from_utf8(codes).unwrap());
+    server.accept_pane_input(client, 1, false, 1, b"\n", true);
+    wait_until(&mut server, |server| {
+        routed_drag_and_drop(server, client)
+            .iter()
+            .any(|command| matches!(command.command, tui_lipan::dnd::ProgramCommand::StartDrag))
+    });
+    server.remove_client(client);
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("72;t=e:i=2:x=4:y=1")
     });
 }
 

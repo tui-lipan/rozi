@@ -64,13 +64,13 @@ impl PaneDragAndDrop {
     }
 
     /// What tells the program its drag is over, when its owner has gone mid-way.
-    fn abandon(&mut self, client_id: Option<u32>) -> Vec<u8> {
+    fn abandon(&mut self, drop_id: Option<u32>, drag_id: Option<u32>) -> Vec<u8> {
         let mut bytes = Vec::new();
         if self.hovering || self.dropped {
-            TerminalEvent::DragLeave.encode(client_id, &mut bytes);
+            TerminalEvent::DragLeave.encode(drop_id, &mut bytes);
         }
         if self.dragging {
-            TerminalEvent::DragFinished { canceled: true }.encode(client_id, &mut bytes);
+            TerminalEvent::DragFinished { canceled: true }.encode(drag_id, &mut bytes);
         }
         *self = Self::default();
         bytes
@@ -102,31 +102,15 @@ impl SessionServer {
         generation: u64,
         escape_codes: String,
     ) {
-        let owner = local.then_some(client_id);
-        let may_operate = if local {
-            self.client_attached(client_id) && !self.client_read_only(client_id)
-        } else {
-            self.client_may_input(client_id)
-        };
-        if !may_operate {
+        if !self.may_drag_and_drop(client_id, pane_id, local, generation) {
+            self.refuse_drag_and_drop(client_id, pane_id, local, generation, &escape_codes);
             return;
         }
-        let owner_connected = |server: &Self, id| server.client_attached(id);
-        let Some(pane) = self.pane(owner, pane_id) else {
-            return;
-        };
-        if pane.generation != generation || pane.exited.is_some() {
-            return;
-        }
-        // Another client is mid-drag over this pane: two drags cannot share it.
-        if let Some(current) = pane.drag_and_drop.owner
-            && current != client_id
-            && pane.drag_and_drop.busy()
-            && owner_connected(self, current)
-        {
+        if self.defer_history_drag_and_drop(client_id, pane_id, local, generation, &escape_codes) {
             return;
         }
         let bytes = escape_codes.into_bytes();
+        let owner = local.then_some(client_id);
         let Some(pane) = self.live_pane_mut(owner, pane_id, generation) else {
             return;
         };
@@ -140,6 +124,74 @@ impl SessionServer {
         if let Some(pty) = &pane.pty {
             let _ = pty.write(&bytes);
         }
+    }
+
+    fn may_drag_and_drop(
+        &self,
+        client: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+    ) -> bool {
+        let authorized = if local {
+            self.client_attached(client) && !self.client_read_only(client)
+        } else {
+            self.client_may_input(client)
+        };
+        let Some(pane) = self.pane(local.then_some(client), pane_id) else {
+            return false;
+        };
+        authorized
+            && pane.generation == generation
+            && pane.exited.is_none()
+            && !self.drag_owned_by_other_client(&pane.drag_and_drop, client)
+    }
+
+    fn drag_owned_by_other_client(&self, drag: &PaneDragAndDrop, client: ClientId) -> bool {
+        drag.owner.is_some_and(|current| {
+            current != client && drag.busy() && self.client_attached(current)
+        })
+    }
+
+    /// Reply to the requesting router, without disturbing another client's conversation.
+    pub(super) fn refuse_drag_and_drop(
+        &mut self,
+        client: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: &str,
+    ) {
+        let mut decoder = EventDecoder::default();
+        let mut replies = Vec::new();
+        for (_, body) in tui_lipan::dnd::OscScanner::default().scan(escape_codes.as_bytes()) {
+            for tagged in decoder.push_body(&body) {
+                let command = match tagged.event {
+                    TerminalEvent::Drop { .. } => ProgramCommand::FinishDrop {
+                        operation: tui_lipan::dnd::DropOperation::None,
+                    },
+                    TerminalEvent::DragOver { .. } => ProgramCommand::DropStatus {
+                        operation: tui_lipan::dnd::DropOperation::None,
+                        mimes: None,
+                    },
+                    _ => continue,
+                };
+                command.encode(tagged.client_id, &mut replies);
+            }
+        }
+        if replies.is_empty() {
+            return;
+        }
+        self.enqueue(
+            client,
+            Target::Client(client),
+            ServerMessage::PaneDragAndDrop {
+                pane_id,
+                local,
+                generation,
+                escape_codes: String::from_utf8(replies).expect("OSC 72 commands are ASCII"),
+            },
+        );
     }
 
     /// Send what a pane's program said about drag and drop to its drag's owner, after its output.
@@ -212,17 +264,15 @@ impl SessionServer {
             .filter(|pane| pane.drag_and_drop.owner == Some(client_id));
         for pane in panes {
             let registration = pane.screen().drag_and_drop_registration().clone();
-            let client_id = registration
+            let drop_id = registration
                 .drops
                 .as_ref()
-                .and_then(|drops| drops.client_id)
-                .or_else(|| {
-                    registration
-                        .drags
-                        .as_ref()
-                        .and_then(|drags| drags.client_id)
-                });
-            let bytes = pane.drag_and_drop.abandon(client_id);
+                .and_then(|drops| drops.client_id);
+            let drag_id = registration
+                .drags
+                .as_ref()
+                .and_then(|drags| drags.client_id);
+            let bytes = pane.drag_and_drop.abandon(drop_id, drag_id);
             if !bytes.is_empty()
                 && let Some(pty) = &pane.pty
             {
@@ -286,7 +336,7 @@ mod tests {
             dragging: true,
             ..PaneDragAndDrop::default()
         };
-        let bytes = state.abandon(Some(4));
+        let bytes = state.abandon(Some(4), Some(7));
         let mut decoder = EventDecoder::default();
         let events: Vec<_> = tui_lipan::dnd::OscScanner::default()
             .scan(&bytes)
@@ -298,11 +348,11 @@ mod tests {
             events,
             [
                 (Some(4), TerminalEvent::DragLeave),
-                (Some(4), TerminalEvent::DragFinished { canceled: true }),
+                (Some(7), TerminalEvent::DragFinished { canceled: true }),
             ]
         );
         assert!(!state.busy());
-        assert!(state.abandon(None).is_empty(), "nothing left to end");
+        assert!(state.abandon(None, None).is_empty(), "nothing left to end");
     }
 
     #[test]

@@ -887,6 +887,7 @@ rozi never inserts a selected path into a command string. See [Sidebar files](si
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `left` | segment array | `["title", "workspaces"]` | Segments on the left, in order. |
+| `center` | segment array | `[]` | Segments pinned to the middle of the workbar. They stay centered whatever the width of `left` and `right`, and render as standalone pills. |
 | `right` | segment array | `["location", "session"]` | Segments on the right, in order. |
 | `clock_format` | string | `"%H:%M"` | A valid strftime format. Invalid formats are ignored. |
 

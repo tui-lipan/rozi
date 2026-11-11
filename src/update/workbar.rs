@@ -11,9 +11,7 @@ fn command_interval(ctx: &Context<AppRoot>, command: &str) -> Option<u64> {
     ctx.state
         .config
         .workbar
-        .left
-        .iter()
-        .chain(ctx.state.config.workbar.right.iter())
+        .all_items()
         .find_map(|item| match &item.segment {
             WorkbarSegment::Command {
                 command: configured,

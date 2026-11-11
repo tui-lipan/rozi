@@ -518,6 +518,7 @@
 # success, warning, error, neutral, panel:
 #   right = [{ segment = "clock", color = "info" }, "session"]
 #left = ["title", "workspaces"]
+#center = []
 #right = ["location", "session"]
 # strftime format, read only by a clock segment. A clock enables a once-a-second repaint;
 # without one the workbar never wakes an idle app.

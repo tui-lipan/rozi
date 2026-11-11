@@ -420,6 +420,7 @@ struct ScratchpadFileConfig {
 #[serde(default)]
 pub(super) struct WorkbarFileConfig {
     pub(super) left: Option<Vec<WorkbarSegmentSpec>>,
+    pub(super) center: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) right: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) clock_format: Option<String>,
     pub(super) alert: WorkbarAlertFileConfig,

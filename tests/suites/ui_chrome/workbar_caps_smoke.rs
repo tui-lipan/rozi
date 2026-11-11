@@ -333,3 +333,45 @@ fn a_recording_dot_stays_ahead_of_the_number_a_preview_gives_its_workspace() {
         );
     });
 }
+
+#[test]
+fn center_segments_stay_centered_as_the_sides_change() {
+    rozi::test_support::on_deeper_stack(|| {
+        let item = |segment| WorkbarItem {
+            segment,
+            color: None,
+        };
+        let prepare = |right: Vec<WorkbarItem>, dnd: bool| {
+            let mut backend = backend();
+            {
+                let state = backend.state_mut();
+                state.config.pane.workbar_style = CapStyle::Round;
+                state.config.pane.workbar_badge_style = CapStyle::Round;
+                state.config.pane.workbar_powerline = true;
+                state.do_not_disturb = dnd;
+                state.config.workbar.center = vec![item(WorkbarSegment::Text("MID".into()))];
+                state.config.workbar.right = right;
+            }
+            row(&mut backend)
+        };
+
+        let bare = prepare(Vec::new(), false);
+        let mid = find_run(&bare, "MID").expect("center badge");
+        // " MID " is 5 cells wide on a 100 cell bar, flanked by the symmetric pill caps.
+        assert_eq!(mid, (100 - 5) / 2 + 1, "centered on the bar");
+        assert_eq!(bare[mid - 1].symbol, LEFT_CAP, "pill caps on both sides");
+        assert_eq!(bare[mid + 3].symbol, RIGHT_CAP);
+
+        let busy = prepare(
+            vec![item(WorkbarSegment::Text(
+                "a much longer right side".into(),
+            ))],
+            true,
+        );
+        assert_eq!(
+            find_run(&busy, "MID"),
+            Some(mid),
+            "unequal sides and mode chips never move the center"
+        );
+    });
+}

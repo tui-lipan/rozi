@@ -2750,6 +2750,8 @@ impl WorkbarItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkbarConfig {
     pub left: Vec<WorkbarItem>,
+    /// Segments pinned to the true center of the workbar.
+    pub center: Vec<WorkbarItem>,
     pub right: Vec<WorkbarItem>,
     pub clock_format: String,
     pub alert: WorkbarAlertConfig,
@@ -2794,6 +2796,7 @@ impl Default for WorkbarConfig {
                 WorkbarItem::new(WorkbarSegment::Title),
                 WorkbarItem::new(WorkbarSegment::Workspaces),
             ],
+            center: Vec::new(),
             right: vec![
                 WorkbarItem::new(WorkbarSegment::Location),
                 WorkbarItem::new(WorkbarSegment::Session),
@@ -2805,20 +2808,23 @@ impl Default for WorkbarConfig {
 }
 
 impl WorkbarConfig {
-    pub fn has_clock(&self) -> bool {
+    /// Every configured item: left, then center, then right.
+    pub fn all_items(&self) -> impl Iterator<Item = &WorkbarItem> {
         self.left
             .iter()
+            .chain(self.center.iter())
             .chain(self.right.iter())
-            .any(|item| item.segment.is_clock())
     }
 
-    /// Unique `(command, interval_secs)` pairs across both workbar sides, one scheduled run per
+    pub fn has_clock(&self) -> bool {
+        self.all_items().any(|item| item.segment.is_clock())
+    }
+
+    /// Unique `(command, interval_secs)` pairs across all workbar sections, one scheduled run per
     /// distinct command string even if it appears in multiple segments.
     pub fn command_specs(&self) -> Vec<(String, u64)> {
         let mut seen = std::collections::HashSet::new();
-        self.left
-            .iter()
-            .chain(self.right.iter())
+        self.all_items()
             .filter_map(|item| match &item.segment {
                 WorkbarSegment::Command {
                     command,

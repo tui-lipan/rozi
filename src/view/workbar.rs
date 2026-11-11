@@ -13,38 +13,32 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
     let workbar_cfg = &state.config.workbar;
 
     let panel_bg = workbar_fill(ctx);
-    let mut row = HStack::new()
-        .gap(1)
+    // `StatusBar` pins `center` to the true middle of the bar and keeps `left` and `right` flush
+    // against their edges, so no spacer is needed and a mode chip appearing on the right never
+    // moves the center segments.
+    let mut bar = StatusBar::new()
         .width(Length::Flex(1))
         .height(Length::Px(WORKBAR_HEIGHT))
+        .padding(0)
+        .gap(1)
         .style(Style::new().bg(panel_bg));
 
     // Track the background color of the elements landing on each outer edge so the whole-workbar
     // end caps can adopt it: a leading/trailing badge (the `rozi` title chip, session chip, or
     // a mode chip) rounds off in its own color, while a plain segment leaves the cap panel-colored.
     let mut left_cap_color: Option<Color> = None;
-    let mut right_cap_color = panel_bg;
 
     for item in &workbar_cfg.left {
         if let Some(element) = left_segment_element(ctx, item) {
-            row = row.child(element);
-            let color = segment_edge_color(ctx, item);
-            left_cap_color.get_or_insert(color);
-            right_cap_color = color;
+            bar = bar.left(element);
+            left_cap_color.get_or_insert(segment_edge_color(ctx, item));
         }
     }
 
-    // The workspace tabs already flex to fill slack; without them, insert a spacer so the
-    // right region lands flush against the trailing edge. The spacer is transparent, so a bare
-    // panel-colored cap sits on that edge.
-    let has_workspaces = workbar_cfg
-        .left
-        .iter()
-        .chain(workbar_cfg.right.iter())
-        .any(|item| matches!(item.segment, WorkbarSegment::Workspaces));
-    if !has_workspaces {
-        row = row.child(Text::new("").width(Length::Flex(1)).height(Length::Px(1)));
-        right_cap_color = panel_bg;
+    for item in &workbar_cfg.center {
+        if let Some(element) = center_segment_element(ctx, item) {
+            bar = bar.center(element);
+        }
     }
 
     // Trailing cluster: transient mode chips first, then the configured right segments, so the
@@ -125,21 +119,21 @@ pub(crate) fn workbar(ctx: &Context<AppRoot>) -> Element {
         }
     }
 
-    if let Some(last) = trailing.last() {
-        right_cap_color = last.edge_color(panel_bg);
-    }
+    let right_cap_color = trailing
+        .last()
+        .map_or(panel_bg, |last| last.edge_color(panel_bg));
     let badge_style = ctx
         .state
         .config
         .effective_cap_style(ctx.state.config.pane.workbar_badge_style);
     let powerline = ctx.state.config.pane.workbar_powerline;
     if let Some(cluster) = trailing_cluster(ctx, trailing, badge_style, powerline, panel_bg) {
-        row = row.child(cluster);
+        bar = bar.right(cluster);
     }
 
     workbar_with_caps(
         ctx,
-        row,
+        bar.into(),
         left_cap_color.unwrap_or(panel_bg),
         right_cap_color,
     )
@@ -429,7 +423,7 @@ fn resolve_badge_color(theme: &Theme, color: BadgeColor) -> (Color, Color) {
 /// control of its own.
 fn workbar_with_caps(
     ctx: &Context<AppRoot>,
-    row: HStack,
+    row: Element,
     left_color: Color,
     right_color: Color,
 ) -> Element {
@@ -439,7 +433,7 @@ fn workbar_with_caps(
         .effective_cap_style(ctx.state.config.pane.workbar_style)
         .glyphs()
     else {
-        return row.into();
+        return row;
     };
     let backdrop = ctx.state.theme.surface.backdrop;
     let cap = |glyph: &'static str, color: Color| {
@@ -690,6 +684,30 @@ fn left_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<El
     ))
 }
 
+/// The element for a center-region workbar item: the workspace tab strip, or a standalone pill.
+/// Center pills are symmetric (caps on both sides over the panel) whatever `workbar_powerline` says,
+/// since nothing chains into them.
+fn center_segment_element(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Option<Element> {
+    if matches!(item.segment, WorkbarSegment::Workspaces) {
+        return Some(workspace_tabs_element(ctx));
+    }
+    let label = segment_label(ctx, &item.segment)?;
+    let (bg, fg) = item_colors(ctx, item);
+    Some(workbar_badge(
+        ctx,
+        &label,
+        fg,
+        bg,
+        workbar_fill(ctx),
+        ctx.state
+            .config
+            .effective_cap_style(ctx.state.config.pane.workbar_badge_style),
+        CapSides::Both,
+        false,
+        badge_action(&item.segment),
+    ))
+}
+
 /// What a workbar badge does when clicked, if it answers to the pointer at all.
 fn badge_action(segment: &WorkbarSegment) -> Option<Action> {
     match segment {
@@ -898,7 +916,7 @@ fn workspace_tabs_element(ctx: &Context<AppRoot>) -> Element {
                 .active_workspace
                 .min(shown.saturating_sub(1)),
         )
-        .width(Length::Flex(1))
+        .width(Length::Auto)
         .height(Length::Px(1))
         .divider(' ')
         .caps(tab_caps)

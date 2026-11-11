@@ -13,7 +13,7 @@ from this section. Put breaking changes under `### Breaking changes` here, with 
 <!-- Keep this heading separate from Verification. Keep checklist items consecutive, with no
 blank lines between them. Put detailed test results and limitations in Verification above. -->
 
-- [ ] Focused tests cover the affected behavior.
+- [ ] Focused tests cover the affected behavior, or the change needs none.
 - [ ] `cargo fmt --all -- --check`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
       `git diff --check` pass.
 - [ ] User documentation is updated, or this change has no documentation effect.

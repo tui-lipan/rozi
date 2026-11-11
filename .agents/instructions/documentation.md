@@ -18,6 +18,31 @@ the site search.
 - The site deploys from the latest release tag, not from `master`, so documenting a feature in the
   pull request that adds it is correct. Do not mark pages as unreleased or add version banners.
 
+## How much to write
+
+Docs are read by people in a hurry and by agents with a limited context; every extra sentence
+makes the important ones harder to find. Length follows how much a user needs the text, not how
+much work the change took or how interesting the mechanism is.
+
+- **Start from nothing.** A fix that makes rozi do what the docs already say, a visual polish, or
+  behavior a user would expect anyway needs no doc change. A small behavior change is usually one
+  edited sentence.
+- **A setting is one reference row.** One sentence saying what it does; the type, default, and
+  range go in their columns or a short clause. Add prose outside the table only when a user cannot
+  use the setting without it. No tuning advice, no "raise it if…", no description of what the
+  feature does frame by frame.
+- **Weight by importance.** A cosmetic or rarely changed option gets less text than the feature a
+  user came to the page for. Do not put a minor rule in a page's introduction or give it its own
+  heading.
+- **Say it once.** One page owns each fact; other pages link to it instead of restating it. Do not
+  repeat in prose what a table, a caption, or the sentence before already says.
+- **Skip what the UI shows.** Do not explain that `Enter` confirms, `Esc` cancels, or what a
+  clearly labeled Settings entry does.
+- **Do not list what does not happen.** Describe what the feature does. Name an exception only if
+  a user would otherwise think it is a bug.
+- **Cut as you add.** Reread the section you are editing and delete what the new text makes
+  redundant. If the section grew by more than a few lines for a small change, shorten it.
+
 ## What stays out of user docs
 
 User docs describe how rozi behaves now, for someone using it. Each sentence must change what a

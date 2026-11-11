@@ -45,7 +45,7 @@ fn can_open(kind: HintKind, config: &crate::config::Config) -> bool {
             .hints
             .get(usize::from(tag))
             .is_some_and(|hint| hint.open || hint.on_open.is_some()),
-        HintKind::Path => super::links::handler(&config.link_handlers, "file").is_some(),
+        HintKind::Path => super::links::opens_files(&config.link_handlers),
         HintKind::GitSha => false,
     }
 }
@@ -142,9 +142,13 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
                     .get(usize::from(tag))
                     .and_then(|hint| hint.on_open.clone());
                 match action {
-                    Some(action) => {
-                        super::links::execute(ctx, target, &action, &matched.text, None, None)
-                    }
+                    Some(action) => super::links::execute(
+                        ctx,
+                        target,
+                        &action,
+                        &matched.text,
+                        super::links::LinkTarget::default(),
+                    ),
                     None => super::links::open(ctx, target, &matched.text),
                 }
             }

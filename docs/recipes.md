@@ -117,6 +117,40 @@ The sidebar's file tree follows the same rule: an `on_click` action receives the
 on_click = { run = '''"${EDITOR:-vi}" "$ROZI_FILE"''' }
 ```
 
+## Open clicked files in popups
+
+With `file` handlers, `Ctrl`-clicking a path in a pane, or picking it in hint mode with an uppercase
+label, opens it. Give each kind of file its own handler with `files`; the first match wins, so put
+the catch-all last:
+
+```toml
+[[links.handlers]]
+schemes = ["file"]
+files = ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp"]
+popup = 'chafa "$ROZI_FILE"; read -r _'
+keep_open = false
+
+[[links.handlers]]
+schemes = ["file"]
+files = ["*.mp4", "*.mkv", "*.webm", "*.mov"]
+popup = 'mpv --vo=kitty --really-quiet "$ROZI_FILE"'
+keep_open = false
+
+[[links.handlers]]
+schemes = ["file"]
+files = ["*.pdf"]
+exec = 'xdg-open "$ROZI_FILE"'
+
+[[links.handlers]]
+schemes = ["file"]
+popup = 'nvim ${ROZI_LINE:+"+call cursor($ROZI_LINE,${ROZI_COLUMN:-1})"} -- "$ROZI_FILE"'
+keep_open = false
+```
+
+`src/main.rs:12:3` then opens Neovim at line 12, column 3. `exec` suits programs with their own
+window. The handler variables are listed under
+[`[[links.handlers]]`](configuration.md#links-handlers).
+
 ## Watch events
 
 Notify when a background pane rings the bell, at most once every five seconds. Save this as

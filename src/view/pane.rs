@@ -1367,14 +1367,22 @@ pub(crate) fn pane_element(
                     .callback(move |event| Msg::PaneSelection(id, event)),
             );
         } else if pinned_target.is_none() {
-            terminal_widget =
-                terminal_widget
-                    .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {
-                        Msg::PaneLinkActivate(id, event.uri)
-                    }))
-                    .on_mouse_forward_event(
-                        ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
-                    );
+            terminal_widget = terminal_widget
+                .on_link_activate(ctx.link().callback(move |event: TerminalLinkEvent| {
+                    Msg::PaneLinkActivate(id, event.kind, event.uri)
+                }))
+                .on_mouse_forward_event(
+                    ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
+                );
+            if crate::ops::links::opens_files(&ctx.state.config.link_handlers) {
+                let resolver = crate::ops::links::PathResolver::for_pane(&ctx.state, id);
+                let handlers = ctx.state.config.link_handlers.clone();
+                let cache = ctx.state.path_links.clone();
+                terminal_widget =
+                    terminal_widget.link_paths(TerminalPathFilter::new(move |path| {
+                        resolver.accepts(path, &handlers, &cache)
+                    }));
+            }
         }
     }
     if copy_cursor.is_some() {

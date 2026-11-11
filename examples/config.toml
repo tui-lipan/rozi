@@ -654,9 +654,10 @@
 # replace run with: command = "terminal-browser.open"
 # To reuse a browser, replace run with: exec = 'terminal-browser new-tab "$ROZI_URL"'
 
+# A file handler also opens file paths shown in panes, such as src/main.rs:12:3.
 [[links.handlers]]
 #schemes = ["file"]
-#run = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
+#popup = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
 #keep_open = false
 
 # Extra hint-mode patterns, appended to the built-in URL, path, and Git-SHA detectors.

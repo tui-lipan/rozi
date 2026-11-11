@@ -184,7 +184,13 @@ pub(crate) fn report_sections(
         "Link handlers",
         info.link_handlers
             .iter()
-            .map(|handler| info_row(&handler.schemes.join(", "), handler.command.clone()))
+            .map(|handler| {
+                let mut links = handler.schemes.join(", ");
+                if !handler.files.is_empty() {
+                    links = format!("{links} ({})", handler.files.join(", "));
+                }
+                info_row(&links, handler.command.clone())
+            })
             .collect(),
     );
     push_section(

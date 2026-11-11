@@ -658,7 +658,7 @@ pub enum Msg {
     AttachmentUploadFinished(std::result::Result<(), String>),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
-    PaneLinkActivate(PaneId, std::sync::Arc<str>),
+    PaneLinkActivate(PaneId, TerminalLinkKind, std::sync::Arc<str>),
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
     ForwardPrefix(KeyEvent),
     PaneMouse(PaneId, ForwardedMouseEvent),

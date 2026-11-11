@@ -3036,6 +3036,10 @@ run = 'terminal-browser open "$ROZI_URL"'
 keep_open = false
 [[links.handlers]]
 schemes = ["file"]
+files = ["*.PNG", "*.gif"]
+popup = 'chafa "$ROZI_FILE"'
+[[links.handlers]]
+schemes = ["file"]
 popup = 'nvim "$ROZI_FILE"'
 [[hints]]
 pattern = '\bISSUE-[0-9]+\b'
@@ -3046,6 +3050,7 @@ on_open = { exec = 'lookup "$ROZI_HINT"' }
         assert!(!loaded.rejected);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert_eq!(loaded.config.link_handlers[0].schemes, ["http", "https"]);
+        assert_eq!(loaded.config.link_handlers[1].files, ["*.png", "*.gif"]);
         assert!(matches!(
             loaded.config.link_handlers[0].action,
             LinkAction::Inline(UserCommandAction::Run {
@@ -3068,6 +3073,14 @@ exec = "true"
 schemes = ["file"]
 exec = "true"
 typo = true
+[[links.handlers]]
+schemes = ["https"]
+files = ["*.png"]
+exec = "true"
+[[links.handlers]]
+schemes = ["file"]
+files = ["shots/*.png"]
+exec = "true"
 [[hints]]
 pattern = "foo"
 on_open = { send = "danger\n" }
@@ -3100,6 +3113,16 @@ on_open = { send = "danger\n" }
                 .iter()
                 .any(|warning| warning.contains("valid URI schemes"))
         );
+        for expected in ["without the `file` scheme", "file-name patterns"] {
+            assert!(
+                loaded
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(expected)),
+                "{expected}: {:?}",
+                loaded.warnings
+            );
+        }
     }
 
     const REFERENCE_EXAMPLE: &str = include_str!("../../examples/config.toml");

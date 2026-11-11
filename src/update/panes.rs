@@ -255,9 +255,10 @@ pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) ->
 pub(super) fn pane_link_activate(
     ctx: &mut Context<AppRoot>,
     id: PaneId,
-    uri: std::sync::Arc<str>,
+    kind: TerminalLinkKind,
+    link: std::sync::Arc<str>,
 ) -> Update {
-    crate::ops::links::open(ctx, id, &uri)
+    crate::ops::links::activate(ctx, id, kind, &link)
 }
 
 pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Update {

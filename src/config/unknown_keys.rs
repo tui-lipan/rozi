@@ -335,7 +335,15 @@ fn collect_nested(table: &Table, unknown: &mut Vec<String>) {
             links,
             "links",
             "handlers",
-            &["schemes", "command", "run", "popup", "exec", "keep_open"],
+            &[
+                "schemes",
+                "files",
+                "command",
+                "run",
+                "popup",
+                "exec",
+                "keep_open",
+            ],
             unknown,
         );
     }

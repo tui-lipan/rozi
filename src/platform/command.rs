@@ -281,7 +281,7 @@ fn run_grouped_command(
         }
     };
     // Held until the command is reaped or killed, then the terminal comes back to this process.
-    let _terminal = lend_terminal.then(|| TerminalLoan::to(&group)).flatten();
+    let terminal = lend_terminal.then(|| TerminalLoan::to(&group)).flatten();
     let sender = input.map(|mut input| {
         let mut stdin = child.stdin.take().expect("piped stdin");
         std::thread::spawn(move || std::io::copy(&mut input, &mut stdin))
@@ -323,10 +323,8 @@ fn run_grouped_command(
                 return Err(error);
             }
         }
-        // A command that read the terminal before it was lent was stopped for it, and being made
-        // the foreground group does not wake a stopped group: it has to be continued.
-        if _terminal.is_some() {
-            group.continue_if_stopped(&child);
+        if let Some(terminal) = &terminal {
+            terminal.follow_stops(&child);
         }
         if started.elapsed() >= timeout {
             group.terminate(&mut child);
@@ -476,28 +474,6 @@ impl CommandGroup {
         let _ = child.wait();
     }
 
-    /// Continue the group if `child` is stopped, as job control stops a background group that reads
-    /// the terminal. Only for a group the terminal has been lent to: continuing one still in the
-    /// background would just stop it again.
-    fn continue_if_stopped(&self, child: &std::process::Child) {
-        // `WNOWAIT` leaves the stop to be reported again, so nothing else waiting on the child
-        // misses it.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let rc = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                child.id() as libc::id_t,
-                &mut info,
-                libc::WSTOPPED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        };
-        if rc == 0 && unsafe { info.si_pid() } != 0 {
-            unsafe {
-                libc::kill(-self.0, libc::SIGCONT);
-            }
-        }
-    }
-
     /// Reap `child` if it has exited on its own, killing whatever it left in the group first.
     ///
     /// The order is the whole point. Reaping releases the pid, and on Unix the pid *is* the group
@@ -544,7 +520,11 @@ impl CommandGroup {
 struct TerminalLoan {
     tty: std::fs::File,
     owner: libc::pid_t,
+    borrower: libc::pid_t,
     settings: Option<libc::termios>,
+    /// False while this process is suspended with its command, or continued in the background,
+    /// and the terminal is not lent.
+    lent: std::cell::Cell<bool>,
 }
 
 #[cfg(unix)]
@@ -573,14 +553,70 @@ impl TerminalLoan {
         Some(Self {
             tty,
             owner,
+            borrower: group.0,
             settings,
+            lent: std::cell::Cell::new(true),
         })
     }
-}
 
-#[cfg(unix)]
-impl Drop for TerminalLoan {
-    fn drop(&mut self) {
+    /// Act on a stop of the command the terminal is lent to, the way a shell treats its job.
+    /// Called on every pass of the wait loop.
+    ///
+    /// A stop for reading or configuring the terminal (`SIGTTIN`, `SIGTTOU`) is the command having
+    /// reached the terminal before it was lent, and being made the foreground group does not wake
+    /// a stopped group, so it is continued. Any other stop was asked for, by `Ctrl+Z` or a signal:
+    /// this process hands the terminal back and suspends its own group too, so the shell that
+    /// started rozi gets its prompt back. Once the terminal is this process's again, after `fg`,
+    /// it lends it again and continues the command. Continued in the background (`bg`), it waits:
+    /// a command continued there would only be stopped again for reading the terminal.
+    fn follow_stops(&self, child: &std::process::Child) {
+        if !self.lent.get() {
+            self.lend_again();
+            return;
+        }
+        let Some(signal) = stop_signal(child) else {
+            return;
+        };
+        if signal == libc::SIGTTIN || signal == libc::SIGTTOU {
+            // The terminal was not the command's when it reached for it: not lent yet, or taken
+            // back by the shell, which can hand its job the terminal again after continuing it.
+            // Lend it (again) before continuing, or the command is only stopped again.
+            self.lent.set(false);
+            self.lend_again();
+            return;
+        }
+        self.take_back();
+        self.lent.set(false);
+        // Returns once continued. In a group the shell does not manage (an orphaned group) the
+        // kernel discards the signal, and the command is lent the terminal again at once.
+        unsafe {
+            libc::kill(0, libc::SIGTSTP);
+        }
+        self.lend_again();
+    }
+
+    /// Lend the terminal back and continue the command, once the terminal is this process's or
+    /// already the command's. The shell may continue a job before it hands the job the terminal,
+    /// or hand it over again afterwards, so this is retried on every pass rather than tried once.
+    fn lend_again(&self) {
+        use std::os::fd::AsRawFd;
+        let fd = self.tty.as_raw_fd();
+        let holder = unsafe { libc::tcgetpgrp(fd) };
+        if holder == self.borrower
+            || (holder == self.owner && unsafe { libc::tcsetpgrp(fd, self.borrower) } == 0)
+        {
+            self.lent.set(true);
+            self.continue_borrower();
+        }
+    }
+
+    fn continue_borrower(&self) {
+        unsafe {
+            libc::kill(-self.borrower, libc::SIGCONT);
+        }
+    }
+
+    fn take_back(&self) {
         use std::os::fd::AsRawFd;
         let fd = self.tty.as_raw_fd();
         // This process is in the background until the terminal is back, and the kernel answers a
@@ -601,6 +637,35 @@ impl Drop for TerminalLoan {
     }
 }
 
+#[cfg(unix)]
+impl Drop for TerminalLoan {
+    fn drop(&mut self) {
+        // Not lent means this process is in the background or was never given the terminal back:
+        // taking it then would take it from whoever holds it, such as the shell after `bg`.
+        if self.lent.get() {
+            self.take_back();
+        }
+    }
+}
+
+/// The signal that stopped `child`, once for each time it stops. Each stop is consumed as it is
+/// reported: a child just continued can still read as stopped until it runs, and peeking would
+/// report that old stop again as a new one. Without `WEXITED`, an exit is never reported or
+/// reaped here.
+#[cfg(unix)]
+fn stop_signal(child: &std::process::Child) -> Option<libc::c_int> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WSTOPPED | libc::WNOHANG,
+        )
+    };
+    (rc == 0 && unsafe { info.si_pid() } != 0).then(|| unsafe { info.si_status() })
+}
+
 /// Windows has no foreground process group: every process attached to a console may read it.
 #[cfg(windows)]
 struct TerminalLoan;
@@ -610,6 +675,8 @@ impl TerminalLoan {
     fn to(_group: &CommandGroup) -> Option<Self> {
         None
     }
+
+    fn follow_stops(&self, _child: &std::process::Child) {}
 }
 
 #[cfg(windows)]
@@ -647,9 +714,6 @@ impl CommandGroup {
             Ok(Self(job))
         }
     }
-
-    /// Windows has no job-control stops.
-    fn continue_if_stopped(&self, _child: &std::process::Child) {}
 
     pub(crate) fn terminate(&self, child: &mut std::process::Child) {
         unsafe {

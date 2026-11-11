@@ -26,7 +26,10 @@
 //!   process and terminates it (which, thanks to [`contain_children`], takes the job's ConPTY
 //!   children with it).
 //!
-//! The Windows half is written against documented API contracts and is compiled and linted on
+//! The Windows half is written against documented API contracts, with one exception: listing this
+//! process's inherited handles uses `NtQueryInformationProcess`, which Microsoft documents as an
+//! internal interface that may change. If it ever fails, rozi falls back to withholding only its
+//! standard handles. The Windows half is compiled and linted on
 //! `windows-latest` in CI. Integration tests run the detached spawn there, but this module's own
 //! tests are `cfg(unix)`, and the situations the other functions exist for - a job reaping live
 //! ConPTY children when a server is killed or crashes, and the console-control events a clean detach

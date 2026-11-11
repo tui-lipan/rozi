@@ -3,6 +3,37 @@
 Unit tests usually live beside Rust modules. Integration and smoke tests live under `tests/`.
 Prefer a focused test while editing, then run the baseline checks from the root guide before handoff.
 
+## When a test earns its place
+
+A test is worth adding when it would fail for a bug someone could plausibly introduce, and no
+existing test would. Before you write one, name that bug. If you cannot, do not write the test.
+Adding no tests is a valid outcome; say so in the pull request's Verification section.
+
+Do not add a test for:
+
+- **Code that cannot work differently.** A value passed straight to a builder, a serde default or
+  derive, a constant, a getter, a `match` the compiler already checks, a type conversion.
+- **The implementation restated.** An expected value computed with the same formula, helper, or
+  table as the code under test proves nothing. Expected values are literals.
+- **A branch that is already covered.** More inputs that take the same path are not more coverage.
+  Use one case per branch, plus the boundary if there is one.
+- **The same rule at a second layer.** Do not pair a unit test with an `AppRoot` test of one rule.
+  Test it at the lowest layer that shows the behavior; render `AppRoot` only when the wiring itself
+  is what could break.
+- **A styling choice.** Colour, bold, padding, icons, and wording are judged by looking; capture
+  them instead. Assert on style only when it is how the user reads state, such as selection,
+  focus, or an error.
+- **Each config key separately.** Add a new key to the existing parse test. A shared range or
+  validation helper gets one test, not one per key that uses it.
+
+Keep the amount of test code in proportion to the change:
+
+- Extend an existing test with an assertion before adding a new function.
+- A bug fix gets one regression test that fails without the fix.
+- A test much longer than the code it covers is a sign it sets up more than the behavior needs, or
+  tests at too high a layer.
+- When you touch a test file, delete tests there that this section rules out.
+
 ## Coverage and test design
 
 - Test observable production behavior. UI composition tests render `AppRoot` and production views,

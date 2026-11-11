@@ -1,15 +1,10 @@
 # Sidebar
 
 The sidebar provides optional left and right docks beside your panes with tabs for activity, agents,
-panes, sessions, files, Git changes, worktrees, and projects. This page covers opening and navigating it, what each tab shows, and how to
-configure tabs or add your own.
+panes, sessions, files, Git changes, worktrees, and projects. This page covers opening and navigating
+it, what each tab shows, and how to configure tabs or add your own.
 
 The sidebar belongs to your client. It is never part of a shared session layout.
-
-Rows in Sessions, Worktrees, Projects, and described command or extension trees share space
-between the name and its description. When both are long, the name keeps at least 40% of the
-available text width. Short names and descriptions leave their unused space to the other side;
-there are no fixed columns. Tree guides, icons, and row controls sit outside that text budget.
 
 <CaptureGallery title="~/src/rozi — web">
 <img src="./assets/captures/sidebar.webp" alt="The sidebar on the left showing the Panes tab, listing each pane in the workspace beside the panes themselves" data-caption="The Panes tab lists every pane in the session. Ctrl+A, then PageDown moves to the next tab.">
@@ -29,16 +24,15 @@ While the sidebar is visible, these command keys work without focusing it:
 | `PageUp` | Previous tab |
 
 Open **Settings… → Bars → Left panels…** or **Right panels…** to split a dock into one to three
-panels. `Enter` applies the choice and `Esc` cancels.
+panels.
 
 **Show/Hide left sidebar** and **Show/Hide right sidebar** in the command palette toggle one dock
 at a time. They have no default keys; bind them as `toggle-left-sidebar` and
 `toggle-right-sidebar`. The `b` command key hides whichever docks are shown and later brings back
 the same ones.
 
-rozi remembers which docks were open when you leave and opens them again next time. Turn off
-**Open sidebars at startup** in Settings to start with both docks hidden; `b` still brings back the
-remembered docks.
+Both docks start hidden. Turn on **Open sidebars at startup** in Settings to reopen the docks that
+were open when you left; `b` brings them back either way.
 
 <CaptureGallery title="Sidebar settings" mode="steps">
 <img src="./assets/captures/sidebar-settings.webp" alt="Settings filtered to the sidebar, with Left panels, Right panels, Open sidebars at startup, and Sidebar tabs entries" data-label="Settings" data-caption="Configure panel counts and startup visibility independently.">
@@ -46,8 +40,7 @@ remembered docks.
 <img src="./assets/captures/sidebar-startup.webp" alt="Open sidebars at startup disabled in Settings while both docks stay visible" data-label="Startup" data-caption="Disable automatic opening while keeping your remembered sidebars for the next launch.">
 </CaptureGallery>
 
-Clicking a row runs its action without moving keyboard focus away from the pane. The sidebar is not
-part of the normal `Tab` focus order.
+Clicking a row runs its action and leaves keyboard focus in the pane.
 
 ## Navigate a focused sidebar
 
@@ -75,8 +68,8 @@ After the `B` command key focuses the sidebar:
 With the mouse, drag the sidebar's outer edge to resize it, within the same 16 to 80 columns that
 `width` allows. Drag the divider between panels to change the split.
 
-Tab order, tab visibility, dock widths, and panel sizes are saved to `config.toml`, so they apply
-to every client.
+Tab order, tab visibility, dock widths, and panel sizes are saved to `config.toml` and apply to
+every client.
 
 ## Activity
 
@@ -92,22 +85,19 @@ agents = true
 
 An agent is anything the Agents tab lists: a coding agent rozi detects, or a program that reports
 or publishes its state as an agent; see
-[Activities and agents](control-protocol.md#activities-and-agents). Rows are grouped by
-the Git project that contains each pane's working directory, with branch and workspace context. A
-published row can name its own directory, so a program that runs several sessions in separate
-worktrees shows each one under its own branch. A linked Git worktree is labelled with its
-repository's name, and the branch beside it tells the checkouts apart: when several checkouts of one
-repository are listed, the repository name comes first in a narrow sidebar, and the branch
-shortens from its start, showing its end. A very long repository name shortens too, so the branch
-always keeps some room. A checkout with no branch shows its short commit.
+[Activities and agents](control-protocol.md#activities-and-agents). Rows are grouped by the Git
+project that contains each pane's working directory, with branch and workspace context. A published
+row can name its own directory, so a program that runs several sessions in separate worktrees shows
+each one under its own branch. A linked worktree is labelled with its repository's name and branch;
+a checkout with no branch shows its short commit.
 
 Each agent takes two lines: what it works on, with its workspace number on the right, then its
 state and how long it has held, such as `Working 9m22s`, followed by what the agent says it is
 doing.
 
-If you run many worktrees of one repository at once, set the tab's **Worktrees** setting to
-**By repository** to name each repository once, with a line per checkout's branch and its agents
-beneath. A repository with one checkout keeps its usual heading, its branch beside its name:
+To name each repository once, with a line per checkout's branch and its agents beneath, set the
+tab's **Worktrees** setting to **By repository**. The default, **Separate**, gives each checkout a
+section of its own:
 
 ```toml
 [sidebar.settings.activity]
@@ -124,28 +114,22 @@ rozi
   └ ⠋ Claude Code
 ```
 
-The default, **Separate**, gives each checkout a section of its own.
 Selecting a row focuses its pane. For a published row, it also asks the program to show that
 activity.
 
-When an agent runs more than once in one project, such as Claude Code with background sessions or
-in two panes, its runs are listed beneath one row for the agent, titled by what each works on, with
-its state and elapsed time beneath, such as `Working 9m22s`. A run with no title is named after its terminal title or the agent, numbered when two would read the
-same. The agent's row shows its most urgent run's state, and selecting it collapses or expands the
-runs. Collapsed, it counts its runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones
-out. When the runs are on different workspaces, each one shows its workspace number. Runs in a
-pane with no known directory are grouped only with other sessions in the same pane.
+When an agent runs more than once in one project, its runs are listed beneath one row for the
+agent, titled by what each works on, with its state and elapsed time beneath. The agent's row shows
+its most urgent run's state, and selecting it collapses or expands the runs. Collapsed, it counts its
+runs by state, such as `▲1 ⠋2 ✓1`, leaving idle ones out.
 
-A run that its program keeps behind the one it shows, such as a background session of Claude Code
-or another loaded Codex thread, has an italic title and `⧉` at the right of its second line.
-Focusing its pane does not show it; selecting the row does.
+A run that its program keeps in the background, such as a background session of Claude Code, has an
+italic title and `⧉` on its second line. Focusing its pane does not show it; selecting the row does.
 
 Each row shows `Blocked`, `Working`, `Done`, `Error`, or `Idle` in its configured status colour.
-Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour, so work waiting
-for you stands apart from work that failed. A finished run stays marked `Done` until you look at
-the agent: focus its pane or, for one of several sessions in a pane, switch to that session.
-Programs can report their own progress here; see [Program status](terminal.md#program-status). Agent state comes from the session server, so every
-attached client sees the same thing.
+Blocked rows use `▲` in the warning colour and failed ones `×` in the error colour. A finished run
+stays marked `Done` until you look at the agent: focus its pane or, for one of several sessions in
+a pane, switch to that session. Programs can report their own progress here; see
+[Program status](terminal.md#program-status).
 
 Activity covers the session on screen. For agents in other local sessions and on connected hosts,
 use the [Agents](#agents) tab or the [Agents view](sessions.md#go-to-an-agent) (`Ctrl+A`, then
@@ -178,35 +162,30 @@ backend                      migrate
 ```
 
 A heading names each machine once another machine has agents, `LOCAL` for this one. Beneath it,
-each checkout is a row named by its repository, with its branch on the right, shortened from its
-start when long. A repository's primary checkout comes first, then its worktrees by branch, and
-agents outside any Git checkout come last, under **Elsewhere**. Checkouts are listed by name, so they stay where they are while
-their agents work, wait, and finish.
+each checkout is a row named by its repository, with its branch on the right. A repository's primary
+checkout comes first, then its worktrees by branch, and agents outside any Git checkout come last,
+under **Elsewhere**.
 
 Within a checkout, agents waiting for you come first, then failed ones, then finished runs you have
-not looked at, then agents still working, then idle ones. When an agent runs more than once in one
-checkout, its runs are listed beneath one row for the agent, which shows its most urgent run's
-state.
+not looked at, then agents still working, then idle ones. An agent with several runs in one checkout
+lists them beneath one row that shows its most urgent run's state.
 
-A run is titled by the agent's task when it names one, such as the title of a session that Claude
-Code, Codex, or OpenCode lists, then by its terminal title, as in Activity, and by the agent's name
-otherwise; two runs that would read the same are numbered. The session it runs in is on the right; a long session name shortens before the title gets less
-than two thirds of the line. The second line gives the state, then
-the reason for it when the agent gave one, such as `Permission required`, then the agent's name
-when the run is titled by something else. In a narrow sidebar the agent's name goes first, then the reason
-shortens, and the state stays. Agents in a session this client holds, the one on screen or one in
-the background, also show a time beside their state: how long a working or blocked state has
-held, or how long a finished run took. A marker in the left margin shows the agent in the focused pane. As in Activity,
-a run its program keeps in the background has an italic title and `⧉` on its second line.
+A run is titled by the agent's task when it names one, then by its terminal title, then by the
+agent's name; runs that would read the same are numbered. The session it runs in is on the right.
+The second line gives the state, then the reason for it when the agent gave one, such as
+`Permission required`, then the agent's name when the run is titled by something else. Agents in a
+session this client holds also show a time beside their state: how long a working or blocked state
+has held, or how long a finished run took. A marker in the left margin shows the agent in the
+focused pane. As in Activity, a run its program keeps in the background has an italic title and `⧉`.
 
 A finished run reads `Done` with a filled `●` until you look at the agent: focus its pane, or for
-one of several sessions in a pane, switch to that session. It then reads as idle. Looking at an
-agent anywhere counts everywhere, whichever session or host it runs in. Runs that finished before
-rozi attached to a session or connected to a host do not read `Done`.
+one of several sessions in a pane, switch to that session. Looking at an agent anywhere counts
+everywhere, whichever session or host it runs in. Runs that finished before rozi attached or
+connected do not read `Done`.
 
 Select a checkout, or an agent with several runs, to fold it. A folded row counts the agents it
-hides by state, idle ones included, such as `▲1 ⠋2 ○1`, and its arrow takes the colour of the most
-urgent. It stays folded until you open it, whatever its agents do.
+hides by state, such as `▲1 ⠋2 ○1`, and its arrow takes the colour of the most urgent. It stays
+folded until you open it.
 
 Activating a run goes to that agent: it focuses the pane in the session on screen, and switches to
 or attaches the session first anywhere else. To go to the next agent that needs you without
@@ -215,9 +194,8 @@ looking for it, bind `focus-next-agent-needing-attention` (see
 the next agent that is waiting for you, failed, or finished a run you have not looked at, after the
 one on screen, in the [Agents view](sessions.md#go-to-an-agent)'s order.
 
-If you run many worktrees of one repository, set the tab's **Worktrees** setting to
-**By repository** to name each repository once, with a row per checkout's branch and its agents
-beneath, as in [Activity](#activity). The two tabs keep their own setting:
+The tab's **Worktrees** setting offers **By repository** too, as in [Activity](#activity); the two
+tabs keep their own setting:
 
 ```toml
 [sidebar.settings.agents]
@@ -253,9 +231,6 @@ connections that are unavailable. Stopped sessions with saved snapshots show `Re
 offline hosts' cached sessions show `Last seen`. When other clients share a session, their
 number follows its state, such as `Current · 󰍺 1`. Agent activity is shown separately.
 
-Session names belong to their host, so a local `dev` session and a remote `dev` session are
-separate rows.
-
 Remote hosts add these rows:
 
 - An offline host has a connect row.
@@ -266,8 +241,7 @@ Remote hosts add these rows:
   [Agents on a machine you are not in](remote.md#agents-on-a-machine-you-are-not-in).
 
 The last row, **+ Connect a host…**, opens the same prompt as `Ctrl+N` in **Sessions → Remote
-hosts**. rozi remembers a new host only after it connects successfully. A host is contacted only
-when you expand or connect it, not when you open the tab.
+hosts**. rozi remembers a new host only after it connects successfully.
 
 To kill a session, hover its row and click `x` twice, or select it in a focused sidebar and press
 `x` twice. Killing the session you are in leaves you in the session picker or the sessionless
@@ -281,27 +255,18 @@ and authentication.
 Files browses the focused pane's working directory. It follows focus and `cd`, and directories load
 when you expand them. rozi remembers which directories are expanded until the client exits.
 
-Files and Git follow the global `nerd_icons` setting. When enabled, they show colored file icons
-and Nerd Font Git marks, hide expansion arrows, and indent two cells per level. When disabled,
-they hide file icons, show Unicode expansion arrows and text Git marks, and indent one cell per
-level. Both modes use Branch guides. Unicode mode leaves one cell after guides or arrows; Nerd
-icon mode has no guide gap and leaves one cell between file icons and labels. File-icon colors
-come from the active theme's `file_icons` palette, and
-Unicode arrows use its muted color. Remove the old per-tab `icons` option from your configuration.
+Files and Git follow the global `nerd_icons` setting: on, they show colored file icons and Nerd
+Font Git marks; off, Unicode expansion arrows and text Git marks. File-icon colors come from the
+active theme's `file_icons` palette.
 
 Activating a file runs the tab's `on_click` action. By default, that types the path into the focused
 pane without pressing `Enter`.
 
-Ctrl+click a file or directory to insert its path into the focused pane without pressing `Enter`.
-Ctrl+Enter does the same for the selected entry while the tree has keyboard focus. This gesture
-always inserts the path, independently of a custom `on_click` action, and does not expand or
-collapse directories. Ordinary directory clicks still expand or collapse them. The shortcut is
-available in both Files and Git.
+Ctrl+click a file or directory, or press `Ctrl+Enter` on the selected entry, to insert its path into
+the focused pane without pressing `Enter`. This works in both Files and Git, whatever `on_click`
+is, and does not expand or collapse directories.
 
-A symlink shows its target, as in `guide-link.md → AGENTS.md`. The target is the link's own text,
-not a resolved path, and clicking the row acts on the link itself. With Nerd Font icons, a link to a
-directory has a linked-folder icon and a link to a file has a linked-file icon. A linked directory
-does not expand.
+A symlink shows its target, as in `guide-link.md → AGENTS.md`. A linked directory does not expand.
 
 Hidden entries, whose names start with a dot, appear dimmed in Files and Git. Turn off the tab's
 **Hidden files** setting to leave them out. Entries that Git ignores, such as a `target/` build
@@ -324,35 +289,28 @@ status markers and line-change counts when available. It always shows the whole 
 when the pane is in a subdirectory.
 
 When all of a directory's changes are inside one subdirectory, the two share a row, as in
-`src/view/sidebar`. Expanding or collapsing that row acts on the innermost directory. While
-you search the tab, every directory gets its own row again. Turn off the tab's **Compact
-directories** setting to always give each directory its own row.
+`src/view/sidebar`. Turn off the tab's **Compact directories** setting to always give each
+directory its own row.
 
-In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`, so the
-markers line up at the right edge. Nerd Font status symbols have a one-cell right margin to keep
-their full size; text markers have no added right margin.
+In Files and Git, line-change counts appear before the status markers, as in `+42 -11 M`.
 
-Instead of an empty tree, the tab says when the repository is clean, when the directory is not in a
-repository, when it is loading, or when changes are unavailable. In a remote session, `git` must be
-on the remote host's `PATH`.
+The tab says when the repository is clean, when the directory is not in a repository, when it is
+loading, or when changes are unavailable. In a remote session, `git` must be on the remote host's
+`PATH`.
 
-Files and Git update as files change, usually within a fraction of a second. File listings follow
-the directories you have open, and reopening a directory shows its current contents. Git status
-follows every tracked directory, open or not, so a file an agent edits under a collapsed directory
-still shows up as changed. It also refreshes when a command finishes. On a filesystem that does
+Files and Git update as files change. Git status follows every tracked directory, open or not, so a
+file an agent edits under a collapsed directory still shows up as changed. On a filesystem that does
 not report changes, such as some network mounts, or in a repository with more than 4,096 tracked
-directories, the tree rereads every five seconds instead. In a remote session, Files and Git
-refresh when a command finishes and every few seconds. Neither tab refreshes while hidden: hide the
-sidebar or switch every visible panel to other tabs and it stops.
+directories, the tree rereads every five seconds instead. In a remote session, both refresh when a
+command finishes and every few seconds. Neither refreshes while hidden.
 
 ## Worktrees
 
 Worktrees lists the Git worktrees of the focused pane's repository, on the host running that pane's
 session. A heading names the repository and host, with the checkouts beneath it. Each checkout is
-listed by branch, with PR/CI
-status underneath, such as `#114 · Passed` or `#112 · Merged`. Paths stay hidden; open the
-**Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in the left margin marks
-the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
+listed by branch, with PR/CI status underneath, such as `#114 · Passed` or `#112 · Merged`. Paths
+stay hidden; open the **Worktrees** picker to search by path or copy one with `Ctrl+C`. A bar in
+the left margin marks the checkout the focused pane is in. See [Read work status](worktrees.md#read-work-status) for
 GitHub setup and status meanings.
 
 The marker on the right shows whether a session was started from that checkout, using the same
@@ -370,20 +328,18 @@ markers as the [Sessions picker](sessions.md#use-the-session-picker):
 A number after the marker counts the sessions using the checkout. `Primary`, `Locked`,
 `Stale lock`, or `Prunable` appears to its left when it applies; see
 [Unlock a worktree](worktrees.md#unlock-a-worktree). When you hover a row, or select it in a focused
-sidebar, the right edge changes to what activating it does, in the accent colour: `open`, `switch`,
-`connect`, `attach`, `restore`, `choose`, `new session`, or `new pane`. A checkout you can remove
-also shows its `✕` beside that word; while the pointer is on the `✕`, the word is muted.
+sidebar, the right edge changes to what activating it does: `open`, `switch`, `connect`, `attach`,
+`restore`, `choose`, `new session`, or `new pane`. A checkout you can remove also shows its `✕`.
 
 Activating a checkout opens its session. If several sessions use it, you choose one. If none do,
 rozi creates a session whose first shell starts in the checkout.
 
 Ctrl+click, or `Ctrl+Enter` on the selected row, opens a shell in the checkout as a new pane of the
-current session instead. Pane placement follows the usual rules, and it needs a client that may
-change the layout. Set `[worktrees] sidebar_open = "pane"` to make a plain click open the pane, and
-Ctrl+click or `Ctrl+Enter` the session. Hold `Ctrl` while hovering or selecting a row and the word
-on its right edge changes to what Ctrl+click opens. This needs a terminal
-that reports physical modifier presses through the Kitty keyboard protocol; elsewhere Ctrl+click
-still works but the word does not change.
+current session instead; it needs a client that may change the layout. Set
+`[worktrees] sidebar_open = "pane"` to make a plain click open the pane, and Ctrl+click or
+`Ctrl+Enter` the session. Hold `Ctrl` while hovering or selecting a row and the word on its right
+edge changes to what Ctrl+click opens; this needs a terminal that reports modifier presses through
+the Kitty keyboard protocol.
 
 **+ New worktree** opens the new-worktree form. The checkout appears as `Creating…`, and its session
 opens when Git finishes.
@@ -395,9 +351,7 @@ the row asks once more before forcing the removal. A checkout with a stale lock 
 confirming it unlocks the checkout and removes it. The primary checkout, checkouts with any other
 lock, and checkouts a session uses have no `x`.
 
-The list follows the focused pane and refreshes along with the Git tab, so a checkout you add from
-a shell appears without further action. See [Worktrees](worktrees.md) for the picker, the CLI, and
-settings.
+See [Worktrees](worktrees.md) for the picker, the CLI, and settings.
 
 ## Projects
 
@@ -414,24 +368,15 @@ Projects lists every Git checkout any of your sessions works in — on this mach
 
 Each repository lists its checkouts by branch, the primary checkout first, and each checkout lists
 the sessions working in it. A session is listed under every checkout one of its panes or agents
-works in, so a session with panes in two repositories appears under both. A row's status glyph shows the
-most urgent agent below it: blocked, then failed, then a finished run you have not looked at,
-then working. Session rows show compact colored status counts, using the same static glyphs as
-collapsed Activity clusters. Ordinary idle agents are omitted. Collapsed checkout and repository
-rows show the combined counts of their agents; expanded parents leave those counts to their
-session rows. The leading working indicator animates. Sessions without agents show a pane count.
-When more than one machine has work, each machine gets a heading, `LOCAL` for this one.
+works in. A row's status glyph shows the most urgent agent below it: blocked, then failed, then a
+finished run you have not looked at, then working. Session rows show compact colored status counts,
+as collapsed Activity clusters do, leaving idle agents out; a session without agents shows a pane
+count. Collapsed checkout and repository rows show their agents' combined counts. When more than
+one machine has work, each machine gets a heading, `LOCAL` for this one.
 
-Sessions held by this client show connection states such as `Background` or `Reconnecting`.
-The current session is identified by its row highlight, without a `Current` label.
-Other running sessions omit the `Running` word.
-The activity glyph describes the most urgent agent, independently of the session's connection
-state. Saved restore snapshots do not add entries to Projects.
-
-The accent bar and subtle background mark the session row for the focused pane's checkout. Other
-appearances of the same session have neither. Collapsing its checkout or repository moves the
-marker to the nearest visible collapsed row. The stronger row background follows the keyboard
-selection while the sidebar is focused.
+Sessions held by this client show connection states such as `Background` or `Reconnecting`. The
+current session is marked by its row highlight. An accent bar marks the session row for the focused
+pane's checkout.
 
 Activating a session row keeps the focused pane when it already belongs to that checkout and
 session. Otherwise it goes to the most urgent agent working there, or to a pane there when none
@@ -440,18 +385,14 @@ row shows or hides what is under it.
 
 Projects lists where sessions work, not every checkout on disk; the [Worktrees](#worktrees) tab
 lists a repository's checkouts whether or not a session uses them. Panes outside a Git repository
-are not listed. With none to show, the tab reads `No sessions in Git`. If a remote host becomes
-unreachable, its heading shows its connection state while its unavailable work is hidden. Sessions
-still connected to this client remain listed, including those held in the background.
+are not listed; with none to show, the tab reads `No sessions in Git`. If a remote host becomes
+unreachable, its heading shows its connection state and its work is hidden, except sessions this
+client is still connected to.
 
 ### Expand and collapse
 
 Projects, [JSON command tabs](#json-command-tabs), and [stream tabs](#stream-tabs) are trees. Click
-the disclosure chevron beside a row to show or hide what is under it. These trees use the Files
-tab's compact guide style. Files and Git hide arrows when Nerd icons are enabled and use `▼`
-and `▶` otherwise. The other trees use Nerd Font chevrons when enabled, with the same Unicode
-arrows as a fallback.
-Status icons appear only on rows with a status to report. In a focused sidebar:
+the chevron beside a row to show or hide what is under it. In a focused sidebar:
 
 | Key | Action |
 | --- | --- |
@@ -468,10 +409,9 @@ rozi remembers which rows you expanded or collapsed until the client exits.
 </CaptureGallery>
 
 Open **Settings… → Bars → Sidebar tabs…** to choose which tabs appear. Search by name and press
-`Enter` to turn a tab on or off; the picker stays open so you can change several. A tab with
-[settings](#tab-settings) counts them beside its status, as in `Enabled · 5 settings`, and `Ctrl+E`
-opens them. A tab from an extension that is not loaded stays
-listed with a dash and keeps its place for when it returns.
+`Enter` to turn a tab on or off. A tab with [settings](#tab-settings) counts them beside its status,
+as in `Enabled · 5 settings`, and `Ctrl+E` opens them. A tab from an extension that is not loaded
+stays listed with a dash and keeps its place.
 
 Arrange tabs by dragging them, or with the focused-sidebar keys above. Drop a tab on another
 panel's body to add it at the end, or on its tab bar to choose its position. A tab you turn off and
@@ -479,8 +419,6 @@ on again returns to where it was.
 
 When extensions provide presets, **Settings… → Bars → Sidebar layout preset…** offers them alongside
 the default layout.
-Highlighting a preset leaves the workspace unchanged; Enter applies it and Escape cancels. Presets
-are starting configurations, so later edits remain yours.
 
 ```toml
 [sidebar]
@@ -497,8 +435,7 @@ tab_style = "padded"
 ```
 
 The `layout` value can also be written as nested TOML tables. Reducing a dock's panel count moves
-the extra tabs into its last panel, and raising it again restores them. On a narrow terminal the
-docks shrink to leave room for your panes, without changing their saved widths.
+the extra tabs into its last panel, and raising it again restores them.
 
 `background_follows_canvas`, `gap`, `background`, and `tab_style` set the look of both docks.
 
@@ -508,25 +445,15 @@ custom tab syntax. A complete example is in [`examples/sidebar.toml`](../example
 ### Tab settings
 
 Activity, Agents, Files, Git, Worktrees, and extension tabs that offer them have settings of their own. In
-**Sidebar tabs…**, highlight the tab and press `Ctrl+E` to open its settings. Each row shows a
-setting's current value:
-
-| Setting | Enter |
-| --- | --- |
-| `Enabled` or `Disabled` | Switches it |
-| A choice, such as **Root** | Lists the values; `Enter` applies one |
-| A set, such as **Delete branch on remove** | Lists the members; `Enter` switches one and the list stays open |
-| A number or text | Asks for the value; a number outside its range is refused |
-
-`Ctrl+R` puts the highlighted setting back to its default. Each change is saved to `config.toml`
-and takes effect at once; `Esc` returns to **Sidebar tabs…**.
+**Sidebar tabs…**, highlight the tab and press `Ctrl+E` to open its settings. `Ctrl+R` puts the
+highlighted setting back to its default. Each change is saved to `config.toml` and takes effect at
+once.
 
 A built-in tab's settings are saved in `[sidebar.settings.<tab>]`; see
 [Built-in tab settings](configuration.md#built-in-tab-settings) for the keys. Worktrees has one,
 **Delete branch on remove**, which is `[worktrees] delete_branch`, shared with the removal picker and
-the CLI. An extension tab's
-settings are the extension's own, saved in `[extensions.<id>]`, and the picker names the extension
-in its header. Changing one restarts the extension's services, as editing the file would.
+the CLI. An extension tab's settings are the extension's own, saved in `[extensions.<id>]`; changing
+one restarts the extension's services.
 
 ## Custom tabs
 
@@ -557,24 +484,16 @@ heading. For example, a tab that starts an agent in a project, grouped by agent:
 ### Command tabs
 
 A command tab runs its command when the tab becomes visible, then again at its configured
-interval. The interval is at least five seconds. Each run is limited to:
-
-- a five-second timeout
-- 64 KiB of combined output
-- 500 rows
-- 4096 characters kept per row
-- 160 characters displayed per row
-
-rozi strips terminal control sequences from the output. A command that fails to start, times out,
-writes to standard error, or exits non-zero shows non-clickable error rows.
+interval. The interval is at least five seconds. Each run has a five-second timeout and is limited
+to 64 KiB of output and 500 rows; a row keeps 4096 characters and shows 160. rozi strips terminal
+control sequences. A command that fails to start, times out, writes to standard error, or exits
+non-zero shows non-clickable error rows.
 
 To group the output, set `group_prefix`. Each output line that starts with the prefix becomes a
-heading showing the rest of the line, with the lines after it beneath it. A line that is only the
-prefix is dropped. Headings cannot be selected. `group_prefix` applies only to command tabs; launcher tabs use `group`.
+heading showing the rest of the line, with the lines after it beneath it. Headings cannot be
+selected. Launcher tabs use `group` instead.
 
-A command tab runs in the focused pane's working directory, so it describes the project you are
-working in and runs again when you `cd`. If the tab was off screen while you changed directory, it
-shows its placeholder until the new result arrives, not the previous project's rows. With
+A command tab runs in the focused pane's working directory and runs again when you `cd`. With
 `--remote`, the pane's directory is on the server, so the tab runs in the client's own directory.
 
 ### JSON command tabs
@@ -607,15 +526,12 @@ of one row per line. Rows can nest, carry a state, and say more than a line of t
 | `expanded` | Whether the row starts expanded. Your own choice wins once you make one. |
 | `heading` | Shows a top-level row as a section heading, with its rows always open beneath it. A heading cannot be activated, and its `description` sits at the right edge. |
 
-A row with children starts expanded unless it says otherwise. A collapsed row tints its arrow with
-the most urgent state among the rows it hides. Activating a row runs the tab's
+A row with children starts expanded unless it says otherwise. Activating a row runs the tab's
 `on_click` with the row's `id` in `ROZI_ROW_ID` and its label as the row text, so `send` may use
 `{line}` for the label. Without `on_click`, activating a row with children shows or hides them.
 
-The same limits apply as for line output, and unknown fields are ignored. Output that is not such
-an object, a command that fails, or one that writes to standard error shows error rows instead.
-rozi strips control sequences and shortens long text. A command tab cannot use `group_prefix`
-with `format = "json"`; nest rows with `parent` instead.
+The same limits and error rows apply as for line output, and unknown fields are ignored. A command
+tab cannot use `group_prefix` with `format = "json"`; nest rows with `parent` instead.
 
 ### Stream tabs
 
@@ -657,17 +573,15 @@ in your `config.toml`.
 | `send` | File tree | `{path}` in the text is replaced with the path |
 | `run`, `popup` | File tree | `ROZI_FILE` environment variable |
 
-`{line}` is the row after control sequences are stripped, sent literally — rozi does not quote or
-evaluate it. `{line}` is rejected in `run` and
+`{line}` is sent literally — rozi does not quote or evaluate it — and is rejected in `run` and
 `popup`. When passing `ROZI_ROW` or `ROZI_FILE` to another program, quote it as `"$ROZI_ROW"` or
 `"$ROZI_FILE"`. A row is command output and must never be used to build a command line.
 
 ### Extension sidebar tabs
 
 Extensions add tabs with `[[sidebar_tabs]]` in their manifest, using the same launcher, command, and
-stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel. Your saved placement takes precedence and survives
-disablement, failed loads, updates, removal, and reinstallation. An extension tab can offer some of
-the extension's settings in [Tab settings](#tab-settings). See
+stream forms. Their ids are `<extension>.<name>`. They may suggest an initial dock and panel; your saved placement takes precedence. An extension tab
+can offer some of the extension's settings in [Tab settings](#tab-settings). See
 [Extensions](writing-extensions.md#sidebar-tabs).
 
 ### Security
@@ -677,7 +591,5 @@ configuration as executable code, and treat command output and filenames as untr
 
 ## Shared sessions
 
-The sidebar's visibility, tabs, panels, selection, and cached data belong to each client. In a
-[shared session](shared-sessions.md), the controller's sidebar still narrows the shared terminal
-width, because the controller sets the size of the pane area everyone sees. A follower's sidebar
-does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).
+In a [shared session](shared-sessions.md), the controller's sidebar narrows the shared terminal
+width. A follower's sidebar does not resize shared panes. See [Shared sessions](shared-sessions.md#terminal-size).

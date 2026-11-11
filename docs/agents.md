@@ -17,8 +17,6 @@ rozi ships definitions for common agent CLIs in
 to `config.toml` when rozi does not recognize a tool, or override a built-in when its screen rules do
 not match the version you run.
 
-Every client attached to a session sees the same agent label and state.
-
 **Focus next blocked pane** jumps to the next pane waiting for input, across workspaces. The command
 palette lists it only while a pane other than the focused one is blocked.
 
@@ -62,13 +60,12 @@ also reports from remote panes and from sessions with no window attached, as lon
 host runs the same rozi version.
 
 The plugin reports only for a Codex client started with `codex --no-daemon`. By default Codex runs
-its threads in a shared background server, which also runs their hooks, outside any pane, so they
-cannot reach rozi. For those clients, use the [codex-rozi-sessions](#codex-threads) extension,
-which reads each thread's state from the background server.
+its threads in a shared background server whose hooks cannot reach rozi. For those clients, use the
+[codex-rozi-sessions](#codex-threads) extension.
 
 The plugin reports one activity for the thread on screen. After `/resume`, the pane picks up the
-resumed thread once you send it a prompt. See the plugin README for the event mapping, checkout installation, and verification
-steps.
+resumed thread once you send it a prompt. See the plugin README for the event mapping, checkout
+installation, and verification steps.
 
 ## Add an agent
 
@@ -126,10 +123,8 @@ built-in's [native resume](#declare-native-resume-support) setting unless you se
 Match text that belongs to the tool's live controls, not text that can also appear in its
 transcript. Footer scope is usually safer for live status text.
 
-rozi reports config warnings for invalid ids, definitions without a process match, unknown states,
-empty pattern groups, invalid regular expressions, rules that set both `screen` and `title`, and
-invalid `scope` or `resume` values. An invalid rule is dropped and the rest of the definition still
-loads. An invalid definition is dropped as a whole.
+rozi reports a config warning for an invalid definition or rule. An invalid rule is dropped and the
+rest of its definition still loads; an invalid definition is dropped as a whole.
 
 In a [shared session](shared-sessions.md), only the controlling client's reload updates the running
 session. After updating rozi, restart running sessions to pick up its new built-in definitions.
@@ -185,9 +180,7 @@ Use `outranks_reports` only for a dialog no hook announces, whose text can't app
 on the same lines. A wrong match refuses prompts on a healthy agent.
 
 `scope = "footer"` reads only the last eight non-empty lines of the screen. Use it for spinners,
-interrupt hints, and prompt controls that may also appear in transcript text. An unrecognized
-`scope` value falls back to `all` with a warning, and `scope` on a `title` rule is ignored with a
-warning.
+interrupt hints, and prompt controls that may also appear in transcript text.
 
 A pattern group accepts:
 
@@ -198,8 +191,8 @@ A pattern group accepts:
 | `none_of` | No listed pattern may match. |
 | `regex` | Treat all patterns in this group as regex-lite expressions. Defaults to `false`. |
 
-A group needs at least one `all_of` or `any_of` pattern. A group with only `none_of` is rejected,
-because it would match any unrelated screen that lacks the text. Empty patterns are rejected.
+A group needs at least one `all_of` or `any_of` pattern; a group with only `none_of`, or an empty
+pattern, is rejected.
 
 Matching ignores case, so write literal patterns as the tool displays them. Regex patterns run
 against lowercased text and do not need a case-insensitive flag.
@@ -220,8 +213,8 @@ subagent view that hides the tool's usual status area. rozi keeps the last obser
 reporting idle. If nothing confirms that state for a while, it eventually returns to idle.
 
 When an agent starts, rozi reports a `working` screen as idle until the agent shows that it is
-ready. Many tools show a loading spinner at startup. Without this, each launch would look like a run
-that finished a moment later. The agent counts as ready when any of these happens:
+ready, so a loading spinner at startup does not look like a run. The agent counts as ready when any
+of these happens:
 
 - It shows a `blocked` screen, such as a trust prompt. rozi reports that immediately.
 - Its loading spinner is gone, and its prompt has stayed up for 2 seconds.
@@ -229,18 +222,13 @@ that finished a moment later. The agent counts as ready when any of these happen
 - 8 seconds have passed since it started.
 
 If the agent is still working when the 8 seconds end, such as when you pass a prompt on the command
-line, rozi reports it as working from then on.
-
-A restarted agent process starts this again, even under the same name. rozi treats it as a new
-agent, so a run that was in progress when the old process stopped is not reported as finished.
+line, rozi reports it as working from then on. A restarted agent process starts this again.
 
 ### Common rules
 
 With `base = true`, rozi also applies common rules for approval text, yes/no questions, trust
 prompts, choice dialogs, braille spinners, and interrupt hints. They follow the same precedence as
-your own rules, so adding a `working` rule does not override a common `blocked` rule. Screen spinners
-match one or two braille glyphs followed by whitespace or the end of a line. Longer runs of braille
-cells in artwork do not count as working.
+your own rules, so adding a `working` rule does not override a common `blocked` rule.
 
 Set `base = false` when the tool's transcript often quotes that kind of text and causes false
 states. Then define the working and blocked rules the tool needs yourself.
@@ -274,9 +262,8 @@ argv = ["mca", "--resume", "{session}"]
 ```
 
 `argv` must not be empty or contain empty strings. `{session}` must appear exactly once, as a whole
-argument, and not as the program. rozi puts the session reference directly into the argument list
-without a shell, so spaces and shell characters in it stay literal. An invalid `resume` is ignored
-with a warning, and the agent's detection rules still work.
+argument, and not as the program. The reference is passed without a shell. An invalid `resume` is
+ignored with a warning, and the agent's detection rules still work.
 
 Some agents refuse to resume a conversation that is still running elsewhere and offer another
 command to reach it. Declare that command as `attach`:
@@ -306,8 +293,7 @@ reported = ["codex", "resume", "--no-daemon", "{session}"]
 An override of a built-in inherits the built-in's resume command when `resume` is omitted. Set
 `resume = false` on the `[[agents]]` entry to turn native resume off. `resume = true` is not valid.
 
-rozi reads `argv` when the session is restored, so a change also applies to sessions saved
-earlier. See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore does.
+See [Sessions](sessions.md#reopen-an-agent-conversation) for what restore does.
 
 ## Inspect and wait for agents
 
@@ -323,22 +309,18 @@ rozi --here agents prompt --target 3 --wait turn --timeout 10m --capture text "F
 
 `rozi agents --help` lists every subcommand and flag, including `report` and `release`, which
 `rozi --help` shows only with `--advanced`. A help flag anywhere after `agents` prints help instead
-of running the command, so it is never sent as prompt text.
+of running the command.
 
 Each row from a publisher that declared itself an agent (`rozi publish --kind agent`) is its own
-agent in `list`, with that row's own `cwd` and `native_session` when it names them. Activities are
-not listed: a `rozi status` in a pane with no detected agent, and rows from any other publisher,
-appear only in the sidebar's Activity tab. See
+agent in `list`, with that row's own `cwd` and `native_session` when it names them. Activities, such
+as a `rozi status` in a pane with no detected agent, appear only in the sidebar's Activity tab. See
 [Activities and agents](control-protocol.md#activities-and-agents).
 
 Target an agent by pane id with `--target`, or by the exact agent with `--ref '<json>'`. A bare pane
-id, as in `agents get 3`, is refused. When a pane publishes agent rows, such as a client showing one
-conversation while others run in the background, `--target` names the row on screen, and
-`list-panes` reports that one. When several windows each show a row, `--target` names the first
-active one, the same row session restore resumes. A row that is not on screen, even the only one,
-is reached with `--ref`. When the client marks none of its rows as on screen, `--target` is refused, and
-`read` and `prompt` refuse every row's `--ref` too, since rozi cannot tell which conversation typed
-text would reach. `list` and `get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
+id, as in `agents get 3`, is refused. When a pane publishes agent rows, `--target` names the row on
+screen (the first active one when several clients mark one), and a row that is not on screen is reached with `--ref`. When none of the rows is marked on
+screen, `--target` is refused, and `read` and `prompt` refuse every row's `--ref` too. `list` and
+`get` include an opaque `ref` in JSON output. Passing it back limits the command to that one run of
 the agent, so a replacement started in the same pane does not receive it.
 
 JSON output also gives each agent's `reason` for its state, the `task` its published row names, and
@@ -346,11 +328,10 @@ JSON output also gives each agent's `reason` for its state, the `task` its publi
 reads learns that a run ended even if it never saw the agent working.
 
 For agent automation, discover agents with `rozi --here agents list --format json`, save the
-chosen `ref`, and keep using `--ref` for subsequent operations. To react when an agent starts,
-blocks, or finishes instead of polling, subscribe to the
-[`agent-state-changed`](hooks.md#events-and-fields) event, which carries the same `ref`. `rozi context --format json`
-verifies your own pane and session independently of the session currently on screen.
-See [caller context](control.md#verify-caller-context).
+chosen `ref`, and keep using `--ref`. To react when an agent starts, blocks, or finishes instead of
+polling, subscribe to the [`agent-state-changed`](hooks.md#events-and-fields) event, which carries
+the same `ref`. `rozi context --format json` verifies your own pane and session; see
+[caller context](control.md#verify-caller-context).
 
 ### Every agent, everywhere
 
@@ -375,10 +356,9 @@ Both need a running rozi; a session server knows only its own agents.
 
 ### Wait for a state
 
-`agents wait` and `agents prompt` run in the session server, so a wait cannot miss a change that
-happens between reading the agent and starting to wait. With `--session`, they work while no client
-is attached. From inside a UI pane, or with `ROZI_SOCKET`, the UI passes them to the session on
-screen, or to the session a `--ref` names.
+With `--session`, `agents wait` and `agents prompt` work while no client is attached. From inside a
+UI pane, or with `ROZI_SOCKET`, they go to the session on screen, or to the session a `--ref`
+names.
 
 `--timeout` is required for `agents wait`, and for `agents prompt` with `--wait`.
 
@@ -388,18 +368,16 @@ and `gone`. An agent that finishes a turn is `done` until you look at its pane, 
 `error`. The answer names the state the agent reached, and a timeout names the state it was left in.
 
 Waiting on a pane whose agent has not been detected yet, such as one you just opened with `split`,
-waits for the agent to appear. `gone` answers at once for a pane with no agent. Errors distinguish a
-gone agent, a replacement agent, a stale reference, and a timeout. Use `--format json` for stable
-responses and error codes.
+waits for the agent to appear. `gone` answers at once for a pane with no agent. Use `--format json`
+for stable responses and error codes.
 
 ### Send a prompt safely
 
-Through a UI, `agents prompt` types with that UI's authority, as its keyboard does: a read-only UI
-cannot prompt, and under an input lock only the controlling UI can. With `--session`, an input lock
-refuses every prompt.
+Through a UI, `agents prompt` types with that UI's authority: a read-only UI cannot prompt, and
+under an input lock only the controlling UI can. With `--session`, an input lock refuses every
+prompt.
 
-`agents prompt` checks the agent's state, sets up any `--wait`, and submits the text followed by
-`Enter` as one operation, so a fast run cannot finish unobserved between sending and waiting. It
+`agents prompt` submits the text followed by `Enter` and sets up any `--wait` as one operation. It
 never types into a blocked agent, which could answer an approval dialog. It also refuses a working
 agent unless you pass `--allow-working`.
 
@@ -421,8 +399,8 @@ and reason, and `result`:
 ```
 
 The capture is taken when the wait resolves. It is terminal content, including prompts, chrome,
-and earlier output visible on screen. It is not an extracted assistant message. Capture requires
-a wait other than `gone`. Timeouts, lost agents, replacements, and stale references remain errors.
+and earlier output visible on screen, not an extracted assistant message. Capture requires a wait
+other than `gone`.
 
 ### Read the agent's response
 
@@ -440,17 +418,15 @@ optional `turn_id`, `text`, `source`, `fidelity`, `complete`, and `truncated`.
 response as complete. `--capture` and `--result` can be combined.
 
 An integration response takes priority. When none is available at the end of an idle or completed
-turn, rozi reads the agent's terminal with `source: "terminal"`. On the normal screen this is the
-retained terminal history, which can include earlier turns and interface text. An agent that draws
-on the alternate screen keeps no terminal history, so rozi scrolls its transcript to read it, as
-described below. When that is not possible, the response is the visible screen as it was when the
-turn ended. A `terminal` response always has `complete: false`.
+turn, rozi reads the agent's terminal with `source: "terminal"`: on the normal screen, the retained
+terminal history, which can include earlier turns and interface text; for an agent that draws on the
+alternate screen, its transcript, read as described below; failing that, the visible screen as it
+was when the turn ended. A `terminal` response always has `complete: false`.
 
-To read an alternate-screen transcript, rozi sends mouse-wheel events to the agent and reads each
-page, then scrolls back to where it started. It does this when the agent is idle or done, mouse
-reporting is enabled, and the transcript is at its bottom: rozi first scrolls down once, and if the
-screen moves, it scrolls back and returns the visible screen instead. Opt an agent out when its
-mouse wheel does anything other than scroll the transcript:
+To read an alternate-screen transcript, rozi sends mouse-wheel events to the agent, reads each page,
+then scrolls back to where it started. It does this when the agent is idle or done, mouse reporting
+is enabled, and the transcript is at its bottom. Opt an agent out when its mouse wheel does anything
+other than scroll the transcript:
 
 ```toml
 [[agents]]
@@ -458,34 +434,22 @@ id = "mycoolagent"
 history = "none"
 ```
 
-An agent that has opted out is never sent input to read its history. A built-in override keeps the
-built-in's setting when `history` is omitted. A successful read has
-`source: "alternate-screen-history"` and `fidelity: "rendered"`. It leaves out scrollbars and the
-rows the agent keeps in place above its transcript, such as a pinned prompt; status rows between
-the transcript and the input box can remain. `complete: true` means all history reachable by
-scrolling was read and the original viewport was restored; it does not identify one assistant
-turn. A read that runs out of time, or reaches a page it cannot line up with the previous one,
-returns the newest part of the transcript with `complete: false`. Unsupported terminals and failed
-restoration return the visible screen instead. rozi never resizes a pane to collect its history.
+A built-in override keeps the built-in's setting when `history` is omitted. A successful read has
+`source: "alternate-screen-history"` and `fidelity: "rendered"`. It leaves out scrollbars and
+pinned rows such as a pinned prompt. `complete: true` means all history reachable by scrolling was
+read; it does not identify one assistant turn. A read that runs out of time, or reaches a page it
+cannot line up with the previous one, returns the newest part of the transcript with
+`complete: false`. Unsupported terminals and failed restoration return the visible screen instead.
+rozi never resizes a pane to collect its history. Typing or resizing cancels the read, concurrent
+agent prompts and headless input requests receive a busy error, and reading is bounded to ten
+seconds. `--capture` still captures the terminal when the turn resolves, before any scrolling.
 
-Typing or resizing cancels the read. Input and resize requests wait for restoration, then run in
-order, so resizing away and back ends at the original size. Screen detection holds its last state
-while rozi scrolls, and attachment uploads that reach the pane then are refused. Concurrent agent
-prompts and headless input requests receive a busy error. Reading is bounded to ten seconds, and
-scrolling back may take as long again plus three seconds; a prompt deadline can stop it sooner. A
-manually scrolled transcript is restored to its starting position, and the response is its visible
-screen.
-`--capture` still captures the terminal when the turn resolves, before any scrolling.
-
-A prompt only returns an integration response published after that prompt was submitted for the same agent
-incarnation and native conversation. Switching conversations while waiting fails the request.
-Result requests refuse a working agent even with `--allow-working`, and overlapping prompt waits
-with a result request are refused. A blocked or failed turn may have no response. In that case JSON omits `response`
-and text output says it is unavailable. `agents response` returns the latest retained response,
-or JSON `null` when none exists. Responses are temporary and do not survive a session restart.
-Each response accepts at most 1 MiB of text. Oversized reports fail explicitly. Normal terminal
-history is truncated at a UTF-8 boundary with `truncated: true`; oversized alternate-screen history
-returns its newest part with `complete: false`.
+A prompt only returns an integration response published after that prompt was submitted. Result
+requests refuse a working agent even with `--allow-working`. A blocked or failed turn may have no
+response; JSON then omits `response` and text output says it is unavailable. `agents response`
+returns the latest retained response, or JSON `null` when none exists. Responses do not survive a
+session restart. Each response is limited to 1 MiB; terminal history is truncated with
+`truncated: true`.
 
 ### Report state from agent hooks
 
@@ -518,28 +482,24 @@ response text in command-line arguments. Sources are `native-hook`, `native-api`
   it returns the pane to screen detection.
 - A hook that can't know another report will follow, because a later hook can stop the turn, adds
   `--unless-quiet idle`, `done`, or `error` to `--state working`. The pane follows screen detection
-  until it reads the agent as idle, then falls to that state, with `--reason` as its reason. So a
-  dialog reads `blocked` in the meantime. The next report replaces it either way. This applies to a
-  report that owns the pane, when the pane lists no agent rows.
+  until it reads the agent as idle, then falls to that state, with `--reason` as its reason. The next
+  report replaces it either way. This applies to a report that owns the pane, when the pane lists no
+  agent rows.
 - `--unless-quiet done` is for a hook that says the turn may have ended, when another hook can still
   send it on or a dialog can open next. The state becomes `done` about two seconds after the screen
-  goes quiet, or `blocked` while a dialog is up, so another hook still running holds it back if the
-  agent's screen shows that. With no screen to read, such as a report for an agent row or a pane
-  listing agent rows, it stays `working` until a report adds `--ended`.
+  goes quiet, or `blocked` while a dialog is up. With no screen to read, such as a report for an
+  agent row, it stays `working` until a report adds `--ended`.
 - Add `--ended` to `--unless-quiet` once the agent has confirmed the turn ended in that state. With
-  no screen to read, the state changes at once. When there is a screen, it still decides, because a
-  dialog can open after a turn ends.
+  no screen to read, the state changes at once; otherwise the screen still decides.
 - When the pane also publishes agent rows, a report drives only the row whose conversation matches
   `--native-session`; the other rows stay listed as published.
 - One token owns the pane. Hooks for a conversation running in the background can still report for
   that conversation's row with their own token.
 
 Inside a rozi pane without `--session`, an omitted `--target` means the calling pane
-(`ROZI_PANE`). This also works in a remote pane and in a session with no window attached: the report
-goes to the session the pane runs in, which keeps it for every window that attaches, now or later.
-With `--session`, always pass `--target`, because an inherited pane number may belong to a different
-session. Reports always reach the session the pane belongs to, even after you switch the window to
-another session.
+(`ROZI_PANE`), also in a remote pane and in a session with no window attached. With `--session`,
+always pass `--target`, because an inherited pane number may belong to a different session. Reports
+always reach the session the pane belongs to, even after you switch the window to another session.
 
 ## Publish state instead of reading the screen
 
@@ -561,16 +521,12 @@ An agent publisher can include a `responses` array beside `rows` in an update:
 {"rows":[{"id":"review","title":"Review","status":"done","native_session":"session-1"}],"responses":[{"id":"review","seq":1,"response":{"text":"No issues found.","source":"native-api","fidelity":"semantic","complete":true,"turn_id":"turn-1"}}]}
 ```
 
-Each response names a row in that same update. Increase `seq` for each response to that row
-within the stream. Replayed sequences are ignored. Publish completion and its response together,
-so `agents prompt --result` can read the answer as soon as its wait resolves. Activity publishers
+Each response names a row in that same update. Increase `seq` for each response to that row;
+replayed sequences are ignored. Publish completion and its response together, so
+`agents prompt --result` can read the answer as soon as its wait resolves. Activity publishers
 cannot publish agent responses. An update carries at most 64 responses, each text at most 1 MiB, and
-4 MiB of responses in total. The server accepts the rows and every response together or rejects
-the whole update, so spread responses for multiple rows across updates and truncate a single
-response to 1 MiB. Rows whose ids are changed by cleaning, or that fall past the 64-row limit,
-cannot own a response, and the update is rejected. A response that could not reach the session
-is sent again with the publisher's next update and after a reconnect, for as long as its row keeps
-the status and `native_session` it had. See [writing extensions](writing-extensions.md) for stream ownership.
+4 MiB in total; the server accepts the rows and every response together or rejects the whole
+update. See [writing extensions](writing-extensions.md) for stream ownership.
 
 `rozi status` and a plain `rozi publish` report activities, not agents. Their rows appear in
 Activity, but not in the Agents view or `rozi agents`, and they do not keep the host awake. A
@@ -590,9 +546,9 @@ directory and native conversation ID. Selecting a row switches OpenCode to that 
 UI API. Child sessions contribute to their parent's activity, and pending permissions or input
 forms keep the relevant row blocked.
 
-Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi pane. Clients
-sharing a server each publish their own tab list. With OpenCode tabs disabled, only the viewed
-root session appears. See the plugin README for installation, lifecycle, and host requirements.
+Install it in OpenCode's `cli.json` so it runs in the client that owns the rozi pane. With OpenCode
+tabs disabled, only the viewed root session appears. See the plugin README for installation,
+lifecycle, and host requirements.
 
 The custom `opencode-tui` client publishes its own rows and does not need the plugin.
 
@@ -630,7 +586,6 @@ The extension covers local panes on Linux and macOS whose Codex client uses the 
 which is Codex's default; the [Codex hook plugin](#integrate-codex-hooks) does not report for
 them.
 
-The extension knows which thread a client shows from the pane's title. Add the thread ID to it
-once: in Codex, run `/title`, select `thread-id`, and save. Without it, two threads with the same
-name, which Codex gives threads started with similar prompts, leave the extension unable to tell
-which one is on screen, and `rozi agents read` and `prompt` refuse to target either of them.
+Add the thread ID to the pane title once so the extension can tell threads with the same name
+apart: in Codex, run `/title`, select `thread-id`, and save. Without it, `rozi agents read` and
+`prompt` refuse to target either of two same-named threads.

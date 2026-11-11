@@ -93,7 +93,7 @@ exclude = [
 # dragged carries its cursor without a trail; wrapped text starts continuation rows with a word.
 # 0.40.2: `Context::skip_cursor_trail`, so a workspace or session switch draws no trail.
 # 0.41.0: `CursorTrailSettle`, and a cursor jump along one line trails at once.
-tui-lipan = { version = "0.42.1", features = [
+tui-lipan = { version = "0.43.0", features = [
   "terminal",
   "terminal-images",
   "terminal-serde",
@@ -243,6 +243,7 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
+  "Wdk_System_Threading",
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",

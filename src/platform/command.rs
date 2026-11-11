@@ -213,6 +213,24 @@ pub(crate) fn run_bounded_command(
     run_observed_command(command, input, timeout, capture_limit, None, None)
 }
 
+/// As [`run_bounded_command`], for a command that may ask its question on this process's
+/// controlling terminal, as `ssh` does for a host key or a password.
+///
+/// A bounded command runs in a process group of its own, so that everything it starts can be
+/// stopped with it. A terminal belongs to one foreground group at a time, and the kernel stops any
+/// other group that reads from it or changes its settings: the command would sit stopped behind a
+/// prompt that was never drawn. This lends the terminal to the command's group while it runs and
+/// takes it back afterwards, the way a shell runs a foreground job. Only a caller that is itself in
+/// the foreground lends anything, so a background run still gets no prompt.
+pub(crate) fn run_bounded_terminal_command(
+    command: &mut std::process::Command,
+    input: Option<Box<dyn std::io::Read + Send>>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput> {
+    run_grouped_command(command, input, timeout, capture_limit, None, None, true)
+}
+
 fn run_observed_command(
     command: &mut std::process::Command,
     input: Option<Box<dyn std::io::Read + Send>>,
@@ -220,6 +238,26 @@ fn run_observed_command(
     capture_limit: usize,
     observer: Option<OutputObserver>,
     stop: Option<&CommandStop>,
+) -> std::io::Result<CommandOutput> {
+    run_grouped_command(
+        command,
+        input,
+        timeout,
+        capture_limit,
+        observer,
+        stop,
+        false,
+    )
+}
+
+fn run_grouped_command(
+    command: &mut std::process::Command,
+    input: Option<Box<dyn std::io::Read + Send>>,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+    observer: Option<OutputObserver>,
+    stop: Option<&CommandStop>,
+    lend_terminal: bool,
 ) -> std::io::Result<CommandOutput> {
     use std::io::Read;
     use std::process::Stdio;
@@ -242,6 +280,8 @@ fn run_observed_command(
             return Err(error);
         }
     };
+    // Held until the command is reaped or killed, then the terminal comes back to this process.
+    let terminal = lend_terminal.then(|| TerminalLoan::to(&group)).flatten();
     let sender = input.map(|mut input| {
         let mut stdin = child.stdin.take().expect("piped stdin");
         std::thread::spawn(move || std::io::copy(&mut input, &mut stdin))
@@ -282,6 +322,9 @@ fn run_observed_command(
                 group.terminate(&mut child);
                 return Err(error);
             }
+        }
+        if let Some(terminal) = &terminal {
+            terminal.follow_stops(&child);
         }
         if started.elapsed() >= timeout {
             group.terminate(&mut child);
@@ -466,6 +509,174 @@ impl CommandGroup {
         }
         child.wait().map(Some)
     }
+}
+
+/// The controlling terminal, lent to a command's process group for as long as this lives.
+///
+/// Dropping it makes this process's group the terminal's foreground group again and puts the
+/// terminal's settings back, so a command killed halfway through a hidden-input prompt does not
+/// leave the terminal without echo.
+#[cfg(unix)]
+struct TerminalLoan {
+    tty: std::fs::File,
+    owner: libc::pid_t,
+    borrower: libc::pid_t,
+    settings: Option<libc::termios>,
+    /// False while this process is suspended with its command, or continued in the background,
+    /// and the terminal is not lent.
+    lent: std::cell::Cell<bool>,
+}
+
+#[cfg(unix)]
+impl TerminalLoan {
+    /// Lend the terminal to `group`. `None` when there is no controlling terminal or this process
+    /// is not its foreground group, in which case the terminal is not this process's to lend.
+    fn to(group: &CommandGroup) -> Option<Self> {
+        use std::os::fd::AsRawFd;
+        let tty = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .ok()?;
+        let fd = tty.as_raw_fd();
+        let owner = unsafe { libc::getpgrp() };
+        if unsafe { libc::tcgetpgrp(fd) } != owner {
+            return None;
+        }
+        let settings = unsafe {
+            let mut settings: libc::termios = std::mem::zeroed();
+            (libc::tcgetattr(fd, &mut settings) == 0).then_some(settings)
+        };
+        if unsafe { libc::tcsetpgrp(fd, group.0) } != 0 {
+            return None;
+        }
+        Some(Self {
+            tty,
+            owner,
+            borrower: group.0,
+            settings,
+            lent: std::cell::Cell::new(true),
+        })
+    }
+
+    /// Act on a stop of the command the terminal is lent to, the way a shell treats its job.
+    /// Called on every pass of the wait loop.
+    ///
+    /// A stop for reading or configuring the terminal (`SIGTTIN`, `SIGTTOU`) is the command having
+    /// reached the terminal before it was lent, and being made the foreground group does not wake
+    /// a stopped group, so it is continued. Any other stop was asked for, by `Ctrl+Z` or a signal:
+    /// this process hands the terminal back and suspends its own group too, so the shell that
+    /// started rozi gets its prompt back. Once the terminal is this process's again, after `fg`,
+    /// it lends it again and continues the command. Continued in the background (`bg`), it waits:
+    /// a command continued there would only be stopped again for reading the terminal.
+    fn follow_stops(&self, child: &std::process::Child) {
+        if !self.lent.get() {
+            self.lend_again();
+            return;
+        }
+        let Some(signal) = stop_signal(child) else {
+            return;
+        };
+        if signal == libc::SIGTTIN || signal == libc::SIGTTOU {
+            // The terminal was not the command's when it reached for it: not lent yet, or taken
+            // back by the shell, which can hand its job the terminal again after continuing it.
+            // Lend it (again) before continuing, or the command is only stopped again.
+            self.lent.set(false);
+            self.lend_again();
+            return;
+        }
+        self.take_back();
+        self.lent.set(false);
+        // Returns once continued. In a group the shell does not manage (an orphaned group) the
+        // kernel discards the signal, and the command is lent the terminal again at once.
+        unsafe {
+            libc::kill(0, libc::SIGTSTP);
+        }
+        self.lend_again();
+    }
+
+    /// Lend the terminal back and continue the command, once the terminal is this process's or
+    /// already the command's. The shell may continue a job before it hands the job the terminal,
+    /// or hand it over again afterwards, so this is retried on every pass rather than tried once.
+    fn lend_again(&self) {
+        use std::os::fd::AsRawFd;
+        let fd = self.tty.as_raw_fd();
+        let holder = unsafe { libc::tcgetpgrp(fd) };
+        if holder == self.borrower
+            || (holder == self.owner && unsafe { libc::tcsetpgrp(fd, self.borrower) } == 0)
+        {
+            self.lent.set(true);
+            self.continue_borrower();
+        }
+    }
+
+    fn continue_borrower(&self) {
+        unsafe {
+            libc::kill(-self.borrower, libc::SIGCONT);
+        }
+    }
+
+    fn take_back(&self) {
+        use std::os::fd::AsRawFd;
+        let fd = self.tty.as_raw_fd();
+        // This process is in the background until the terminal is back, and the kernel answers a
+        // background group that changes the terminal with `SIGTTOU`, which stops it. Blocking the
+        // signal for these calls is what lets a background group take the terminal back.
+        unsafe {
+            let mut block: libc::sigset_t = std::mem::zeroed();
+            let mut before: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut block);
+            libc::sigaddset(&mut block, libc::SIGTTOU);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &block, &mut before);
+            libc::tcsetpgrp(fd, self.owner);
+            if let Some(settings) = &self.settings {
+                libc::tcsetattr(fd, libc::TCSADRAIN, settings);
+            }
+            libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TerminalLoan {
+    fn drop(&mut self) {
+        // Not lent means this process is in the background or was never given the terminal back:
+        // taking it then would take it from whoever holds it, such as the shell after `bg`.
+        if self.lent.get() {
+            self.take_back();
+        }
+    }
+}
+
+/// The signal that stopped `child`, once for each time it stops. Each stop is consumed as it is
+/// reported: a child just continued can still read as stopped until it runs, and peeking would
+/// report that old stop again as a new one. Without `WEXITED`, an exit is never reported or
+/// reaped here.
+#[cfg(unix)]
+fn stop_signal(child: &std::process::Child) -> Option<libc::c_int> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WSTOPPED | libc::WNOHANG,
+        )
+    };
+    (rc == 0 && unsafe { info.si_pid() } != 0).then(|| unsafe { info.si_status() })
+}
+
+/// Windows has no foreground process group: every process attached to a console may read it.
+#[cfg(windows)]
+struct TerminalLoan;
+
+#[cfg(windows)]
+impl TerminalLoan {
+    fn to(_group: &CommandGroup) -> Option<Self> {
+        None
+    }
+
+    fn follow_stops(&self, _child: &std::process::Child) {}
 }
 
 #[cfg(windows)]

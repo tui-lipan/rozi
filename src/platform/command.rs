@@ -323,6 +323,11 @@ fn run_grouped_command(
                 return Err(error);
             }
         }
+        // A command that read the terminal before it was lent was stopped for it, and being made
+        // the foreground group does not wake a stopped group: it has to be continued.
+        if _terminal.is_some() {
+            group.continue_if_stopped(&child);
+        }
         if started.elapsed() >= timeout {
             group.terminate(&mut child);
             break (child.wait().ok(), true);
@@ -469,6 +474,28 @@ impl CommandGroup {
         }
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// Continue the group if `child` is stopped, as job control stops a background group that reads
+    /// the terminal. Only for a group the terminal has been lent to: continuing one still in the
+    /// background would just stop it again.
+    fn continue_if_stopped(&self, child: &std::process::Child) {
+        // `WNOWAIT` leaves the stop to be reported again, so nothing else waiting on the child
+        // misses it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let rc = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WSTOPPED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if rc == 0 && unsafe { info.si_pid() } != 0 {
+            unsafe {
+                libc::kill(-self.0, libc::SIGCONT);
+            }
+        }
     }
 
     /// Reap `child` if it has exited on its own, killing whatever it left in the group first.
@@ -620,6 +647,9 @@ impl CommandGroup {
             Ok(Self(job))
         }
     }
+
+    /// Windows has no job-control stops.
+    fn continue_if_stopped(&self, _child: &std::process::Child) {}
 
     pub(crate) fn terminate(&self, child: &mut std::process::Child) {
         unsafe {

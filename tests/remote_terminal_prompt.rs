@@ -5,6 +5,10 @@
 //! terminal's foreground group when it reads from the terminal. Without lending the terminal, the
 //! prompt's ssh sits stopped and the command looks frozen on a blank screen until its deadline.
 //!
+//! The stand-in stops itself with `SIGTTIN` before it reads, which is what the kernel does to it
+//! when it reads the terminal before rozi has lent it. Whatever the scheduling, rozi has to find
+//! it stopped and continue it, so the test does not depend on which process runs first.
+//!
 //! The terminal comes from `script`, so this runs on Linux only (util-linux `script`).
 #![cfg(target_os = "linux")]
 
@@ -25,11 +29,13 @@ fn a_cli_ssh_reads_its_host_key_answer_from_the_terminal() {
     std::fs::create_dir_all(&bin).unwrap();
     // Asks once, on the terminal, the way OpenSSH asks about an unknown host key, then refuses the
     // connection whatever the answer. Later probes fail at once, so only the first one waits.
+    // It is stopped first, as an ssh that reached the terminal before it was lent would be.
     let ssh = bin.join("ssh");
     std::fs::write(
         &ssh,
         br#"#!/bin/sh
 [ -s "$ROZI_TEST_ANSWERS" ] && exit 255
+kill -TTIN $$
 printf 'Are you sure you want to continue connecting (yes/no)? ' > /dev/tty
 IFS= read -r answer < /dev/tty
 printf '%s\n' "$answer" >> "$ROZI_TEST_ANSWERS"

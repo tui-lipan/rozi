@@ -277,6 +277,98 @@ fn configure_detached_server(command: &mut std::process::Command) {
     }
 }
 
+/// Stop every handle this process inherited from reaching the processes it starts.
+///
+/// `Command::spawn` creates every Windows child with `bInheritHandles`, which hands it each
+/// inheritable handle in this process whatever its `Stdio` says. Whatever started rozi decides
+/// which handles those are, and it can pass more than the three standard ones: a shell or `sshd`
+/// that captures rozi's output hands down the pipe it reads, sometimes under more than one handle.
+/// A session server started from here would keep that pipe open for its whole life, and the
+/// caller's read, the `ssh` command, or the PowerShell pipeline would never end.
+///
+/// So the first thing rozi does on Windows is make every handle it inherited non-inheritable. Run
+/// it before any thread starts: a spawn on another thread marks its own pipes inheritable for the
+/// moment it starts a child, and clearing those would cut that child off from its output.
+/// `Stdio::inherit()` is unaffected, because it duplicates the handle for the child instead of
+/// relying on this flag, and rozi passes nothing else to a child by inheritance.
+///
+/// A failure leaves the handles as they were; [`spawn_detached_server`] still withholds the standard
+/// ones, which is all a caller that only redirects rozi's output gives it.
+pub fn withhold_inherited_handles_from_children() {
+    #[cfg(windows)]
+    withhold_inherited_handles();
+}
+
+#[cfg(windows)]
+fn withhold_inherited_handles() {
+    use windows_sys::Wdk::System::Threading::{
+        NtQueryInformationProcess, ProcessHandleInformation,
+    };
+    use windows_sys::Win32::Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    /// `PROCESS_HANDLE_TABLE_ENTRY_INFO`, one entry of a process handle snapshot.
+    #[repr(C)]
+    struct HandleEntry {
+        handle: HANDLE,
+        handle_count: usize,
+        pointer_count: usize,
+        granted_access: u32,
+        object_type_index: u32,
+        attributes: u32,
+        reserved: u32,
+    }
+    /// `PROCESS_HANDLE_SNAPSHOT_INFORMATION`: a count and a reserved word, then the entries.
+    const HEADER: usize = 2 * std::mem::size_of::<usize>();
+    const OBJ_INHERIT: u32 = 0x2;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004_u32 as i32;
+
+    // The table can grow between the size query and the read, so retry with what was reported.
+    let mut buffer: Vec<usize> = vec![0; 1024];
+    for _ in 0..4 {
+        let bytes = buffer.len() * std::mem::size_of::<usize>();
+        let mut needed = 0u32;
+        let status = unsafe {
+            NtQueryInformationProcess(
+                GetCurrentProcess(),
+                ProcessHandleInformation,
+                buffer.as_mut_ptr().cast(),
+                bytes as u32,
+                &mut needed,
+            )
+        };
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            let words = (needed as usize).div_ceil(std::mem::size_of::<usize>()) + 64;
+            buffer.resize(words, 0);
+            continue;
+        }
+        if status < 0 {
+            return;
+        }
+        let count = buffer[0];
+        let room = (bytes - HEADER) / std::mem::size_of::<HandleEntry>();
+        let entries = unsafe {
+            std::slice::from_raw_parts(
+                buffer
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(HEADER)
+                    .cast::<HandleEntry>(),
+                count.min(room),
+            )
+        };
+        for entry in entries
+            .iter()
+            .filter(|entry| entry.attributes & OBJ_INHERIT != 0)
+        {
+            unsafe {
+                SetHandleInformation(entry.handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+        return;
+    }
+}
+
 /// Stop this process's own stdio handles reaching its children by inheritance.
 ///
 /// `Command::spawn` creates every Windows child with `bInheritHandles`, which hands it each

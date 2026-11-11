@@ -21,6 +21,8 @@ const UI_STACK_BYTES: usize = 32 * 1024 * 1024;
 const _: () = assert!(UI_STACK_BYTES >= 16 * 1024 * 1024);
 
 fn main() -> ExitCode {
+    // First, while this is the only thread: nothing rozi starts may hold its caller's pipes open.
+    rozi::platform::server_lifecycle::withhold_inherited_handles_from_children();
     end_quietly_when_stdout_closes();
     match on_ui_thread(rozi::app::run) {
         Ok(()) => ExitCode::SUCCESS,

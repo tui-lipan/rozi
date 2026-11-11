@@ -21,6 +21,8 @@ const UI_STACK_BYTES: usize = 32 * 1024 * 1024;
 const _: () = assert!(UI_STACK_BYTES >= 16 * 1024 * 1024);
 
 fn main() -> ExitCode {
+    // First, while this is the only thread: nothing rozi starts may hold its caller's pipes open.
+    rozi::platform::server_lifecycle::withhold_inherited_handles_from_children();
     end_quietly_when_stdout_closes();
     match on_ui_thread(rozi::app::run) {
         Ok(()) => ExitCode::SUCCESS,
@@ -86,8 +88,10 @@ fn on_ui_thread<T: Send + 'static>(body: fn() -> T) -> T {
     }
 }
 
-fn report_runtime_error(writer: &mut impl Write, error: &impl std::fmt::Debug) {
-    let _ = writeln!(writer, "Error: {error:?}");
+/// Print a failed run the way every other rozi message reads: `rozi: <what went wrong>`. The error's
+/// `Display` is the sentence written for a person; its `Debug` is the Rust value around it.
+fn report_runtime_error(writer: &mut impl Write, error: &impl std::fmt::Display) {
+    let _ = writeln!(writer, "rozi: {error}");
 }
 
 #[cfg(test)]
@@ -109,6 +113,20 @@ mod tests {
     #[test]
     fn a_lost_stderr_does_not_panic_while_reporting_the_runtime_error() {
         report_runtime_error(&mut BrokenStderr, &"terminal disconnected");
+    }
+
+    #[test]
+    fn a_failed_run_is_reported_as_its_message_not_as_a_rust_value() {
+        let error = tui_lipan::Error::from(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Session `dev` was not found.",
+        ));
+        let mut out = Vec::new();
+        report_runtime_error(&mut out, &error);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "rozi: Session `dev` was not found.\n"
+        );
     }
 
     /// Only a closed stdout is an ordinary ending. Anything else has to stay a crash.

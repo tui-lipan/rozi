@@ -75,7 +75,7 @@ terminal apps keep working normally.
 When you drag after pressing the prefix, the which-key strip hides during the drag. The `PREFIX`
 badge stays until you release the button, which also ends the prefix.
 
-The wheel scrolls history, sidebar tabs, and pickers three lines for every scroll your terminal
+The wheel scrolls pane history and scrollable lists three lines for every scroll your terminal
 sends. Change the multiplier with **Scroll multiplier** in
 [Settings](customize.md#use-the-settings-picker) or `scroll_multiplier` in
 [`[input]`](configuration.md#input). It stacks with your terminal's own scroll multiplier: if

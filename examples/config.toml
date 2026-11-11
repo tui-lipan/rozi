@@ -81,8 +81,8 @@
 # "instant", "short", or "long". Held <modifier>+<key> chords resolve in one press and never go
 # pending, so this is prefix-only, and the PREFIX badge is never delayed.
 #which_key = "short"
-# Multiplies the wheel scrolling your terminal sends across panes, workspace tabs, sidebar tabs, and pickers,
-# from 1 to 50. It stacks with the terminal's own multiplier (Ghostty at 3 and rozi at 3 scroll
+# Multiplies wheel scrolling in panes and scrollable lists, from 1 to 50.
+# It stacks with the terminal's own multiplier (Ghostty at 3 and rozi at 3 scroll
 # 9 lines per notch). Programs that track the mouse, such as editors, apply their own scroll step.
 #scroll_multiplier = 3
 

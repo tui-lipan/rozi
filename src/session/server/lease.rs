@@ -325,6 +325,7 @@ impl SessionServer {
     /// there is none. Used when the controller gives it up rather than leaves.
     fn release_controller(&mut self) -> Vec<(Target, ServerMessage)> {
         self.controller = self.promotion_candidate();
+        self.cancel_unauthorized_drags();
         if let Some(promoted) = self.controller
             && let Some(client) = self.client_mut(promoted)
         {
@@ -454,6 +455,7 @@ impl SessionServer {
         reason: ControllerChangeReason,
     ) -> Vec<(Target, ServerMessage)> {
         self.controller = Some(to);
+        self.cancel_unauthorized_drags();
         if let Some(client) = self.client_mut(to) {
             client.requesting_control = false;
             client.last_request_notify = None;
@@ -557,6 +559,7 @@ impl SessionServer {
         self.remove_agent_waits(id);
         self.capture_waits.remove(&id);
         self.cancel_client_attachments(id);
+        self.drop_client_drags(id);
         self.release_recording_replies(id);
         self.session_subscribers.remove(&id);
         if self.origin_seed_client == Some(id) {
@@ -629,6 +632,7 @@ impl SessionServer {
         promotion_reason: ControllerChangeReason,
     ) -> Vec<ServerMessage> {
         self.controller = self.promotion_candidate();
+        self.cancel_unauthorized_drags();
         // A promoted client no longer needs its own pending request.
         if let Some(new_controller) = self.controller
             && let Some(client) = self.client_mut(new_controller)

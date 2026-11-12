@@ -188,6 +188,9 @@ impl SessionServer {
         let scrollback = restored_scrollback.unwrap_or(self.settings.scrollback);
         let mut screen = crate::pane::new_terminal_screen(rows, cols, scrollback);
         screen.set_program_status_enabled(true);
+        // The server answers the program's drag-and-drop query and keeps its registration; the
+        // drag itself is the client's (see `drag_and_drop`).
+        screen.set_drag_and_drop_enabled(true);
         screen.set_cell_size(cell);
         // The server exports this screen to seed later attachments, so it retains the same bounded
         // Kitty image state as a client parser even though it never renders those pixels itself.
@@ -313,6 +316,7 @@ impl SessionServer {
                         env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
                         program_status_sync: Default::default(),
+                        drag_and_drop: Default::default(),
                         agent: AgentScratch::default(),
                         program_on_path: None,
                         foreground_launch_cwd: None,
@@ -372,6 +376,7 @@ impl SessionServer {
                             env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
                             program_status_sync: Default::default(),
+                            drag_and_drop: Default::default(),
                             agent: AgentScratch::default(),
                             program_on_path: None,
                             foreground_launch_cwd: None,
@@ -592,7 +597,13 @@ impl SessionServer {
                             );
                         }
                         self.sync_program_status(owner, id, generation, false);
-                        if !semantic_events.is_empty() {
+                        self.route_drag_and_drop(owner, id, generation);
+                        let registration_changed = self.pane(owner, id).is_some_and(|pane| {
+                            protocol::PaneDragAndDrop::from(
+                                pane.screen().drag_and_drop_registration(),
+                            ) != pane.runtime.drag_and_drop
+                        });
+                        if !semantic_events.is_empty() || registration_changed {
                             self.sync_pane_runtime(owner, id, generation);
                         }
                         None
@@ -602,6 +613,7 @@ impl SessionServer {
                             .flush_output_transaction_boundary();
                         pane.output_coalesce_epoch = pane.output_coalesce_epoch.saturating_add(1);
                         pane.screen_without_change().program_status_process_exited();
+                        Self::forget_pane_drag_and_drop(pane);
                         pane.pty = None;
                         pane.pty_resize_pending = false;
                         // A launch intent is what divides this from the client's

@@ -1025,6 +1025,8 @@ pub enum Msg {
         path: Option<String>,
         error: Option<String>,
     },
+    /// Drag and drop with the host terminal and the programs in panes.
+    DragAndDrop(crate::update::drag_and_drop::Msg),
     SessionProgramStatusChanged {
         epoch: u64,
         pane_id: crate::pane::id::PaneId,

@@ -393,6 +393,8 @@ impl Component for AppRoot {
         // Set here, not through `App::title`, so the first frame already carries the configured
         // title rather than a placeholder the first update replaces.
         crate::update::host_title::sync(ctx);
+        // Register for drops before the first drag can arrive, rather than on the first update.
+        ops::drag_and_drop::sync(ctx);
         let tasks = StartupTasks {
             enabled: self.startup_tasks,
             update_check_interval: ctx.state.update_check_interval(),
@@ -452,6 +454,18 @@ impl Component for AppRoot {
 
     fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
         ops::focus::window_focus_changed(ctx, focused)
+    }
+
+    fn on_host_drag_and_drop(
+        &mut self,
+        event: tui_lipan::dnd::HostEvent,
+        ctx: &mut Context<Self>,
+    ) -> Update {
+        update::handle_msg(
+            self,
+            Msg::DragAndDrop(update::drag_and_drop::Msg::Host(event)),
+            ctx,
+        )
     }
 
     fn on_focus_changed(&self, change: &FocusChanged) -> Option<Self::Message> {

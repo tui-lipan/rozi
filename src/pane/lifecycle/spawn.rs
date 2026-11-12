@@ -171,7 +171,7 @@ pub(crate) fn spawn_pane_in_scratch(
     );
     let generation = ctx.state.next_scratch_pty_generation;
     ctx.state.next_scratch_pty_generation = generation.saturating_add(1);
-    let mut pane = Pane::new(id, ctx.state.config.scrollback, rect);
+    let mut pane = Pane::new_local(id, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = identity;
     pane.terminal.bind_server_backend(id, generation);

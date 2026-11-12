@@ -37,6 +37,7 @@ enum DeferredMutation {
     Input(DeferredInput),
     Control(ClientId, Box<ClientMessage>),
     Resize(ClientId, PaneResizeRequest),
+    DragReply { generation: u64, bytes: Vec<u8> },
 }
 
 struct DeferredInput {
@@ -427,6 +428,9 @@ impl SessionServer {
             DeferredMutation::Control(client, message) => {
                 self.process_client_control_now(client, *message);
             }
+            DeferredMutation::DragReply { generation, bytes } => {
+                self.write_drag_reply(None, pane_id, generation, bytes);
+            }
             DeferredMutation::Resize(client, resize) => {
                 let replies = self.handle_resize_with(client, resize, |pane| {
                     pane.pty.as_ref().map_or(Ok(()), |pty| {
@@ -496,6 +500,76 @@ impl SessionServer {
         }
         read.input_bytes += bytes;
         read.mutations.push(mutation);
+    }
+
+    /// Server-generated replies stay ordered behind history restoration and before the
+    /// next owner's input. Cancellation must not be rejected by the user-input queue's capacity limit.
+    pub(super) fn write_drag_reply(
+        &mut self,
+        owner: Option<ClientId>,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    ) {
+        if bytes.is_empty() {
+            return;
+        }
+        if owner.is_none()
+            && let Some(read) = self.agent_history.get_mut(&pane_id)
+            && read.reference().pane.generation == generation
+        {
+            read.cancel();
+            read.mutations
+                .push(DeferredMutation::DragReply { generation, bytes });
+            return;
+        }
+        if let Some(pane) = self.live_pane_mut(owner, pane_id, generation)
+            && let Some(pty) = &pane.pty
+        {
+            let _ = pty.write(&bytes);
+        }
+    }
+
+    pub(super) fn defer_history_drag_and_drop(
+        &mut self,
+        client: ClientId,
+        pane_id: PaneId,
+        local: bool,
+        generation: u64,
+        escape_codes: &str,
+    ) -> bool {
+        if local {
+            return false;
+        }
+        let Some(read) = self.agent_history.get_mut(&pane_id) else {
+            return false;
+        };
+        if read.reference().pane.generation != generation {
+            return false;
+        }
+        // A refused drop must still release the host's pending conversation.
+        if read.input_bytes.saturating_add(escape_codes.len()) > MAX_QUEUED_INPUT
+            || read.mutations.len() >= 4096
+        {
+            self.refuse_drag_and_drop(client, pane_id, local, generation, escape_codes);
+            return true;
+        }
+        read.cancel();
+        self.queue_history_mutation(
+            pane_id,
+            client,
+            escape_codes.len(),
+            DeferredMutation::Control(
+                client,
+                Box::new(ClientMessage::DragAndDrop {
+                    pane_id,
+                    local,
+                    generation,
+                    escape_codes: escape_codes.to_owned(),
+                }),
+            ),
+        );
+        true
     }
 
     pub(super) fn defer_history_marked_input(

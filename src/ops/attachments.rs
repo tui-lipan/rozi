@@ -1,7 +1,7 @@
 //! Paste local clipboard attachments into the session that owns the target pane.
 
 use crate::pane::id::PaneId;
-use crate::pane::lifecycle::{find_pane, pane_is_local};
+use crate::pane::lifecycle::{find_pane_in_namespace, pane_is_local};
 use crate::session::client::attachments::Source;
 use crate::state::State;
 use crate::{AppRoot, Msg};
@@ -13,18 +13,35 @@ pub(crate) fn bridge_enabled(state: &State, id: PaneId) -> bool {
 }
 
 pub(crate) fn paste(ctx: &mut Context<AppRoot>, id: PaneId, event: TerminalPasteEvent) -> Update {
+    let local = pane_is_local(&ctx.state, id);
+    paste_in_namespace(ctx, id, local, event)
+}
+
+pub(crate) fn paste_in_namespace(
+    ctx: &mut Context<AppRoot>,
+    id: PaneId,
+    local: bool,
+    event: TerminalPasteEvent,
+) -> Update {
     let TerminalPasteEvent { content, origin } = event;
-    let Some(pane) = find_pane(&ctx.state, id) else {
+    let Some(pane) = find_pane_in_namespace(&ctx.state, id, local) else {
         return Update::none();
     };
     let generation = pane.pty_generation;
     let modes = pane.terminal.snapshot().key_modes;
-    let local = pane_is_local(&ctx.state, id);
     if let ClipboardContent::Text(text) = &content {
         // Recognize an image path only in terminal-emitted text. Clipboard text
         // remains literal even when a local image exists at the copied path.
-        if !bridge_enabled(&ctx.state, id) || dropped_image_path(text, origin).is_none() {
-            return crate::pane::pty_events::paste_pane_bytes(ctx, id, encode_paste(text, modes));
+        if local
+            || ctx.state.current().remote_target.is_none()
+            || dropped_image_path(text, origin).is_none()
+        {
+            return crate::pane::pty_events::paste_pane_bytes_in_namespace(
+                ctx,
+                id,
+                local,
+                encode_paste(text, modes),
+            );
         }
     }
     let fallback = match &content {
@@ -38,7 +55,8 @@ pub(crate) fn paste(ctx: &mut Context<AppRoot>, id: PaneId, event: TerminalPaste
             return Update::full();
         }
     };
-    let (client, _) = match crate::pane::pty_events::prepare_pane_paste(ctx, id) {
+    let (client, _) = match crate::pane::pty_events::prepare_pane_paste_in_namespace(ctx, id, local)
+    {
         Ok(accepted) => accepted,
         Err(update) => return update,
     };

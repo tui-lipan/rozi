@@ -47,6 +47,7 @@ pub(super) fn test_pane(generation: u64) -> ServerPane {
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
         program_status_sync: Default::default(),
+        drag_and_drop: Default::default(),
         agent: AgentScratch::default(),
         program_on_path: None,
         foreground_launch_cwd: None,
@@ -4727,6 +4728,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,
@@ -4902,6 +4904,7 @@ fn duplicate_spawn_is_rejected() {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,
@@ -4969,6 +4972,7 @@ fn exited_pane_can_be_respawned() {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,
@@ -5164,6 +5168,7 @@ fn attach_reports_layout_and_panes() {
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
         program_status_sync: Default::default(),
+        drag_and_drop: Default::default(),
         agent: AgentScratch::default(),
         program_on_path: None,
         foreground_launch_cwd: None,
@@ -5369,6 +5374,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
             program_status_sync: Default::default(),
+            drag_and_drop: Default::default(),
             agent: AgentScratch::default(),
             program_on_path: None,
             foreground_launch_cwd: None,
@@ -5466,6 +5472,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 log: None,
                 runtime: protocol::PaneRuntimeState::default(),
                 program_status_sync: Default::default(),
+                drag_and_drop: Default::default(),
                 agent: AgentScratch::default(),
                 program_on_path: None,
                 foreground_launch_cwd: None,
@@ -9773,4 +9780,296 @@ fn shared_pane_title_change_is_recorded_once_it_settles() {
     assert_eq!(changed.data["pane"], "1");
     assert_eq!(changed.data["title"], "editor");
     assert_eq!(changed.data["previous_title"], "");
+}
+
+/// Spawn a shared pane running `script`, whose terminal echoes what is written to it: anything the
+/// server writes to the program shows up on its screen as text.
+fn spawn_drag_and_drop_pane(server: &mut SessionServer, script: &str) {
+    let result = server.spawn_pane(SpawnRequest {
+        owner: None,
+        pane_id: 1,
+        generation: 1,
+        launch: Some(crate::pane::launch::PaneLaunch::shell(script)),
+        agent_resume: None,
+        cwd: None,
+        title: None,
+        cols: 200,
+        rows: 10,
+        keep_open: false,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+        cell: None,
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+}
+
+/// What the server routed to `client` from pane 1's program.
+fn routed_drag_and_drop(
+    server: &SessionServer,
+    client: ClientId,
+) -> Vec<tui_lipan::dnd::TaggedCommand> {
+    let mut decoder = tui_lipan::dnd::CommandDecoder::default();
+    decode_outbox_frames(server.client(client).expect("client"))
+        .into_iter()
+        .filter_map(|frame| match frame {
+            DecodedOutboxFrame::Control(message) => match *message {
+                ServerMessage::PaneDragAndDrop { escape_codes, .. } => Some(escape_codes),
+                _ => None,
+            },
+            DecodedOutboxFrame::Pane { .. } => None,
+        })
+        .flat_map(|codes| tui_lipan::dnd::OscScanner::default().scan(codes.as_bytes()))
+        .flat_map(|(_, body)| decoder.push_body(&body))
+        .collect()
+}
+
+fn drop_on_pane(server: &mut SessionServer, client: ClientId) {
+    let mut codes = Vec::new();
+    tui_lipan::dnd::TerminalEvent::Drop {
+        position: tui_lipan::dnd::DragPosition::default(),
+        operations: tui_lipan::dnd::DropOperations::COPY,
+        mimes: vec!["text/uri-list".into()],
+    }
+    .encode(Some(9), &mut codes);
+    server.handle_message(
+        client,
+        ClientMessage::DragAndDrop {
+            pane_id: 1,
+            local: false,
+            generation: 1,
+            escape_codes: String::from_utf8(codes).unwrap(),
+        },
+    );
+}
+
+#[test]
+fn a_pane_program_registers_for_drops_and_answers_only_the_client_dropping_on_it() {
+    let mut server = SessionServer::new_named("dnd");
+    let (dropping, _a) = attach_client(&mut server);
+    let (watching, _b) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(
+        &mut server,
+        r"printf '\033]72;t=a:i=9;text/uri-list\033\\'; read -r x; printf '\033]72;t=r:x=1:i=9\033\\'; read -r y",
+    );
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drops.is_some()
+    });
+    let drops = server.panes[&1]
+        .runtime
+        .drag_and_drop
+        .drops
+        .clone()
+        .unwrap();
+    assert_eq!(drops.client_id, Some(9));
+    assert_eq!(drops.mimes, ["text/uri-list"]);
+
+    clear_outboxes(&mut server, &[dropping, watching]);
+    drop_on_pane(&mut server, dropping);
+    server.accept_pane_input(dropping, 1, false, 1, b"\n", true);
+    wait_until(&mut server, |server| {
+        !routed_drag_and_drop(server, dropping).is_empty()
+    });
+    let routed = routed_drag_and_drop(&server, dropping);
+    assert_eq!(
+        routed,
+        [tui_lipan::dnd::TaggedCommand {
+            client_id: Some(9),
+            command: tui_lipan::dnd::ProgramCommand::RequestData(
+                tui_lipan::dnd::DataTarget::Mime { index: 1 }
+            ),
+        }]
+    );
+    assert!(
+        routed_drag_and_drop(&server, watching).is_empty(),
+        "only the client running the drag hears the program"
+    );
+}
+
+#[test]
+fn a_competing_drop_is_finished_without_stealing_the_first_clients_conversation() {
+    let mut server = SessionServer::new_named("dnd");
+    let (first, _a) = attach_client(&mut server);
+    let (second, _b) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(&mut server, r"printf '\033]72;t=a:i=9;\033\\'; read x");
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drops.is_some()
+    });
+    clear_outboxes(&mut server, &[first, second]);
+    drop_on_pane(&mut server, first);
+    drop_on_pane(&mut server, second);
+    assert_eq!(
+        routed_drag_and_drop(&server, second),
+        [tui_lipan::dnd::TaggedCommand {
+            client_id: Some(9),
+            command: tui_lipan::dnd::ProgramCommand::FinishDrop {
+                operation: tui_lipan::dnd::DropOperation::None,
+            },
+        }]
+    );
+    assert!(routed_drag_and_drop(&server, first).is_empty());
+    server.remove_client(second);
+    server.remove_client(first);
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+    });
+}
+
+#[test]
+fn an_accepted_drop_is_canceled_when_its_owner_loses_input_authority() {
+    use tui_lipan::dnd::{DataTarget, DropOperation, ProgramCommand, TerminalEvent};
+    for transition in [
+        "handoff-before-request",
+        "handoff-after-request",
+        "enable-lock",
+        "park",
+    ] {
+        let mut server = SessionServer::new_named("dnd-authority");
+        let (first, _a) = attach_client(&mut server);
+        let (second, _b) = attach_client(&mut server);
+        server.assign_controller(first, protocol::ControllerChangeReason::Granted);
+        if transition != "enable-lock" {
+            server.handle_message(first, ClientMessage::SetInputLock { locked: true });
+        }
+        spawn_drag_and_drop_pane(
+            &mut server,
+            r"printf '\033]72;t=a:i=9;\033\\'; while read -r x; do printf '\033]72;t=r:x=1:i=9\033\\'; done",
+        );
+        wait_until(&mut server, |server| {
+            server.panes[&1].runtime.drag_and_drop.drops.is_some()
+        });
+        clear_outboxes(&mut server, &[first, second]);
+        drop_on_pane(&mut server, first);
+        if transition == "handoff-after-request" {
+            server.accept_pane_input(first, 1, false, 1, b"\n", true);
+            wait_until(&mut server, |server| {
+                routed_drag_and_drop(server, first)
+                    .iter()
+                    .any(|command| matches!(command.command, ProgramCommand::RequestData(_)))
+            });
+        }
+        if transition == "park" {
+            server.handle_message(first, ClientMessage::SetParked { parked: true });
+        } else {
+            server.handle_message(second, ClientMessage::RequestControl);
+        }
+        if transition == "enable-lock" {
+            assert!(
+                !routed_drag_and_drop(&server, first)
+                    .iter()
+                    .any(|command| matches!(command.command, ProgramCommand::FinishDrop { .. })),
+                "unlocked input authority survives a controller change"
+            );
+            server.handle_message(second, ClientMessage::SetInputLock { locked: true });
+        }
+        assert!(
+            routed_drag_and_drop(&server, first)
+                .iter()
+                .any(|command| command.command
+                    == ProgramCommand::FinishDrop {
+                        operation: DropOperation::None
+                    }),
+            "{transition}: the old host drop must finish"
+        );
+        wait_until(&mut server, |server| {
+            pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+        });
+        let mut late = Vec::new();
+        TerminalEvent::Data {
+            target: DataTarget::Mime { index: 1 },
+            kind: None,
+            remote: false,
+            bytes: b"stale-drop-data".to_vec(),
+            end: true,
+        }
+        .encode(Some(9), &mut late);
+        server.accept_drag_and_drop(first, 1, false, 1, String::from_utf8(late).unwrap());
+        drop_on_pane(&mut server, second);
+        server.accept_pane_input(second, 1, false, 1, b"\n", true);
+        wait_until(&mut server, |server| {
+            routed_drag_and_drop(server, second)
+                .iter()
+                .any(|command| matches!(command.command, ProgramCommand::RequestData(_)))
+        });
+        assert!(
+            !pane_text(&mut server, None, 1).contains("c3RhbGUtZHJvcC1kYXRh"),
+            "late drop bytes must not enter the PTY"
+        );
+    }
+}
+
+#[test]
+fn a_program_no_client_owns_is_refused_and_its_query_answered() {
+    let mut server = SessionServer::new_named("dnd");
+    let (_client, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(
+        &mut server,
+        r"printf '\033]72;t=q\033\\\033]72;t=a;\033\\\033]72;t=r:x=1\033\\'; read x",
+    );
+    // The terminal echoes the server's replies: the support answer and the refusal.
+    wait_until(&mut server, |server| {
+        let text = pane_text(server, None, 1);
+        text.contains("72;t=q") && text.contains("72;t=R:x=1;EPERM")
+    });
+}
+
+#[test]
+fn a_client_that_leaves_mid_drop_leaves_the_program_told_it_is_over() {
+    let mut server = SessionServer::new_named("dnd");
+    let (dropping, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(&mut server, r"printf '\033]72;t=a:i=9;\033\\'; read x");
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drops.is_some()
+    });
+    drop_on_pane(&mut server, dropping);
+    server.remove_client(dropping);
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+    });
+}
+
+#[test]
+fn outgoing_drag_disconnect_uses_the_drag_registration_id() {
+    let mut server = SessionServer::new_named("dnd");
+    let (client, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(
+        &mut server,
+        r"printf '\033]72;t=a:i=1;\033\\\033]72;t=o:x=1:i=2;\033\\'; read -r x; printf '\033]72;t=P:x=-1:i=2\033\\'; read -r y",
+    );
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drags.is_some()
+    });
+    let mut codes = Vec::new();
+    tui_lipan::dnd::TerminalEvent::DragGesture {
+        position: Default::default(),
+    }
+    .encode(Some(2), &mut codes);
+    server.accept_drag_and_drop(client, 1, false, 1, String::from_utf8(codes).unwrap());
+    server.accept_pane_input(client, 1, false, 1, b"\n", true);
+    wait_until(&mut server, |server| {
+        routed_drag_and_drop(server, client)
+            .iter()
+            .any(|command| matches!(command.command, tui_lipan::dnd::ProgramCommand::StartDrag))
+    });
+    server.remove_client(client);
+    wait_until(&mut server, |server| {
+        pane_text(server, None, 1).contains("72;t=e:i=2:x=4:y=1")
+    });
+}
+
+#[test]
+fn a_pane_whose_program_exits_forgets_what_it_registered() {
+    let mut server = SessionServer::new_named("dnd");
+    let (_client, _stream) = attach_client(&mut server);
+    spawn_drag_and_drop_pane(&mut server, r"printf '\033]72;t=a;\033\\'; sleep 0.3");
+    wait_until(&mut server, |server| {
+        server.panes[&1].runtime.drag_and_drop.drops.is_some()
+    });
+    wait_until(&mut server, |server| {
+        server.panes[&1].exited.is_some() && server.panes[&1].runtime.drag_and_drop.is_empty()
+    });
 }

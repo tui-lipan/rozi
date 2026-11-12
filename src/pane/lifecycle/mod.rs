@@ -8,8 +8,8 @@ pub(crate) use close::{
     prune_closed_pane, remove_pane_after_exit,
 };
 pub(crate) use namespace::{
-    find_pane, find_pane_in_namespace, find_pane_in_namespace_mut, find_pane_mut, pane_env,
-    pane_is_local,
+    find_displayed_pane, find_pane, find_pane_in_namespace, find_pane_in_namespace_mut,
+    find_pane_mut, pane_env, pane_is_local,
 };
 pub(crate) use spawn::{
     PaneSpawnRequest, SpawnFloat, SpawnPlacement, focused_local_cwd, focused_server_cwd_ref,

@@ -280,6 +280,8 @@ pub struct TerminalPane {
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
     /// The session server is recording this pane (`rozi record`).
     pub recording: bool,
+    /// What the pane's program registered for drag and drop.
+    pub drag_and_drop: crate::session::protocol::PaneDragAndDrop,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
     /// The server's launch count for [`Self::detected_agent`]; see
     /// [`crate::session::protocol::PaneRuntimeState::agent_launch`].
@@ -493,6 +495,7 @@ impl TerminalPane {
             foreground_pid: None,
             reported_status: None,
             recording: false,
+            drag_and_drop: Default::default(),
             detected_agent: None,
             agent_launch: 0,
             agent_integration: None,

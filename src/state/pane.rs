@@ -187,6 +187,12 @@ pub struct PaneActivity {
 }
 
 impl Pane {
+    pub(crate) fn new_local(id: PaneId, scrollback: usize, floating_rect: FloatRect) -> Self {
+        let mut pane = Self::new(id, scrollback, floating_rect);
+        pane.keys.terminal = Key::from(format!("rozi-local-terminal-{id}"));
+        pane
+    }
+
     pub fn new(id: PaneId, scrollback: usize, floating_rect: FloatRect) -> Self {
         Self {
             id,

@@ -1037,6 +1037,7 @@ impl SessionServer {
                     return Vec::new();
                 }
                 self.input_locked = locked;
+                self.cancel_unauthorized_drags();
                 vec![(Target::Broadcast, self.clients_changed())]
             }
             ClientMessage::MarkedInput {
@@ -1077,6 +1078,15 @@ impl SessionServer {
                 transfer_id,
                 operation,
             } => self.attachment_step(client_id, transfer_id, operation),
+            ClientMessage::DragAndDrop {
+                pane_id,
+                local,
+                generation,
+                escape_codes,
+            } => {
+                self.accept_drag_and_drop(client_id, pane_id, local, generation, escape_codes);
+                Vec::new()
+            }
             ClientMessage::Rename { name } => {
                 if !self.is_controller(client_id) {
                     return Vec::new();

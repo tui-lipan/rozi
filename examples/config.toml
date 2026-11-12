@@ -319,6 +319,9 @@
 #right_click = "off"
 # Let programs in a pane set the system clipboard via the OSC52 escape sequence.
 #enable_osc52 = true
+# Drop files and text into panes, and drag out of programs that offer it, in a terminal that
+# supports drag and drop (kitty).
+#drag_and_drop = true
 # Light up copied text. Other choices are "off", "fade", "scan", and "pulse".
 #copy_feedback = "flash"
 # Also light up the copy that a finished mouse selection makes.

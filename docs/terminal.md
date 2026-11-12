@@ -1,7 +1,7 @@
 # Terminal features
 
 This page covers how panes behave as terminals: the shell they start, working directories, mouse and
-clipboard handling, copy mode and search, links, scrollback, images, and pane logging.
+clipboard handling, drag and drop, copy mode and search, links, scrollback, images, and pane logging.
 
 Programs in a pane work as they would in any terminal, including mouse input, titles, clipboard
 access, and resizing. They see rozi as their terminal, whichever terminal rozi itself runs in: each
@@ -165,6 +165,24 @@ config reloads.
 
 When attached to a remote session, mouse selection and OSC 52 use your local clipboard. A pane
 program that calls a clipboard API directly uses the remote host's clipboard.
+
+## Drag and drop
+
+In a terminal that supports drag and drop, such as kitty 0.47 or later, you can drop files and text
+from other applications onto a pane. The pane under the pointer is the one that receives the drop,
+and its border lights up while you drag over it. Dropping focuses that pane.
+
+- A program in the pane that supports drag and drop, such as yazi or kitty's `kitten dnd`, receives
+  the drop itself, as it would in a terminal of its own. It decides what it accepts and can read
+  dropped files even when it runs in a remote session. Losing permission to type in the pane
+  cancels an active drag or drop.
+- Any other program receives the dropped files as their paths, quoted for a shell, or the dropped
+  text, as a paste. A pane in a remote session receives uploaded copies of the files instead, as
+  [pasting copied files](#select-copy-and-paste) does, with the same limits.
+- A program that offers drags can be dragged from, into other applications.
+
+Turn drag and drop off with `[clipboard].drag_and_drop = false`. In a terminal without drag and drop
+support, a drop arrives the way that terminal sends it, usually as pasted text.
 
 ## Copy, search, and hints
 

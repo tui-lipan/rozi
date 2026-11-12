@@ -19,6 +19,14 @@ pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
         .find(|pane| pane.id == id)
 }
 
+/// Resolve a focus/copy target in the displayed namespace, without selecting hidden scratch panes.
+pub(crate) fn find_displayed_pane(state: &State, id: PaneId) -> Option<&Pane> {
+    if let Some(popup) = state.popup.as_ref().filter(|pane| pane.id == id) {
+        return Some(popup);
+    }
+    find_pane_in_namespace(state, id, state.scratch_visible)
+}
+
 pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
     if state.popup.as_ref().is_some_and(|pane| pane.id == id) {
         return state.popup.as_mut();

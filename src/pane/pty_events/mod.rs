@@ -5,7 +5,8 @@ pub(crate) mod resize;
 
 pub(crate) use input::{
     forward_key_to_pane, handle_pane_input, handle_pane_mouse, handle_pane_scroll,
-    paste_pane_bytes, prepare_pane_paste, send_pane_bytes, terminal_key_event_bytes,
+    paste_pane_bytes_in_namespace, prepare_pane_paste_in_namespace, send_pane_bytes,
+    terminal_key_event_bytes,
 };
 pub(crate) use notifications::{
     PaneStatusNotification, ToastBody, ToastKey, TrackedToast, confirm_toast,

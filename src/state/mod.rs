@@ -16,6 +16,7 @@ mod appearance;
 mod attachment;
 mod capture;
 mod drag;
+mod drag_and_drop;
 mod extension_runtime;
 mod extension_workers;
 mod identity;
@@ -44,6 +45,7 @@ pub use appearance::*;
 pub use attachment::*;
 pub use capture::*;
 pub use drag::*;
+pub use drag_and_drop::*;
 pub use extension_runtime::*;
 pub use extension_workers::*;
 pub use identity::*;
@@ -202,6 +204,8 @@ pub struct State {
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
+    /// Drags and drops from the host terminal, and drags programs in panes start.
+    pub drag_and_drop: DragAndDropState,
     pub animation: GeometryAnimation,
     pub pane_event_animation: Option<crate::layout::anim::PaneEventAnimationSnapshot>,
     /// Invalidates the framework-owned workspace Canvas when a pane relocates between workspace
@@ -680,6 +684,7 @@ impl State {
             moving_pane: None,
             resizing_pane: None,
             split_drag: None,
+            drag_and_drop: DragAndDropState::default(),
             animation: GeometryAnimation::None,
             pane_event_animation: None,
             pane_canvas_epoch: 0,
@@ -927,6 +932,18 @@ impl State {
         pane_id: PaneId,
     ) -> Option<crate::session::client::SessionClient> {
         if self.scratch.panes.iter().any(|pane| pane.id == pane_id) {
+            self.scratch_client()
+        } else {
+            self.current().session_client.clone()
+        }
+    }
+
+    pub(crate) fn pty_client_in_namespace(
+        &self,
+        pane_id: PaneId,
+        local: bool,
+    ) -> Option<crate::session::client::SessionClient> {
+        if local && self.popup.as_ref().is_none_or(|pane| pane.id != pane_id) {
             self.scratch_client()
         } else {
             self.current().session_client.clone()

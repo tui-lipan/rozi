@@ -1078,6 +1078,18 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
                 path,
                 error,
             },
+            ServerMessage::PaneDragAndDrop {
+                pane_id,
+                local,
+                generation,
+                escape_codes,
+            } => Msg::DragAndDrop(crate::update::drag_and_drop::Msg::Pane {
+                epoch,
+                pane_id,
+                local,
+                generation,
+                escape_codes,
+            }),
             ServerMessage::ProgramStatusChanged {
                 pane_id,
                 local,

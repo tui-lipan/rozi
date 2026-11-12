@@ -556,11 +556,102 @@ pub struct PaneRuntimeState {
     /// for as long as it is, so a recording is never invisible.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recording: bool,
+    /// What the pane's program registered for drag and drop (OSC 72), so a client knows where a
+    /// drag goes before it reaches the pane.
+    #[serde(default, skip_serializing_if = "PaneDragAndDrop::is_empty")]
+    pub drag_and_drop: PaneDragAndDrop,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`super::ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
     /// insurance) can detect and ignore a stale one.
     pub sequence: u64,
+}
+
+/// What a pane's program registered for drag and drop (OSC 72).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneDragAndDrop {
+    /// Set while the program accepts drops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drops: Option<PaneDropRegistration>,
+    /// Set while the program offers drags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drags: Option<PaneDragRegistration>,
+}
+
+impl PaneDragAndDrop {
+    pub fn is_empty(&self) -> bool {
+        self.drops.is_none() && self.drags.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneDropRegistration {
+    /// The `i` key the program registered with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<u32>,
+    /// Extra MIME types the program asked for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mimes: Vec<String>,
+    /// The protocol machine id of the host running the program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct PaneDragRegistration {
+    /// The `i` key the program registered with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<u32>,
+    /// The protocol machine id of the host running the program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+}
+
+impl From<&tui_lipan::dnd::ChildRegistration> for PaneDragAndDrop {
+    fn from(registration: &tui_lipan::dnd::ChildRegistration) -> Self {
+        Self {
+            drops: registration
+                .drops
+                .as_ref()
+                .map(|drops| PaneDropRegistration {
+                    client_id: drops.client_id,
+                    mimes: drops.mimes.iter().map(|m| m.to_string()).collect(),
+                    machine_id: drops.machine_id.as_deref().map(str::to_owned),
+                }),
+            drags: registration
+                .drags
+                .as_ref()
+                .map(|drags| PaneDragRegistration {
+                    client_id: drags.client_id,
+                    machine_id: drags.machine_id.as_deref().map(str::to_owned),
+                }),
+        }
+    }
+}
+
+impl From<&PaneDragAndDrop> for tui_lipan::dnd::ChildRegistration {
+    fn from(registration: &PaneDragAndDrop) -> Self {
+        Self {
+            drops: registration
+                .drops
+                .as_ref()
+                .map(|drops| tui_lipan::dnd::DropRegistration {
+                    client_id: drops.client_id,
+                    mimes: drops.mimes.iter().map(|m| m.as_str().into()).collect(),
+                    machine_id: drops.machine_id.as_deref().map(Into::into),
+                }),
+            drags: registration
+                .drags
+                .as_ref()
+                .map(|drags| tui_lipan::dnd::DragRegistration {
+                    client_id: drags.client_id,
+                    machine_id: drags.machine_id.as_deref().map(Into::into),
+                }),
+        }
+    }
 }
 
 /// What a report's `working` becomes if the screen shows the agent has stopped. See

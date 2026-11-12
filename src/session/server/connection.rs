@@ -151,7 +151,7 @@ impl SessionServer {
         };
         if may_operate {
             if !local {
-                self.agent_requests.note_client_input(pane_id);
+                self.agent_requests.note_pane_input(pane_id);
             }
             if self.defer_history_input(id, pane_id, local, generation, bytes, latency_sensitive) {
                 return;

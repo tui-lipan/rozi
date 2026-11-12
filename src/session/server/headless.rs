@@ -1721,6 +1721,7 @@ impl SessionServer {
             ));
         }
         let generation = pane.generation;
+        self.agent_requests.note_pane_input(id);
         self.handle_pane_input(None, id, generation, &bytes);
         Ok(())
     }

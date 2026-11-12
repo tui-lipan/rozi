@@ -107,7 +107,29 @@ fn code(response: ControlResponse) -> Option<ControlErrorCode> {
 
 #[test]
 fn requests_reach_a_target_one_turn_at_a_time() {
-    let mut rig = Rig::new(&[2, 3]);
+    let mut rig = Rig::new(&[2, 3, 4]);
+
+    // Input a headless command writes keeps the pane from settling, so nothing is typed over it;
+    // the delivery itself counts as input.
+    rig.server.agent_requests.quiet = Duration::from_millis(50);
+    let quiet = rig.ask(None, 4, "settle first");
+    std::thread::sleep(Duration::from_millis(60));
+    rig.server
+        .session_write_input(4, b"draft".to_vec())
+        .unwrap();
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&quiet.id).state, AgentRequestState::Queued);
+    std::thread::sleep(Duration::from_millis(60));
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&quiet.id).state, AgentRequestState::Active);
+    assert!(
+        !rig.server
+            .agent_requests
+            .stopped_since
+            .contains_key(&rig.agent(4))
+    );
+    rig.server.agent_requests.quiet = Duration::ZERO;
+
     rig.set_state(3, DetectedAgentState::Working);
     let first = rig.ask(Some(2), 3, "review the parser");
     let second = rig.ask(Some(2), 3, "and the lexer");

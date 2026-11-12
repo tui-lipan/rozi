@@ -32,8 +32,9 @@ pub(super) struct AgentRequestStore {
     /// The request each agent is answering, until its turn ends.
     slots: HashMap<protocol::AgentRef, DeliverySlot>,
     awaits: HashMap<WaitKey, PendingAwait>,
-    /// When a client last typed into a pane, kept for one quiet window.
-    client_input: HashMap<PaneId, Instant>,
+    /// When input was last written to a pane, by a client or a headless command, kept for one
+    /// quiet window.
+    pane_input: HashMap<PaneId, Instant>,
     /// Since when each target has been seen stopped.
     stopped_since: HashMap<protocol::AgentRef, Instant>,
     pub(super) quiet: Duration,
@@ -46,7 +47,7 @@ impl Default for AgentRequestStore {
             requests: Vec::new(),
             slots: HashMap::new(),
             awaits: HashMap::new(),
-            client_input: HashMap::new(),
+            pane_input: HashMap::new(),
             stopped_since: HashMap::new(),
             quiet: QUIET_WINDOW,
             undetected_turn: UNDETECTED_TURN,
@@ -91,8 +92,8 @@ enum TurnOutcome {
 }
 
 impl AgentRequestStore {
-    pub(super) fn note_client_input(&mut self, pane: PaneId) {
-        self.client_input.insert(pane, Instant::now());
+    pub(super) fn note_pane_input(&mut self, pane: PaneId) {
+        self.pane_input.insert(pane, Instant::now());
     }
 
     /// The request `agent` is answering, if any.
@@ -241,7 +242,7 @@ impl AgentRequestStore {
     fn quiet_since(&self, pane: PaneId, stopped_since: Instant) -> bool {
         stopped_since.elapsed() >= self.quiet
             && self
-                .client_input
+                .pane_input
                 .get(&pane)
                 .is_none_or(|input| input.elapsed() >= self.quiet)
     }
@@ -249,7 +250,7 @@ impl AgentRequestStore {
     /// Forget what no request needs any more, and drop the oldest resolved requests over the cap.
     fn prune(&mut self) {
         let quiet = self.quiet;
-        self.client_input.retain(|_, input| input.elapsed() < quiet);
+        self.pane_input.retain(|_, input| input.elapsed() < quiet);
         let targets: HashSet<protocol::AgentRef> = self
             .requests
             .iter()
@@ -831,6 +832,9 @@ impl SessionServer {
         let fence = self
             .agent_responses
             .fence(self.response_native_session(&to));
+        // The delivery may end without the agent ever leaving its stopped state, so the next
+        // request waits out a fresh quiet window instead of inheriting the one before it.
+        self.agent_requests.stopped_since.remove(&to);
         self.agent_requests.slots.insert(
             to.clone(),
             DeliverySlot {

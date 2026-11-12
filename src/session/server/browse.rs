@@ -179,7 +179,9 @@ fn git_status_for_dir(dir: &Path) -> DirStatus {
         if slot.1.is_none() {
             slot.1 = record.unstaged;
         }
-        slot.2 |= record.ignored;
+        // Changes aggregate up to a collapsed directory, but ignored children do not make their
+        // parent ignored. Git appends `/` when the ignored entry itself is a directory.
+        slot.2 |= record.ignored && record.path.trim_end_matches('/') == child;
     }
     map
 }
@@ -364,7 +366,9 @@ mod tests {
         for name in ["modified", "deleted", "renamed", "conflict"] {
             std::fs::write(dir.path().join(name), "base\n").unwrap();
         }
-        std::fs::write(dir.path().join(".gitignore"), "ignored\n").unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored\n__pycache__/\n").unwrap();
+        std::fs::create_dir(dir.path().join("tools")).unwrap();
+        std::fs::write(dir.path().join("tools/check.py"), "# tracked\n").unwrap();
         git(&["add", "."]);
         git(&[
             "-c",
@@ -382,6 +386,8 @@ mod tests {
         git(&["add", "added"]);
         std::fs::write(dir.path().join("untracked"), "new\n").unwrap();
         std::fs::write(dir.path().join("ignored"), "ignored\n").unwrap();
+        std::fs::create_dir(dir.path().join("tools/__pycache__")).unwrap();
+        std::fs::write(dir.path().join("tools/__pycache__/check.pyc"), "cache\n").unwrap();
         // Put all three merge stages into the real index. This generates UU without branches,
         // merge drivers, user identity, or machine Git configuration affecting the fixture.
         let hash = std::process::Command::new("git")
@@ -441,6 +447,7 @@ mod tests {
             ("untracked", Some(WireChangeState::Untracked), None, false),
             ("conflict", Some(WireChangeState::Conflicted), None, false),
             ("ignored", None, None, true),
+            ("tools", None, None, false),
         ] {
             let entry = entries.iter().find(|entry| entry.name == name).unwrap();
             assert_eq!(

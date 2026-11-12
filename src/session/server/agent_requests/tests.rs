@@ -201,6 +201,16 @@ fn a_locked_or_replaced_target_is_never_typed_into() {
     // Asked by the agent about to be replaced, so nobody is left to receive the answer.
     let orphan = rig.ask(Some(3), 2, "orphan");
     assert_eq!(orphan.state, AgentRequestState::Queued);
+    // Asked from a conversation its agent has since left.
+    let moved = rig.ask(Some(3), 2, "moved");
+    rig.server
+        .agent_requests
+        .info_mut(&moved.id)
+        .unwrap()
+        .from_native_session = Some("another conversation".into());
+    rig.server.pump_agent_requests();
+    assert_eq!(rig.request(&moved.id).state, AgentRequestState::Cancelled);
+    assert_eq!(rig.request(&orphan.id).state, AgentRequestState::Queued);
     let pane = rig.server.panes.get_mut(&3).unwrap();
     pane.runtime.agent_launch += 1;
     pane.agent.sync_references(&pane.runtime);
@@ -236,12 +246,17 @@ fn only_the_target_answers_and_its_first_answer_stands() {
     // Answered while queued, so it is never typed into the agent.
     rig.set_state(3, DetectedAgentState::Idle);
     assert!(rig.server.agent_requests.answering(&rig.agent(3)).is_none());
-    let latest = rig
-        .server
-        .agent_responses
-        .latest(&rig.agent(3), &None)
-        .unwrap();
-    assert_eq!(latest.content.source, AgentResponseSource::AgentCli);
+    // The reply stays on the request: `agents response` also answers clients that predate
+    // requests and cannot decode its source, and the list carries no prompt or answer text.
+    assert!(
+        rig.server
+            .agent_responses
+            .latest(&rig.agent(3), &None)
+            .is_none()
+    );
+    let list = rig.server.agent_request_list(None, None).data.unwrap();
+    assert_eq!(list[0]["id"], request.id.as_str());
+    assert!(list[0].get("prompt").is_none() && list[0].get("response").is_none());
 }
 
 #[test]
@@ -298,10 +313,19 @@ fn an_await_answers_once_and_never_holds_up_its_request() {
     // A script's await ends with its connection; the request carries on.
     assert!(
         rig.server
-            .register_request_await(7, None, &request.id, Some(60_000), reply)
+            .register_request_await(7, None, &request.id, Some(60_000), reply.clone())
             .is_none()
     );
     rig.server.remove_agent_waits(7);
     assert!(!rig.server.holds_agent_wait(7));
     assert_eq!(rig.request(&request.id).state, AgentRequestState::Active);
+
+    // Once the inbound request is typed into the awaiting agent, it is no less of a cycle.
+    rig.set_state(2, DetectedAgentState::Idle);
+    assert_eq!(rig.request(&inbound.id).state, AgentRequestState::Active);
+    let refused = rig
+        .server
+        .register_request_await(client, Some(rig.agent(2)), &request.id, None, reply)
+        .unwrap();
+    assert_eq!(code(refused), Some(ControlErrorCode::Conflict));
 }

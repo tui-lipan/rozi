@@ -1,7 +1,7 @@
 //! Ephemeral content journal. It is deliberately absent from runtime broadcasts and snapshots.
 use std::collections::{HashMap, VecDeque};
 
-use crate::control::{AgentResponse, AgentResponsePayload, AgentResponseSource};
+use crate::control::{AgentResponse, AgentResponsePayload};
 use crate::session::protocol::AgentRef;
 
 pub(super) const MAX_RESPONSE_BYTES: usize = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
@@ -47,8 +47,13 @@ impl AgentResponseStore {
             .map(|entry| &entry.response)
     }
 
-    /// The first response to the turn `fence` started. An explicit reply answers its request, not
-    /// a turn, so it never counts.
+    /// An id for a response kept outside this store, in sequence with the ones in it.
+    pub fn next_id(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
+    }
+
+    /// The first response to the turn `fence` started.
     pub fn after(
         &self,
         reference: &AgentRef,
@@ -59,7 +64,6 @@ impl AgentResponseStore {
             .iter()
             .find(|entry| {
                 entry.response.response_id > fence.generation
-                    && entry.response.content.source != AgentResponseSource::AgentCli
                     && (fence.native_session.is_none()
                         || entry.native_session == fence.native_session)
             })
@@ -230,7 +234,7 @@ impl super::SessionServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::AgentResponseFidelity;
+    use crate::control::{AgentResponseFidelity, AgentResponseSource};
 
     pub(super) fn payload(text: &str) -> AgentResponsePayload {
         AgentResponsePayload {

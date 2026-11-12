@@ -910,10 +910,4 @@ fn an_explicit_reply_during_a_requests_history_read_wins_and_restores() {
             .answering(&rig.reference)
             .is_none()
     );
-    let latest = rig
-        .server
-        .agent_responses
-        .latest(&rig.reference, &None)
-        .unwrap();
-    assert_eq!(latest.content.source, AgentResponseSource::AgentCli);
 }

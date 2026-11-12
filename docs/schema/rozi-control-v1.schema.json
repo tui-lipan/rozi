@@ -358,9 +358,9 @@
       "type": "object"
     },
     "AgentRequestList": {
-      "description": "What `agent-requests` answers with, oldest first.",
+      "description": "What `agent-requests` answers with, oldest first. `agent-request` returns one in full.",
       "items": {
-        "$ref": "#/$defs/AgentRequestInfo"
+        "$ref": "#/$defs/AgentRequestSummary"
       },
       "type": "array"
     },
@@ -386,6 +386,64 @@
           "type": "string"
         }
       ]
+    },
+    "AgentRequestSummary": {
+      "description": "A request without its prompt and answer, as `agent-requests` lists it.",
+      "properties": {
+        "created_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentRequestState"
+        },
+        "to": {
+          "$ref": "#/$defs/AgentRef"
+        },
+        "updated_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "to",
+        "state",
+        "created_at_unix_ms",
+        "updated_at_unix_ms"
+      ],
+      "type": "object"
     },
     "AgentResponse": {
       "description": "Content supplied by an integration, separate from lifecycle metadata.",

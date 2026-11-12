@@ -474,13 +474,14 @@ ends, read the same way, including an alternate-screen transcript.
 | `active` | Typed into the agent. |
 | `answered` | `response` holds the answer. The first answer stands; a different reply is refused with `conflict`. |
 | `failed` | The agent exited, was replaced, or moved to another conversation. |
-| `cancelled` | Cancelled by whoever asked, or the asking agent left before delivery. |
+| `cancelled` | Cancelled by whoever asked, or the asking agent left or changed conversation before delivery. |
 
 `agents await` prints the answer, or the request's state when it failed or was cancelled. A
 request asked while answering another belongs to its chain (`parent` and `root` in JSON). Awaiting
-a request fails at once with `conflict` when a request from its chain is queued for you, since
+a request fails at once with `conflict` when a request from its chain is waiting on you, since
 neither could finish; answer that one first. `agents requests --incoming` or `--outgoing` lists
-the requests to or from you, and `agents cancel <ID>` cancels one you asked.
+the requests to or from you without their text, which `agents request <ID>` shows, and
+`agents cancel <ID>` cancels one you asked.
 
 These commands always go to the session server of the pane they run in; from outside rozi, pass
 `--session`, and the request has no asker. A prompt is limited to 64 KiB, an agent to 16 queued

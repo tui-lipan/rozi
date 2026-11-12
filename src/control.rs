@@ -2558,11 +2558,45 @@ pub struct AgentRequestInfo {
     pub updated_at_unix_ms: u64,
 }
 
-/// What `agent-requests` answers with, oldest first.
+/// A request without its prompt and answer, as `agent-requests` lists it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct AgentRequestSummary {
+    pub id: String,
+    pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<crate::session::protocol::AgentRef>,
+    pub to: crate::session::protocol::AgentRef,
+    pub state: AgentRequestState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub created_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+}
+
+impl From<&AgentRequestInfo> for AgentRequestSummary {
+    fn from(request: &AgentRequestInfo) -> Self {
+        Self {
+            id: request.id.clone(),
+            root: request.root.clone(),
+            parent: request.parent.clone(),
+            from: request.from.clone(),
+            to: request.to.clone(),
+            state: request.state,
+            reason: request.reason.clone(),
+            created_at_unix_ms: request.created_at_unix_ms,
+            updated_at_unix_ms: request.updated_at_unix_ms,
+        }
+    }
+}
+
+/// What `agent-requests` answers with, oldest first. `agent-request` returns one in full.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(transparent)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
-pub struct AgentRequestList(pub Vec<AgentRequestInfo>);
+pub struct AgentRequestList(pub Vec<AgentRequestSummary>);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]

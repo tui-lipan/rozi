@@ -19,6 +19,8 @@ const MAX_DEPTH: usize = 8;
 const MAX_PER_ROOT: usize = 64;
 const MAX_QUEUED_PER_TARGET: usize = 16;
 const MAX_RESOLVED_BYTES: usize = 16 * MAX_RESPONSE_BYTES;
+/// Keeps the list of every request within one session frame.
+const MAX_RESOLVED: usize = 1024;
 /// How long a target must have been stopped, with nobody typing into its pane, before a request is
 /// typed into it.
 const QUIET_WINDOW: Duration = Duration::from_secs(2);
@@ -211,16 +213,15 @@ impl AgentRequestStore {
         false
     }
 
-    /// A request queued for `caller` that it would have to answer before `awaited` can resolve.
+    /// A request `caller` has yet to answer, queued for it or already typed into it, that
+    /// `awaited` cannot resolve without.
     fn await_cycle(&self, caller: Option<&protocol::AgentRef>, awaited: &str) -> Option<&str> {
         let caller = caller?;
         self.requests
             .iter()
             .map(|stored| &stored.info)
             .find(|info| {
-                info.state == AgentRequestState::Queued
-                    && info.to == *caller
-                    && self.descends_from(info, awaited)
+                !info.state.is_resolved() && info.to == *caller && self.descends_from(info, awaited)
             })
             .map(|info| info.id.as_str())
     }
@@ -260,13 +261,14 @@ impl AgentRequestStore {
             .collect();
         self.stopped_since
             .retain(|agent, _| targets.contains(agent));
-        let mut resolved_bytes: usize = self
-            .requests
-            .iter()
-            .filter(|stored| stored.info.state.is_resolved())
-            .map(stored_bytes)
-            .sum();
-        while resolved_bytes > MAX_RESOLVED_BYTES {
+        let resolved = || {
+            self.requests
+                .iter()
+                .filter(|stored| stored.info.state.is_resolved())
+        };
+        let mut resolved_count = resolved().count();
+        let mut resolved_bytes: usize = resolved().map(stored_bytes).sum();
+        while resolved_bytes > MAX_RESOLVED_BYTES || resolved_count > MAX_RESOLVED {
             let Some(index) = self.requests.iter().position(|stored| {
                 stored.info.state.is_resolved()
                     && self.answering(&stored.info.to) != Some(&stored.info.id)
@@ -274,6 +276,7 @@ impl AgentRequestStore {
                 break;
             };
             resolved_bytes -= stored_bytes(&self.requests.remove(index));
+            resolved_count -= 1;
         }
     }
 }
@@ -401,13 +404,14 @@ impl SessionServer {
         if let Err((_, message)) = super::responses::validate_payload(&payload) {
             return invalid(message);
         }
-        let to = request.to.clone();
-        let native = self.response_native_session(&to);
-        self.agent_responses
-            .insert(to.clone(), native.clone(), payload);
-        let response = self.agent_responses.latest(&to, &native).cloned();
+        // Kept on the request alone: `agent-cli` must not reach a peer through `agent-response`,
+        // which a client without the request capability may send.
+        let response = AgentResponse {
+            response_id: self.agent_responses.next_id(),
+            content: payload,
+        };
         let info = self.agent_requests.info_mut(id).expect("looked up above");
-        info.response = response;
+        info.response = Some(response);
         settle(info, AgentRequestState::Answered, None);
         let answered = info.clone();
         self.pump_agent_requests();
@@ -483,7 +487,7 @@ impl SessionServer {
                     info.from.as_ref() == Some(caller)
                 }
             })
-            .cloned()
+            .map(Into::into)
             .collect();
         ControlResponse::ok(AgentRequestList(requests))
     }
@@ -561,7 +565,7 @@ impl SessionServer {
             .await_cycle(pending.caller.as_ref(), &pending.id)
         {
             return Some(conflict(format!(
-                "request `{inbound}` is queued for you and waits on `{}`; answer it with `rozi agents reply {inbound} --stdin` instead of waiting",
+                "request `{inbound}` is yours to answer and `{}` waits on it; answer it with `rozi agents reply {inbound} --stdin` instead of waiting",
                 pending.id
             )));
         }
@@ -742,12 +746,21 @@ impl SessionServer {
         }
     }
 
-    /// Why a queued request's asking agent can no longer receive its answer.
-    fn requester_gone(&self, id: &str) -> Option<String> {
-        let from = self.agent_requests.get(id)?.info.from.as_ref()?;
-        self.request_agent(from)
-            .err()
-            .map(|reason| format!("the asking agent is gone: {reason}"))
+    /// Why a queued request's asking agent can no longer receive its answer. A conversation not
+    /// known when it asked is the one it is first seen in.
+    fn requester_gone(&mut self, id: &str) -> Option<String> {
+        let info = &self.agent_requests.get(id)?.info;
+        let from = info.from.as_ref()?;
+        if let Err(reason) = self.request_agent(from) {
+            return Some(format!("the asking agent is gone: {reason}"));
+        }
+        let native_session = self.response_native_session(from);
+        if info.from_native_session.is_none() {
+            self.agent_requests.info_mut(id)?.from_native_session = native_session;
+            return None;
+        }
+        (native_session != info.from_native_session)
+            .then(|| "the asking agent moved to another conversation".into())
     }
 
     /// The current runtime of `agent`, or why it is gone.

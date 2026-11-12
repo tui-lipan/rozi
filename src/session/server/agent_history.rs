@@ -8,16 +8,49 @@ use super::connection::PaneResizeRequest;
 use super::headless::ReplyTo;
 use super::responses::{AgentResponseFence, MAX_RESPONSE_BYTES};
 use super::*;
-use crate::control::{AgentResponsePayload, AgentResponseSource, AgentWaitResult, ControlResponse};
+use crate::control::{
+    AgentResponse, AgentResponsePayload, AgentResponseSource, AgentWaitResult, ControlResponse,
+};
 
 const MAX_QUEUED_INPUT: usize = 1024 * 1024;
 
 pub(super) struct HistoryWait {
-    pub key: waits::WaitKey,
-    pub reply: ReplyTo,
+    pub consumer: HistoryConsumer,
     pub deadline: Option<Instant>,
     pub fence: AgentResponseFence,
-    pub result: AgentWaitResult,
+}
+
+/// Who a history read answers.
+pub(super) enum HistoryConsumer {
+    /// A prompt wait holding its client's reply open.
+    Reply {
+        key: waits::WaitKey,
+        reply: ReplyTo,
+        result: Box<AgentWaitResult>,
+    },
+    /// An agent request, answered through the request store.
+    Request {
+        id: String,
+        reference: protocol::AgentRef,
+    },
+}
+
+impl HistoryWait {
+    fn reference(&self) -> &protocol::AgentRef {
+        match &self.consumer {
+            HistoryConsumer::Reply { result, .. } => {
+                result.reference.as_ref().expect("history has an agent")
+            }
+            HistoryConsumer::Request { reference, .. } => reference,
+        }
+    }
+
+    fn client(&self) -> Option<ClientId> {
+        match &self.consumer {
+            HistoryConsumer::Reply { key, .. } => Some(key.0),
+            HistoryConsumer::Request { .. } => None,
+        }
+    }
 }
 
 pub(super) struct PendingHistoryRead {
@@ -49,11 +82,7 @@ struct DeferredInput {
 
 impl PendingHistoryRead {
     fn reference(&self) -> &protocol::AgentRef {
-        self.wait
-            .result
-            .reference
-            .as_ref()
-            .expect("history has an agent")
+        self.wait.reference()
     }
 
     fn cancel(&mut self) {
@@ -65,7 +94,7 @@ impl PendingHistoryRead {
 }
 
 /// The active grid's text: retained history on the normal screen, the viewport on the alternate.
-pub(super) fn bounded_terminal_text(screen: &TerminalScreen) -> String {
+fn bounded_terminal_text(screen: &TerminalScreen) -> String {
     use std::ops::ControlFlow;
     let mut text = String::new();
     let _ = screen.try_for_each_text_line(0, screen.total_text_lines(), |row, line| {
@@ -114,33 +143,38 @@ fn rendered_payload(
 }
 
 impl SessionServer {
-    /// Return an immediate result, or retain the reply while a leased traversal restores.
-    pub(super) fn fallback_agent_result(
+    /// Answer `wait` from what `subject`'s turn left on its terminal: the alternate screen's
+    /// history through a leased traversal when the pane qualifies, else the visible screen. Without
+    /// a subject, `wait` is answered with no terminal text.
+    pub(super) fn answer_from_screen(
         &mut self,
-        mut wait: HistoryWait,
-    ) -> Option<ControlResponse> {
-        let Some(reference) = history_subject(&wait.result) else {
-            return Some(ControlResponse::ok(wait.result));
+        wait: HistoryWait,
+        subject: Option<protocol::AgentRef>,
+    ) {
+        let Some(reference) = subject else {
+            return self.complete_history(wait, None, None);
         };
         let Some(pane) = self.panes.get_mut(&reference.pane.pane_id) else {
-            return Some(ControlResponse::ok(wait.result));
+            return self.complete_history(wait, None, None);
         };
         let screen = pane.screen_without_change();
         let visible = bounded_terminal_text(screen);
-        if !screen.is_alternate_screen() || !self.may_read_history(&wait, &reference) {
-            self.store_terminal(&reference, &wait.fence, &mut wait.result, visible);
-            return Some(ControlResponse::ok(wait.result));
-        }
-        let pane = self
-            .panes
-            .get_mut(&reference.pane.pane_id)
-            .expect("validated pane");
-        let screen = pane.screen_without_change();
-        let mouse = screen.render_snapshot().mouse_mode;
-        let Ok(reader) = AltScreenHistoryReader::new(screen.history_read_frame(), Instant::now())
-        else {
-            self.store_terminal(&reference, &wait.fence, &mut wait.result, visible);
-            return Some(ControlResponse::ok(wait.result));
+        let reader = if screen.is_alternate_screen() && self.may_read_history(&wait, &reference) {
+            let screen = self
+                .panes
+                .get_mut(&reference.pane.pane_id)
+                .expect("validated pane")
+                .screen_without_change();
+            let mouse = screen.render_snapshot().mouse_mode;
+            AltScreenHistoryReader::new(screen.history_read_frame(), Instant::now())
+                .ok()
+                .map(|reader| (reader, mouse))
+        } else {
+            None
+        };
+        let Some((reader, mouse)) = reader else {
+            let response = self.store_terminal_response(&reference, &wait.fence, visible);
+            return self.complete_history(wait, None, response);
         };
         self.agent_history.insert(
             reference.pane.pane_id,
@@ -156,13 +190,57 @@ impl SessionServer {
                 action_at: None,
             },
         );
-        None
+    }
+
+    /// Hand a finished read's outcome to whoever it answers.
+    fn complete_history(
+        &mut self,
+        wait: HistoryWait,
+        error: Option<ControlResponse>,
+        response: Option<AgentResponse>,
+    ) {
+        match wait.consumer {
+            HistoryConsumer::Reply {
+                key,
+                reply,
+                mut result,
+            } => {
+                if response.is_some() {
+                    result.response = response;
+                }
+                let answer = error.unwrap_or_else(|| ControlResponse::ok(*result));
+                self.answer_held(key.0, &reply, answer);
+            }
+            HistoryConsumer::Request { id, reference } => {
+                self.finish_request_history(&reference, &id, error, response);
+            }
+        }
+    }
+
+    /// Whether request `id`'s answer is being read from history.
+    pub(super) fn reading_request_history(&self, id: &str) -> bool {
+        self.agent_history.values().any(|read| {
+            matches!(&read.wait.consumer, HistoryConsumer::Request { id: reading, .. } if reading == id)
+        })
+    }
+
+    /// Whether the read's consumer still wants an answer: a request answered by its agent in the
+    /// meantime does not.
+    fn history_wanted(&self, wait: &HistoryWait) -> bool {
+        match &wait.consumer {
+            HistoryConsumer::Reply { .. } => true,
+            HistoryConsumer::Request { id, .. } => self.request_active(id),
+        }
     }
 
     fn may_read_history(&mut self, wait: &HistoryWait, reference: &protocol::AgentRef) -> bool {
         if self.agent_history.contains_key(&reference.pane.pane_id)
             || !self.history_authorized(wait)
         {
+            return false;
+        }
+        // Only a turn that ended idle or done, for an agent the pane itself detected.
+        if reference.slot.is_some() || !self.history_subject_idle(reference) {
             return false;
         }
         let Some(pane) = self.panes.get_mut(&reference.pane.pane_id) else {
@@ -203,32 +281,24 @@ impl SessionServer {
     }
 
     fn history_authorized(&self, wait: &HistoryWait) -> bool {
-        match wait.reply {
-            ReplyTo::Attached { .. } => self.client_may_input(wait.key.0),
+        match &wait.consumer {
+            HistoryConsumer::Reply {
+                key,
+                reply: ReplyTo::Attached { .. },
+                ..
+            } => self.client_may_input(key.0),
             _ => !self.input_locked,
-        }
-    }
-
-    fn store_terminal(
-        &mut self,
-        reference: &protocol::AgentRef,
-        fence: &AgentResponseFence,
-        result: &mut AgentWaitResult,
-        text: String,
-    ) {
-        if let Some(response) = self.store_terminal_response(reference, fence, text) {
-            result.response = Some(response);
         }
     }
 
     /// Store rendered terminal text, which never claims to be a complete response, and return the
     /// turn's response. Nothing is stored for an empty screen.
-    pub(super) fn store_terminal_response(
+    fn store_terminal_response(
         &mut self,
         reference: &protocol::AgentRef,
         fence: &AgentResponseFence,
         text: String,
-    ) -> Option<crate::control::AgentResponse> {
+    ) -> Option<AgentResponse> {
         if text.is_empty() {
             return None;
         }
@@ -241,7 +311,7 @@ impl SessionServer {
         reference: &protocol::AgentRef,
         fence: &AgentResponseFence,
         content: AgentResponsePayload,
-    ) -> Option<crate::control::AgentResponse> {
+    ) -> Option<AgentResponse> {
         // A semantic reply arriving during traversal always takes precedence.
         if self.agent_responses.after(reference, fence).is_none() {
             let native = self.response_native_session(reference);
@@ -282,6 +352,7 @@ impl SessionServer {
         }
         if !self.history_subject_idle(read.reference())
             || !self.history_authorized(&read.wait)
+            || !self.history_wanted(&read.wait)
             || self
                 .agent_responses
                 .after(read.reference(), &read.wait.fence)
@@ -400,28 +471,25 @@ impl SessionServer {
         history: std::result::Result<HistoryRead, HistoryReadError>,
     ) {
         let reference = read.reference().clone();
-        match history {
+        let response = match history {
+            _ if !self.history_wanted(&read.wait) => None,
             Ok(history) => {
                 let content = rendered_payload(
                     history.text,
                     AgentResponseSource::AlternateScreenHistory,
                     history.complete,
                 );
-                read.wait.result.response =
-                    self.store_rendered(&reference, &read.wait.fence, content);
+                self.store_rendered(&reference, &read.wait.fence, content)
             }
             // A failed request publishes nothing; a traversal that just ended without text
             // still answers with the screen the turn ended on.
             Err(_) if read.error.is_none() => {
                 let visible = std::mem::take(&mut read.visible);
-                self.store_terminal(&reference, &read.wait.fence, &mut read.wait.result, visible);
+                self.store_terminal_response(&reference, &read.wait.fence, visible)
             }
-            Err(_) => {}
-        }
-        let response = read
-            .error
-            .unwrap_or_else(|| ControlResponse::ok(read.wait.result));
-        self.answer_held(read.wait.key.0, &read.wait.reply, response);
+            Err(_) => None,
+        };
+        self.complete_history(read.wait, read.error, response);
         // Release before replay, and recheck each client's current authority and incarnation.
         for mutation in read.mutations {
             self.replay_history_mutation(reference.pane.pane_id, mutation);
@@ -681,7 +749,7 @@ impl SessionServer {
         for read in self
             .agent_history
             .values_mut()
-            .filter(|read| read.wait.key.0 == client)
+            .filter(|read| read.wait.client() == Some(client))
         {
             read.cancel();
         }
@@ -690,11 +758,11 @@ impl SessionServer {
     pub(super) fn holds_agent_history(&self, client: ClientId) -> bool {
         self.agent_history
             .values()
-            .any(|read| read.wait.key.0 == client)
+            .any(|read| read.wait.client() == Some(client))
     }
 }
 
-fn history_subject(result: &AgentWaitResult) -> Option<protocol::AgentRef> {
+pub(super) fn history_subject(result: &AgentWaitResult) -> Option<protocol::AgentRef> {
     let reference = result.reference.as_ref()?;
     let agent = result.agent.as_ref()?;
     (result.response.is_none()

@@ -36,7 +36,7 @@ pub(super) struct AgentRequestStore {
     client_input: HashMap<PaneId, Instant>,
     /// Since when each target has been seen stopped.
     stopped_since: HashMap<protocol::AgentRef, Instant>,
-    quiet: Duration,
+    pub(super) quiet: Duration,
     undetected_turn: Duration,
 }
 
@@ -86,8 +86,8 @@ enum Readiness {
 enum TurnOutcome {
     Failed(String),
     Answered(AgentResponse),
-    /// Answer from the screen the turn ended on.
-    Screen,
+    /// Ended with nothing to answer with.
+    Unanswered,
 }
 
 impl AgentRequestStore {
@@ -594,6 +594,11 @@ impl SessionServer {
     }
 
     fn settle_request_turn(&mut self, target: &protocol::AgentRef) {
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
+        // The history read settles it when it finishes.
+        if self.reading_request_history(&slot.request) {
+            return;
+        }
         let runtime = match self.request_agent(target) {
             Ok(runtime) => runtime,
             Err(reason) => return self.finish_request_turn(target, TurnOutcome::Failed(reason)),
@@ -623,8 +628,58 @@ impl SessionServer {
         let ended = slot.tracker.turn_ended(stopped, Some(runtime.state))
             || (stopped && !slot.departed && slot.delivered.elapsed() >= undetected_turn);
         if ended {
-            self.finish_request_turn(target, TurnOutcome::Screen);
+            self.answer_request_from_screen(target);
         }
+    }
+
+    /// Answer `target`'s request from what its turn left on the terminal. The slot stays occupied
+    /// until any history read this starts has restored the viewport.
+    fn answer_request_from_screen(&mut self, target: &protocol::AgentRef) {
+        let slot = self.agent_requests.slots.get(target).expect("listed slot");
+        let id = slot.request.clone();
+        // A request its agent already replied to needs nothing from the screen.
+        let Some(fence) = slot
+            .tracker
+            .fence()
+            .cloned()
+            .filter(|_| self.request_active(&id))
+        else {
+            return self.finish_request_turn(target, TurnOutcome::Unanswered);
+        };
+        let wait = super::agent_history::HistoryWait {
+            consumer: super::agent_history::HistoryConsumer::Request {
+                id,
+                reference: target.clone(),
+            },
+            deadline: None,
+            fence,
+        };
+        self.answer_from_screen(wait, Some(target.clone()));
+    }
+
+    /// Settle request `id` with what was read from `target`'s terminal, and free the slot.
+    pub(super) fn finish_request_history(
+        &mut self,
+        target: &protocol::AgentRef,
+        id: &str,
+        error: Option<ControlResponse>,
+        response: Option<AgentResponse>,
+    ) {
+        if self.agent_requests.answering(target) != Some(id) {
+            return;
+        }
+        let outcome = match (error, response) {
+            (Some(error), _) => TurnOutcome::Failed(error_text(error)),
+            (None, Some(response)) => TurnOutcome::Answered(response),
+            (None, None) => TurnOutcome::Unanswered,
+        };
+        self.finish_request_turn(target, outcome);
+    }
+
+    pub(super) fn request_active(&self, id: &str) -> bool {
+        self.agent_requests
+            .get(id)
+            .is_some_and(|stored| stored.info.state == AgentRequestState::Active)
     }
 
     /// Free `target`'s slot, resolving its request if nothing has resolved it yet.
@@ -634,24 +689,17 @@ impl SessionServer {
             .slots
             .remove(target)
             .expect("listed slot");
-        let active = self
-            .agent_requests
-            .get(&slot.request)
-            .is_some_and(|stored| stored.info.state == AgentRequestState::Active);
-        if !active {
+        if !self.request_active(&slot.request) {
             return;
         }
         let (state, reason, response) = match outcome {
             TurnOutcome::Failed(reason) => (AgentRequestState::Failed, Some(reason), None),
             TurnOutcome::Answered(response) => (AgentRequestState::Answered, None, Some(response)),
-            TurnOutcome::Screen => match self.screen_answer(target, slot.tracker) {
-                Some(response) => (AgentRequestState::Answered, None, Some(response)),
-                None => (
-                    AgentRequestState::Failed,
-                    Some("the turn ended with nothing on screen".into()),
-                    None,
-                ),
-            },
+            TurnOutcome::Unanswered => (
+                AgentRequestState::Failed,
+                Some("the turn ended with nothing on screen".into()),
+                None,
+            ),
         };
         let info = self
             .agent_requests
@@ -659,18 +707,6 @@ impl SessionServer {
             .expect("checked above");
         info.response = response;
         settle(info, state, reason);
-    }
-
-    /// The text on `target`'s screen as the turn's response, unless its integration answered.
-    fn screen_answer(
-        &mut self,
-        target: &protocol::AgentRef,
-        tracker: AgentTurnTracker,
-    ) -> Option<AgentResponse> {
-        let fence = tracker.into_fence()?;
-        let pane = self.panes.get_mut(&target.pane.pane_id)?;
-        let text = super::agent_history::bounded_terminal_text(pane.screen_without_change());
-        self.store_terminal_response(target, &fence, text)
     }
 
     fn deliver_queued_requests(&mut self) {

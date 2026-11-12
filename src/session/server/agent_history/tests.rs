@@ -880,3 +880,40 @@ fn attachment_begin_and_completion_never_write_under_the_lease() {
     rig.finish();
     assert!(!rig.scratch.path().join("input").exists());
 }
+
+#[test]
+fn an_explicit_reply_during_a_requests_history_read_wins_and_restores() {
+    let mut rig = Rig::new("bottom");
+    rig.server.agent_requests.quiet = Duration::ZERO;
+    let original = rig.screen();
+    let asked = rig
+        .server
+        .ask_agent(None, AgentTarget::Pane(3), "summarize".into());
+    let id = asked.data.unwrap()["id"].as_str().unwrap().to_owned();
+    rig.state(protocol::DetectedAgentState::Working);
+    rig.state(protocol::DetectedAgentState::Idle);
+    assert!(rig.server.agent_history.contains_key(&3));
+    rig.until(|rig| rig.screen().contains("line 04"));
+
+    let reply = rig
+        .server
+        .reply_to_request(Some(rig.reference.clone()), &id, "explicit".into());
+    assert!(reply.ok, "{reply:?}");
+    rig.until(|rig| rig.server.agent_history.is_empty());
+    assert_eq!(rig.screen(), original);
+    let request = rig.server.agent_request(&id).data.unwrap();
+    assert_eq!(request["state"], "answered", "{request}");
+    assert_eq!(request["response"]["text"], "explicit", "{request}");
+    assert!(
+        rig.server
+            .agent_requests
+            .answering(&rig.reference)
+            .is_none()
+    );
+    let latest = rig
+        .server
+        .agent_responses
+        .latest(&rig.reference, &None)
+        .unwrap();
+    assert_eq!(latest.content.source, AgentResponseSource::AgentCli);
+}

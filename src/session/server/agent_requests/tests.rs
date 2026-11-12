@@ -138,6 +138,24 @@ fn requests_reach_a_target_one_turn_at_a_time() {
     assert_eq!(response.content.source, AgentResponseSource::Terminal);
     assert!(response.content.text.contains("parser is fine"));
     assert_eq!(rig.request(&second.id).state, AgentRequestState::Active);
+
+    // An integration's answer published after delivery beats the screen, without the turn ending.
+    rig.server.agent_responses.insert(
+        rig.agent(3),
+        None,
+        AgentResponsePayload {
+            text: "the lexer is fine".into(),
+            turn_id: None,
+            source: AgentResponseSource::NativeHook,
+            fidelity: AgentResponseFidelity::Semantic,
+            complete: true,
+            truncated: false,
+        },
+    );
+    rig.server.pump_agent_requests();
+    let answered = rig.request(&second.id);
+    assert_eq!(answered.state, AgentRequestState::Answered);
+    assert_eq!(answered.response.unwrap().content.text, "the lexer is fine");
 }
 
 #[test]
@@ -158,6 +176,9 @@ fn a_locked_or_replaced_target_is_never_typed_into() {
         .info_mut(&third.id)
         .unwrap()
         .to_native_session = Some("another conversation".into());
+    // Asked by the agent about to be replaced, so nobody is left to receive the answer.
+    let orphan = rig.ask(Some(3), 2, "orphan");
+    assert_eq!(orphan.state, AgentRequestState::Queued);
     let pane = rig.server.panes.get_mut(&3).unwrap();
     pane.runtime.agent_launch += 1;
     pane.agent.sync_references(&pane.runtime);
@@ -165,6 +186,7 @@ fn a_locked_or_replaced_target_is_never_typed_into() {
     for id in [&first.id, &second.id, &third.id] {
         assert_eq!(rig.request(id).state, AgentRequestState::Failed, "{id}");
     }
+    assert_eq!(rig.request(&orphan.id).state, AgentRequestState::Cancelled);
 }
 
 #[test]

@@ -413,17 +413,18 @@ impl SessionServer {
                         }
                     };
                     if let Some(fence) = wait.turn.and_then(AgentTurnTracker::into_fence) {
+                        let subject = super::agent_history::history_subject(&result);
                         let pending = super::agent_history::HistoryWait {
-                            key,
-                            reply: wait.reply.clone(),
+                            consumer: super::agent_history::HistoryConsumer::Reply {
+                                key,
+                                reply: wait.reply,
+                                result: Box::new(result),
+                            },
                             deadline: wait.deadline,
                             fence,
-                            result,
                         };
-                        let Some(response) = self.fallback_agent_result(pending) else {
-                            continue;
-                        };
-                        response
+                        self.answer_from_screen(pending, subject);
+                        continue;
                     } else {
                         ControlResponse::ok(result)
                     }

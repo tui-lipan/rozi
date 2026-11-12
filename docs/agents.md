@@ -465,8 +465,8 @@ rozi types the request into the other agent once it is idle, done, or in error, 
 and nobody has typed into its pane for two seconds. The typed text names the request and how to
 answer it: `rozi agents reply <ID> --stdin`, with the answer on stdin. An agent receives one
 request at a time, and an approval prompt does not end its turn. Without a reply, the answer is the
-agent's [integration response](#read-the-agents-response), or else its screen when the turn ends,
-with `source: "terminal"`.
+agent's [integration response](#read-the-agents-response), or else its terminal when the turn
+ends, read the same way, including an alternate-screen transcript.
 
 | State | Meaning |
 | --- | --- |

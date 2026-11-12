@@ -15,7 +15,7 @@ a real terminal:
 - test a terminal app by pressing keys and checking what the screen shows;
 - record a pane or the whole UI and export the recording;
 - start coding agents in other panes, prompt them, wait for them, and read their answers through
-  `rozi agents`;
+  `rozi agents`, or ask them a question and answer theirs without waiting;
 - control a detached named session with `--session`, on this machine or over SSH with `--remote`;
 - start a session of its own with `rozi sessions new <NAME> --detach --no-resurrect` for test
   runs and captures you did not ask to see, so its panes stay out of your workspaces and it is

@@ -445,19 +445,6 @@ pub(crate) fn pane_frame_alert_can_pulse(theme: &Theme, color: BadgeColor) -> bo
     )
 }
 
-pub(crate) fn pane_frame_alert_color(
-    theme: &Theme,
-    color: BadgeColor,
-    pulse: bool,
-    trough_phase: bool,
-) -> Color {
-    if pulse && trough_phase {
-        pane_frame_alert_trough(theme, color)
-    } else {
-        pane_frame_alert_foreground(theme, color)
-    }
-}
-
 /// The peak background of a marked workspace tab: the panel surface tinted toward the alert role.
 ///
 /// Tabs mark on background where pane borders mark on foreground. A pane border *is* a foreground

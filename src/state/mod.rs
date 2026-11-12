@@ -264,10 +264,8 @@ pub struct State {
     /// Where the once-a-second ticks read the wall clock's phase from; see
     /// [`crate::app::WallAnchor`].
     pub wall_anchor: Cell<Option<crate::app::WallAnchor>>,
-    /// Shared half-period phase for urgent alert borders and inactive workspace markers.
-    pub alert_pulse_phase: bool,
-    /// Phase for calm alerts (a finished agent), flipped once per full urgent cycle so it breathes
-    /// `anim::ALERT_PULSE_CALM_FACTOR` times slower off the same tick chain.
+    /// The recording dot's off half of its blink, at the calm rate: flipped once per full urgent
+    /// cycle of the tick chain. Alert borders, tints and tabs read registry pulses instead.
     pub alert_pulse_calm_phase: bool,
     /// Whether one delayed alert-pulse tick is already queued.
     pub alert_pulse_armed: bool,
@@ -709,7 +707,6 @@ impl State {
             last_scratch_rect: Cell::new(None),
             last_clock_text: RefCell::new(None),
             wall_anchor: Cell::new(None),
-            alert_pulse_phase: false,
             alert_pulse_calm_phase: false,
             alert_pulse_armed: false,
             alert_pulse_armed_at: std::time::Duration::ZERO,

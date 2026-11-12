@@ -360,6 +360,7 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub remote_picker: Option<RemotePickerState>,
+    pub ports_overlay: Option<PortsOverlayState>,
     /// The global Agents view, listing every agent this client knows about across every machine it
     /// is connected to. Holds no rows of its own: they are a pure projection of live pane state and
     /// the host monitors' latest snapshots, rebuilt each frame so a poll cannot leave it stale.
@@ -775,6 +776,7 @@ impl State {
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),
             ports: PortForwardRuntimeState::default(),
+            ports_overlay: None,
             collaboration: None,
             follow_prompt: None,
             askpass: None,
@@ -1368,6 +1370,7 @@ impl State {
                 self.remote_picker.is_some() && !self.defer_startup_picker,
                 "remote-picker",
             ),
+            (self.ports_overlay.is_some(), "ports"),
             (
                 self.show_session_picker && !self.defer_startup_picker,
                 "session-picker",

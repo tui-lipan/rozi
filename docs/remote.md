@@ -472,6 +472,11 @@ Forwards belong to your client for that SSH host rather than to one session, so 
 keeps them running and later opens to the same host and port reuse the existing tunnel. Quitting
 rozi, disconnecting from the host (`Ctrl+X`), or forgetting the host closes its forwards.
 
+Run **Ports…** from the command palette (shown while attached to a remote session or while any
+forward exists) to inspect forwards, add a forward (`Remote host`, `Remote port`, and optional
+`Local port`), retry a failed forward, open a ready HTTP(S) forward in your browser, or close
+forwards; see [Ports](keybindings.md#ports).
+
 ## Disconnect from a host
 
 `Ctrl+W` disconnects one session attachment. `Ctrl+X` disconnects this client from the whole host:

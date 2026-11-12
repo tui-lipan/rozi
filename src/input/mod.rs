@@ -61,6 +61,7 @@ pub enum Action {
     OpenWorktrees,
     ApplyProfile,
     OpenSessionPicker,
+    OpenPorts,
     /// The global Agents view: every agent this client knows about, here and on every connected
     /// host, with `Enter` landing on the one under the cursor.
     OpenAgentPicker,
@@ -213,6 +214,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::OpenWorktrees,
     Action::ApplyProfile,
     Action::OpenSessionPicker,
+    Action::OpenPorts,
     Action::OpenAgentPicker,
     Action::OpenCollaborators,
     Action::RenameSession,
@@ -348,6 +350,7 @@ impl Action {
             Action::OpenWorktrees => "worktrees",
             Action::ApplyProfile => "apply-profile",
             Action::OpenSessionPicker => "sessions",
+            Action::OpenPorts => "ports",
             Action::OpenAgentPicker => "agents",
             Action::OpenCollaborators => "collaborators",
             Action::RenameSession => "rename-session",
@@ -487,6 +490,7 @@ impl Action {
             | Action::OpenWorktrees
             | Action::ApplyProfile
             | Action::OpenSessionPicker
+            | Action::OpenPorts
             | Action::OpenAgentPicker
             | Action::FocusNextAgentNeedingAttention
             | Action::OpenCollaborators

@@ -439,6 +439,7 @@ pub(crate) fn palette_visible(action: Action, state: &State) -> bool {
     command_available(action, state)
         && match action {
             Action::OpenWorktrees => crate::ops::worktrees::repository_scope_ref(state).is_ok(),
+            Action::OpenPorts => state.current().remote_target.is_some() || !state.ports.is_empty(),
             Action::PromoteToMaster => crate::ops::focus::can_promote_focused_to_master(state),
             Action::FocusNextBlockedPane => crate::ops::focus::next_blocked_pane(state).is_some(),
             Action::FocusNextAgentNeedingAttention => {
@@ -1676,6 +1677,38 @@ mod tests {
             .terminal
             .project_root = Some("/repo".to_string());
         assert!(palette_visible(Action::OpenWorktrees, &state));
+    }
+
+    #[test]
+    fn ports_is_listed_only_when_remote_or_forwards_exist() {
+        let mut state = State::new(Config::default(), Theme::default());
+        assert!(command_available(Action::OpenPorts, &state));
+        assert!(!palette_visible(Action::OpenPorts, &state));
+
+        let workbox = crate::session::remote::RemoteTarget::Alias("workbox".into());
+        state.current_mut().remote_target = Some(workbox.clone());
+        assert!(palette_visible(Action::OpenPorts, &state));
+
+        state.current_mut().remote_target = None;
+        assert!(!palette_visible(Action::OpenPorts, &state));
+
+        state.ports.insert(crate::state::PortForwardEntry {
+            key: crate::session::remote::forward::ForwardKey {
+                target: workbox,
+                remote_host: crate::session::remote::forward::ForwardHost::Localhost,
+                remote_port: 5173,
+            },
+            local_port: 5173,
+            port_pinned: true,
+            local_port_mode: crate::session::remote::forward::LocalPortMode::Auto,
+            browser_scheme: None,
+            state: crate::state::ForwardState::Ready,
+            generation: 1,
+            handle: None,
+            error: None,
+            pending_opens: Vec::new(),
+        });
+        assert!(palette_visible(Action::OpenPorts, &state));
     }
 
     #[test]

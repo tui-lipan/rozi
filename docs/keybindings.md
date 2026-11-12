@@ -285,6 +285,19 @@ temporary session, `Ctrl+K` twice to kill a live session or forget a last-seen c
 twice to restart, `Ctrl+W` to disconnect a retained attachment, and `Ctrl+X` to disconnect from the
 host. `Esc` goes back to **Remote hosts**, then to **Sessions**.
 
+### Ports
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Open a ready HTTP(S) forward in your browser, or retry a failed forward |
+| `Ctrl+N` | Add a port forward |
+| `Ctrl+R` | Retry a failed forward |
+| `Ctrl+K` twice | Close the selected forward |
+| `Esc` | Close the form or overlay |
+
+In the add-forward dialog, `Tab` and `Shift+Tab` move between **Remote host**, **Remote port**,
+and **Local port**.
+
 ### Agents
 
 **Agents** lists every agent rozi knows about, on this machine and on every connected host, with

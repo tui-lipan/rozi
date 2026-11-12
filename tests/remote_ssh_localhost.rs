@@ -620,3 +620,48 @@ fn port_forward_reports_failure_when_ssh_port_is_unreachable() {
     }
     drop(handle);
 }
+
+#[test]
+fn port_forward_exact_local_port_fails_when_occupied() {
+    if !localhost_ssh_available() {
+        eprintln!("skipping: non-interactive ssh localhost is not available");
+        return;
+    }
+
+    let occupied = TcpListener::bind("127.0.0.1:0").expect("occupy local port");
+    let occupied_port = occupied.local_addr().expect("occupied addr").port();
+
+    let target = parse_remote_target("ssh://localhost").expect("parse target");
+    let (tx, rx) = mpsc::channel();
+    let handle = start_forward(
+        ForwardSpec {
+            target,
+            connect_host: ForwardHost::Localhost.connect_host().to_string(),
+            remote_port: 5173,
+            local_port: occupied_port,
+            pin_local_port: true,
+        },
+        pinned_config().unattended(),
+        false,
+        move |event| {
+            let _ = tx.send(event);
+        },
+    );
+    match handle {
+        Err(_) => {}
+        Ok(handle) => {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(ForwardEvent::Failed { error }) => {
+                    assert!(
+                        error.contains(&occupied_port.to_string()),
+                        "expected occupied port {occupied_port} in error: {error}"
+                    );
+                }
+                other => panic!(
+                    "explicit occupied local port {occupied_port} must fail rather than falling back, got {other:?}"
+                ),
+            }
+            drop(handle);
+        }
+    }
+}

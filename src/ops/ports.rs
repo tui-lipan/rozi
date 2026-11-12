@@ -2764,6 +2764,7 @@ mod tests {
     fn auto_forward_converted_to_explicit_exact_restarts_worker() {
         crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
+            let _no_ssh = crate::session::remote::forward::suspend_worker_spawn_for_test();
             let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let free_port = probe.local_addr().unwrap().port();
             drop(probe);
@@ -2903,6 +2904,7 @@ mod tests {
     fn replacing_reconnecting_or_starting_forward_preserves_queued_link_opens() {
         crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
+            let _no_ssh = crate::session::remote::forward::suspend_worker_spawn_for_test();
             let probe_one = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let probe_two = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -3136,6 +3138,7 @@ mod tests {
     fn synchronous_replacement_failure_preserves_pending_opens() {
         crate::test_support::on_large_stack(|| {
             crate::test_support::isolate_user_dirs();
+            let _no_ssh = crate::session::remote::forward::suspend_worker_spawn_for_test();
             let probe_one = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let free_port_one = probe_one.local_addr().unwrap().port();
             drop(probe_one);
@@ -3398,6 +3401,7 @@ mod tests {
     #[test]
     fn control_commands_list_reuse_reject_ambiguous_close_and_remove() {
         crate::test_support::isolate_user_dirs();
+        let _no_ssh = crate::session::remote::forward::suspend_worker_spawn_for_test();
         let mut backend = TestBackend::new(AppRoot::default());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while backend.state().command_link.is_none() {
@@ -3494,25 +3498,11 @@ mod tests {
         assert_eq!(workbox_entry.local_port_mode, LocalPortMode::Exact);
         assert!(workbox_entry.port_pinned);
         assert!(workbox_entry.generation > gen_w);
-        if let Some(handle) = workbox_entry.handle.as_ref() {
-            assert!(handle.pin_local_port);
-        } else {
-            assert_eq!(workbox_entry.state, ForwardState::AuthRequired);
-        }
+        assert!(workbox_entry.handle.as_ref().unwrap().pin_local_port);
         assert_eq!(
             LocalPortRequest::from_entry(workbox_entry),
             LocalPortRequest::Exact(free_port)
         );
-        // Fence against async failure events from the background `ssh workbox` probe before
-        // running subsequent dispatches against the active entry.
-        let gen_exact = backend.state_mut().ports.mint_generation();
-        {
-            let entry = backend.state_mut().ports.get_mut(&key_w).unwrap();
-            entry.state = ForwardState::Ready;
-            entry.error = None;
-            entry.generation = gen_exact;
-            entry.handle = Some(ForwardHandle::dormant());
-        }
 
         // Explicit --local-port on an occupied loopback port must fail rather than falling back to
         // an ephemeral port, and must leave the existing forward untouched.

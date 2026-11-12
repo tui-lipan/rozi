@@ -174,7 +174,8 @@ and its border lights up while you drag over it. Dropping focuses that pane.
 
 - A program in the pane that supports drag and drop, such as yazi or kitty's `kitten dnd`, receives
   the drop itself, as it would in a terminal of its own. It decides what it accepts and can read
-  dropped files even when it runs in a remote session.
+  dropped files even when it runs in a remote session. Losing permission to type in the pane
+  cancels an active drag or drop.
 - Any other program receives the dropped files as their paths, quoted for a shell, or the dropped
   text, as a paste. A pane in a remote session receives uploaded copies of the files instead, as
   [pasting copied files](#select-copy-and-paste) does, with the same limits.

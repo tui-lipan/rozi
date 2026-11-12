@@ -493,6 +493,58 @@ fn drag_and_drop_waits_for_history_restoration() {
 }
 
 #[test]
+fn revoked_drop_cleanup_waits_for_history_restoration() {
+    let mut rig = Rig::new("bottom");
+    rig.server
+        .panes
+        .get_mut(&3)
+        .unwrap()
+        .screen_mut()
+        .set_drag_and_drop_enabled(true);
+    let mut codes = Vec::new();
+    tui_lipan::dnd::TerminalEvent::Drop {
+        position: Default::default(),
+        operations: tui_lipan::dnd::DropOperations::COPY,
+        mimes: vec!["text/plain".into()],
+    }
+    .encode(Some(9), &mut codes);
+    rig.server
+        .accept_drag_and_drop(rig.client, 3, false, 7, String::from_utf8(codes).unwrap());
+    rig.begin(true);
+    let (second, _stream) = attach_client(&mut rig.server);
+    rig.server
+        .handle_message(rig.client, ClientMessage::SetInputLock { locked: true });
+    rig.server
+        .handle_message(second, ClientMessage::RequestControl);
+    assert!(rig.server.agent_history[&3].cancelled);
+    assert!(
+        matches!(
+            &rig.server.agent_history[&3].mutations[..],
+            [DeferredMutation::DragReply { generation: 7, .. }]
+        ),
+        "server cleanup must wait behind restoration"
+    );
+    // A request already in flight when authority changed must also be refused after restoration.
+    rig.server.handle_event(ServerEvent::Pty(
+        None,
+        3,
+        7,
+        TerminalPtyEvent::Output(b"\x1b]72;t=r:x=1:i=9\x1b\\".to_vec().into()),
+    ));
+    assert!(
+        matches!(
+            &rig.server.agent_history[&3].mutations[..],
+            [
+                DeferredMutation::DragReply { .. },
+                DeferredMutation::DragReply { .. }
+            ]
+        ),
+        "the unowned data-request refusal must also wait behind restoration"
+    );
+    rig.finish();
+}
+
+#[test]
 fn unexpected_output_before_probe_never_scrolls() {
     let mut rig = Rig::new("bottom");
     rig.begin(true);

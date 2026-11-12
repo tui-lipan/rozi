@@ -102,17 +102,10 @@ impl SessionServer {
         generation: u64,
         escape_codes: String,
     ) {
-        let escape_codes = if self.may_drag_and_drop(client_id, pane_id, local, generation) {
-            escape_codes
-        } else {
+        if !self.may_drag_and_drop(client_id, pane_id, local, generation) {
             self.refuse_drag_and_drop(client_id, pane_id, local, generation, &escape_codes);
-            let Some(cleanup) =
-                self.owned_drag_cleanup(client_id, pane_id, local, generation, &escape_codes)
-            else {
-                return;
-            };
-            cleanup
-        };
+            return;
+        }
         if self.defer_history_drag_and_drop(client_id, pane_id, local, generation, &escape_codes) {
             return;
         }
@@ -131,44 +124,6 @@ impl SessionServer {
         if let Some(pty) = &pane.pty {
             let _ = pty.write(&bytes);
         }
-    }
-
-    /// An existing owner may end its conversation after losing input authority. Decode and
-    /// re-encode only cleanup events, so a mixed batch cannot smuggle input past the lock.
-    fn owned_drag_cleanup(
-        &self,
-        client: ClientId,
-        pane_id: PaneId,
-        local: bool,
-        generation: u64,
-        codes: &str,
-    ) -> Option<String> {
-        let pane = self.pane(local.then_some(client), pane_id)?;
-        if !self.client_attached(client)
-            || pane.generation != generation
-            || pane.exited.is_some()
-            || pane.drag_and_drop.owner != Some(client)
-        {
-            return None;
-        }
-        let mut decoder = EventDecoder::default();
-        let mut cleanup = Vec::new();
-        for (_, body) in tui_lipan::dnd::OscScanner::default().scan(codes.as_bytes()) {
-            for tagged in decoder.push_body(&body) {
-                if matches!(
-                    tagged.event,
-                    TerminalEvent::DragLeave
-                        | TerminalEvent::DragFinished { .. }
-                        | TerminalEvent::DragFailed(_)
-                ) {
-                    tagged.event.encode(tagged.client_id, &mut cleanup);
-                }
-            }
-        }
-        if cleanup.is_empty() {
-            return None;
-        }
-        String::from_utf8(cleanup).ok()
     }
 
     fn may_drag_and_drop(
@@ -273,11 +228,7 @@ impl SessionServer {
                     reply.encode(command.client_id, &mut replies);
                 }
             }
-            if !replies.is_empty()
-                && let Some(pty) = &pane.pty
-            {
-                let _ = pty.write(&replies);
-            }
+            self.write_drag_reply(owner, pane_id, generation, replies);
             return;
         };
         let mut escape_codes = Vec::new();
@@ -298,6 +249,65 @@ impl SessionServer {
                 escape_codes,
             },
         );
+    }
+
+    /// Input-lock and controller changes can revoke a connected owner's authority mid-drop.
+    /// End both sides now, so neither the host nor another collaborator waits on that owner.
+    pub(super) fn cancel_unauthorized_drags(&mut self) {
+        let revoked: Vec<_> = self
+            .panes
+            .iter()
+            .filter_map(|(&id, pane)| {
+                let client = pane.drag_and_drop.owner?;
+                (!self.client_may_input(client)).then_some((id, client))
+            })
+            .collect();
+        for (pane_id, client) in revoked {
+            self.cancel_pane_drag(pane_id, client);
+        }
+    }
+
+    fn cancel_pane_drag(&mut self, pane_id: PaneId, client: ClientId) {
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return;
+        };
+        let generation = pane.generation;
+        let registration = pane.screen().drag_and_drop_registration().clone();
+        let drop_id = registration.drops.as_ref().and_then(|r| r.client_id);
+        let drag_id = registration.drags.as_ref().and_then(|r| r.client_id);
+        let bytes = pane.drag_and_drop.abandon(drop_id, drag_id);
+        // These commands only affect a conversation this client's router still owns.
+        // CancelDrag also clears an offered drag that has not reached StartDrag yet.
+        let mut replies = Vec::new();
+        for (command, tag) in [
+            (
+                ProgramCommand::DropStatus {
+                    operation: tui_lipan::dnd::DropOperation::None,
+                    mimes: None,
+                },
+                drop_id,
+            ),
+            (
+                ProgramCommand::FinishDrop {
+                    operation: tui_lipan::dnd::DropOperation::None,
+                },
+                drop_id,
+            ),
+            (ProgramCommand::CancelDrag, drag_id),
+        ] {
+            command.encode(tag, &mut replies);
+        }
+        self.enqueue(
+            client,
+            Target::Client(client),
+            ServerMessage::PaneDragAndDrop {
+                pane_id,
+                local: false,
+                generation,
+                escape_codes: String::from_utf8(replies).expect("OSC 72 commands are ASCII"),
+            },
+        );
+        self.write_drag_reply(None, pane_id, generation, bytes);
     }
 
     /// A client has gone: end every drag it owned, so no program waits on it forever.
@@ -402,7 +412,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_locked_out_owner_can_finish_its_drag_and_release_the_pane() {
+    fn authority_loss_cancels_drags_and_late_cleanup_cannot_touch_the_new_owner() {
         use super::super::tests::{attach_client, test_pane};
         use crate::session::protocol::{ClientMessage, ControllerChangeReason};
         let hover = TerminalEvent::DragOver {
@@ -439,6 +449,8 @@ mod tests {
             server.handle_message(second, ClientMessage::RequestControl);
             assert!(!server.client_may_input(first));
             assert!(server.client_may_input(second));
+            assert!(!server.panes[&1].drag_and_drop.busy());
+            assert_eq!(server.panes[&1].drag_and_drop.owner, None);
             server.accept_drag_and_drop(
                 second,
                 1,
@@ -446,7 +458,7 @@ mod tests {
                 1,
                 String::from_utf8(written(std::slice::from_ref(&hover))).unwrap(),
             );
-            assert_eq!(server.panes[&1].drag_and_drop.owner, Some(first));
+            assert_eq!(server.panes[&1].drag_and_drop.owner, Some(second));
             server.accept_drag_and_drop(
                 first,
                 1,
@@ -454,14 +466,7 @@ mod tests {
                 1,
                 String::from_utf8(written(&[cleanup])).unwrap(),
             );
-            assert!(!server.panes[&1].drag_and_drop.busy());
-            server.accept_drag_and_drop(
-                second,
-                1,
-                false,
-                1,
-                String::from_utf8(written(std::slice::from_ref(&hover))).unwrap(),
-            );
+            assert!(server.panes[&1].drag_and_drop.busy());
             assert_eq!(server.panes[&1].drag_and_drop.owner, Some(second));
         }
     }

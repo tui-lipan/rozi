@@ -9920,6 +9920,89 @@ fn a_competing_drop_is_finished_without_stealing_the_first_clients_conversation(
 }
 
 #[test]
+fn an_accepted_drop_is_canceled_when_its_owner_loses_input_authority() {
+    use tui_lipan::dnd::{DataTarget, DropOperation, ProgramCommand, TerminalEvent};
+    for transition in [
+        "handoff-before-request",
+        "handoff-after-request",
+        "enable-lock",
+        "park",
+    ] {
+        let mut server = SessionServer::new_named("dnd-authority");
+        let (first, _a) = attach_client(&mut server);
+        let (second, _b) = attach_client(&mut server);
+        server.assign_controller(first, protocol::ControllerChangeReason::Granted);
+        if transition != "enable-lock" {
+            server.handle_message(first, ClientMessage::SetInputLock { locked: true });
+        }
+        spawn_drag_and_drop_pane(
+            &mut server,
+            r"printf '\033]72;t=a:i=9;\033\\'; while read -r x; do printf '\033]72;t=r:x=1:i=9\033\\'; done",
+        );
+        wait_until(&mut server, |server| {
+            server.panes[&1].runtime.drag_and_drop.drops.is_some()
+        });
+        clear_outboxes(&mut server, &[first, second]);
+        drop_on_pane(&mut server, first);
+        if transition == "handoff-after-request" {
+            server.accept_pane_input(first, 1, false, 1, b"\n", true);
+            wait_until(&mut server, |server| {
+                routed_drag_and_drop(server, first)
+                    .iter()
+                    .any(|command| matches!(command.command, ProgramCommand::RequestData(_)))
+            });
+        }
+        if transition == "park" {
+            server.handle_message(first, ClientMessage::SetParked { parked: true });
+        } else {
+            server.handle_message(second, ClientMessage::RequestControl);
+        }
+        if transition == "enable-lock" {
+            assert!(
+                !routed_drag_and_drop(&server, first)
+                    .iter()
+                    .any(|command| matches!(command.command, ProgramCommand::FinishDrop { .. })),
+                "unlocked input authority survives a controller change"
+            );
+            server.handle_message(second, ClientMessage::SetInputLock { locked: true });
+        }
+        assert!(
+            routed_drag_and_drop(&server, first)
+                .iter()
+                .any(|command| command.command
+                    == ProgramCommand::FinishDrop {
+                        operation: DropOperation::None
+                    }),
+            "{transition}: the old host drop must finish"
+        );
+        wait_until(&mut server, |server| {
+            pane_text(server, None, 1).contains("72;t=m:i=9:x=-1:y=-1")
+        });
+        let mut late = Vec::new();
+        TerminalEvent::Data {
+            target: DataTarget::Mime { index: 1 },
+            kind: None,
+            remote: false,
+            bytes: b"stale-drop-data".to_vec(),
+            end: true,
+        }
+        .encode(Some(9), &mut late);
+        server.accept_drag_and_drop(first, 1, false, 1, String::from_utf8(late).unwrap());
+        drop_on_pane(&mut server, second);
+        server.accept_pane_input(second, 1, false, 1, b"\n", true);
+        wait_until(&mut server, |server| {
+            routed_drag_and_drop(server, second)
+                .iter()
+                .any(|command| matches!(command.command, ProgramCommand::RequestData(_)))
+        });
+        assert!(
+            !pane_text(&mut server, None, 1).contains("c3RhbGUtZHJvcC1kYXRh"),
+            "late drop bytes must not enter the PTY"
+        );
+    }
+}
+
+#[test]
 fn a_program_no_client_owns_is_refused_and_its_query_answered() {
     let mut server = SessionServer::new_named("dnd");
     let (_client, _stream) = attach_client(&mut server);

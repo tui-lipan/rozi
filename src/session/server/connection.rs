@@ -1037,6 +1037,7 @@ impl SessionServer {
                     return Vec::new();
                 }
                 self.input_locked = locked;
+                self.cancel_unauthorized_drags();
                 vec![(Target::Broadcast, self.clients_changed())]
             }
             ClientMessage::MarkedInput {

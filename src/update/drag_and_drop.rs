@@ -46,8 +46,12 @@ fn host_event(ctx: &mut Context<AppRoot>, event: HostEvent) -> Update {
     let reset = crate::ops::drag_and_drop::forget_other_attachment(ctx);
     let hit = event.targets.iter().find_map(|target| {
         let pane = crate::ops::drag_and_drop::pane_by_terminal_key(&ctx.state, &target.key)?;
+        let key = crate::ops::drag_and_drop::drop_pane(&ctx.state, pane);
+        if !crate::ops::drag_and_drop::valid_target(&ctx.state, key) {
+            return None;
+        }
         Some(Hit {
-            key: crate::ops::drag_and_drop::drop_pane(&ctx.state, pane),
+            key,
             position: target.position,
             registration: (&pane.terminal.drag_and_drop).into(),
         })
@@ -113,6 +117,11 @@ fn pane_commands(
         generation,
         attachment_epoch: ctx.state.runtime_epoch,
     };
+    if !crate::ops::drag_and_drop::valid_target(&ctx.state, key) {
+        ctx.state.drag_and_drop.decoders.remove(&key);
+        let outputs = ctx.state.drag_and_drop.router.forget_child(&key);
+        return reset.merge(crate::ops::drag_and_drop::perform(ctx, outputs));
+    }
     let Some(pane) = crate::pane::lifecycle::find_pane_in_namespace(&ctx.state, pane_id, local)
         .filter(|pane| pane.pty_generation == generation)
     else {
@@ -398,6 +407,71 @@ mod tests {
                     operation: DropOperation::Copy
                 }]
             );
+        });
+    }
+
+    #[test]
+    fn authority_loss_forgets_shared_gestures_and_hover_before_a_late_offer() {
+        crate::test_support::on_large_stack(|| {
+            for hover in [false, true] {
+                let mut h = harness();
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(1);
+                shared.input_locked = true;
+                h.backend.state_mut().current_mut().shared = Some(shared);
+                h.register(PaneDragAndDrop {
+                    drops: Some(PaneDropRegistration {
+                        client_id: Some(5),
+                        ..Default::default()
+                    }),
+                    drags: Some(Default::default()),
+                });
+                h.host(if hover {
+                    TerminalEvent::DragOver {
+                        position: h.at(1, 1),
+                        operations: DropOperations::COPY,
+                        mimes: Some(files()),
+                    }
+                } else {
+                    TerminalEvent::DragGesture {
+                        position: h.at(1, 1),
+                    }
+                });
+                assert_eq!(h.backend.state().drag_and_drop.router.children().len(), 1);
+                h.sent_to_host();
+                h.backend
+                    .dispatch(crate::Msg::SessionControllerChanged {
+                        epoch: h.backend.state().runtime_epoch,
+                        controller: Some(2),
+                        reason: crate::session::protocol::ControllerChangeReason::Granted,
+                    })
+                    .unwrap();
+                assert!(h.backend.state().drag_and_drop.router.children().is_empty());
+                assert_eq!(h.backend.state().drag_and_drop.hovered, None);
+                h.sent_to_host();
+                // Blocked host gestures must not arm a replacement conversation.
+                h.host(TerminalEvent::DragGesture {
+                    position: h.at(1, 1),
+                });
+                assert!(h.backend.state().drag_and_drop.router.children().is_empty());
+                // Even after permission returns, the old gesture cannot authorize an Offer.
+                h.backend
+                    .dispatch(crate::Msg::SessionControllerChanged {
+                        epoch: h.backend.state().runtime_epoch,
+                        controller: Some(1),
+                        reason: crate::session::protocol::ControllerChangeReason::Granted,
+                    })
+                    .unwrap();
+                h.pane_says(ProgramCommand::Offer {
+                    operations: DropOperations::COPY,
+                    mimes: vec!["text/plain".into()],
+                });
+                assert!(
+                    h.sent_to_host()
+                        .iter()
+                        .all(|command| !matches!(command, ProgramCommand::Offer { .. }))
+                );
+            }
         });
     }
 

@@ -54,8 +54,10 @@ pub(crate) fn forget_other_attachment(ctx: &mut Context<AppRoot>) -> Update {
     perform(ctx, outputs)
 }
 
-fn valid_target(state: &State, pane: DropPane) -> bool {
-    (pane.local || pane.attachment_epoch == state.runtime_epoch)
+pub(crate) fn valid_target(state: &State, pane: DropPane) -> bool {
+    (pane.local
+        || (pane.attachment_epoch == state.runtime_epoch
+            && state.current().pane_input_block_reason().is_none()))
         && crate::pane::lifecycle::find_pane_in_namespace(state, pane.pane_id, pane.local)
             .is_some_and(|found| found.pty_generation == pane.generation && !found.closing)
 }
@@ -176,7 +178,7 @@ fn paste_uri_list(
 }
 
 /// Repairs after every update: what rozi has registered with the host, and the router's hold on
-/// panes that have gone.
+/// panes that have gone or can no longer receive input.
 pub(crate) fn sync(ctx: &mut Context<AppRoot>) {
     let _ = forget_other_attachment(ctx);
     let gone: Vec<DropPane> = ctx

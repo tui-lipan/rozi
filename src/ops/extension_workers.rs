@@ -197,6 +197,14 @@ pub(crate) fn gate(command: &ControlCommand) -> Gate {
         | ControlCommand::ExtensionsStatus => Gate::Denied(
             "deploying an extension changes what a session keeps, which a placed worker may not do",
         ),
+        ControlCommand::AgentAsk { .. }
+        | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentAwait { .. }
+        | ControlCommand::AgentRequest { .. }
+        | ControlCommand::AgentRequests { .. }
+        | ControlCommand::AgentCancel { .. } => {
+            Gate::Denied("agent requests belong to the session server a pane runs in")
+        }
         ControlCommand::AgentReport { .. } | ControlCommand::AgentRelease { .. } => {
             Gate::Denied("agent reports come from the pane an agent runs in")
         }

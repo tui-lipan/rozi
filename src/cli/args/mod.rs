@@ -2109,8 +2109,9 @@ pub(super) fn reject_trailing_control_args(
 /// (`ui_socket_in_env` false). The pane's own id becomes the explicit target: it is meaningful here
 /// because the instance, which the server checks, proves which namespace it belongs to.
 ///
-/// A shared pane's action commands always go to its own server: deployed actions belong to the
-/// session, so they must not depend on a UI being attached.
+/// A shared pane's action commands and agent requests always go to its own server: deployed
+/// actions and requests belong to the session, so they must not depend on a UI being attached, and
+/// a request names its caller by the pane it comes from.
 ///
 /// Anything else keeps its endpoint, including discovery of the only live UI when nothing names
 /// one. A pane that does have `ROZI_SOCKET` keeps reporting through its UI.
@@ -2127,6 +2128,12 @@ pub(super) fn own_session_endpoint(
             | control::ControlCommand::InvocationList
             | control::ControlCommand::InvocationCancel { .. }
             | control::ControlCommand::ActionsList
+            | control::ControlCommand::AgentAsk { .. }
+            | control::ControlCommand::AgentReply { .. }
+            | control::ControlCommand::AgentAwait { .. }
+            | control::ControlCommand::AgentRequest { .. }
+            | control::ControlCommand::AgentRequests { .. }
+            | control::ControlCommand::AgentCancel { .. }
     );
     if endpoint == ControlEndpoint::Ui(None)
         && session_only

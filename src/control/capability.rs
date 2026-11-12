@@ -9,6 +9,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ControlCapability {
     AgentPromptResults,
+    /// A session server keeps requests between its agents: `agent-ask`, `agent-reply`,
+    /// `agent-await`, `agent-request`, `agent-requests`, and `agent-cancel`.
+    AgentRequests,
     /// `agents prompt` and `agents wait` return the agent's own reply when its integration reports
     /// one, instead of only a terminal capture.
     AgentResponses,
@@ -110,8 +113,9 @@ pub enum ControlCapability {
 
 impl ControlCapability {
     /// Every control capability this binary has, in name order.
-    pub const ALL: [ControlCapability; 39] = [
+    pub const ALL: [ControlCapability; 40] = [
         ControlCapability::AgentPromptResults,
+        ControlCapability::AgentRequests,
         ControlCapability::AgentResponses,
         ControlCapability::AgentWaits,
         ControlCapability::AttachedControl,
@@ -156,6 +160,7 @@ impl ControlCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             ControlCapability::AgentPromptResults => "agent-prompt-results",
+            ControlCapability::AgentRequests => "agent-requests",
             ControlCapability::AgentResponses => "agent-responses",
             ControlCapability::AgentWaits => "agent-waits",
             ControlCapability::AttachedControl => "attached-control",

@@ -200,6 +200,13 @@ fn headless_capability_probe_refuses_a_missing_feature_before_sending() {
             .contains(concat!("session runs rozi ", env!("CARGO_PKG_VERSION")))
     );
     assert!(!connection.supports(protocol::Capability::RuntimeMetrics));
+    let refused = connection
+        .run(request(ControlCommand::AgentRequests { direction: None }))
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("missing agent-requests"),
+        "{refused}"
+    );
     assert!(
         connection
             .run(request(ControlCommand::ListPanes))

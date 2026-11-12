@@ -45,11 +45,16 @@ pub enum Capability {
     /// The server routes each pane's drag-and-drop conversation (OSC 72) to the client that owns
     /// it: [`super::ClientMessage::DragAndDrop`] and [`super::ServerMessage::PaneDragAndDrop`].
     DragAndDrop,
+    /// The server keeps asynchronous requests between the agents of its session: the
+    /// `agent-ask`, `agent-reply`, `agent-await`, `agent-request`, `agent-requests`, and
+    /// `agent-cancel` control commands, and the `agent-cli` response source.
+    AgentRequests,
 }
 
 impl Capability {
     /// Every capability this build knows, in wire-name order.
-    pub const ALL: [Capability; 6] = [
+    pub const ALL: [Capability; 7] = [
+        Capability::AgentRequests,
         Capability::AgentSummaries,
         Capability::ClientHandoff,
         Capability::DragAndDrop,
@@ -67,6 +72,7 @@ impl Capability {
             Capability::GraphicsRootFrameEdits => "graphics-root-frame-edits",
             Capability::ClientHandoff => "client-handoff",
             Capability::DragAndDrop => "drag-and-drop",
+            Capability::AgentRequests => "agent-requests",
         }
     }
 
@@ -79,6 +85,7 @@ impl Capability {
             | Self::GraphicsRootFrameEdits
             | Self::ClientHandoff => "0.0.44",
             Self::DragAndDrop => "0.0.46",
+            Self::AgentRequests => "0.0.47",
         }
     }
 
@@ -149,7 +156,28 @@ pub struct GatedValue {
 }
 
 /// Every vocabulary value added within this generation. Empty at the start of a generation.
-pub const GATED_VOCABULARY: &[GatedValue] = &[];
+pub const GATED_VOCABULARY: &[GatedValue] = &[
+    GatedValue {
+        vocabulary: "AgentResponseSource",
+        value: "agent-cli",
+        capability: Capability::AgentRequests,
+    },
+    agent_request_command("agent-ask"),
+    agent_request_command("agent-reply"),
+    agent_request_command("agent-await"),
+    agent_request_command("agent-request"),
+    agent_request_command("agent-requests"),
+    agent_request_command("agent-cancel"),
+];
+
+/// A control command a session server serves only with [`Capability::AgentRequests`].
+const fn agent_request_command(value: &'static str) -> GatedValue {
+    GatedValue {
+        vocabulary: "ControlRequest",
+        value,
+        capability: Capability::AgentRequests,
+    }
+}
 
 impl FromIterator<Capability> for Capabilities {
     fn from_iter<I: IntoIterator<Item = Capability>>(iter: I) -> Self {

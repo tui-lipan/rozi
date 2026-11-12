@@ -150,6 +150,9 @@ impl SessionServer {
             self.client_may_input(id)
         };
         if may_operate {
+            if !local {
+                self.agent_requests.note_client_input(pane_id);
+            }
             if self.defer_history_input(id, pane_id, local, generation, bytes, latency_sensitive) {
                 return;
             }
@@ -1038,6 +1041,7 @@ impl SessionServer {
                 }
                 self.input_locked = locked;
                 self.cancel_unauthorized_drags();
+                self.pump_agent_requests();
                 vec![(Target::Broadcast, self.clients_changed())]
             }
             ClientMessage::MarkedInput {

@@ -128,12 +128,15 @@ enum WaitEvaluation {
 }
 
 impl SessionServer {
+    /// Whether another prompt is in flight for `reference`: a history read on its pane, a prompt
+    /// wait, or, for a `result` prompt, a request it is answering.
     pub(super) fn has_conflicting_prompt(
         &self,
         reference: &protocol::AgentRef,
         result: bool,
     ) -> bool {
         self.agent_history.contains_key(&reference.pane.pane_id)
+            || (result && self.agent_requests.answering(reference).is_some())
             || self.agent_waits.values().any(|wait| {
                 wait.turn
                     .as_ref()
@@ -312,6 +315,7 @@ impl SessionServer {
             }
         }
         self.finish_agent_waits(completed);
+        self.pump_agent_requests();
     }
 
     /// Whether the agent has answered the prompt `wait` follows. `native_session` is the one the
@@ -480,12 +484,14 @@ impl SessionServer {
     pub(super) fn remove_agent_waits(&mut self, client_id: ClientId) {
         self.agent_waits
             .retain(|&(client, _), _| client != client_id);
+        self.agent_requests.remove_awaits(client_id);
         self.cancel_client_history(client_id);
     }
 
     /// Whether `client_id` still holds a wait, which keeps a headless connection open.
     pub(super) fn holds_agent_wait(&self, client_id: ClientId) -> bool {
         self.holds_agent_history(client_id)
+            || self.agent_requests.holds_await(client_id)
             || self
                 .agent_waits
                 .keys()
@@ -564,37 +570,44 @@ impl SessionServer {
                     )),
                 }
             }
-            AgentTarget::Ref(reference) => {
-                if reference.pane.session_instance != self.instance_id {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        "agent reference belongs to a different session server instance",
-                    ));
-                }
-                let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        format!("pane {} no longer exists", reference.pane.pane_id),
-                    ));
-                };
-                if pane.generation != reference.pane.generation {
-                    return Err(ControlResponse::error_with(
-                        ControlErrorCode::StaleReference,
-                        format!("pane {} has been replaced", reference.pane.pane_id),
-                    ));
-                }
-                let current = self
-                    .agent_runtimes_for(reference.pane.pane_id, pane)
-                    .into_iter()
-                    .find(|runtime| runtime.reference == reference);
-                current.map(|runtime| runtime.reference).ok_or_else(|| {
-                    ControlResponse::error_with(
-                        ControlErrorCode::AgentReplaced,
-                        "agent reference no longer names the current incarnation",
-                    )
-                })
-            }
+            AgentTarget::Ref(reference) => self
+                .current_agent_runtime(&reference)
+                .map(|runtime| runtime.reference),
         }
+    }
+
+    /// The runtime of the exact agent `reference` names, while it is still the current one.
+    pub(super) fn current_agent_runtime(
+        &self,
+        reference: &protocol::AgentRef,
+    ) -> std::result::Result<protocol::AgentRuntime, ControlResponse> {
+        if reference.pane.session_instance != self.instance_id {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                "agent reference belongs to a different session server instance",
+            ));
+        }
+        let Some(pane) = self.panes.get(&reference.pane.pane_id) else {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                format!("pane {} no longer exists", reference.pane.pane_id),
+            ));
+        };
+        if pane.generation != reference.pane.generation {
+            return Err(ControlResponse::error_with(
+                ControlErrorCode::StaleReference,
+                format!("pane {} has been replaced", reference.pane.pane_id),
+            ));
+        }
+        self.agent_runtimes_for(reference.pane.pane_id, pane)
+            .into_iter()
+            .find(|runtime| runtime.reference == *reference)
+            .ok_or_else(|| {
+                ControlResponse::error_with(
+                    ControlErrorCode::AgentReplaced,
+                    "agent reference no longer names the current incarnation",
+                )
+            })
     }
 
     fn evaluate_agent_wait(

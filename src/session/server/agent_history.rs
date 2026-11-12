@@ -65,7 +65,7 @@ impl PendingHistoryRead {
 }
 
 /// The active grid's text: retained history on the normal screen, the viewport on the alternate.
-fn bounded_terminal_text(screen: &TerminalScreen) -> String {
+pub(super) fn bounded_terminal_text(screen: &TerminalScreen) -> String {
     use std::ops::ControlFlow;
     let mut text = String::new();
     let _ = screen.try_for_each_text_line(0, screen.total_text_lines(), |row, line| {
@@ -209,7 +209,6 @@ impl SessionServer {
         }
     }
 
-    /// Store rendered terminal text, which never claims to be a complete response.
     fn store_terminal(
         &mut self,
         reference: &protocol::AgentRef,
@@ -217,26 +216,39 @@ impl SessionServer {
         result: &mut AgentWaitResult,
         text: String,
     ) {
-        if !text.is_empty() {
-            let content = rendered_payload(text, AgentResponseSource::Terminal, false);
-            self.store_rendered(reference, fence, result, content);
+        if let Some(response) = self.store_terminal_response(reference, fence, text) {
+            result.response = Some(response);
         }
+    }
+
+    /// Store rendered terminal text, which never claims to be a complete response, and return the
+    /// turn's response. Nothing is stored for an empty screen.
+    pub(super) fn store_terminal_response(
+        &mut self,
+        reference: &protocol::AgentRef,
+        fence: &AgentResponseFence,
+        text: String,
+    ) -> Option<crate::control::AgentResponse> {
+        if text.is_empty() {
+            return None;
+        }
+        let content = rendered_payload(text, AgentResponseSource::Terminal, false);
+        self.store_rendered(reference, fence, content)
     }
 
     fn store_rendered(
         &mut self,
         reference: &protocol::AgentRef,
         fence: &AgentResponseFence,
-        result: &mut AgentWaitResult,
         content: AgentResponsePayload,
-    ) {
+    ) -> Option<crate::control::AgentResponse> {
         // A semantic reply arriving during traversal always takes precedence.
         if self.agent_responses.after(reference, fence).is_none() {
             let native = self.response_native_session(reference);
             self.agent_responses
                 .insert(reference.clone(), native, content);
         }
-        result.response = self.agent_responses.after(reference, fence).cloned();
+        self.agent_responses.after(reference, fence).cloned()
     }
 
     /// Poll from the normal server loop. Never block the pump waiting for a TUI redraw.
@@ -395,7 +407,8 @@ impl SessionServer {
                     AgentResponseSource::AlternateScreenHistory,
                     history.complete,
                 );
-                self.store_rendered(&reference, &read.wait.fence, &mut read.wait.result, content);
+                read.wait.result.response =
+                    self.store_rendered(&reference, &read.wait.fence, content);
             }
             // A failed request publishes nothing; a traversal that just ended without text
             // still answers with the screen the turn ended on.
@@ -413,6 +426,7 @@ impl SessionServer {
         for mutation in read.mutations {
             self.replay_history_mutation(reference.pane.pane_id, mutation);
         }
+        self.pump_agent_requests();
     }
 
     fn replay_history_mutation(&mut self, pane_id: PaneId, mutation: DeferredMutation) {

@@ -44,6 +44,24 @@ pub(in crate::cli) const HELP_SECTIONS: &[HelpSection] = &[
                 "Safely submit a prompt",
             ),
             row(
+                "ask --ref <JSON> -- <TEXT>",
+                "Ask another agent; returns the request at once",
+            ),
+            row(
+                "reply <ID> --stdin",
+                "Answer a request sent to you, text on stdin",
+            ),
+            row(
+                "await <ID> --timeout <DUR>",
+                "Wait until a request is answered",
+            ),
+            row("request <ID>", "Show one request"),
+            row(
+                "requests [--incoming|--outgoing]",
+                "List requests, or those to or from you",
+            ),
+            row("cancel <ID>", "Cancel a request you asked"),
+            row(
                 "report --agent <ID> --integration <TOKEN> --state <STATE> --seq <N>",
                 "Report integration state",
             ),
@@ -123,7 +141,7 @@ pub(super) fn parse_agents_args(
 ) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
     let mut iter = args.into_iter();
     let subcommand = iter.next().ok_or_else(|| {
-        "agents requires a subcommand (list, go, get, read, response, wait, prompt, report, or release)"
+        "agents requires a subcommand (list, go, get, read, response, wait, prompt, ask, reply, await, request, requests, cancel, report, or release)"
             .to_string()
     })?;
     let args = iter.collect::<Vec<_>>();
@@ -173,10 +191,18 @@ pub(super) fn parse_agents_args(
         "read" => parse_read(args),
         "wait" => parse_wait(args),
         "prompt" => parse_prompt(args),
+        "ask" => parse_ask(args),
+        "reply" => parse_reply(args),
+        "await" => parse_await(args),
+        "request" => parse_request_id(args, "agents request")
+            .map(|(id, format)| (ControlCommand::AgentRequest { id }, format)),
+        "requests" => parse_requests(args),
+        "cancel" => parse_request_id(args, "agents cancel")
+            .map(|(id, format)| (ControlCommand::AgentCancel { id }, format)),
         "report" => parse_report(args),
         "release" => parse_release(args),
         other => Err(format!(
-            "unknown agents subcommand `{other}`; expected list, go, get, read, response, wait, prompt, report, or release"
+            "unknown agents subcommand `{other}`; expected list, go, get, read, response, wait, prompt, ask, reply, await, request, requests, cancel, report, or release"
         )),
     }
 }
@@ -418,6 +444,146 @@ fn parse_prompt(
         },
         format,
     ))
+}
+
+fn parse_ask(
+    args: Vec<String>,
+) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+    let mut target = None;
+    let mut prompt: Option<String> = None;
+    let mut format = None;
+    let mut iter = args.into_iter();
+    while let Some(argument) = iter.next() {
+        match argument.as_str() {
+            "--target" | "--ref" => set_target(&mut target, &argument, &mut iter)?,
+            "--format" => set_format(&mut format, &mut iter, "agents ask")?,
+            // Everything after `--` is the text, whatever it looks like.
+            "--" => {
+                let rest = iter.by_ref().collect::<Vec<_>>().join(" ");
+                if prompt.replace(rest).is_some() {
+                    return Err("agents ask takes one text".into());
+                }
+            }
+            value if prompt.is_none() && !value.starts_with('-') => {
+                prompt = Some(value.to_string());
+            }
+            other => return Err(unexpected("agents ask", other)),
+        }
+    }
+    Ok((
+        ControlCommand::AgentAsk {
+            target: require_target(target, "agents ask")?,
+            prompt: prompt.ok_or_else(|| {
+                "agents ask requires text: agents ask --ref <JSON> -- <TEXT>".to_string()
+            })?,
+        },
+        format,
+    ))
+}
+
+fn parse_reply(
+    args: Vec<String>,
+) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+    let (id, format, rest) = take_request_id(args, "agents reply")?;
+    if rest != ["--stdin"] {
+        return Err("agents reply reads the answer from stdin: agents reply <ID> --stdin".into());
+    }
+    use std::io::Read;
+    let limit = crate::session::protocol::MAX_AGENT_RESPONSE_BYTES;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("agents reply --stdin: {error}"))?;
+    if bytes.len() > limit {
+        return Err(format!(
+            "a reply is limited to {} MiB",
+            limit / (1024 * 1024)
+        ));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| "agents reply --stdin: the answer is not UTF-8".to_string())?;
+    Ok((
+        ControlCommand::AgentReply {
+            id,
+            text: text.trim_end().to_string(),
+        },
+        format,
+    ))
+}
+
+fn parse_await(
+    args: Vec<String>,
+) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+    let (id, format, rest) = take_request_id(args, "agents await")?;
+    let mut timeout_ms = None;
+    let mut iter = rest.into_iter();
+    while let Some(flag) = iter.next() {
+        match flag.as_str() {
+            "--timeout" => {
+                let value = super::require_value(&mut iter, "--timeout requires a duration")?;
+                if timeout_ms
+                    .replace(super::parse_duration_ms(&value, "--timeout")?)
+                    .is_some()
+                {
+                    return Err("agents await --timeout specified more than once".into());
+                }
+            }
+            other => return Err(unexpected("agents await", other)),
+        }
+    }
+    let timeout_ms = timeout_ms
+        .ok_or_else(|| "agents await requires --timeout, such as --timeout 10m".to_string())?;
+    Ok((
+        ControlCommand::AgentAwait {
+            id,
+            timeout_ms: Some(timeout_ms),
+        },
+        format,
+    ))
+}
+
+fn parse_requests(
+    args: Vec<String>,
+) -> std::result::Result<(ControlCommand, Option<ListFormat>), String> {
+    let (format, rest) = take_format(args, "agents requests")?;
+    let mut direction = None;
+    for flag in rest {
+        let value = match flag.as_str() {
+            "--incoming" => crate::control::AgentRequestDirection::Incoming,
+            "--outgoing" => crate::control::AgentRequestDirection::Outgoing,
+            other => return Err(unexpected("agents requests", other)),
+        };
+        if direction.replace(value).is_some() {
+            return Err("agents requests takes --incoming or --outgoing, not both".into());
+        }
+    }
+    Ok((ControlCommand::AgentRequests { direction }, format))
+}
+
+fn parse_request_id(
+    args: Vec<String>,
+    command: &str,
+) -> std::result::Result<(String, Option<ListFormat>), String> {
+    let (id, format, rest) = take_request_id(args, command)?;
+    reject_rest(rest, command)?;
+    Ok((id, format))
+}
+
+/// The request id a command takes as its first argument, its `--format`, and whatever else it
+/// was given.
+fn take_request_id(
+    args: Vec<String>,
+    command: &str,
+) -> std::result::Result<(String, Option<ListFormat>, Vec<String>), String> {
+    let (format, mut rest) = take_format(args, command)?;
+    if rest.first().is_none_or(|first| first.starts_with('-')) {
+        return Err(format!(
+            "{command} takes a request id first: {command} <ID>"
+        ));
+    }
+    let id = rest.remove(0);
+    Ok((id, format, rest))
 }
 
 fn parse_read(
@@ -1017,6 +1183,22 @@ mod tests {
             let error = parse_agents_args(args(&command)).unwrap_err();
             assert!(error.contains(expected), "{command:?}: {error}");
         }
+    }
+
+    #[test]
+    fn ask_takes_everything_after_the_separator_as_its_text() {
+        let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect();
+        let (command, _) =
+            parse_agents_args(args(&["ask", "--target", "3", "--", "--why", "not?"])).unwrap();
+        assert_eq!(
+            command,
+            ControlCommand::AgentAsk {
+                target: AgentTarget::Pane(3),
+                prompt: "--why not?".into(),
+            }
+        );
+        let error = parse_agents_args(args(&["await", "--timeout", "1m", "rq_1"])).unwrap_err();
+        assert!(error.contains("takes a request id first"), "{error}");
     }
 
     #[test]

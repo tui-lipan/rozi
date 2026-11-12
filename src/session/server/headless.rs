@@ -127,7 +127,13 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         | ControlCommand::ExtensionsUndeploy { .. }
         | ControlCommand::ExtensionsStatus
         | ControlCommand::Notify { .. }
-        | ControlCommand::Subscribe { .. } => None,
+        | ControlCommand::Subscribe { .. }
+        | ControlCommand::AgentAsk { .. }
+        | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentAwait { .. }
+        | ControlCommand::AgentRequest { .. }
+        | ControlCommand::AgentRequests { .. }
+        | ControlCommand::AgentCancel { .. } => None,
         ControlCommand::ListAttachedPanes => Some(
             "list-panes --scope attached needs a UI; a session server knows only its own panes",
         ),
@@ -240,6 +246,17 @@ pub fn attached_control_refusal(
         ControlCommand::RecordStart { .. }
         | ControlCommand::RecordStop { .. }
         | ControlCommand::RecordMark { .. } => None,
+        // The server derives who asks or answers from the calling pane, which a UI cannot vouch
+        // for; the CLI sends these to the pane's own session.
+        ControlCommand::AgentAsk { .. }
+        | ControlCommand::AgentReply { .. }
+        | ControlCommand::AgentAwait { .. }
+        | ControlCommand::AgentRequest { .. }
+        | ControlCommand::AgentRequests { .. }
+        | ControlCommand::AgentCancel { .. } => Some((
+            ControlErrorCode::Unsupported,
+            "agent requests go to the calling pane's own session server, not through a UI",
+        )),
         _ => Some((
             ControlErrorCode::Unsupported,
             "only recording commands and agent waits and prompts are run by the session server for an attached client",
@@ -523,6 +540,13 @@ impl SessionServer {
                     },
                     reply.clone(),
                 )),
+                ControlCommand::AgentAwait { id, timeout_ms } => Some(self.register_request_await(
+                    client_id,
+                    self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                    id,
+                    *timeout_ms,
+                    reply.clone(),
+                )),
                 ControlCommand::RecordStart { .. }
                 | ControlCommand::RecordStop { .. }
                 | ControlCommand::RecordList
@@ -754,7 +778,28 @@ impl SessionServer {
             ControlCommand::PaneLogging { target, enabled } => {
                 self.session_pane_logging(target, enabled, broadcasts)
             }
-            ControlCommand::AgentWait { .. } => unreachable!("agent waits are registered above"),
+            ControlCommand::AgentAsk { target, prompt } => self.ask_agent(
+                self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                target,
+                prompt,
+            ),
+            ControlCommand::AgentReply { id, text } => self.reply_to_request(
+                self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                &id,
+                text,
+            ),
+            ControlCommand::AgentRequest { id } => self.agent_request(&id),
+            ControlCommand::AgentRequests { direction } => self.agent_request_list(
+                self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                direction,
+            ),
+            ControlCommand::AgentCancel { id } => self.cancel_request(
+                self.caller_agent(request.source_session.as_ref(), request.source_pane),
+                &id,
+            ),
+            ControlCommand::AgentWait { .. } | ControlCommand::AgentAwait { .. } => {
+                unreachable!("agent waits are registered above")
+            }
             ControlCommand::RecordStart { .. }
             | ControlCommand::RecordStop { .. }
             | ControlCommand::RecordList
@@ -1148,25 +1193,13 @@ impl SessionServer {
         id: Option<PaneId>,
     ) -> ControlResponse {
         use crate::control::{CallerContext, CallerSession, CallerUi};
-        let pane = id
-            .and_then(|id| {
-                self.panes
-                    .get(&id)
-                    .filter(|pane| pane.exited.is_none())
-                    .map(|pane| (id, pane))
-            })
-            .filter(|_| source == Some(&self.instance_id));
+        let pane = self.source_pane(source, id);
         let reference = pane.map(|(id, pane)| protocol::PaneRef {
             session_instance: self.instance_id.clone(),
             pane_id: id,
             generation: pane.generation,
         });
-        let agent = pane.and_then(|(id, pane)| {
-            match protocol::pane_agent(self.agent_runtimes_for(id, pane), &pane.runtime.rows) {
-                protocol::PaneAgent::One(agent) => Some(*agent),
-                _ => None,
-            }
-        });
+        let agent = pane.and_then(|(id, pane)| self.pane_named_agent(id, pane));
         ControlResponse::ok(CallerContext {
             inside_rozi: reference.is_some(),
             status: if reference.is_some() {
@@ -1185,6 +1218,37 @@ impl SessionServer {
             agent,
             ui: CallerUi::default(),
         })
+    }
+
+    /// The live pane a request comes from, when it names this server's instance as its own.
+    fn source_pane(
+        &self,
+        source: Option<&protocol::SessionInstanceId>,
+        id: Option<PaneId>,
+    ) -> Option<(PaneId, &ServerPane)> {
+        let id = id.filter(|_| source == Some(&self.instance_id))?;
+        self.panes
+            .get(&id)
+            .filter(|pane| pane.exited.is_none())
+            .map(|pane| (id, pane))
+    }
+
+    /// The agent a pane id names: its own, or the published row on screen.
+    fn pane_named_agent(&self, id: PaneId, pane: &ServerPane) -> Option<protocol::AgentRuntime> {
+        match protocol::pane_agent(self.agent_runtimes_for(id, pane), &pane.runtime.rows) {
+            protocol::PaneAgent::One(agent) => Some(*agent),
+            _ => None,
+        }
+    }
+
+    /// The agent a request comes from, verified as [`Self::caller_context`] verifies it.
+    pub(super) fn caller_agent(
+        &self,
+        source: Option<&protocol::SessionInstanceId>,
+        id: Option<PaneId>,
+    ) -> Option<protocol::AgentRef> {
+        let (id, pane) = self.source_pane(source, id)?;
+        self.pane_named_agent(id, pane).map(|agent| agent.reference)
     }
 
     pub(super) fn session_pane_report(&self) -> Vec<PaneInfo> {
@@ -1373,7 +1437,7 @@ impl SessionServer {
 
     /// Read now rather than from the last poll: a dialog can open just after the report that said
     /// the agent was ready, and the Enter of a prompt typed into it would answer it.
-    fn refuse_unannounced_dialog(
+    pub(super) fn refuse_unannounced_dialog(
         &mut self,
         pane_id: PaneId,
     ) -> std::result::Result<(), ControlResponse> {
@@ -1489,7 +1553,7 @@ impl SessionServer {
         }
     }
 
-    fn validate_agent_input_reference(
+    pub(super) fn validate_agent_input_reference(
         &self,
         reference: &protocol::AgentRef,
     ) -> std::result::Result<(), ControlResponse> {
@@ -1680,7 +1744,7 @@ impl SessionServer {
         }
     }
 
-    fn session_prompt_bytes(
+    pub(super) fn session_prompt_bytes(
         &self,
         id: PaneId,
         prompt: &str,

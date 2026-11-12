@@ -33,10 +33,13 @@ const TAGS: [&str; 4] = ["type", "kind", "step", "cmd"];
 const UNKNOWN: &str = "unknown";
 /// Vocabularies that stay closed in the schema, because the control API publishes them, but that
 /// the session wire decodes tolerantly through `session::protocol::tolerant`. Each needs an
-/// `UnknownValue` impl there; keep the two lists in step.
-const TOLERANT: [&str; 4] = [
+/// `UnknownValue` impl there; keep the two lists in step. `ControlRequest` is the exception: its
+/// command decodes an unknown `cmd` into `ControlCommand::Unknown`, which the schema leaves out.
+const TOLERANT: [&str; 6] = [
     "AgentAuthority",
+    "AgentResponseSource",
     "AgentState",
+    "ControlRequest",
     "DetectedAgentState",
     "PublisherKind",
 ];

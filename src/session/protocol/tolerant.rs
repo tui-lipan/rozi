@@ -57,3 +57,10 @@ impl UnknownValue for super::PublisherKind {
         Self::Activity
     }
 }
+
+impl UnknownValue for crate::control::AgentResponseSource {
+    /// The source that claims least: text read off a terminal.
+    fn unknown(_: Option<&str>) -> Self {
+        Self::Terminal
+    }
+}

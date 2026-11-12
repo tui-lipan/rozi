@@ -1153,6 +1153,20 @@ pub(super) fn format_control_text(
         control::ControlCommand::AgentRead { .. } => format_capture_text(data),
         control::ControlCommand::AgentResponse { .. } => format_agent_response_text(data),
         control::ControlCommand::AgentWait { .. } => format_agent_wait_text(data, styles),
+        control::ControlCommand::AgentAsk { .. }
+        | control::ControlCommand::AgentReply { .. }
+        | control::ControlCommand::AgentCancel { .. } => format_agent_request_line(data, styles),
+        control::ControlCommand::AgentRequest { .. }
+        | control::ControlCommand::AgentAwait { .. } => format_agent_request_text(data, styles),
+        control::ControlCommand::AgentRequests { .. } => data
+            .and_then(serde_json::Value::as_array)
+            .map(|requests| {
+                requests
+                    .iter()
+                    .map(|request| format_agent_request_line(Some(request), styles))
+                    .collect()
+            })
+            .unwrap_or_default(),
         control::ControlCommand::AgentPrompt { result, .. } => {
             if data.is_some_and(|data| data.get("condition").is_some()) {
                 let mut text = if *result {
@@ -1514,6 +1528,53 @@ fn format_agent_wait_text(data: Option<&serde_json::Value>, styles: OutputStyles
         text.push('\n');
     }
     text
+}
+
+/// One request on one line: its id, state, the panes it goes between, and why it is where it is.
+fn format_agent_request_line(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    let Some(data) = data else {
+        return String::new();
+    };
+    let pane = |key: &str| {
+        data.get(key)
+            .and_then(|agent| agent.get("pane"))
+            .and_then(|pane| value_u64(pane, "pane_id"))
+            .map_or_else(|| "-".to_string(), |id| format!("pane {id}"))
+    };
+    let state = value_string(data, "state").unwrap_or("unknown");
+    let tone = match state {
+        "answered" => OutputTone::Success,
+        "failed" => OutputTone::Error,
+        "queued" | "active" => OutputTone::Warning,
+        _ => OutputTone::Muted,
+    };
+    let mut line = format!(
+        "{}  {}  {} -> {}",
+        styles.paint(
+            value_string(data, "id").unwrap_or_default(),
+            OutputTone::Accent
+        ),
+        styles.paint(state, tone),
+        pane("from"),
+        pane("to"),
+    );
+    if let Some(reason) = value_string(data, "reason") {
+        line.push_str("  ");
+        line.push_str(&styles.paint(reason, OutputTone::Muted));
+    }
+    line.push('\n');
+    line
+}
+
+/// A request's answer when it has one, and its summary line otherwise.
+fn format_agent_request_text(data: Option<&serde_json::Value>, styles: OutputStyles) -> String {
+    match data
+        .and_then(|data| data.get("response"))
+        .and_then(|response| value_string(response, "text"))
+    {
+        Some(text) => format!("{text}\n"),
+        None => format_agent_request_line(data, styles),
+    }
 }
 
 pub(super) fn style_first_line(text: String, tone: OutputTone, styles: OutputStyles) -> String {

@@ -49,7 +49,13 @@ fn schema() -> serde_json::Value {
 /// schema cannot say this itself: one response envelope carries every command's answer.
 const REPLY_PAYLOADS: &[(&str, &[&str])] = &[
     ("actions-list", &["ActionInfo[]"]),
+    ("agent-ask", &["AgentRequestInfo"]),
+    ("agent-await", &["AgentRequestInfo"]),
+    ("agent-cancel", &["AgentRequestInfo"]),
     ("agent-get", &["AgentInfo"]),
+    ("agent-reply", &["AgentRequestInfo"]),
+    ("agent-request", &["AgentRequestInfo"]),
+    ("agent-requests", &["AgentRequestList"]),
     ("agent-response", &["AgentResponseLookup"]),
     ("agent-prompt", &["AgentPromptAccepted", "AgentWaitResult"]),
     ("agent-read", &["PaneCapture"]),

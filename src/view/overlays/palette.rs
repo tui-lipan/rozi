@@ -742,7 +742,7 @@ pub(super) fn picker_tabs(
         .effective_cap_style(ctx.state.config.pane.picker_tab_style)
         .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
-    DraggableTabBar::new()
+    crate::view::scrolling_tab_bar(theme, strip)
         .tabs(labels.iter().map(|label| DraggableTab::new(*label)))
         .active(active)
         .draggable(false)
@@ -752,14 +752,6 @@ pub(super) fn picker_tabs(
         .height(Length::Px(1))
         .divider(' ')
         .caps(caps)
-        .overflow_left_label(|_| Arc::from("❮ "))
-        .overflow_right_label(|_| Arc::from(" ❯"))
-        .overflow_style(Style::new().fg(theme.border_active))
-        .overflow_hover_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(strip.elevate_by(0.08)),
-        )
         .style(
             Style::new()
                 .fg(crate::ops::theme::chrome_label_fg(theme, strip))

@@ -225,13 +225,13 @@ const COMMAND_KEYS: &[&str] = &["id", "label", "run", "send", "popup", "exec", "
 
 const BINDING_TABLE_KEYS: &[&str] = &["add", "label", "run", "send", "popup", "exec", "keep_open"];
 
-const WORKBAR_KEYS: &[&str] = &["left", "right", "clock_format", "alert"];
+const WORKBAR_KEYS: &[&str] = &["left", "center", "right", "clock_format", "alert"];
 
 const WORKBAR_ALERT_KEYS: &[&str] = &[
     "bell", "blocked", "error", "finished", "working", "idle", "mode", "paint",
 ];
 
-const WORKBAR_SEGMENT_KEYS: &[&str] = &["segment", "color"];
+const WORKBAR_SEGMENT_KEYS: &[&str] = &["segment", "color", "priority"];
 
 const RULE_KEYS: &[&str] = &[
     "match",
@@ -438,6 +438,7 @@ fn collect_workbar(table: &Table, unknown: &mut Vec<String>) {
     };
     collect_named_table(workbar, "workbar", "alert", WORKBAR_ALERT_KEYS, unknown);
     collect_segment_list(workbar, "left", unknown);
+    collect_segment_list(workbar, "center", unknown);
     collect_segment_list(workbar, "right", unknown);
 }
 

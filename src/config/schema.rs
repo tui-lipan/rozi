@@ -2730,19 +2730,36 @@ impl BadgeColor {
     }
 }
 
-/// A configured workbar segment plus an optional badge color override. `color: None` uses the
-/// segment's curated default color (see the view's `curated_color`).
+/// A configured workbar segment with optional badge color and retention-priority overrides.
+/// An unset override uses the segment's curated default.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkbarItem {
     pub segment: WorkbarSegment,
     pub color: Option<BadgeColor>,
+    /// Larger values keep this segment visible longer when space is limited.
+    pub priority: Option<u8>,
 }
 
 impl WorkbarItem {
+    /// Effective retention priority for space-limited workbars.
+    pub fn retention_priority(&self) -> u8 {
+        self.priority.unwrap_or(match self.segment {
+            WorkbarSegment::Session => 200,
+            WorkbarSegment::Workspaces => 180,
+            WorkbarSegment::Activity => 120,
+            WorkbarSegment::Layout => 100,
+            WorkbarSegment::Location => 80,
+            WorkbarSegment::Clock => 60,
+            WorkbarSegment::Text(_) | WorkbarSegment::Command { .. } => 50,
+            WorkbarSegment::Title => 20,
+        })
+    }
+
     fn new(segment: WorkbarSegment) -> Self {
         Self {
             segment,
             color: None,
+            priority: None,
         }
     }
 }
@@ -2750,6 +2767,8 @@ impl WorkbarItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkbarConfig {
     pub left: Vec<WorkbarItem>,
+    /// Segments pinned to the true center of the workbar.
+    pub center: Vec<WorkbarItem>,
     pub right: Vec<WorkbarItem>,
     pub clock_format: String,
     pub alert: WorkbarAlertConfig,
@@ -2794,6 +2813,7 @@ impl Default for WorkbarConfig {
                 WorkbarItem::new(WorkbarSegment::Title),
                 WorkbarItem::new(WorkbarSegment::Workspaces),
             ],
+            center: Vec::new(),
             right: vec![
                 WorkbarItem::new(WorkbarSegment::Location),
                 WorkbarItem::new(WorkbarSegment::Session),
@@ -2805,20 +2825,23 @@ impl Default for WorkbarConfig {
 }
 
 impl WorkbarConfig {
-    pub fn has_clock(&self) -> bool {
+    /// Every configured item: left, then center, then right.
+    pub fn all_items(&self) -> impl Iterator<Item = &WorkbarItem> {
         self.left
             .iter()
+            .chain(self.center.iter())
             .chain(self.right.iter())
-            .any(|item| item.segment.is_clock())
     }
 
-    /// Unique `(command, interval_secs)` pairs across both workbar sides, one scheduled run per
+    pub fn has_clock(&self) -> bool {
+        self.all_items().any(|item| item.segment.is_clock())
+    }
+
+    /// Unique `(command, interval_secs)` pairs across all workbar sections, one scheduled run per
     /// distinct command string even if it appears in multiple segments.
     pub fn command_specs(&self) -> Vec<(String, u64)> {
         let mut seen = std::collections::HashSet::new();
-        self.left
-            .iter()
-            .chain(self.right.iter())
+        self.all_items()
             .filter_map(|item| match &item.segment {
                 WorkbarSegment::Command {
                     command,
@@ -2984,10 +3007,12 @@ mod tests {
                 WorkbarItem {
                     segment: WorkbarSegment::Location,
                     color: None,
+                    priority: None,
                 },
                 WorkbarItem {
                     segment: WorkbarSegment::Session,
                     color: None,
+                    priority: None,
                 },
             ]
         );

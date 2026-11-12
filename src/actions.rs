@@ -1312,6 +1312,7 @@ mod tests {
                 .push(crate::config::WorkbarItem {
                     segment: crate::config::WorkbarSegment::Layout,
                     color: None,
+                    priority: None,
                 });
 
             backend

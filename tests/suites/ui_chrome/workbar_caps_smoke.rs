@@ -119,6 +119,7 @@ fn trailing_badges_chain_only_while_powerline_is_on() {
                 state.config.workbar.right = vec![WorkbarItem {
                     segment: WorkbarSegment::Session,
                     color: None,
+                    priority: None,
                 }];
                 state.current_mut().session_name = Some("dev".into());
                 state.current_mut().session_attached = true;
@@ -331,5 +332,284 @@ fn a_recording_dot_stays_ahead_of_the_number_a_preview_gives_its_workspace() {
             "the recorded workspace makes room and keeps its dot ahead of its new number, got {:?}",
             text(&preview)
         );
+    });
+}
+
+#[test]
+fn center_segments_stay_centered_as_the_sides_change() {
+    rozi::test_support::on_deeper_stack(|| {
+        let item = |segment| WorkbarItem {
+            segment,
+            color: None,
+            priority: None,
+        };
+        let prepare = |right: Vec<WorkbarItem>, dnd: bool| {
+            let mut backend = backend();
+            {
+                let state = backend.state_mut();
+                state.config.pane.workbar_style = CapStyle::Round;
+                state.config.pane.workbar_badge_style = CapStyle::Round;
+                state.config.pane.workbar_powerline = true;
+                state.do_not_disturb = dnd;
+                state.config.workbar.center = vec![item(WorkbarSegment::Text("MID".into()))];
+                state.config.workbar.right = right;
+            }
+            row(&mut backend)
+        };
+
+        let bare = prepare(Vec::new(), false);
+        let mid = find_run(&bare, "MID").expect("center badge");
+        // " MID " is 5 cells wide on a 100 cell bar, flanked by the symmetric pill caps.
+        assert_eq!(mid, (100 - 5) / 2 + 1, "centered on the bar");
+        assert_eq!(bare[mid - 1].symbol, LEFT_CAP, "pill caps on both sides");
+        assert_eq!(bare[mid + 3].symbol, RIGHT_CAP);
+
+        let busy = prepare(
+            vec![item(WorkbarSegment::Text(
+                "a much longer right side".into(),
+            ))],
+            true,
+        );
+        assert_eq!(
+            find_run(&busy, "MID"),
+            Some(mid),
+            "unequal sides and mode chips never move the center"
+        );
+    });
+}
+
+#[test]
+fn narrow_workbar_keeps_modes_and_session_before_optional_badges() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut b = backend();
+        b.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 60,
+            h: 8,
+        });
+        let item = |segment| WorkbarItem {
+            segment,
+            color: None,
+            priority: None,
+        };
+        {
+            let state = b.state_mut();
+            state.config.pane.workbar_style = CapStyle::Round;
+            state.config.pane.workbar_badge_style = CapStyle::Round;
+            state.config.workbar.center = vec![item(WorkbarSegment::Text("MID".into()))];
+            state.config.workbar.right = vec![
+                item(WorkbarSegment::Text("optional detail".into())),
+                item(WorkbarSegment::Session),
+            ];
+            state.current_mut().session_name = Some("dev".into());
+            state.current_mut().session_attached = true;
+            state.mode = rozi::state::Mode::Resize;
+            state.do_not_disturb = true;
+        }
+        let cells = row(&mut b);
+        let text: String = cells.iter().map(|c| c.symbol.as_str()).collect();
+        for label in ["MID", "RESIZE", "DND", "dev"] {
+            assert!(find_run(&cells, label).is_some(), "{label} missing: {text}");
+        }
+        assert!(find_run(&cells, "optional").is_none(), "{text}");
+        assert_eq!(
+            cells.last().unwrap().fg,
+            b.state().theme.border_active,
+            "outer cap follows the retained session badge"
+        );
+        assert_eq!(find_run(&cells, "MID"), Some((60 - 5) / 2 + 1));
+    });
+}
+
+#[test]
+fn uncentered_workbar_charges_only_visible_section_gaps() {
+    rozi::test_support::on_deeper_stack(|| {
+        // Powerline chips abut; separate chips and left entries have one-cell gaps.
+        // The left and right sections never require a gap between them.
+        for (powerline, left_labels, width) in [
+            (true, vec![], 13),
+            (false, vec![], 14),
+            (true, vec!["L"], 16),
+            (false, vec!["L"], 17),
+            (true, vec!["L", "M"], 20),
+        ] {
+            let mut b = backend();
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width,
+                h: 8,
+            });
+            {
+                let state = b.state_mut();
+                state.config.pane.workbar_powerline = powerline;
+                state.config.workbar.left = left_labels
+                    .iter()
+                    .map(|label| WorkbarItem {
+                        segment: WorkbarSegment::Text((*label).into()),
+                        color: None,
+                        priority: None,
+                    })
+                    .collect();
+                state.config.workbar.center.clear();
+                state.mode = rozi::state::Mode::Resize;
+                state.do_not_disturb = true;
+            }
+            let cells = row(&mut b);
+            let text: String = cells.iter().map(|cell| cell.symbol.as_str()).collect();
+            for label in left_labels.into_iter().chain(["RESIZE", "DND"]) {
+                assert!(
+                    find_run(&cells, label).is_some(),
+                    "{label} missing at {width} cells: {text}"
+                );
+            }
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width - 1,
+                h: 8,
+            });
+            let cells = row(&mut b);
+            let omitted = if width <= 14 {
+                "DND"
+            } else if width == 20 {
+                "M"
+            } else {
+                "L"
+            };
+            assert!(
+                find_run(&cells, omitted).is_none(),
+                "{omitted} must yield below exact fit"
+            );
+        }
+    });
+}
+
+#[test]
+fn explicit_priority_keeps_a_later_badge_whole() {
+    rozi::test_support::on_deeper_stack(|| {
+        for (width, centered) in [(30, true), (15, false)] {
+            let mut b = backend();
+            b.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: width,
+                h: 8,
+            });
+            let item = |label: &str, priority| WorkbarItem {
+                segment: WorkbarSegment::Text(label.into()),
+                color: None,
+                priority,
+            };
+            if centered {
+                b.state_mut().config.workbar.center = vec![item("MID", None)];
+            }
+            b.state_mut().config.workbar.right =
+                vec![item("FIRST", Some(1)), item("SECOND", Some(220))];
+            let cells = row(&mut b);
+            assert!(find_run(&cells, "FIRST").is_none(), "width {width}");
+            assert!(find_run(&cells, "SECOND").is_some(), "width {width}");
+        }
+    });
+}
+
+#[test]
+fn narrow_workspace_tabs_scroll_with_the_shared_arrow_controls() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut b = backend();
+        b.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 40,
+            h: 8,
+        });
+        {
+            let state = b.state_mut();
+            state.config.pane.workbar_style = CapStyle::Round;
+            state.config.workbar.center = vec![WorkbarItem {
+                segment: WorkbarSegment::Text("MID".into()),
+                color: None,
+                priority: None,
+            }];
+            state.config.workbar.left = vec![WorkbarItem {
+                segment: WorkbarSegment::Workspaces,
+                color: None,
+                priority: None,
+            }];
+        }
+        let initial = row(&mut b);
+        let right = find_run(&initial, "❯").expect("shared right overflow arrow") as u16;
+        click(&mut b, right);
+        let after = row(&mut b);
+        let left = find_run(&after, "❮").expect("left arrow survives the workbar cap") as u16;
+        assert!(
+            find_run(&after, "5").is_some(),
+            "scroll reaches the last workspace"
+        );
+        assert_eq!(
+            b.state().current().active_workspace,
+            0,
+            "scrolling does not select a workspace"
+        );
+        click(&mut b, left);
+        assert!(find_run(&row(&mut b), "1 ·1").is_some());
+        b.send_mouse(MouseEvent {
+            x: right,
+            y: 0,
+            kind: MouseKind::ScrollDown,
+            mods: KeyMods::NONE,
+        })
+        .expect("scroll workspace tabs");
+        assert!(
+            find_run(&row(&mut b), "5").is_some(),
+            "wheel reaches hidden tabs"
+        );
+        b.dispatch(rozi::Msg::RunAction(rozi::input::Action::SwitchWorkspace(
+            4,
+        )))
+        .expect("switch workspace");
+        assert!(
+            find_run(&row(&mut b), "5").is_some(),
+            "active workspace is revealed"
+        );
+    });
+}
+
+#[test]
+fn center_pills_keep_their_cap_colors_when_they_fill_the_entire_bar() {
+    rozi::test_support::on_deeper_stack(|| {
+        let mut b = backend();
+        b.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 11,
+            h: 8,
+        });
+        {
+            let state = b.state_mut();
+            state.config.pane.workbar_style = CapStyle::Round;
+            state.config.pane.workbar_badge_style = CapStyle::Round;
+            state.config.workbar.left.clear();
+            state.config.workbar.center = vec![
+                WorkbarItem {
+                    segment: WorkbarSegment::Text("AAA".into()),
+                    color: Some(rozi::config::BadgeColor::Info),
+                    priority: None,
+                },
+                WorkbarItem {
+                    segment: WorkbarSegment::Text("BBB".into()),
+                    color: Some(rozi::config::BadgeColor::Success),
+                    priority: None,
+                },
+            ];
+        }
+        let cells = row(&mut b);
+        assert_eq!(cells[0].symbol, LEFT_CAP);
+        assert_eq!(cells[0].fg, b.state().theme.status.info);
+        assert_eq!(cells[10].symbol, RIGHT_CAP);
+        assert_eq!(cells[10].fg, b.state().theme.status.success);
+        assert_eq!(find_run(&cells, "AAA"), Some(1));
+        assert_eq!(find_run(&cells, "BBB"), Some(7));
     });
 }

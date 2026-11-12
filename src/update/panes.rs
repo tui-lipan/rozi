@@ -403,9 +403,7 @@ fn workbar_shows_workspace_tabs(state: &State) -> bool {
         && state
             .config
             .workbar
-            .left
-            .iter()
-            .chain(state.config.workbar.right.iter())
+            .all_items()
             .any(|item| matches!(item.segment, crate::config::WorkbarSegment::Workspaces))
 }
 
@@ -639,6 +637,7 @@ mod tests {
         assert!(!alert_pulse_should_run(&state));
         state.config.pane.show_workbar = true;
         state.config.workbar.left.clear();
+        state.config.workbar.center.clear();
         state.config.workbar.right.clear();
         assert!(!alert_pulse_should_run(&state));
 
@@ -683,6 +682,7 @@ mod tests {
         state.config.pane.border_mode = PaneBorderMode::Dividers;
         assert!(alert_pulse_should_run(&state), "the tab's dot blinks");
         state.config.workbar.left.clear();
+        state.config.workbar.center.clear();
         state.config.workbar.right.clear();
         assert!(
             !alert_pulse_should_run(&state),

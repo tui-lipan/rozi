@@ -364,9 +364,7 @@ pub(crate) fn set_layout(
         .state
         .config
         .workbar
-        .left
-        .iter()
-        .chain(&ctx.state.config.workbar.right)
+        .all_items()
         .any(|item| matches!(&item.segment, crate::config::WorkbarSegment::Layout));
     let layout_label = {
         let workspace = ctx.state.active_workspace_mut();

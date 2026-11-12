@@ -18,9 +18,9 @@ pub(super) fn apply_workbar_config(
     ) -> Vec<WorkbarItem> {
         raw.into_iter()
             .filter_map(|spec| {
-                let (name, color_name) = match spec {
-                    WorkbarSegmentSpec::Name(name) => (name, None),
-                    WorkbarSegmentSpec::Table { segment, color } => (segment, color),
+                let (name, color_name, priority) = match spec {
+                    WorkbarSegmentSpec::Name(name) => (name, None, None),
+                    WorkbarSegmentSpec::Table { segment, color, priority } => (segment, color, priority),
                 };
                 let segment = match WorkbarSegment::parse(&name) {
                     Some(segment) => segment,
@@ -45,13 +45,16 @@ pub(super) fn apply_workbar_config(
                     },
                     None => None,
                 };
-                Some(WorkbarItem { segment, color })
+                Some(WorkbarItem { segment, color, priority })
             })
             .collect()
     }
 
     if let Some(left) = raw.left {
         workbar.left = parse_segments(left, "left", warnings);
+    }
+    if let Some(center) = raw.center {
+        workbar.center = parse_segments(center, "center", warnings);
     }
     if let Some(right) = raw.right {
         workbar.right = parse_segments(right, "right", warnings);
@@ -241,6 +244,36 @@ mod tests {
     use tui_lipan::prelude::CapStyle as TuiCapStyle;
 
     #[test]
+    fn workbar_center_parses_and_schedules_its_clock_and_commands() {
+        let raw: WorkbarFileConfig = toml::from_str(
+            r#"center = [{ segment = "clock", color = "info", priority = 230 }, "command:uptime -p", "text:build"]"#,
+        )
+        .expect("config parses");
+        let mut workbar = WorkbarConfig::default();
+        assert!(workbar.center.is_empty());
+        let mut warnings = Vec::new();
+        apply_workbar_config(&mut workbar, raw, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(workbar.center.len(), 3);
+        assert_eq!(workbar.center[0].segment, WorkbarSegment::Clock);
+        assert_eq!(workbar.center[0].color, Some(BadgeColor::Info));
+        assert_eq!(workbar.center[0].retention_priority(), 230);
+        assert_eq!(workbar.center[2].retention_priority(), 50);
+        assert_eq!(
+            workbar.center[2].segment,
+            WorkbarSegment::Text("build".into())
+        );
+        assert!(workbar.has_clock());
+        assert_eq!(
+            workbar.command_specs(),
+            vec![(
+                "uptime -p".into(),
+                super::super::schema::DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS
+            )]
+        );
+    }
+
+    #[test]
     fn workbar_segment_table_form_overrides_color() {
         let raw: WorkbarFileConfig =
             toml::from_str(r#"right = [{ segment = "clock", color = "info" }, "session"]"#)
@@ -255,10 +288,12 @@ mod tests {
                 WorkbarItem {
                     segment: WorkbarSegment::Clock,
                     color: Some(BadgeColor::Info),
+                    priority: None,
                 },
                 WorkbarItem {
                     segment: WorkbarSegment::Session,
                     color: None,
+                    priority: None,
                 },
             ]
         );
@@ -277,6 +312,7 @@ mod tests {
             vec![WorkbarItem {
                 segment: WorkbarSegment::Clock,
                 color: None,
+                priority: None,
             }]
         );
         assert_eq!(warnings.len(), 1);

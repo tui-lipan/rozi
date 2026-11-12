@@ -224,7 +224,7 @@ instead on Linux with a systemd user session.
 | `prefix` | string | `"ctrl-a"` | One key step in [config key syntax](keybindings.md#key-notation), such as `"ctrl-b"`. |
 | `modifier_shortcuts` | bool | `true` | Mirrors the generated prefix bindings onto held-modifier chords. |
 | `which_key` | string | `"short"` | Delay before the which-key strip appears: `"off"`, `"instant"`, `"short"` (500 ms), or `"long"` (1000 ms). |
-| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends across panes, sidebar tabs, and pickers, `1` to `50`. It stacks with the terminal's own multiplier. |
+| `scroll_multiplier` | integer | `3` | Multiplies the wheel scrolling your terminal sends in panes and scrollable lists, `1` to `50`. It stacks with the terminal's own multiplier. |
 
 See [Keybindings](keybindings.md), and
 [Prefix and held modifier](keybindings.md#prefix-and-held-modifier) for the which-key strip.
@@ -824,10 +824,12 @@ rozi never inserts a selected path into a command string. See [Sidebar files](si
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `left` | segment array | `["title", "workspaces"]` | Segments on the left, in order. |
+| `center` | segment array | `[]` | Segments pinned to the middle of the workbar. They stay centered whatever the width of `left` and `right`, and render as standalone pills. |
 | `right` | segment array | `["location", "session"]` | Segments on the right, in order. |
 | `clock_format` | string | `"%H:%M"` | A valid strftime format. Invalid formats are ignored. |
 
-A segment is a name string or a table `{ segment = "…", color = "…" }`. Colors are `accent`,
+A segment is a name string or a table `{ segment = "…", color = "…", priority = 200 }`.
+The color and priority fields are optional. Colors are `accent`,
 `info`, `success`, `warning`, `error`, `neutral`, or `panel`.
 
 | Segment | Shows |
@@ -836,6 +838,27 @@ A segment is a name string or a table `{ segment = "…", color = "…" }`. Colo
 | `text:<literal>` | Fixed text. It may use `{host}`, `{workspace}`, `{layout}`, and `{session}`. |
 | `command:<shell command>` | The command's output, refreshed every 60 seconds. |
 | `command:<interval seconds>:<shell command>` | The command's output, refreshed at the given interval (minimum 1 second). |
+
+When a section runs out of space, badges disappear whole in retention-priority order.
+Higher priorities stay visible longer; ties keep earlier configured segments. Set `priority`
+from `0` to `255` on a segment table to override its default. Center segments keep their own
+centered section; side content cannot push them aside. If the center itself is too wide,
+its lower-priority items disappear too.
+
+| Segment | Default priority |
+| --- | --- |
+| Transient mode, synchronization, collaboration, and recording indicators | `255` |
+| `session` | `200` |
+| `workspaces` | `180` |
+| `activity` | `120` |
+| `layout` | `100` |
+| `location` | `80` |
+| `clock` | `60` |
+| `text:…`, `command:…` | `50` |
+| `title` | `20` |
+
+Workspace tabs shrink to a scrolling strip before disappearing. Use the wheel or click `❮` and
+`❯` to reach hidden tabs. Switching workspaces brings the active tab into view.
 
 Click `title` to open the command palette. Click `location` or `session` to open Sessions.
 

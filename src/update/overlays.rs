@@ -838,6 +838,7 @@ mod tests {
                 .push(crate::config::WorkbarItem {
                     segment: crate::config::WorkbarSegment::Clock,
                     color: None,
+                    priority: None,
                 });
             backend.dispatch(Msg::WorkbarTick).unwrap();
             let anchor = backend.state().wall_anchor.get();

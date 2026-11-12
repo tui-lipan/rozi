@@ -261,7 +261,7 @@
 #glide_ms = 160
 # How long the cursor must hold still after a jump to another line, or to the start of a line,
 # before its smear starts, and the longest such a jump waits, in milliseconds.
-#settle_ms = 50
+#settle_ms = 0
 #settle_max_ms = 200
 #max_length = 0.0
 #opacity = 1.0

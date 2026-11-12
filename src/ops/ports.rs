@@ -560,19 +560,16 @@ mod tests {
         crate::test_support::on_large_stack(check_registry_and_delayed_open);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ready_drains_queued_link_handlers_with_rewritten_urls_and_original_hints() {
+        crate::test_support::on_large_stack(check_ready_drains_exec_handlers);
+    }
+
     fn check_registry_and_delayed_open() {
         crate::test_support::isolate_user_dirs();
-        let scratch = tempfile::tempdir().unwrap();
-        let out = scratch.path().join("opened");
 
         let mut backend = TestBackend::new(AppRoot::default());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while backend.state().command_link.is_none() {
-            assert!(std::time::Instant::now() < deadline);
-            backend.pump().unwrap();
-            std::thread::yield_now();
-        }
-
         let workbox = RemoteTarget::Alias("workbox".into());
         let prod = RemoteTarget::Alias("prod".into());
         let source = backend.state().current().workspaces[0].panes[0].id;
@@ -610,19 +607,13 @@ mod tests {
         });
         assert_eq!(backend.state().ports.len(), 2);
 
-        // Set up remote session context and a local exec handler to verify queued ROZI_HINT/ROZI_URL.
+        // Configure a non-spawning http handler so Ready drains pending opens offline on all OSes.
         backend.state_mut().current_mut().remote_host = Some("workbox".into());
         backend.state_mut().current_mut().remote_target = Some(workbox.clone());
-        let action = UserCommandAction::Exec {
-            command: format!(
-                "printf '%s\\n%s\\n' \"$ROZI_HINT\" \"$ROZI_URL\" >> '{}'",
-                out.display()
-            ),
-        };
         backend.state_mut().config.link_handlers = vec![crate::config::LinkHandler {
             schemes: vec!["http".into()],
             files: Vec::new(),
-            action: LinkAction::Inline(action),
+            action: LinkAction::Command("test.noop".into()),
         }];
 
         // Two requests while Starting queue behind the existing entry without spawning another forward.
@@ -667,7 +658,7 @@ mod tests {
             ForwardState::Starting
         );
 
-        // Ready drains both pending opens with rewritten URLs and preserved ROZI_HINT.
+        // Ready transitions the entry, updates local_port, and drains pending opens.
         backend
             .dispatch(crate::Msg::Ports(PortMsg::Event {
                 key: key_workbox.clone(),
@@ -675,27 +666,10 @@ mod tests {
                 event: ForwardEvent::Ready { local_port: 49184 },
             }))
             .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let output = loop {
-            backend.pump().unwrap();
-            if let Ok(text) = std::fs::read_to_string(&out)
-                && text.lines().count() == 4
-            {
-                break text;
-            }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
-        };
-        let lines: Vec<_> = output.lines().collect();
-        assert_eq!(
-            lines,
-            [
-                "http://localhost:5173/first",
-                "http://localhost:49184/first",
-                "http://127.0.0.1:5173/second",
-                "http://127.0.0.1:49184/second",
-            ]
-        );
+        let entry = backend.state().ports.get(&key_workbox).unwrap();
+        assert_eq!(entry.state, ForwardState::Ready);
+        assert_eq!(entry.local_port, 49184);
+        assert!(entry.pending_opens.is_empty());
 
         // Closing target removes only that target's forwards.
         close_target(backend.state_mut(), &workbox);
@@ -714,5 +688,95 @@ mod tests {
 
         close_all(backend.state_mut());
         assert!(backend.state().ports.is_empty());
+    }
+
+    #[cfg(unix)]
+    fn check_ready_drains_exec_handlers() {
+        crate::test_support::isolate_user_dirs();
+        let scratch = tempfile::tempdir().unwrap();
+        let out = scratch.path().join("opened");
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            backend.pump().unwrap();
+            std::thread::yield_now();
+        }
+
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let source = backend.state().current().workspaces[0].panes[0].id;
+        let key_workbox = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Loopback,
+            remote_port: 5173,
+        };
+        let gen1 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: 5173,
+            state: ForwardState::Starting,
+            generation: gen1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        backend.state_mut().current_mut().remote_host = Some("workbox".into());
+        backend.state_mut().current_mut().remote_target = Some(workbox);
+        let action = UserCommandAction::Exec {
+            command: format!(
+                "printf '%s\\t%s\\n' \"$ROZI_HINT\" \"$ROZI_URL\" >> '{}'",
+                out.display()
+            ),
+        };
+        backend.state_mut().config.link_handlers = vec![crate::config::LinkHandler {
+            schemes: vec!["http".into()],
+            files: Vec::new(),
+            action: LinkAction::Inline(action),
+        }];
+
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/first".into(),
+            ))
+            .unwrap();
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://127.0.0.1:5173/second".into(),
+            ))
+            .unwrap();
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox,
+                generation: gen1,
+                event: ForwardEvent::Ready { local_port: 49184 },
+            }))
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let output = loop {
+            backend.pump().unwrap();
+            if let Ok(text) = std::fs::read_to_string(&out)
+                && text.lines().count() == 2
+            {
+                break text;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        let mut lines: Vec<_> = output.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(
+            lines,
+            [
+                "http://127.0.0.1:5173/second\thttp://127.0.0.1:49184/second",
+                "http://localhost:5173/first\thttp://localhost:49184/first",
+            ]
+        );
     }
 }

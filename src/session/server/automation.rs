@@ -434,6 +434,9 @@ fn session_worker_permitted(command: &ControlCommand) -> bool {
         | ControlCommand::AgentsOverview
         | ControlCommand::AgentGo { .. }
         | ControlCommand::ExtensionRuntimeStatus
+        | ControlCommand::PortsList
+        | ControlCommand::PortsForward { .. }
+        | ControlCommand::PortsClose { .. }
         | ControlCommand::ExtensionsDeploy { .. }
         | ControlCommand::ExtensionsUndeploy { .. }
         | ControlCommand::Focus { .. }

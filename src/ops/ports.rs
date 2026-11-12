@@ -417,6 +417,18 @@ fn commit_started_entry(
     Update::full()
 }
 
+pub(crate) fn start_forward_entry_checked(
+    ctx: &mut Context<AppRoot>,
+    key: ForwardKey,
+    local_request: LocalPortRequest,
+    browser_scheme: Option<BrowserScheme>,
+    interactive: bool,
+    extra_pending: Vec<PendingLinkOpen>,
+) -> std::result::Result<Update, String> {
+    let entry = try_build_started_entry(ctx, key, local_request, browser_scheme, interactive)?;
+    Ok(commit_started_entry(ctx, entry, extra_pending))
+}
+
 pub(crate) fn start_forward_entry(
     ctx: &mut Context<AppRoot>,
     key: ForwardKey,
@@ -425,8 +437,15 @@ pub(crate) fn start_forward_entry(
     interactive: bool,
     extra_pending: Vec<PendingLinkOpen>,
 ) -> Update {
-    match try_build_started_entry(ctx, key, local_request, browser_scheme, interactive) {
-        Ok(entry) => commit_started_entry(ctx, entry, extra_pending),
+    match start_forward_entry_checked(
+        ctx,
+        key,
+        local_request,
+        browser_scheme,
+        interactive,
+        extra_pending,
+    ) {
+        Ok(update) => update,
         Err(reason) => {
             crate::pane::pty_events::notify_error(ctx, "Could not forward port", reason);
             Update::full()
@@ -1008,6 +1027,213 @@ pub(crate) fn submit_add_form(ctx: &mut Context<AppRoot>) -> Update {
             reject_port_form(ctx, reason)
         }
     }
+}
+
+fn control_forward_status(state: ForwardState) -> crate::control::PortForwardStatus {
+    match state {
+        ForwardState::Starting => crate::control::PortForwardStatus::Starting,
+        ForwardState::Ready => crate::control::PortForwardStatus::Ready,
+        ForwardState::Reconnecting => crate::control::PortForwardStatus::Reconnecting,
+        ForwardState::AuthRequired => crate::control::PortForwardStatus::AuthRequired,
+        ForwardState::Failed => crate::control::PortForwardStatus::Failed,
+    }
+}
+
+fn control_forward_info(
+    state: &State,
+    entry: &PortForwardEntry,
+) -> crate::control::PortForwardInfo {
+    crate::control::PortForwardInfo {
+        target: entry.key.target.to_spec(),
+        target_label: state.remote_target_label(&entry.key.target),
+        remote_host: entry.key.remote_host.display_label().to_string(),
+        remote_port: entry.key.remote_port,
+        local_port: (entry.local_port != 0).then_some(entry.local_port),
+        state: control_forward_status(entry.state),
+        error: entry.error.clone(),
+    }
+}
+
+pub(crate) fn list_control_forwards(state: &State) -> crate::control::PortForwardListPayload {
+    let entries = sorted_keys(state)
+        .into_iter()
+        .filter_map(|key| state.ports.get(&key))
+        .map(|entry| control_forward_info(state, entry))
+        .collect();
+    crate::control::PortForwardListPayload(entries)
+}
+
+fn resolve_control_forward_key(
+    state: &State,
+    remote: Option<&str>,
+    host: Option<&str>,
+    port: u16,
+    for_close: bool,
+) -> std::result::Result<ForwardKey, String> {
+    if port == 0 {
+        return Err("remote port must be between 1 and 65535".to_string());
+    }
+    let remote_host = match host {
+        Some(raw) => ForwardHost::parse(raw)?,
+        None => ForwardHost::Localhost,
+    };
+    let target = match remote {
+        Some(raw) => crate::session::remote::parse_remote_target(raw)?,
+        None => {
+            if let Some(current) = state.current().remote_target.clone() {
+                current
+            } else if for_close {
+                let mut distinct_targets: Vec<RemoteTarget> = Vec::new();
+                for key in sorted_keys(state) {
+                    if !distinct_targets.contains(&key.target) {
+                        distinct_targets.push(key.target);
+                    }
+                }
+                match distinct_targets.len() {
+                    0 => {
+                        return Err("no active remote host; pass `--remote <HOST>`".to_string());
+                    }
+                    1 => distinct_targets.remove(0),
+                    _ => {
+                        return Err(
+                            "multiple remote hosts have active forwards; pass `--remote <HOST>`"
+                                .to_string(),
+                        );
+                    }
+                }
+            } else {
+                default_forward_target(state)
+                    .ok_or_else(|| "no active remote host; pass `--remote <HOST>`".to_string())?
+            }
+        }
+    };
+    Ok(ForwardKey {
+        target,
+        remote_host,
+        remote_port: port,
+    })
+}
+
+pub(crate) fn control_forward(
+    ctx: &mut Context<AppRoot>,
+    remote: Option<&str>,
+    host: Option<&str>,
+    port: u16,
+    local_port: Option<u16>,
+) -> (crate::control::ControlResponse, Update) {
+    if local_port == Some(0) {
+        return (
+            crate::control::ControlResponse::error_with(
+                crate::control::ControlErrorCode::InvalidArgument,
+                "local port must be between 1 and 65535",
+            ),
+            Update::none(),
+        );
+    }
+    let key = match resolve_control_forward_key(&ctx.state, remote, host, port, false) {
+        Ok(key) => key,
+        Err(message) => {
+            return (
+                crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::InvalidArgument,
+                    message,
+                ),
+                Update::none(),
+            );
+        }
+    };
+
+    if let Some(existing) = ctx.state.ports.get(&key)
+        && !matches!(
+            existing.state,
+            ForwardState::Failed | ForwardState::AuthRequired
+        )
+        && (local_port.is_none() || local_port == Some(existing.local_port))
+    {
+        return (
+            crate::control::ControlResponse::ok(control_forward_info(&ctx.state, existing)),
+            Update::none(),
+        );
+    }
+
+    let local_request = match local_port {
+        Some(port) => LocalPortRequest::Exact(port),
+        None => LocalPortRequest::Unpinned,
+    };
+    match start_forward_entry_checked(ctx, key.clone(), local_request, None, true, Vec::new()) {
+        Ok(update) => {
+            let Some(entry) = ctx.state.ports.get(&key) else {
+                return (
+                    crate::control::ControlResponse::error_with(
+                        crate::control::ControlErrorCode::RequestFailed,
+                        "port forward state disappeared after start",
+                    ),
+                    update,
+                );
+            };
+            (
+                crate::control::ControlResponse::ok(control_forward_info(&ctx.state, entry)),
+                update,
+            )
+        }
+        Err(message) => (
+            crate::control::ControlResponse::error_with(
+                crate::control::ControlErrorCode::RequestFailed,
+                message,
+            ),
+            Update::none(),
+        ),
+    }
+}
+
+pub(crate) fn control_close(
+    ctx: &mut Context<AppRoot>,
+    remote: Option<&str>,
+    host: Option<&str>,
+    port: u16,
+) -> (crate::control::ControlResponse, Update) {
+    let key = match resolve_control_forward_key(&ctx.state, remote, host, port, true) {
+        Ok(key) => key,
+        Err(message) => {
+            return (
+                crate::control::ControlResponse::error_with(
+                    crate::control::ControlErrorCode::InvalidArgument,
+                    message,
+                ),
+                Update::none(),
+            );
+        }
+    };
+
+    let Some(entry) = ctx.state.ports.remove(&key) else {
+        return (
+            crate::control::ControlResponse::ok(crate::control::PortForwardClosed {
+                removed: false,
+                forward: None,
+            }),
+            Update::none(),
+        );
+    };
+
+    ctx.state.commands_dirty = true;
+    let info = control_forward_info(&ctx.state, &entry);
+    drop(entry);
+    let next = sorted_keys(&ctx.state).into_iter().next();
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        if overlay.pending_close.as_ref() == Some(&key) {
+            overlay.pending_close = None;
+        }
+        if overlay.selected.as_ref() == Some(&key) {
+            overlay.selected = next;
+        }
+    }
+    (
+        crate::control::ControlResponse::ok(crate::control::PortForwardClosed {
+            removed: true,
+            forward: Some(info),
+        }),
+        Update::full(),
+    )
 }
 
 #[cfg(test)]
@@ -3166,5 +3392,94 @@ mod tests {
 
         assert_eq!(unpinned_preferred_local_port(true, 5173), Some(5173));
         assert_eq!(unpinned_preferred_local_port(false, 5173), None);
+    }
+
+    #[test]
+    fn control_commands_list_reuse_reject_ambiguous_close_and_remove() {
+        let mut backend = TestBackend::new(AppRoot::default());
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let prod = RemoteTarget::Alias("prod".into());
+        let key_w = ForwardKey {
+            target: workbox,
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+        let key_p = ForwardKey {
+            target: prod,
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_w,
+            local_port: 5173,
+            port_pinned: true,
+            local_port_mode: LocalPortMode::Auto,
+            browser_scheme: None,
+            state: ForwardState::Ready,
+            generation: 1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_p.clone(),
+            local_port: 15173,
+            port_pinned: true,
+            local_port_mode: LocalPortMode::Auto,
+            browser_scheme: None,
+            state: ForwardState::Ready,
+            generation: 2,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        let dispatch_ctl = |backend: &mut TestBackend<AppRoot>,
+                            json: serde_json::Value|
+         -> crate::control::ControlResponse {
+            let req: crate::control::ControlRequest = serde_json::from_value(json).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            backend
+                .dispatch(crate::Msg::ControlRequest(
+                    crate::control::ControlEnvelope::local(req, tx),
+                ))
+                .unwrap();
+            rx.try_recv().unwrap()
+        };
+
+        let listed = dispatch_ctl(&mut backend, serde_json::json!({ "cmd": "ports-list" }));
+        assert!(listed.ok);
+        assert_eq!(listed.data.unwrap().as_array().unwrap().len(), 2);
+
+        // Forwarding an already-ready key without changing local_port reuses it cleanly.
+        let reused = dispatch_ctl(
+            &mut backend,
+            serde_json::json!({ "cmd": "ports-forward", "remote": "workbox", "port": 5173 }),
+        );
+        assert!(reused.ok);
+        assert_eq!(reused.data.unwrap()["local_port"], 5173);
+
+        // Closing without --remote when multiple targets have forwards refuses rather than guessing.
+        let ambiguous = dispatch_ctl(
+            &mut backend,
+            serde_json::json!({ "cmd": "ports-close", "port": 5173 }),
+        );
+        assert!(!ambiguous.ok);
+
+        // Closing with explicit --remote removes the matching entry and is idempotent afterward.
+        let closed = dispatch_ctl(
+            &mut backend,
+            serde_json::json!({ "cmd": "ports-close", "remote": "prod", "port": 5173 }),
+        );
+        assert!(closed.ok);
+        assert_eq!(closed.data.unwrap()["removed"], true);
+        assert!(backend.state().ports.get(&key_p).is_none());
+
+        let missing = dispatch_ctl(
+            &mut backend,
+            serde_json::json!({ "cmd": "ports-close", "remote": "prod", "port": 5173 }),
+        );
+        assert!(missing.ok);
+        assert_eq!(missing.data.unwrap()["removed"], false);
     }
 }

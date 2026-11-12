@@ -175,6 +175,11 @@ pub fn session_control_unsupported(command: &ControlCommand) -> Option<&'static 
         ControlCommand::ExtensionRuntimeStatus => {
             Some("extension runtimes belong to a UI; a session server runs no extension processes")
         }
+        ControlCommand::PortsList
+        | ControlCommand::PortsForward { .. }
+        | ControlCommand::PortsClose { .. } => {
+            Some("port forwards belong to a running rozi UI client, not a session server")
+        }
     }
 }
 

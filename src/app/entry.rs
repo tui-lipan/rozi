@@ -231,6 +231,10 @@ pub fn run() -> Result<()> {
             cli::print_worktrees_help();
             return Ok(());
         }
+        cli::ParsedCli::PortsHelp => {
+            cli::print_ports_help();
+            return Ok(());
+        }
         cli::ParsedCli::SessionsHelp => {
             cli::print_sessions_help();
             return Ok(());
@@ -439,6 +443,7 @@ pub fn run() -> Result<()> {
         | cli::ParsedCli::SkillHelp
         | cli::ParsedCli::SessionsHelp
         | cli::ParsedCli::WorktreesHelp
+        | cli::ParsedCli::PortsHelp
         | cli::ParsedCli::AgentsHelp
         | cli::ParsedCli::Extensions(_)
         | cli::ParsedCli::ExtensionsDeploy(_)

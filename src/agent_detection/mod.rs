@@ -26,6 +26,28 @@ use crate::session::protocol::{AgentIdentity, DetectedAgentState};
 use definition::evaluate;
 use process::identify_job;
 
+/// Whether an OSC 7501 `app` names the agent `agent_id`: its definition ID, or a name the agent
+/// catalog knows it by (`claude-code` for `claude`).
+pub fn program_status_names_agent(app: &str, agent_id: &str) -> bool {
+    agent_id.eq_ignore_ascii_case(app)
+        || AgentCatalog::shared_builtin()
+            .by_name(app)
+            .is_some_and(|definition| definition.id() == agent_id)
+}
+
+/// What the agent `agent_id` says about itself over OSC 7501: the most urgent of the records it
+/// reports, its child records included, since they inherit its `app`.
+pub fn agent_program_status<'a>(
+    snapshot: &'a tui_lipan::ProgramStatusSnapshot,
+    agent_id: &str,
+) -> Option<&'a tui_lipan::ProgramStatusRecord> {
+    crate::session::protocol::most_urgent_program_status(snapshot.records.iter().filter(|record| {
+        snapshot
+            .app_for(record)
+            .is_some_and(|app| program_status_names_agent(app, agent_id))
+    }))
+}
+
 /// What one detection sweep saw.
 ///
 /// Deliberately not [`crate::session::protocol::DetectedAgent`]: that type is the wire shape and

@@ -351,8 +351,16 @@ pub(crate) fn pane_runtime_changed(
             }
         }
     }
-    if let (Some(edges), Some(title)) = (&edges, &title)
-        && edges.failed
+    let alerted = |state| {
+        find_pane_in_namespace(&ctx.state, pane_id, local)
+            .is_some_and(|pane| program_status_alerted(pane, state))
+    };
+    let failed = edges.as_ref().is_some_and(|edges| edges.failed)
+        && !alerted(tui_lipan::ProgramStatusState::Error);
+    let became_blocked = edges.as_ref().is_some_and(|edges| edges.became_blocked)
+        && !alerted(tui_lipan::ProgramStatusState::Blocked);
+    if let (Some(_), Some(title)) = (&edges, &title)
+        && failed
     {
         let attended = ctx.state.is_pane_attended(pane_id);
         if !ctx.state.do_not_disturb {
@@ -370,7 +378,7 @@ pub(crate) fn pane_runtime_changed(
         }
     }
     if let (Some(edges), Some(title)) = (edges, title)
-        && (edges.became_blocked || edges.finished)
+        && (became_blocked || edges.finished)
     {
         let attended = ctx.state.is_pane_attended(pane_id);
         if !ctx.state.do_not_disturb {
@@ -381,14 +389,14 @@ pub(crate) fn pane_runtime_changed(
                 pane_id,
                 &title,
                 crate::pane::pty_events::PaneStatusNotification {
-                    blocked: edges.became_blocked,
+                    blocked: became_blocked,
                     done: edges.finished,
                     reported_status: reported_status.as_ref(),
                 },
             );
         }
         if ctx.state.is_controller() && !attended {
-            if edges.became_blocked {
+            if became_blocked {
                 crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
             }
             if edges.finished {
@@ -502,6 +510,20 @@ fn apply_background_program_status(
     }
 }
 
+/// How long one OSC 7501 alert speaks for a pane: repeats within it stay quiet, and so does the
+/// agent's own alert for the same state, which the report just announced.
+const PROGRAM_STATUS_ALERT_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether this client alerted for the pane's OSC 7501 `state` moments ago. An agent reporting
+/// over OSC 7501 changes state from that same report, so its own alert would say it twice.
+fn program_status_alerted(pane: &crate::state::Pane, state: tui_lipan::ProgramStatusState) -> bool {
+    pane.terminal
+        .program_status_notified
+        .is_some_and(|(at, alerted)| {
+            alerted == state && at.elapsed() < PROGRAM_STATUS_ALERT_COOLDOWN
+        })
+}
+
 fn notify_program_status(
     ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
@@ -524,8 +546,8 @@ fn notify_program_status(
     };
     if pane
         .terminal
-        .program_status_notification_at
-        .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5))
+        .program_status_notified
+        .is_some_and(|(at, _)| at.elapsed() < PROGRAM_STATUS_ALERT_COOLDOWN)
     {
         return;
     }
@@ -542,7 +564,7 @@ fn notify_program_status(
     if (notified || sounded)
         && let Some(pane) = find_pane_in_namespace_mut(&mut ctx.state, pane_id, local)
     {
-        pane.terminal.program_status_notification_at = Some(std::time::Instant::now());
+        pane.terminal.program_status_notified = Some((std::time::Instant::now(), state));
     }
 }
 
@@ -600,7 +622,17 @@ fn apply_program_status(
     if let Some(record) = current.filter(|r| actionable_program_status(r.state)) {
         if previous.as_ref() != Some(&(record.id.clone(), record.state)) {
             pane.terminal.program_status_attention = !attended;
-            alert = Some((pane.display_title(None), record.state, record.msg.clone()));
+            // The agent's own report already put it in this state, and its alert says so.
+            let announced = pane.occupants().iter().any(|occupant| {
+                occupant.state.as_str() == record.state.as_str()
+                    && occupant.agent.as_ref().is_some_and(|agent| {
+                        snapshot.app_for(record).is_some_and(|app| {
+                            crate::agent_detection::program_status_names_agent(app, &agent.id)
+                        })
+                    })
+            });
+            alert =
+                (!announced).then(|| (pane.display_title(None), record.state, record.msg.clone()));
         }
     } else {
         pane.terminal.program_status_attention = false;
@@ -672,7 +704,7 @@ mod tests {
                 assert!(
                     backend.state().current().workspaces[0].panes[0]
                         .terminal
-                        .program_status_notification_at
+                        .program_status_notified
                         .is_none(),
                     "{suppressed}"
                 );
@@ -713,7 +745,7 @@ mod tests {
                 assert!(
                     backend.state().current().workspaces[0].panes[0]
                         .terminal
-                        .program_status_notification_at
+                        .program_status_notified
                         .is_some(),
                     "{suppressed}"
                 );
@@ -809,10 +841,11 @@ mod tests {
         assert!(!attached.terminal.program_status_attention);
     }
 
-    /// An agent's own `blocked` still alerts: while detection reads the agent as working, nothing
-    /// else would say it needs the user.
+    /// An agent's own `blocked` alerts while its state says it is working, as from a session server
+    /// that reads only its screen: nothing else would say it needs the user. Once the agent is
+    /// blocked, its own alert says so, and this one would repeat it.
     #[test]
-    fn an_agents_own_blocked_report_alerts_while_detection_says_working() {
+    fn an_agents_own_blocked_report_alerts_only_while_its_state_says_otherwise() {
         let mut pane = crate::state::Pane::new(1, 100, FloatRect::default());
         pane.terminal.detected_agent = Some(DetectedAgent {
             agent: AgentIdentity::new("claude", "Claude Code").into(),
@@ -821,8 +854,16 @@ mod tests {
         let mut screen = TerminalScreen::new(24, 80, 100);
         screen.set_program_status_enabled(true);
         screen.process_bytes(b"\x1b]7501;state=blocked:app=claude-code\x07");
-        assert!(apply_program_status(&mut pane, screen.program_status_snapshot(), false).is_some());
+        let blocked = screen.program_status_snapshot();
+        assert!(apply_program_status(&mut pane, blocked.clone(), false).is_some());
         assert!(pane.terminal.program_status_attention);
+
+        let mut announced = crate::state::Pane::new(1, 100, FloatRect::default());
+        announced.terminal.detected_agent = Some(DetectedAgent {
+            agent: AgentIdentity::new("claude", "Claude Code").into(),
+            state: DetectedAgentState::Blocked,
+        });
+        assert!(apply_program_status(&mut announced, blocked, false).is_none());
     }
 
     #[test]

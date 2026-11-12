@@ -67,7 +67,14 @@ fn host_event(ctx: &mut Context<AppRoot>, event: HostEvent) -> Update {
     // What the user dropped on is what they work on next.
     let focused = dropped_on.is_some_and(|target| {
         if target.local {
-            ctx.state.scratch.focused_pane = Some(target.pane_id);
+            if ctx
+                .state
+                .popup
+                .as_ref()
+                .is_none_or(|pane| pane.id != target.pane_id)
+            {
+                ctx.state.scratch.focused_pane = Some(target.pane_id);
+            }
         } else {
             crate::ops::focus::focus_pane_anywhere(ctx, target.pane_id);
         }
@@ -295,7 +302,7 @@ mod tests {
             #[cfg(windows)]
             let (uris, pasted) = (
                 b"file:///C:/tmp/my%20photo.png\r\nfile:///C:/tmp/notes.txt\r\n".as_slice(),
-                "\"C:\\tmp\\my photo.png\" C:\\tmp\\notes.txt ",
+                "\"C:/tmp/my photo.png\" C:/tmp/notes.txt ",
             );
             h.host(TerminalEvent::Data {
                 target: DataTarget::Mime { index: 1 },
@@ -462,6 +469,114 @@ mod tests {
                 message,
                 ClientOutbound::Control(ClientMessage::DragAndDrop { local: false, .. })
             )));
+        });
+    }
+
+    #[test]
+    fn scratch_program_replies_reach_the_host_through_the_private_mailbox() {
+        crate::test_support::on_large_stack(|| {
+            let mut h = harness();
+            let (client, outbound) = SessionClient::test_channel();
+            let mut pane = crate::state::Pane::new_local(h.pane, 100, FloatRect::default());
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.pty_generation = h.generation;
+            pane.terminal.drag_and_drop.drops = Some(PaneDropRegistration {
+                client_id: Some(5),
+                ..Default::default()
+            });
+            let key = pane.keys.terminal.clone();
+            let state = h.backend.state_mut();
+            state.scratch.panes.push(pane);
+            state.scratch.focused_pane = Some(h.pane);
+            state.scratch_visible = true;
+            state.scratch_runtime =
+                Some(crate::scratchpad::runtime::ScratchRuntime::from_test_client(client));
+            h.outbound = outbound;
+            h.backend.render();
+            h.backend.advance(std::time::Duration::from_secs(1));
+            h.backend.render();
+            h.rect = h
+                .backend
+                .rect_of_key(&key)
+                .expect("scratch terminal is mounted");
+            h.sent_to_host();
+            h.host(TerminalEvent::DragOver {
+                position: h.at(1, 1),
+                operations: DropOperations::COPY,
+                mimes: Some(files()),
+            });
+            let delivered = h.sent_to_pane();
+            assert!(
+                matches!(&delivered[..], [(Some(5), TerminalEvent::DragOver { .. })]),
+                "{delivered:?}"
+            );
+
+            h.sent_to_host();
+            let reply = |h: &mut Harness, command: ProgramCommand| {
+                let mut codes = Vec::new();
+                command.encode(Some(5), &mut codes);
+                let message = crate::scratchpad::runtime::message_for_frame(
+                    h.backend.state().runtime_epoch,
+                    crate::session::protocol::Frame::Control(
+                        crate::session::protocol::ServerMessage::PaneDragAndDrop {
+                            pane_id: h.pane,
+                            local: true,
+                            generation: h.generation,
+                            escape_codes: String::from_utf8(codes).unwrap(),
+                        },
+                    ),
+                )
+                .expect("scratch protocol reply reaches the UI");
+                h.backend.dispatch(message).unwrap();
+            };
+            let status = ProgramCommand::DropStatus {
+                operation: DropOperation::Copy,
+                mimes: None,
+            };
+            reply(&mut h, status.clone());
+            assert_eq!(h.sent_to_host(), [status]);
+            h.host(TerminalEvent::Drop {
+                position: h.at(1, 1),
+                operations: DropOperations::COPY,
+                mimes: files(),
+            });
+            let request = ProgramCommand::RequestData(DataTarget::Mime { index: 1 });
+            reply(&mut h, request.clone());
+            assert_eq!(h.sent_to_host(), [request]);
+        });
+    }
+
+    #[test]
+    fn a_popup_drop_preserves_the_hidden_scratch_focus() {
+        crate::test_support::on_large_stack(|| {
+            let mut h = harness();
+            let scratch = crate::state::Pane::new_local(7, 100, FloatRect::default());
+            h.backend.state_mut().scratch.panes.push(scratch);
+            h.backend.state_mut().scratch.focused_pane = Some(7);
+            let popup = crate::state::Pane::new_local(
+                crate::pane::id::POPUP_PANE_ID,
+                100,
+                FloatRect::default(),
+            );
+            let key = popup.keys.terminal.clone();
+            h.backend.state_mut().popup = Some(popup);
+            h.backend
+                .dispatch(crate::Msg::DragAndDrop(Msg::Host(HostEvent {
+                    client_id: None,
+                    event: TerminalEvent::Drop {
+                        position: Default::default(),
+                        operations: DropOperations::COPY,
+                        mimes: files(),
+                    },
+                    targets: vec![tui_lipan::dnd::HostTarget {
+                        key,
+                        rect: h.rect,
+                        position: Default::default(),
+                    }],
+                })))
+                .unwrap();
+            assert_eq!(h.backend.state().scratch.focused_pane, Some(7));
         });
     }
 

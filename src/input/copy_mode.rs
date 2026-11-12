@@ -113,7 +113,7 @@ pub(crate) fn flash_copy_feedback(
     selection: tui_lipan::utils::GridSelection,
 ) -> Command {
     clear_copy_feedback(ctx);
-    if crate::pane::lifecycle::find_pane(&ctx.state, target)
+    if crate::pane::lifecycle::find_displayed_pane(&ctx.state, target)
         .is_some_and(|pane| ctx.has_focus_within_key(pane.keys.terminal.clone()))
         && let Some(node_id) = ctx.focused_node_id()
     {

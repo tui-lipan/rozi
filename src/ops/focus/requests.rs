@@ -8,7 +8,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
     if ctx.state.has_modal_overlay() {
         return;
     }
-    if let Some(pane) = crate::pane::lifecycle::find_pane_mut(&mut ctx.state, id)
+    if let Some(pane) = crate::pane::lifecycle::find_displayed_pane(&ctx.state, id)
         .filter(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
         let key = pane.keys.terminal.clone();
@@ -154,4 +154,38 @@ pub(crate) fn request_pick_focus(ctx: &mut Context<AppRoot>) {
 /// so focus has to move explicitly rather than being inherited.
 pub(crate) fn request_pick_prompt_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::pick_prompt_input_key());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn returning_from_a_palette_focuses_the_displayed_namespace_when_ids_collide() {
+        crate::test_support::on_large_stack(|| {
+            crate::test_support::isolate_user_dirs();
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
+            let (id, shared_key) = {
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+                (pane.id, pane.keys.terminal.clone())
+            };
+            let mut scratch = crate::state::Pane::new_local(id, 100, FloatRect::default());
+            scratch.opening = false;
+            scratch.terminal_active = true;
+            let local_key = scratch.keys.terminal.clone();
+            backend.state_mut().scratch.panes.push(scratch);
+            backend.state_mut().scratch.focused_pane = Some(id);
+            for (visible, expected) in [(true, local_key), (false, shared_key)] {
+                backend.state_mut().scratch_visible = visible;
+                backend.state_mut().show_palette = true;
+                backend.render();
+                backend.advance(std::time::Duration::from_secs(1));
+                backend.dispatch(crate::Msg::ClosePalette).unwrap();
+                backend.render();
+                assert_eq!(backend.focused_key(), Some(&expected));
+            }
+        });
+    }
 }

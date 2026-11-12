@@ -1007,7 +1007,10 @@ Custom hint actions can also reference commands, for example
 
 `run` and `popup` execute on the session host in the source pane's working directory.
 `exec` executes on the client; it inherits the source directory only for a local session and
-receives `ROZI_PANE` identifying the source pane. Remote file paths are not fetched or translated.
+receives `ROZI_PANE` identifying the source pane. A plain path opens only through a handler that
+runs on the machine the file is on, since rozi does not fetch or translate remote paths: on a
+remote session that is `run`, `popup`, or a command placed on the session host, and in the
+[scratchpad](layouts-and-panes.md#popups-and-scratch-panes), `run` or `exec`.
 A filename ending in `:123` is read as a position; use a file URI to keep that suffix as part of the
 filename.
 

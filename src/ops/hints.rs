@@ -38,14 +38,22 @@ pub fn scan_snapshot_with_custom(
     scan.scan_snapshot(snapshot)
 }
 
-fn can_open(kind: HintKind, config: &crate::config::Config) -> bool {
-    match kind {
+/// Whether an uppercase label opens `matched` rather than copying it. A path opens exactly when
+/// `Ctrl`-click would open it.
+fn can_open(
+    state: &crate::state::State,
+    target: crate::pane::id::PaneId,
+    matched: &HintMatch,
+) -> bool {
+    match matched.kind {
         HintKind::Url => true,
-        HintKind::Custom(tag) => config
+        HintKind::Custom(tag) => state
+            .config
             .hints
             .get(usize::from(tag))
             .is_some_and(|hint| hint.open || hint.on_open.is_some()),
-        HintKind::Path => super::links::opens_files(&config.link_handlers),
+        HintKind::Path => super::links::PathLinks::for_pane(state, target)
+            .accepts(&matched.text, &state.path_links),
         HintKind::GitSha => false,
     }
 }
@@ -129,7 +137,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (boo
     }
     let matched = state.matches[selected].clone();
     let open =
-        (ch.is_ascii_uppercase() || key.mods.shift) && can_open(matched.kind, &ctx.state.config);
+        (ch.is_ascii_uppercase() || key.mods.shift) && can_open(&ctx.state, target, &matched);
     if open {
         // Leave hint mode before launching: a new pane or popup must retain its new focus.
         let mut update = exit(ctx);

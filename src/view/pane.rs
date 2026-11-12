@@ -1374,13 +1374,12 @@ pub(crate) fn pane_element(
                 .on_mouse_forward_event(
                     ctx.link().callback(move |event| Msg::PaneMouse(id, event)),
                 );
-            if crate::ops::links::opens_files(&ctx.state.config.link_handlers) {
-                let resolver = crate::ops::links::PathResolver::for_pane(&ctx.state, id);
-                let handlers = ctx.state.config.link_handlers.clone();
+            let links = crate::ops::links::PathLinks::for_pane(&ctx.state, id);
+            if links.any() {
                 let cache = ctx.state.path_links.clone();
                 terminal_widget =
                     terminal_widget.link_paths(TerminalPathFilter::new(move |path| {
-                        resolver.accepts(path, &handlers, &cache)
+                        links.accepts(path, &cache)
                     }));
             }
         }

@@ -24,13 +24,6 @@ pub(crate) fn handler<'a>(
         .map(|handler| &handler.action)
 }
 
-/// Whether any handler opens files, which makes paths in panes links.
-pub(crate) fn opens_files(handlers: &[LinkHandler]) -> bool {
-    handlers
-        .iter()
-        .any(|handler| handler.schemes.iter().any(|scheme| scheme == "file"))
-}
-
 pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Update {
     if let Ok(url) = url::Url::parse(text) {
         let file = if url.scheme() == "file" {
@@ -83,48 +76,86 @@ pub(crate) fn activate(
 
 pub(crate) fn open_path(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Update {
     let position = PathPosition::parse(text);
-    let Some(action) =
-        handler(&ctx.state.config.link_handlers, "file", Some(position.path)).cloned()
-    else {
-        return failed(ctx, format!("No link handler opens {}", position.path));
-    };
-    let file = match PathResolver::for_pane(&ctx.state, source).resolve(position.path) {
-        Ok(file) => file,
+    let opener = match PathLinks::for_pane(&ctx.state, source).open(position.path) {
+        Ok(opener) => opener,
         Err(error) => return failed(ctx, error),
     };
     let target = LinkTarget {
-        file: &file,
+        file: &opener.file,
         line: position.line,
         column: position.column,
         ..LinkTarget::default()
     };
-    execute(ctx, source, &action, text, target)
+    execute(ctx, source, &opener.action, text, target)
 }
 
-/// The paths a pane shows, resolved the way the `file` handler that opens them will see them.
+/// Which machine a process runs on, or a pane's files are on.
+///
+/// Without a remote session, both are this machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Machine {
+    /// The machine running this client.
+    Client,
+    /// The remote host of the session on screen.
+    SessionHost,
+}
+
+/// Where the `file` handler `action` runs when the session on screen is `remote`.
+fn handler_machine(state: &State, action: &LinkAction) -> Machine {
+    if state.current().remote_host.is_none() {
+        return Machine::Client;
+    }
+    let action = match action {
+        LinkAction::Inline(action) => action,
+        LinkAction::Command(id) => {
+            if super::placement::placed_command(state, id).is_some() {
+                return Machine::SessionHost;
+            }
+            match state
+                .config
+                .commands
+                .iter()
+                .find(|command| &command.id == id)
+            {
+                Some(command) => &command.action,
+                None => return Machine::Client,
+            }
+        }
+    };
+    // As `user_command` launches them: a popup on the session server, a pane there unless the
+    // scratchpad is open, and anything else here.
+    match action {
+        UserCommandAction::Popup { .. } => Machine::SessionHost,
+        UserCommandAction::Run { .. } if !state.scratch_visible => Machine::SessionHost,
+        _ => Machine::Client,
+    }
+}
+
+/// Where a pane's paths are, and how they read there.
 #[derive(Clone, Debug)]
-pub(crate) enum PathResolver {
-    /// The pane's directory is on this machine, so a path can be made absolute and checked.
+pub(crate) enum PathPlace {
+    /// On this machine, so a path can be made absolute and checked.
     Local {
         cwd: Option<PathBuf>,
         home: Option<PathBuf>,
     },
-    /// The pane runs on a remote session host. Handlers that start a pane or popup run there, in
-    /// the pane's directory, but this client cannot look at that file system.
+    /// On the remote host of the session on screen, which this client cannot look at.
     SessionHost,
-    /// The pane's shell reports a directory on another host, such as over `ssh`, where no handler
-    /// runs.
+    /// On another host the pane's shell reports, such as over `ssh`, where no handler runs.
     Elsewhere(String),
 }
 
-impl PathResolver {
-    pub(crate) fn for_pane(state: &State, source: PaneId) -> Self {
-        if state.current().remote_host.is_some() {
-            return Self::SessionHost;
-        }
+impl PathPlace {
+    fn for_pane(state: &State, source: PaneId) -> Self {
         let pane = crate::pane::lifecycle::find_pane(state, source);
+        // The pane's own report wins: a shell that moved to another host took its files with it,
+        // whether the session runs here or remotely.
         if let Some(host) = pane.and_then(|pane| pane.terminal.cwd_host.clone()) {
             return Self::Elsewhere(host);
+        }
+        // Scratch panes run on this machine even while a remote session is on screen.
+        if state.current().remote_host.is_some() && !crate::scratchpad::contains(state, source) {
+            return Self::SessionHost;
         }
         Self::Local {
             cwd: pane
@@ -134,45 +165,109 @@ impl PathResolver {
         }
     }
 
-    /// Resolve `path`, without a position suffix, to the `ROZI_FILE` its handler receives.
-    pub(crate) fn resolve(&self, path: &str) -> std::result::Result<String, String> {
+    fn machine(&self) -> Option<Machine> {
         match self {
-            Self::SessionHost => Ok(path.to_string()),
-            Self::Elsewhere(host) => Err(format!("{path} is on {host}")),
-            Self::Local { cwd, home } => {
-                let resolved = local_path(path, cwd.as_deref(), home.as_deref())
-                    .filter(|resolved| resolved.exists())
-                    .ok_or_else(|| format!("No such file or directory: {path}"))?;
-                resolved
-                    .into_os_string()
-                    .into_string()
-                    .map_err(|_| format!("{path} cannot be passed to a handler on this host"))
-            }
+            Self::Local { .. } => Some(Machine::Client),
+            Self::SessionHost => Some(Machine::SessionHost),
+            Self::Elsewhere(_) => None,
+        }
+    }
+}
+
+/// The `file` handlers that can open a pane's paths, with the machine each one runs on.
+#[derive(Clone, Debug)]
+pub(crate) struct PathLinks {
+    place: PathPlace,
+    handlers: Vec<(LinkHandler, Machine)>,
+    session_host: Option<String>,
+}
+
+/// A path ready for its handler.
+pub(crate) struct PathOpener {
+    pub action: LinkAction,
+    /// The `ROZI_FILE` the handler receives.
+    pub file: String,
+}
+
+impl PathLinks {
+    pub(crate) fn for_pane(state: &State, source: PaneId) -> Self {
+        Self {
+            place: PathPlace::for_pane(state, source),
+            handlers: state
+                .config
+                .link_handlers
+                .iter()
+                .filter(|handler| handler.schemes.iter().any(|scheme| scheme == "file"))
+                .map(|handler| (handler.clone(), handler_machine(state, &handler.action)))
+                .collect(),
+            session_host: state.current().remote_host.clone(),
         }
     }
 
-    /// Whether `text`, a path as a pane shows it, is a link: a handler opens files of its name, and
-    /// it exists, or cannot be checked from here but opens where its pane runs.
+    /// The handler for `path`, without its position suffix, and the `ROZI_FILE` it receives, or
+    /// why it cannot be opened.
+    pub(crate) fn open(&self, path: &str) -> std::result::Result<PathOpener, String> {
+        let (action, runs_on) = self
+            .handler(path)
+            .ok_or_else(|| format!("No link handler opens {path}"))?;
+        let file = match &self.place {
+            PathPlace::Elsewhere(host) => return Err(format!("{path} is on {host}")),
+            PathPlace::SessionHost => path.to_string(),
+            PathPlace::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
+                .filter(|resolved| resolved.exists())
+                .ok_or_else(|| format!("No such file or directory: {path}"))?
+                .into_os_string()
+                .into_string()
+                .map_err(|_| format!("{path} cannot be passed to a handler on this host"))?,
+        };
+        if self.place.machine() != Some(runs_on) {
+            let host = self.session_host.as_deref().unwrap_or("the session host");
+            let (files, handler) = match runs_on {
+                Machine::Client => (host, "this machine"),
+                Machine::SessionHost => ("this machine", host),
+            };
+            return Err(format!(
+                "{path} is on {files}, but its link handler runs on {handler}"
+            ));
+        }
+        Ok(PathOpener {
+            action: action.clone(),
+            file,
+        })
+    }
+
+    /// Whether `text`, a path as a pane shows it, is a link: a handler on the machine the path is
+    /// on opens files of its name, and the file exists, or cannot be checked from here.
     ///
     /// The terminal asks on every pointer movement over a path, so the last answer is reused
     /// for a moment instead of touching the file system again.
-    pub(crate) fn accepts(
-        &self,
-        text: &str,
-        handlers: &[LinkHandler],
-        cache: &PathLinkCache,
-    ) -> bool {
+    pub(crate) fn accepts(&self, text: &str, cache: &PathLinkCache) -> bool {
         let path = PathPosition::parse(text).path;
-        if handler(handlers, "file", Some(path)).is_none() {
+        let Some((_, runs_on)) = self.handler(path) else {
+            return false;
+        };
+        if self.place.machine() != Some(runs_on) {
             return false;
         }
-        match self {
+        match &self.place {
             // Unchecked, a bare name such as `example.com` or `e.g` is too often not a file.
-            Self::SessionHost => path.contains(['/', '\\']),
-            Self::Elsewhere(_) => false,
-            Self::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
+            PathPlace::SessionHost => path.contains(['/', '\\']),
+            PathPlace::Elsewhere(_) => false,
+            PathPlace::Local { cwd, home } => local_path(path, cwd.as_deref(), home.as_deref())
                 .is_some_and(|resolved| cache.exists(resolved)),
         }
+    }
+
+    /// Whether any handler opens files at all, which makes the pane look for paths.
+    pub(crate) fn any(&self) -> bool {
+        !self.handlers.is_empty()
+    }
+
+    fn handler(&self, path: &str) -> Option<(&LinkAction, Machine)> {
+        self.handlers
+            .iter()
+            .find(|(handler, _)| handler.opens("file", Some(path)))
+            .map(|(handler, machine)| (&handler.action, *machine))
     }
 }
 
@@ -335,37 +430,114 @@ fn failed(ctx: &mut Context<AppRoot>, error: impl Into<String>) -> Update {
 mod policy_tests {
     use super::*;
 
+    fn file_handler(files: &[&str], action: UserCommandAction) -> LinkHandler {
+        LinkHandler {
+            schemes: vec!["file".into()],
+            files: files.iter().map(|file| file.to_string()).collect(),
+            action: LinkAction::Inline(action),
+        }
+    }
+
     #[test]
-    fn paths_resolve_only_where_their_handler_can_open_them() {
+    fn paths_open_only_with_a_handler_on_their_machine() {
         let scratch = tempfile::tempdir().unwrap();
         std::fs::write(scratch.path().join("notes.md"), "").unwrap();
         std::fs::create_dir(scratch.path().join("project")).unwrap();
-        let local = PathResolver::Local {
+        let cache = PathLinkCache::default();
+        let links = |place, files: &[&str], machine| PathLinks {
+            place,
+            handlers: vec![(file_handler(files, UserCommandAction::run("open")), machine)],
+            session_host: Some("buildbox".into()),
+        };
+        let local = || PathPlace::Local {
             cwd: Some(scratch.path().join("project")),
             home: Some(scratch.path().to_path_buf()),
         };
-        let cache = PathLinkCache::default();
-        let any = [LinkHandler {
-            schemes: vec!["file".into()],
-            files: Vec::new(),
-            action: LinkAction::Inline(UserCommandAction::run("open")),
-        }];
-        let notes = scratch.path().join("notes.md").display().to_string();
-        assert_eq!(local.resolve("~/notes.md"), Ok(notes.clone()));
-        assert!(local.accepts("../notes.md:4:2", &any, &cache));
-        assert!(local.resolve("./missing.md").is_err());
-        assert!(!local.accepts("./missing.md", &any, &cache));
 
-        let elsewhere = PathResolver::Elsewhere("server".into());
-        assert!(elsewhere.resolve(&notes).is_err());
-        assert!(!elsewhere.accepts(&notes, &any, &cache));
-        // Unseen from here, but it opens on the session host, relative to the pane's directory.
+        let here = links(local(), &[], Machine::Client);
+        let notes = scratch.path().join("notes.md").display().to_string();
         assert_eq!(
-            PathResolver::SessionHost.resolve("src/a.rs"),
+            here.open("~/notes.md").map(|opener| opener.file),
+            Ok(notes.clone())
+        );
+        assert!(here.accepts("../notes.md:4:2", &cache));
+        assert!(here.open("./missing.md").is_err());
+        assert!(!here.accepts("./missing.md", &cache));
+        // Routing by name decides too: no handler takes a Markdown file here.
+        assert!(!links(local(), &["*.png"], Machine::Client).accepts("../notes.md", &cache));
+
+        assert!(
+            !links(PathPlace::Elsewhere("prod".into()), &[], Machine::Client)
+                .accepts(&notes, &cache)
+        );
+        // A remote path opens, unchecked, on its host; a bare name there is too often not a file.
+        let remote = links(PathPlace::SessionHost, &[], Machine::SessionHost);
+        assert_eq!(
+            remote.open("src/a.rs").map(|opener| opener.file),
             Ok("src/a.rs".into())
         );
-        assert!(PathResolver::SessionHost.accepts("src/a.rs:3", &any, &cache));
-        assert!(!PathResolver::SessionHost.accepts("a.rs", &any, &cache));
+        assert!(remote.accepts("src/a.rs:3", &cache));
+        assert!(!remote.accepts("a.rs", &cache));
+        // A handler on the other machine would open some other file, or none.
+        assert!(!links(PathPlace::SessionHost, &[], Machine::Client).accepts("src/a.rs", &cache));
+        assert!(
+            links(PathPlace::SessionHost, &[], Machine::Client)
+                .open("src/a.rs")
+                .is_err()
+        );
+        assert!(!links(local(), &[], Machine::SessionHost).accepts("../notes.md", &cache));
+    }
+
+    #[test]
+    fn panes_and_handlers_name_the_machine_they_run_on() {
+        use crate::state::Pane;
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
+        state.current_mut().remote_host = Some("buildbox".into());
+        let mut ssh = Pane::new(7, 100, Default::default());
+        ssh.terminal.cwd_host = Some("prod".into());
+        state.current_mut().workspaces[0].panes.push(ssh);
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(8, 100, Default::default()));
+        state
+            .scratch
+            .panes
+            .push(Pane::new(9, 100, Default::default()));
+        assert!(
+            matches!(PathPlace::for_pane(&state, 7), PathPlace::Elsewhere(host) if host == "prod")
+        );
+        assert!(matches!(
+            PathPlace::for_pane(&state, 8),
+            PathPlace::SessionHost
+        ));
+        assert!(matches!(
+            PathPlace::for_pane(&state, 9),
+            PathPlace::Local { .. }
+        ));
+
+        let machine = |state: &State, action| handler_machine(state, &LinkAction::Inline(action));
+        assert_eq!(
+            machine(&state, UserCommandAction::popup("open")),
+            Machine::SessionHost
+        );
+        assert_eq!(
+            machine(&state, UserCommandAction::run("open")),
+            Machine::SessionHost
+        );
+        assert_eq!(
+            machine(
+                &state,
+                UserCommandAction::Exec {
+                    command: "open".into()
+                }
+            ),
+            Machine::Client
+        );
+        state.scratch_visible = true;
+        assert_eq!(
+            machine(&state, UserCommandAction::run("open")),
+            Machine::Client
+        );
     }
 
     #[test]

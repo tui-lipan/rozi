@@ -1695,10 +1695,13 @@ mod tests {
         state.ports.insert(crate::state::PortForwardEntry {
             key: crate::session::remote::forward::ForwardKey {
                 target: workbox,
-                remote_host: crate::session::remote::forward::ForwardHost::Loopback,
+                remote_host: crate::session::remote::forward::ForwardHost::Localhost,
                 remote_port: 5173,
             },
             local_port: 5173,
+            port_pinned: true,
+            local_port_mode: crate::session::remote::forward::LocalPortMode::Auto,
+            browser_scheme: None,
             state: crate::state::ForwardState::Ready,
             generation: 1,
             handle: None,

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use super::AttachmentId;
-use tui_lipan::prelude::TextInput;
 use crate::config::LinkAction;
 use crate::pane::id::PaneId;
 use crate::session::protocol::SessionInstanceId;
 use crate::session::remote::RemoteTarget;
-use crate::session::remote::forward::{ForwardHandle, ForwardHost, ForwardKey};
+use crate::session::remote::forward::{ForwardHandle, ForwardHost, ForwardKey, LocalPortMode};
+use tui_lipan::prelude::TextInput;
 
 /// Lifecycle state of a client-owned SSH port forward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +16,32 @@ pub enum ForwardState {
     Reconnecting,
     AuthRequired,
     Failed,
+}
+
+/// HTTP(S) scheme retained when a forward originated from or was opened via a web link.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserScheme {
+    Http,
+    Https,
+}
+
+impl BrowserScheme {
+    pub fn from_scheme(scheme: &str) -> Option<Self> {
+        if scheme.eq_ignore_ascii_case("http") {
+            Some(Self::Http)
+        } else if scheme.eq_ignore_ascii_case("https") {
+            Some(Self::Https)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
 }
 
 /// How an activated terminal URL is opened once any required local tunnel is ready.
@@ -68,9 +94,12 @@ pub struct PendingLinkOpen {
 pub struct PortForwardEntry {
     pub key: ForwardKey,
     pub local_port: u16,
-    /// True once this forward has emitted its first `Ready`, locking `local_port` for the life of
-    /// the entry (including across `AuthRequired`/`Failed` restarts).
+    /// True once this forward has emitted its first `Ready`, or was created with an explicit local
+    /// port, locking `local_port` for the life of the entry (including across `AuthRequired`/`Failed`
+    /// restarts).
     pub port_pinned: bool,
+    pub local_port_mode: LocalPortMode,
+    pub browser_scheme: Option<BrowserScheme>,
     pub state: ForwardState,
     pub generation: u64,
     pub handle: Option<ForwardHandle>,

@@ -1,52 +1,16 @@
 use super::*;
 
-use crate::ops::ports::{PortMsg, default_forward_target, sorted_keys};
-use crate::session::remote::forward::ForwardKey;
-use crate::state::{
-    ForwardState, PortFormField, PortFormState, PortForwardEntry, PortsOverlayState,
+use crate::ops::ports::{
+    PortMsg, browser_open_url, default_forward_target, forward_can_retry, forward_search_item,
+    selected_overlay_key, sorted_keys,
 };
+use crate::session::remote::forward::ForwardKey;
+use crate::state::{ForwardState, PortFormField, PortFormState, PortsOverlayState};
 use crate::view::vocabulary::{
     MARKER_FAILED, MARKER_LIVE, picker_circle_spinner_gutter, picker_marker_gutter,
 };
 
 const PORT_FORM_LABEL_WIDTH: u16 = 13;
-
-fn forward_status_label(state: ForwardState) -> &'static str {
-    match state {
-        ForwardState::Ready => "Ready",
-        ForwardState::Starting => "Starting…",
-        ForwardState::Reconnecting => "Reconnecting…",
-        ForwardState::AuthRequired => "Auth required",
-        ForwardState::Failed => "Failed",
-    }
-}
-
-fn forward_description(ctx: &Context<AppRoot>, entry: &PortForwardEntry) -> ItemDescription {
-    let host = ctx.state.remote_target_label(&entry.key.target);
-    let status = forward_status_label(entry.state);
-    if matches!(
-        entry.state,
-        ForwardState::Failed | ForwardState::AuthRequired | ForwardState::Reconnecting
-    ) && let Some(error) = entry.error.as_deref()
-    {
-        let reason = crate::session::discovery::probe_failure_reason(error);
-        return picker_description(crate::view::vocabulary::fields([host.as_str(), reason]));
-    }
-    picker_description(crate::view::vocabulary::fields([host.as_str(), status]))
-}
-
-fn forward_label(entry: &PortForwardEntry) -> String {
-    let remote = format!(
-        "{}:{}",
-        entry.key.remote_host.display_label(),
-        entry.key.remote_port
-    );
-    if entry.local_port != 0 {
-        format!("127.0.0.1:{} → {remote}", entry.local_port)
-    } else {
-        remote
-    }
-}
 
 fn forward_gutter(ctx: &Context<AppRoot>, state: ForwardState) -> ListItemGutter {
     let theme = &ctx.state.theme;
@@ -69,19 +33,11 @@ fn ports_list_overlay(ctx: &Context<AppRoot>, overlay: &PortsOverlayState) -> El
         .iter()
         .filter_map(|key| {
             let entry = ctx.state.ports.get(key)?;
-            Some(
-                SearchEntry::item(forward_label(entry), key.clone())
-                    .description(forward_description(ctx, entry)),
-            )
+            Some(SearchEntry::Item(forward_search_item(&ctx.state, entry)))
         })
         .collect();
 
-    let selected_key = overlay
-        .selected
-        .as_ref()
-        .filter(|key| ctx.state.ports.get(key).is_some())
-        .cloned()
-        .or_else(|| keys.first().cloned());
+    let selected_key = selected_overlay_key(&ctx.state);
     let selected_index = selected_key.as_ref().and_then(|selected| {
         entries.iter().enumerate().find_map(|(index, entry)| {
             matches!(entry, SearchEntry::Item(item) if &item.value == selected).then_some(index)
@@ -92,22 +48,13 @@ fn ports_list_overlay(ctx: &Context<AppRoot>, overlay: &PortsOverlayState) -> El
         .and_then(|key| ctx.state.ports.get(key));
 
     let enter_action = match selected_entry {
-        Some(entry) if entry.state == ForwardState::Ready && entry.local_port != 0 => {
-            Some(("open", true))
-        }
-        Some(entry)
-            if matches!(
-                entry.state,
-                ForwardState::Failed | ForwardState::AuthRequired
-            ) =>
-        {
-            Some(("retry", true))
-        }
+        Some(entry) if browser_open_url(entry).is_some() => Some(("open", true)),
+        Some(entry) if forward_can_retry(entry) => Some(("retry", true)),
         _ => None,
     };
     let (enter_label, enter_enabled) = enter_action.unwrap_or(("open", false));
     let can_add = default_forward_target(&ctx.state).is_some();
-    let can_retry = selected_entry.is_some();
+    let can_retry = selected_entry.is_some_and(forward_can_retry);
     let can_close = selected_key.is_some();
     let armed_row = overlay
         .pending_close
@@ -332,8 +279,8 @@ mod tests {
     use super::*;
     use crate::ops::ports::PortMsg;
     use crate::session::remote::RemoteTarget;
-    use crate::session::remote::forward::ForwardHost;
-    use crate::state::PortForwardEntry;
+    use crate::session::remote::forward::{ForwardHost, LocalPortMode};
+    use crate::state::{BrowserScheme, PortForwardEntry};
     use tui_lipan::TestBackend;
 
     #[test]
@@ -341,13 +288,18 @@ mod tests {
         let workbox = RemoteTarget::Alias("workbox".into());
         let key1 = ForwardKey {
             target: workbox.clone(),
-            remote_host: ForwardHost::Loopback,
+            remote_host: ForwardHost::Localhost,
             remote_port: 5173,
         };
         let key2 = ForwardKey {
             target: workbox.clone(),
             remote_host: ForwardHost::Host("database.internal".into()),
             remote_port: 5432,
+        };
+        let key3 = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Host("redis.internal".into()),
+            remote_port: 6379,
         };
 
         let mut backend = TestBackend::new(AppRoot::default());
@@ -356,8 +308,11 @@ mod tests {
         backend.state_mut().config.animations.enabled = false;
         backend.state_mut().current_mut().remote_target = Some(workbox);
         backend.state_mut().ports.insert(PortForwardEntry {
-            key: key1,
+            key: key1.clone(),
             local_port: 5173,
+            port_pinned: true,
+            local_port_mode: LocalPortMode::Auto,
+            browser_scheme: Some(BrowserScheme::Http),
             state: ForwardState::Ready,
             generation: 1,
             handle: None,
@@ -365,12 +320,27 @@ mod tests {
             pending_opens: Vec::new(),
         });
         backend.state_mut().ports.insert(PortForwardEntry {
-            key: key2,
+            key: key2.clone(),
             local_port: 15432,
+            port_pinned: true,
+            local_port_mode: LocalPortMode::Exact,
+            browser_scheme: None,
             state: ForwardState::Failed,
             generation: 2,
             handle: None,
             error: Some("ssh: connect to host workbox: Connection refused".into()),
+            pending_opens: Vec::new(),
+        });
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key3.clone(),
+            local_port: 16379,
+            port_pinned: true,
+            local_port_mode: LocalPortMode::Exact,
+            browser_scheme: None,
+            state: ForwardState::Ready,
+            generation: 3,
+            handle: None,
+            error: None,
             pending_opens: Vec::new(),
         });
 
@@ -390,6 +360,7 @@ mod tests {
         );
         assert!(list_text.contains("open Enter"), "{list_text}");
         assert!(list_text.contains("add forward"), "{list_text}");
+        assert!(!list_text.contains("retry Ctrl+R"), "{list_text}");
 
         // Optional PNG dump when reviewing visuals outside git.
         #[cfg(feature = "ui-snapshot")]
@@ -398,6 +369,65 @@ mod tests {
             std::fs::write(path, png).unwrap();
         }
 
+        // Ready manual TCP forward does not advertise browser open or retry.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Select(key3)))
+            .unwrap();
+        backend.render();
+        let manual_text = backend.capture_frame().plain_text();
+        assert!(!manual_text.contains("open Enter"), "{manual_text}");
+        assert!(!manual_text.contains("retry Ctrl+R"), "{manual_text}");
+
+        // Failed forward advertises retry on Enter and Ctrl+R.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Select(key2)))
+            .unwrap();
+        backend.render();
+        let failed_text = backend.capture_frame().plain_text();
+        assert!(failed_text.contains("retry Enter"), "{failed_text}");
+        assert!(failed_text.contains("retry Ctrl+R"), "{failed_text}");
+
+        // Zero-match filter via real typing disables row actions (retry and close) and blocks Ctrl+K.
+        for ch in ['x', 'y', 'z'] {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char(ch),
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        backend.render();
+        let empty_text = backend.capture_frame().plain_text();
+        assert!(
+            empty_text.contains("No forwards match `xyz`"),
+            "{empty_text}"
+        );
+        assert!(!empty_text.contains("open Enter"), "{empty_text}");
+        assert!(!empty_text.contains("retry Ctrl+R"), "{empty_text}");
+        assert!(!empty_text.contains("close Ctrl+K"), "{empty_text}");
+
+        for _ in 0..2 {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Char('k'),
+                    mods: KeyMods::CTRL,
+                })
+                .unwrap();
+        }
+        assert_eq!(backend.state().ports.len(), 3);
+
+        for _ in 0..3 {
+            backend
+                .send_key(KeyEvent {
+                    code: KeyCode::Backspace,
+                    mods: KeyMods::NONE,
+                })
+                .unwrap();
+        }
+        backend.render();
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Select(key1)))
+            .unwrap();
         backend
             .dispatch(crate::Msg::Ports(PortMsg::CloseSelected))
             .unwrap();

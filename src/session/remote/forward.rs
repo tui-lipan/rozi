@@ -107,6 +107,16 @@ pub struct ForwardKey {
     pub remote_port: u16,
 }
 
+/// How a forward chooses its initial local loopback bind port before its first `Ready`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalPortMode {
+    /// Try the requested or remote port first, falling back to an ephemeral port if unavailable.
+    #[default]
+    Auto,
+    /// Bind only the exact requested local port, failing if it is unavailable.
+    Exact,
+}
+
 /// Concrete SSH forward parameters for one `ssh -N -L` process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardSpec {
@@ -115,7 +125,7 @@ pub struct ForwardSpec {
     pub remote_port: u16,
     pub local_port: u16,
     /// Refuse remapping `local_port` on bind conflicts even before the first `Ready`
-    /// (for example when restarting a forward whose local endpoint was already published).
+    /// (for example when using an explicit local port or restarting a previously pinned forward).
     pub pin_local_port: bool,
 }
 
@@ -166,6 +176,8 @@ impl StopSignal {
 pub struct ForwardHandle {
     stop: Arc<StopSignal>,
     thread: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    pub(crate) pin_local_port: bool,
 }
 
 impl ForwardHandle {
@@ -174,6 +186,7 @@ impl ForwardHandle {
         Self {
             stop: Arc::new(StopSignal::default()),
             thread: None,
+            pin_local_port: false,
         }
     }
 }
@@ -198,6 +211,19 @@ pub fn preferred_local_port(preferred: Option<u16>) -> io::Result<u16> {
     }
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+/// Verify that `port` can be bound on local loopback without falling back to an ephemeral port.
+pub fn exact_local_port(port: u16) -> io::Result<u16> {
+    if port == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "explicit local port must be non-zero",
+        ));
+    }
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
     drop(listener);
     Ok(port)
 }
@@ -282,6 +308,8 @@ pub fn start_forward(
         spec.local_port = preferred_local_port(Some(spec.remote_port))?;
     }
 
+    #[cfg(test)]
+    let pin_local_port = spec.pin_local_port;
     let stop = Arc::new(StopSignal::default());
     let worker_stop = stop.clone();
     let thread = thread::Builder::new()
@@ -293,6 +321,8 @@ pub fn start_forward(
     Ok(ForwardHandle {
         stop,
         thread: Some(thread),
+        #[cfg(test)]
+        pin_local_port,
     })
 }
 
@@ -401,10 +431,7 @@ fn run_forward_loop_with(
                 stderr,
                 spawn_not_found,
             } => {
-                if !port_pinned.get()
-                    && !spawn_not_found
-                    && is_local_bind_race(&stderr)
-                    && bind_retries < MAX_BIND_RETRIES
+                if should_retry_bind_race(port_pinned.get(), spawn_not_found, &stderr, bind_retries)
                     && let Ok(next_port) = preferred_local_port(None)
                 {
                     bind_retries += 1;
@@ -621,6 +648,18 @@ fn finish_stderr(thread: Option<JoinHandle<String>>, exit_code: Option<i32>) -> 
     }
 }
 
+fn should_retry_bind_race(
+    port_pinned: bool,
+    spawn_not_found: bool,
+    stderr: &str,
+    bind_retries: u32,
+) -> bool {
+    !port_pinned
+        && !spawn_not_found
+        && bind_retries < MAX_BIND_RETRIES
+        && is_local_bind_race(stderr)
+}
+
 fn is_local_bind_race(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     lower.contains("address already in use")
@@ -736,6 +775,29 @@ mod tests {
         drop(ephemeral);
         let reclaimed = preferred_local_port(Some(occupied_port)).unwrap();
         assert_eq!(reclaimed, occupied_port);
+    }
+
+    #[test]
+    fn exact_local_port_fails_when_occupied_and_disables_bind_race_fallback() {
+        let ephemeral = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let occupied_port = ephemeral.local_addr().unwrap().port();
+        assert!(exact_local_port(occupied_port).is_err());
+
+        assert!(should_retry_bind_race(
+            false,
+            false,
+            "Address already in use",
+            0
+        ));
+        assert!(!should_retry_bind_race(
+            true,
+            false,
+            "Address already in use",
+            0
+        ));
+
+        drop(ephemeral);
+        assert_eq!(exact_local_port(occupied_port).unwrap(), occupied_port);
     }
 
     #[test]

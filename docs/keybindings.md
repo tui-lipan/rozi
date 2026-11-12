@@ -289,9 +289,9 @@ host. `Esc` goes back to **Remote hosts**, then to **Sessions**.
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Open a ready forwarded port in your browser, or retry a failed forward |
+| `Enter` | Open a ready HTTP(S) forward in your browser, or retry a failed forward |
 | `Ctrl+N` | Add a port forward |
-| `Ctrl+R` | Retry the selected forward |
+| `Ctrl+R` | Retry a failed forward |
 | `Ctrl+K` twice | Close the selected forward |
 | `Esc` | Close the form or overlay |
 

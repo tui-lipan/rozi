@@ -58,6 +58,14 @@ pub fn remote_picker_key() -> &'static str {
     "rozi-remote-picker"
 }
 
+pub fn ports_overlay_key() -> &'static str {
+    "rozi-ports-overlay"
+}
+
+pub fn port_form_input_key() -> &'static str {
+    "rozi-port-form-input"
+}
+
 pub fn agent_picker_key() -> &'static str {
     "rozi-agent-picker"
 }

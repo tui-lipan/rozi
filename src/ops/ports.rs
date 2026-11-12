@@ -12,13 +12,13 @@ use crate::session::remote::forward::{
     ForwardEvent, ForwardHost, ForwardKey, ForwardSpec, preferred_local_port, start_forward,
 };
 use crate::state::{
-    ForwardState, OpenDestination, PendingLinkContext, PendingLinkOpen, PortForwardEntry,
-    ResolvedLinkDestination, State,
+    ForwardState, OpenDestination, PendingLinkContext, PendingLinkOpen, PortFormField,
+    PortFormState, PortForwardEntry, PortsOverlayState, ResolvedLinkDestination, State,
 };
 
 use super::links::{Machine, PanePlace};
 
-/// A port-forward event or action routed through [`crate::Msg::Ports`].
+/// A port-forward event or UI action routed through [`crate::Msg::Ports`].
 #[derive(Clone)]
 pub enum PortMsg {
     Event {
@@ -26,6 +26,16 @@ pub enum PortMsg {
         generation: u64,
         event: ForwardEvent,
     },
+    CloseOverlay,
+    QueryChanged(String),
+    Select(ForwardKey),
+    Activate(ForwardKey),
+    OpenAddForm,
+    CloseAddForm,
+    FormChanged(PortFormField, InputEvent),
+    SubmitAddForm,
+    RetrySelected,
+    CloseSelected,
 }
 
 /// Forward policy decision for a parsed terminal URL.
@@ -368,6 +378,7 @@ pub(crate) fn start_forward_entry(
         error: None,
         pending_opens: pending.into_iter().collect(),
     });
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -448,12 +459,326 @@ pub(crate) fn handle_event(
 
 /// Close all tunnels targeting `target` (e.g. on disconnect or forget host).
 pub(crate) fn close_target(state: &mut State, target: &RemoteTarget) {
-    state.ports.remove_target(target);
+    if !state.ports.remove_target(target).is_empty() {
+        state.commands_dirty = true;
+    }
+    if let Some(overlay) = state.ports_overlay.as_mut() {
+        if overlay
+            .pending_close
+            .as_ref()
+            .is_some_and(|key| &key.target == target)
+        {
+            overlay.pending_close = None;
+        }
+        if overlay
+            .selected
+            .as_ref()
+            .is_some_and(|key| &key.target == target)
+        {
+            overlay.selected = None;
+        }
+    }
+    let next_selected = sorted_keys(state).into_iter().next();
+    if let Some(overlay) = state.ports_overlay.as_mut()
+        && overlay.selected.is_none()
+    {
+        overlay.selected = next_selected;
+    }
 }
 
 /// Close all client-owned tunnels (e.g. on exit, hangup, or relaunch).
 pub(crate) fn close_all(state: &mut State) {
+    if !state.ports.is_empty() {
+        state.commands_dirty = true;
+    }
     state.ports.clear();
+    if let Some(overlay) = state.ports_overlay.as_mut() {
+        overlay.pending_close = None;
+        overlay.selected = None;
+    }
+}
+
+/// Forward keys sorted deterministically: active session host first, then host label, remote
+/// port, and remote host label.
+pub(crate) fn sorted_keys(state: &State) -> Vec<ForwardKey> {
+    let current = state.current().remote_target.as_ref();
+    let mut keys: Vec<_> = state.ports.iter().map(|(key, _)| key.clone()).collect();
+    keys.sort_by(|a, b| {
+        let a_current = current == Some(&a.target);
+        let b_current = current == Some(&b.target);
+        b_current
+            .cmp(&a_current)
+            .then_with(|| {
+                state
+                    .remote_target_label(&a.target)
+                    .cmp(&state.remote_target_label(&b.target))
+            })
+            .then_with(|| a.remote_port.cmp(&b.remote_port))
+            .then_with(|| {
+                a.remote_host
+                    .display_label()
+                    .cmp(b.remote_host.display_label())
+            })
+    });
+    keys
+}
+
+/// Remote SSH target for manual forward creation from the `Ports…` overlay.
+pub(crate) fn default_forward_target(state: &State) -> Option<RemoteTarget> {
+    state
+        .current()
+        .remote_target
+        .clone()
+        .or_else(|| {
+            state
+                .ports_overlay
+                .as_ref()
+                .and_then(|overlay| overlay.selected.as_ref())
+                .map(|key| key.target.clone())
+        })
+        .or_else(|| state.ports.iter().next().map(|(key, _)| key.target.clone()))
+        .or_else(|| {
+            state
+                .background
+                .values()
+                .find_map(|attachment| attachment.remote_target.clone())
+        })
+}
+
+pub(crate) fn open_overlay(ctx: &mut Context<AppRoot>) -> Update {
+    crate::actions::clear_non_settings_overlays(ctx);
+    let selected = sorted_keys(&ctx.state).into_iter().next();
+    ctx.state.ports_overlay = Some(PortsOverlayState::new(selected));
+    ctx.state.commands_dirty = true;
+    crate::ops::focus::request_ports_overlay_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn close_overlay(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.state.ports_overlay = None;
+    crate::ops::focus::request_current_pane_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.query.set_text(query);
+        overlay.pending_close = None;
+    }
+    Update::full()
+}
+
+pub(crate) fn select_forward(ctx: &mut Context<AppRoot>, key: ForwardKey) -> Update {
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        if overlay.selected.as_ref() != Some(&key) {
+            overlay.pending_close = None;
+        }
+        overlay.selected = Some(key);
+    }
+    Update::full()
+}
+
+pub(crate) fn activate_forward(ctx: &mut Context<AppRoot>, key: ForwardKey) -> Update {
+    let Some(entry) = ctx.state.ports.get(&key) else {
+        return Update::none();
+    };
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.selected = Some(key.clone());
+        overlay.pending_close = None;
+    }
+    match entry.state {
+        ForwardState::Ready if entry.local_port != 0 => {
+            let url = format!("http://127.0.0.1:{}", entry.local_port);
+            if let Err(error) = tui_lipan::utils::open_url(&url) {
+                crate::pane::pty_events::notify_error(
+                    ctx,
+                    format!("Could not open `{url}`"),
+                    error.to_string(),
+                );
+            }
+            Update::full()
+        }
+        ForwardState::Failed | ForwardState::AuthRequired => {
+            let policy = if entry.port_pinned && entry.local_port != 0 {
+                LocalPortPolicy::Pinned(entry.local_port)
+            } else {
+                LocalPortPolicy::Unpinned
+            };
+            start_forward_entry(ctx, key, policy, true, None)
+        }
+        ForwardState::Starting | ForwardState::Reconnecting => Update::none(),
+        ForwardState::Ready => Update::none(),
+    }
+}
+
+fn selected_overlay_key(state: &State) -> Option<ForwardKey> {
+    let overlay = state.ports_overlay.as_ref()?;
+    overlay
+        .selected
+        .as_ref()
+        .filter(|key| state.ports.get(key).is_some())
+        .cloned()
+        .or_else(|| sorted_keys(state).into_iter().next())
+}
+
+pub(crate) fn retry_selected(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(key) = selected_overlay_key(&ctx.state) else {
+        return Update::none();
+    };
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.pending_close = None;
+        overlay.selected = Some(key.clone());
+    }
+    let Some(entry) = ctx.state.ports.get(&key) else {
+        return Update::none();
+    };
+    let policy = if entry.port_pinned && entry.local_port != 0 {
+        LocalPortPolicy::Pinned(entry.local_port)
+    } else {
+        LocalPortPolicy::Unpinned
+    };
+    start_forward_entry(ctx, key, policy, true, None)
+}
+
+pub(crate) fn close_selected(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(key) = selected_overlay_key(&ctx.state) else {
+        return Update::none();
+    };
+    let armed = ctx
+        .state
+        .ports_overlay
+        .as_ref()
+        .is_some_and(|overlay| overlay.pending_close.as_ref() == Some(&key));
+    if !armed {
+        if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+            overlay.pending_close = Some(key);
+        }
+        return Update::full();
+    }
+
+    ctx.state.ports.remove(&key);
+    ctx.state.commands_dirty = true;
+    let next = sorted_keys(&ctx.state).into_iter().next();
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.pending_close = None;
+        overlay.selected = next;
+    }
+    let host = ctx.state.remote_target_label(&key.target);
+    crate::pane::pty_events::notify_info(
+        ctx,
+        format!(
+            "Closed forward `{host} · {}:{}`",
+            key.remote_host.display_label(),
+            key.remote_port
+        ),
+    );
+    Update::full()
+}
+
+pub(crate) fn open_add_form(ctx: &mut Context<AppRoot>) -> Update {
+    let Some(target) = default_forward_target(&ctx.state) else {
+        return Update::none();
+    };
+    let Some(overlay) = ctx.state.ports_overlay.as_mut() else {
+        return Update::none();
+    };
+    overlay.pending_close = None;
+    overlay.form = Some(PortFormState::new(target));
+    crate::ops::focus::request_port_form_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn close_add_form(ctx: &mut Context<AppRoot>) -> Update {
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.form = None;
+    }
+    crate::ops::focus::request_ports_overlay_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn port_form_is_open(state: &State) -> bool {
+    state
+        .ports_overlay
+        .as_ref()
+        .is_some_and(|overlay| overlay.form.is_some())
+}
+
+pub(crate) fn port_form_cycle_focus(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
+    if let Some(form) = ctx
+        .state
+        .ports_overlay
+        .as_mut()
+        .and_then(|overlay| overlay.form.as_mut())
+    {
+        form.cycle_focus(forward);
+    }
+    crate::ops::focus::request_port_form_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn form_changed(
+    ctx: &mut Context<AppRoot>,
+    field: PortFormField,
+    event: InputEvent,
+) -> Update {
+    if let Some(form) = ctx
+        .state
+        .ports_overlay
+        .as_mut()
+        .and_then(|overlay| overlay.form.as_mut())
+    {
+        form.focus = field;
+        event.apply_to(form.input_mut(field));
+        form.error = None;
+    }
+    Update::full()
+}
+
+pub(crate) fn submit_add_form(ctx: &mut Context<AppRoot>) -> Update {
+    let parsed = ctx
+        .state
+        .ports_overlay
+        .as_ref()
+        .and_then(|overlay| overlay.form.as_ref())
+        .map(PortFormState::parse_request);
+    let Some(parsed) = parsed else {
+        return Update::none();
+    };
+    let (key, local_port) = match parsed {
+        Ok(pair) => pair,
+        Err(error) => {
+            if let Some(form) = ctx
+                .state
+                .ports_overlay
+                .as_mut()
+                .and_then(|overlay| overlay.form.as_mut())
+            {
+                form.error = Some(error);
+            }
+            crate::ops::focus::request_port_form_focus(ctx);
+            return Update::full();
+        }
+    };
+
+    if let Some(overlay) = ctx.state.ports_overlay.as_mut() {
+        overlay.form = None;
+        overlay.pending_close = None;
+        overlay.selected = Some(key.clone());
+    }
+    crate::ops::focus::request_ports_overlay_focus(ctx);
+
+    let preferred = (local_port != 0).then_some(local_port);
+    if let Some(existing) = ctx.state.ports.get(&key)
+        && !matches!(
+            existing.state,
+            ForwardState::Failed | ForwardState::AuthRequired
+        )
+        && (preferred.is_none() || preferred == Some(existing.local_port))
+    {
+        return Update::full();
+    }
+    let policy = preferred.map_or(LocalPortPolicy::Unpinned, LocalPortPolicy::Pinned);
+    start_forward_entry(ctx, key, policy, true, None)
 }
 
 #[cfg(test)]
@@ -1493,6 +1818,172 @@ mod tests {
         assert!(
             backend.state().scratch.panes.is_empty(),
             "pinned restart must never emit Ready or open on a different local port"
+        );
+    }
+
+    #[test]
+    fn port_form_validates_fields_and_cycles_focus() {
+        let target = RemoteTarget::Alias("workbox".into());
+        let mut form = PortFormState::new(target.clone());
+        assert_eq!(form.focus, PortFormField::RemotePort);
+        assert_eq!(form.remote_host.text(), "localhost");
+
+        // Tab and Shift+Tab cycle cleanly through all three fields in order.
+        form.cycle_focus(true);
+        assert_eq!(form.focus, PortFormField::LocalPort);
+        form.cycle_focus(true);
+        assert_eq!(form.focus, PortFormField::RemoteHost);
+        form.cycle_focus(false);
+        assert_eq!(form.focus, PortFormField::LocalPort);
+
+        // Missing or invalid ports produce clear validation errors.
+        assert!(form.parse_request().is_err());
+        form.remote_port.set_text("0");
+        assert!(form.parse_request().is_err());
+        form.remote_port.set_text("5173");
+        form.local_port.set_text("not-a-port");
+        assert!(form.parse_request().is_err());
+
+        // Blank local port means auto (0); blank remote host falls back to localhost.
+        form.local_port.set_text("");
+        form.remote_host.set_text("");
+        let (key, local_port) = form.parse_request().unwrap();
+        assert_eq!(
+            key,
+            ForwardKey {
+                target: target.clone(),
+                remote_host: ForwardHost::Localhost,
+                remote_port: 5173,
+            }
+        );
+        assert_eq!(local_port, 0);
+
+        // Explicit non-loopback host and custom local port are preserved.
+        form.remote_host.set_text("database.internal");
+        form.remote_port.set_text("5432");
+        form.local_port.set_text("15432");
+        let (key, local_port) = form.parse_request().unwrap();
+        assert_eq!(
+            key,
+            ForwardKey {
+                target,
+                remote_host: ForwardHost::Host("database.internal".into()),
+                remote_port: 5432,
+            }
+        );
+        assert_eq!(local_port, 15432);
+    }
+
+    #[test]
+    fn ports_overlay_lifecycle_arms_close_and_updates_selection() {
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let key1 = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 3000,
+        };
+        let key2 = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        backend.state_mut().current_mut().remote_target = Some(workbox);
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key1.clone(),
+            local_port: 3000,
+            port_pinned: true,
+            state: ForwardState::Ready,
+            generation: 1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key2.clone(),
+            local_port: 5173,
+            port_pinned: false,
+            state: ForwardState::Failed,
+            generation: 2,
+            handle: None,
+            error: Some("connection refused".into()),
+            pending_opens: Vec::new(),
+        });
+
+        backend
+            .dispatch(crate::Msg::RunAction(crate::input::Action::OpenPorts))
+            .unwrap();
+        let overlay = backend.state().ports_overlay.as_ref().unwrap();
+        assert_eq!(overlay.selected, Some(key1.clone()));
+        assert!(overlay.form.is_none());
+
+        // Open and cancel the add-forward form cleanly.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::OpenAddForm))
+            .unwrap();
+        assert!(
+            backend
+                .state()
+                .ports_overlay
+                .as_ref()
+                .unwrap()
+                .form
+                .is_some()
+        );
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::CloseAddForm))
+            .unwrap();
+        assert!(
+            backend
+                .state()
+                .ports_overlay
+                .as_ref()
+                .unwrap()
+                .form
+                .is_none()
+        );
+
+        // Two-step destructive close: first press arms, second closes and selects next row.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::CloseSelected))
+            .unwrap();
+        assert_eq!(
+            backend
+                .state()
+                .ports_overlay
+                .as_ref()
+                .unwrap()
+                .pending_close,
+            Some(key1.clone())
+        );
+        assert_eq!(backend.state().ports.len(), 2);
+
+        // Moving selection clears armed confirmation.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Select(key2.clone())))
+            .unwrap();
+        assert!(
+            backend
+                .state()
+                .ports_overlay
+                .as_ref()
+                .unwrap()
+                .pending_close
+                .is_none()
+        );
+
+        // Arm and confirm closing `key2`.
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::CloseSelected))
+            .unwrap();
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::CloseSelected))
+            .unwrap();
+        assert!(backend.state().ports.get(&key2).is_none());
+        assert_eq!(
+            backend.state().ports_overlay.as_ref().unwrap().selected,
+            Some(key1)
         );
     }
 }

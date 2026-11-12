@@ -420,6 +420,7 @@ fn execute_action_inner(
         Action::OpenWorktrees => crate::ops::worktrees::open(ctx),
         Action::ApplyProfile => crate::ops::profile::open_apply_profile_picker(ctx),
         Action::OpenSessionPicker => crate::ops::session::open_session_picker(ctx),
+        Action::OpenPorts => crate::ops::ports::open_overlay(ctx),
         Action::OpenAgentPicker => crate::ops::agents::open_agent_picker(ctx),
         Action::OpenCollaborators => crate::ops::session::open_collaborators(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),
@@ -598,6 +599,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::OpenWorktrees
             | Action::ApplyProfile
             | Action::OpenSessionPicker
+            | Action::OpenPorts
             | Action::OpenAgentPicker
             | Action::OpenCollaborators
             | Action::OpenExtensions
@@ -621,7 +623,7 @@ fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAct
 }
 
 /// A top-level Settings opening abandons any other modal instead of rendering over it.
-fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
+pub(crate) fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     crate::ops::theme::cancel_theme_picker(ctx);
     if ctx.state.show_layout_picker || ctx.state.layout_picker.is_some() {
         let _ = crate::ops::layout_picker::cancel_layout_picker(ctx);
@@ -642,6 +644,7 @@ fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     ctx.state.worktree_picker = None;
+    ctx.state.ports_overlay = None;
     ctx.state.profile_picker_epoch = ctx.state.profile_picker_epoch.wrapping_add(1);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;

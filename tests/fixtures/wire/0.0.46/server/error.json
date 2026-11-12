@@ -1,0 +1,8 @@
+{
+  "code": "protocol-mismatch",
+  "message": "client protocol 51-51 is incompatible with server protocol 52-52 (client is older)",
+  "protocol_max": 52,
+  "protocol_min": 52,
+  "rozi_version": "0.0.44",
+  "type": "error"
+}

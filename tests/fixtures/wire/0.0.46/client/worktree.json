@@ -1,0 +1,8 @@
+{
+  "request": {
+    "cwd": "example",
+    "kind": "branches"
+  },
+  "request_id": 1,
+  "type": "worktree"
+}

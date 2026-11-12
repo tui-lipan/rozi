@@ -1,0 +1,18 @@
+{
+  "stopped": {
+    "bytes": 1,
+    "deltas": 1,
+    "dropped": 1,
+    "elapsed_ms": 1,
+    "error": "example",
+    "frames": 1,
+    "id": 1,
+    "images": 1,
+    "keyframes": 1,
+    "marks": 1,
+    "pane": 1,
+    "path": "example",
+    "reason": "unknown"
+  },
+  "type": "recording-ended"
+}

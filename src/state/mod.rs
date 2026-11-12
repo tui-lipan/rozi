@@ -24,6 +24,7 @@ mod keybindings;
 mod mode;
 mod pane;
 mod pickers;
+mod ports;
 pub(crate) mod projects;
 mod relaunch;
 mod remote;
@@ -53,6 +54,7 @@ pub use keybindings::*;
 pub use mode::*;
 pub use pane::*;
 pub use pickers::*;
+pub use ports::*;
 pub use relaunch::*;
 pub use remote::*;
 pub use search::*;
@@ -373,6 +375,8 @@ pub struct State {
     pub pending_agent_jump: Option<PendingAgentJump>,
     /// Live remote-host monitors, caches, and discovery. Overlay pickers stay on this struct.
     pub remote: RemoteRuntimeState,
+    /// Client-global SSH port forwards, independent of session attachments.
+    pub ports: PortForwardRuntimeState,
     pub collaboration: Option<CollaborationState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
@@ -770,6 +774,7 @@ impl State {
             sidebar_streams: SidebarStreams::default(),
             pending_agent_jump: None,
             remote: RemoteRuntimeState::default(),
+            ports: PortForwardRuntimeState::default(),
             collaboration: None,
             follow_prompt: None,
             askpass: None,

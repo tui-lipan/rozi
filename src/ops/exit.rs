@@ -99,6 +99,7 @@ pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool
     crate::ops::session::release_background_for_exit(ctx, close_temporary);
     crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
     crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::ports::close_all(&mut ctx.state);
     crate::ops::self_update::stop_for_exit(&mut ctx.state);
     crate::ops::placement::shutdown_all(&mut ctx.state);
     crate::ops::ui_recording::finish_for_exit(&mut ctx.state);
@@ -143,6 +144,7 @@ pub(crate) fn leave_for_relaunch(
     }
     crate::scratchpad::shutdown_for_client_exit(&mut ctx.state);
     crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::ports::close_all(&mut ctx.state);
     crate::ops::self_update::stop_for_exit(&mut ctx.state);
     crate::ops::placement::shutdown_all(&mut ctx.state);
     crate::ops::ui_recording::finish_for_exit(&mut ctx.state);
@@ -230,6 +232,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     }
     crate::ops::session::release_background_for_exit(ctx, false);
     crate::ops::services::terminate_all(&mut ctx.state);
+    crate::ops::ports::close_all(&mut ctx.state);
     crate::ops::self_update::stop_for_exit(&mut ctx.state);
     crate::ops::placement::shutdown_all(&mut ctx.state);
     crate::ops::ui_recording::finish_for_exit(&mut ctx.state);

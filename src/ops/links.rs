@@ -40,24 +40,67 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Up
         } else {
             None
         };
-        if let Some(action) = handler(
+        let destination = match handler(
             &ctx.state.config.link_handlers,
             url.scheme(),
             file.as_deref(),
         )
         .cloned()
         {
-            let target = LinkTarget {
-                uri: text,
-                file: file.as_deref().unwrap_or_default(),
-                ..LinkTarget::default()
-            };
-            return execute(ctx, source, &action, text, target);
+            Some(action) => crate::state::OpenDestination::Handler(action),
+            None => crate::state::OpenDestination::System,
+        };
+        if let Some(request) =
+            super::ports::forward_request_for_link(&ctx.state, source, &url, &destination)
+        {
+            return super::ports::open_forwarded_link(ctx, source, text, request, destination);
         }
+        return open_destination_with_file(
+            ctx,
+            source,
+            &destination,
+            text,
+            text,
+            file.as_deref().unwrap_or_default(),
+        );
     }
     match tui_lipan::utils::open_url(text) {
         Ok(()) => Update::none(),
         Err(error) => failed(ctx, error.to_string()),
+    }
+}
+
+pub(crate) fn open_destination(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    destination: &crate::state::OpenDestination,
+    hint_text: &str,
+    url_to_open: &str,
+) -> Update {
+    open_destination_with_file(ctx, source, destination, hint_text, url_to_open, "")
+}
+
+fn open_destination_with_file(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    destination: &crate::state::OpenDestination,
+    hint_text: &str,
+    url_to_open: &str,
+    file: &str,
+) -> Update {
+    match destination {
+        crate::state::OpenDestination::Handler(action) => {
+            let target = LinkTarget {
+                uri: url_to_open,
+                file,
+                ..LinkTarget::default()
+            };
+            execute(ctx, source, action, hint_text, target)
+        }
+        crate::state::OpenDestination::System => match tui_lipan::utils::open_url(url_to_open) {
+            Ok(()) => Update::none(),
+            Err(error) => failed(ctx, error.to_string()),
+        },
     }
 }
 
@@ -100,9 +143,9 @@ pub(crate) enum Machine {
     SessionHost,
 }
 
-/// Where the `file` handler `action` runs when the session on screen is `remote`.
-fn handler_machine(state: &State, action: &LinkAction) -> Machine {
-    if state.current().remote_host.is_none() {
+/// Where the link handler `action` runs when the session on screen is `remote`.
+pub(crate) fn handler_machine(state: &State, action: &LinkAction) -> Machine {
+    if state.current().remote_host.is_none() && state.current().remote_target.is_none() {
         return Machine::Client;
     }
     let action = match action {
@@ -131,6 +174,35 @@ fn handler_machine(state: &State, action: &LinkAction) -> Machine {
     }
 }
 
+/// Which machine a pane's terminal output and relative context belong to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PanePlace {
+    /// On this machine (a local session pane, or a client-local scratch pane).
+    Client,
+    /// On the remote host of the session on screen.
+    SessionHost,
+    /// On another host the pane's shell reports, such as over `ssh`.
+    Elsewhere(String),
+}
+
+impl PanePlace {
+    pub(crate) fn for_pane(state: &State, source: PaneId) -> Self {
+        let pane = crate::pane::lifecycle::find_pane(state, source);
+        // The pane's own report wins: a shell that moved to another host took its context with
+        // it, whether the session runs here or remotely.
+        if let Some(host) = pane.and_then(|pane| pane.terminal.cwd_host.clone()) {
+            return Self::Elsewhere(host);
+        }
+        // Scratch panes run on this machine even while a remote session is on screen.
+        if (state.current().remote_target.is_some() || state.current().remote_host.is_some())
+            && !crate::scratchpad::contains(state, source)
+        {
+            return Self::SessionHost;
+        }
+        Self::Client
+    }
+}
+
 /// Where a pane's paths are, and how they read there.
 #[derive(Clone, Debug)]
 pub(crate) enum PathPlace {
@@ -147,21 +219,18 @@ pub(crate) enum PathPlace {
 
 impl PathPlace {
     fn for_pane(state: &State, source: PaneId) -> Self {
-        let pane = crate::pane::lifecycle::find_pane(state, source);
-        // The pane's own report wins: a shell that moved to another host took its files with it,
-        // whether the session runs here or remotely.
-        if let Some(host) = pane.and_then(|pane| pane.terminal.cwd_host.clone()) {
-            return Self::Elsewhere(host);
-        }
-        // Scratch panes run on this machine even while a remote session is on screen.
-        if state.current().remote_host.is_some() && !crate::scratchpad::contains(state, source) {
-            return Self::SessionHost;
-        }
-        Self::Local {
-            cwd: pane
-                .and_then(|pane| pane.local_cwd_ref())
-                .map(PathBuf::from),
-            home: crate::platform::paths::home_directory().map(PathBuf::from),
+        match PanePlace::for_pane(state, source) {
+            PanePlace::Elsewhere(host) => Self::Elsewhere(host),
+            PanePlace::SessionHost => Self::SessionHost,
+            PanePlace::Client => {
+                let pane = crate::pane::lifecycle::find_pane(state, source);
+                Self::Local {
+                    cwd: pane
+                        .and_then(|pane| pane.local_cwd_ref())
+                        .map(PathBuf::from),
+                    home: crate::platform::paths::home_directory().map(PathBuf::from),
+                }
+            }
         }
     }
 

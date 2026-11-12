@@ -133,6 +133,16 @@ pub struct ForwardHandle {
     thread: Option<JoinHandle<()>>,
 }
 
+impl ForwardHandle {
+    #[cfg(test)]
+    pub(crate) fn dormant() -> Self {
+        Self {
+            stop: Arc::new(StopSignal::default()),
+            thread: None,
+        }
+    }
+}
+
 impl Drop for ForwardHandle {
     fn drop(&mut self) {
         self.stop.request();

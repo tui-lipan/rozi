@@ -7,6 +7,7 @@ pub(crate) use attach::spawn_state_panes_on_session;
 pub(crate) mod keybindings;
 mod overlays;
 mod panes;
+mod ports;
 mod prompts;
 pub(crate) use prompts::cancel_attach_askpass;
 mod services;
@@ -83,6 +84,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
             agents,
             projects,
         } => hosts::apply(ctx, target, generation, rows, agents, projects),
+        Msg::Ports(msg) => ports::handle(ctx, msg),
         Msg::LocalAgentMetadata(snapshot) => local_agents::apply(ctx, snapshot),
         Msg::ClosePopup => panes::close_popup(ctx),
         Msg::FrameworkFocusEnteredPane(pane) => {

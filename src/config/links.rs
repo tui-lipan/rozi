@@ -13,6 +13,7 @@ pub(super) struct LinksFileConfig {
 #[serde(default)]
 struct LinkHandlerFileConfig {
     schemes: Vec<String>,
+    files: Vec<String>,
     #[serde(flatten)]
     action: OpenActionFileConfig,
 }
@@ -73,10 +74,40 @@ pub(super) fn build_handlers(raw: LinksFileConfig, warnings: &mut Vec<String>) -
                 ));
                 return None;
             }
+            let files = match parse_files(handler.files, &schemes) {
+                Ok(files) => files,
+                Err(error) => {
+                    warnings.push(format!("{context} {error}; skipped"));
+                    return None;
+                }
+            };
             Some(LinkHandler {
                 schemes,
+                files,
                 action: parse_open_action(handler.action, &context, warnings)?,
             })
+        })
+        .collect()
+}
+
+/// Validate a handler's `files` patterns, returning them lowercased for matching.
+pub(super) fn parse_files(files: Vec<String>, schemes: &[String]) -> Result<Vec<String>, String> {
+    if files.is_empty() {
+        return Ok(files);
+    }
+    if !schemes.iter().any(|scheme| scheme == "file") {
+        return Err("sets `files` without the `file` scheme".into());
+    }
+    files
+        .into_iter()
+        .map(|pattern| {
+            let pattern = pattern.trim();
+            if pattern.is_empty() || pattern.contains(['/', '\\']) {
+                return Err(format!(
+                    "needs file-name patterns in `files`, not `{pattern}`"
+                ));
+            }
+            Ok(pattern.to_lowercase())
         })
         .collect()
 }

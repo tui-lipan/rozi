@@ -404,6 +404,8 @@ pub struct State {
     /// which forwards it to the child and - with focus-follows-mouse on - hands that pane the focus
     /// the press was denied. Cleared by the next pane pointer report, which is that release.
     pub consumed_pointer_click: bool,
+    /// The last existence check for a path under a link-activating pointer.
+    pub(crate) path_links: crate::ops::links::PathLinkCache,
     /// Pane-tree content for the client-local scratch overlay. It deliberately reuses `Workspace`
     /// internally while remaining outside every attachment, profile, and shared-layout commit.
     pub scratch: Workspace,
@@ -777,6 +779,7 @@ impl State {
             copy_feedback_epoch: 0,
             hint_mode: None,
             consumed_pointer_click: false,
+            path_links: Default::default(),
             scratch: Workspace::new(0),
             scratch_runtime: None,
             next_scratch_pane_id: 1 << 31,

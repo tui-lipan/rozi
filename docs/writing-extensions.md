@@ -876,7 +876,9 @@ schemes = ["http", "https"]
 command = "open"
 ```
 
-`command` is the local command ID, not a namespaced ID. It must name a process command in this
+Add `files = ["*.png", "*.jpg"]` to a `file` handler to open only files whose names match, as in
+[`[[links.handlers]]`](configuration.md#links-handlers). `command` is the local command ID, not a
+namespaced ID. It must name a process command in this
 manifest; `send` commands and commands belonging to another extension are invalid. Empty or invalid
 URI schemes invalidate the whole extension. Matching ignores case. User handlers precede extension
 handlers; extensions are ordered by installation directory name and handlers by declaration order.

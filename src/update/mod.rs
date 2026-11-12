@@ -571,7 +571,7 @@ fn handle_msg_inner(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) ->
         }
         Msg::PaneInput(id, input) => panes::pane_input(ctx, id, input),
         Msg::PaneKey(id, key) => panes::pane_key(ctx, id, key),
-        Msg::PaneLinkActivate(id, event) => panes::pane_link_activate(ctx, id, event),
+        Msg::PaneLinkActivate(id, kind, link) => panes::pane_link_activate(ctx, id, kind, link),
         Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
         Msg::PaneMouse(id, event) => panes::pane_mouse(ctx, id, event),
         Msg::PaneSelection(id, event) => crate::input::copy_mode::handle_pointer(ctx, id, &event),

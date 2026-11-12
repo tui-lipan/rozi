@@ -174,6 +174,8 @@ pub struct ExtensionInfo {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct ExtensionLinkHandlerDiagnostic {
     pub schemes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
     pub command: String,
 }
 
@@ -659,6 +661,13 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
                 .push("link handler needs nonempty valid URI schemes".into());
             continue;
         }
+        let files = match super::links::parse_files(raw.files, &schemes) {
+            Ok(files) => files,
+            Err(error) => {
+                info.errors.push(format!("link handler {error}"));
+                continue;
+            }
+        };
         if !commands.iter().any(|command| {
             command.id == command_id && !matches!(command.action, UserCommandAction::Send(_))
         }) {
@@ -670,10 +679,12 @@ fn build_candidate(directory: &Path) -> DiscoveredExtension {
         }
         info.link_handlers.push(ExtensionLinkHandlerDiagnostic {
             schemes: schemes.clone(),
+            files: files.clone(),
             command: command_id.clone(),
         });
         link_handlers.push(super::LinkHandler {
             schemes,
+            files,
             action: super::LinkAction::Command(command_id),
         });
     }

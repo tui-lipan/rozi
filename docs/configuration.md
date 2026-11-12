@@ -965,7 +965,11 @@ See [Agent definitions](agents.md).
 Choose what happens when you `Ctrl`-click a link or select a hint with an uppercase final
 label character. The first handler matching the URI scheme wins. Unmatched URLs keep the
 system opener, which supports `http`, `https`, and `mailto`; other schemes require a handler.
-A `file` handler also enables opening plain path hints. Installed extensions can contribute
+A `file` handler also opens file paths shown in plain text, by `Ctrl`-click or hint. A path is a
+link only when it exists; on a [remote session](remote.md) rozi cannot check, so every path that
+names a directory, such as `src/main.rs`, is one.
+A path in a pane whose shell runs on another host, such as over `ssh`, is not a link. Installed
+extensions can contribute
 handlers automatically; user handlers run first. Disable an extension in **Extensions…** to remove
 its handlers.
 
@@ -977,7 +981,7 @@ keep_open = false
 
 [[links.handlers]]
 schemes = ["file"]
-run = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
+popup = 'nvim ${ROZI_LINE:+"+$ROZI_LINE"} -- "$ROZI_FILE"'
 keep_open = false
 ```
 
@@ -986,6 +990,7 @@ To reuse a terminal-browser, replace `run` with `exec = 'terminal-browser new-ta
 | Key | Type | Default | Constraints and behavior |
 | --- | --- | --- | --- |
 | `schemes` | string array | required | Nonempty URI schemes, matched without case sensitivity. |
+| `files` | string array | all files | File-name patterns a `file` handler opens, such as `"*.png"`; `*` and `?` are wildcards and case is ignored. See [Open clicked files in popups](recipes.md#open-clicked-files-in-popups). |
 | `command` | string | unset | Configured or extension command ID. Cannot be combined with inline action fields. |
 | `run` | string | unset | Shell command in a new pane. Set exactly one of `command`, `run`, `popup`, or `exec`. |
 | `popup` | string | unset | Shell command in a floating popup. |
@@ -1010,9 +1015,9 @@ use `$env:ROZI_URL`, `$env:ROZI_FILE`, and so on. The examples above use POSIX s
 
 | Variable | Value |
 | --- | --- |
-| `ROZI_URL` | Original URI; empty for plain path hints and custom hint actions. |
-| `ROZI_FILE` | Decoded file-URI path, or a plain path hint without its numeric `:line[:column]` suffix; otherwise empty. |
-| `ROZI_LINE`, `ROZI_COLUMN` | Numeric position suffix from a plain path hint, or empty. |
+| `ROZI_URL` | Original URI; empty for plain paths and custom hint actions. |
+| `ROZI_FILE` | Decoded file-URI path, or a plain path without its `:line[:column]` suffix, made absolute (on a remote session, as shown); otherwise empty. |
+| `ROZI_LINE`, `ROZI_COLUMN` | Position suffix of a plain path, or empty. |
 | `ROZI_HINT` | Full original clicked URI or selected hint, including any position suffix. |
 | `ROZI_SOURCE_PANE` | Pane containing the clicked link or selected hint. |
 | `ROZI_SOURCE_SESSION` | Opaque session-server instance ID containing the source pane. |
@@ -1024,9 +1029,12 @@ Custom hint actions can also reference commands, for example
 
 `run` and `popup` execute on the session host in the source pane's working directory.
 `exec` executes on the client; it inherits the source directory only for a local session and
-receives `ROZI_PANE` identifying the source pane. Remote file paths are not fetched or translated.
-A filename ending in `:123` is interpreted as a hint position; use a file URI to preserve that
-suffix as part of the filename.
+receives `ROZI_PANE` identifying the source pane. A plain path opens only through a handler that
+runs on the machine the file is on, since rozi does not fetch or translate remote paths: on a
+remote session that is `run`, `popup`, or a command placed on the session host, and in the
+[scratchpad](layouts-and-panes.md#popups-and-scratch-panes), `run` or `exec`.
+A filename ending in `:123` is read as a position; use a file URI to keep that suffix as part of the
+filename.
 
 ## `[[hints]]`
 

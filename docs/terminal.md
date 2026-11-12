@@ -241,6 +241,7 @@ Hold `Ctrl` and click a visible URL to open it with a [configured link handler](
 or the system handler when none matches. Links that programs mark
 explicitly (OSC 8 hyperlinks) also work, and take precedence over URLs detected in plain text.
 File URLs and other schemes need a configured handler. rozi shows an error for unsupported destinations.
+With a `file` handler, file paths such as `src/main.rs:12:3` are links too, when the file exists.
 
 ## Scrollback
 

@@ -148,5 +148,7 @@ pub(crate) struct UserExtensionConfig {
 #[serde(deny_unknown_fields)]
 pub(super) struct ExtensionLinkHandlerFile {
     pub(super) schemes: Vec<String>,
+    #[serde(default)]
+    pub(super) files: Vec<String>,
     pub(super) command: String,
 }

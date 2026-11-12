@@ -1700,7 +1700,67 @@ impl FloatPosition {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkHandler {
     pub schemes: Vec<String>,
+    /// Lowercase file-name patterns limiting which files a `file` handler opens; empty opens all.
+    pub files: Vec<String>,
     pub action: LinkAction,
+}
+
+impl LinkHandler {
+    /// Whether this handler opens a `scheme` link, and for a `file` link, the file at `path`.
+    pub fn opens(&self, scheme: &str, path: Option<&str>) -> bool {
+        if !self
+            .schemes
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(scheme))
+        {
+            return false;
+        }
+        if self.files.is_empty() || !scheme.eq_ignore_ascii_case("file") {
+            return true;
+        }
+        let Some(path) = path else {
+            return false;
+        };
+        let name = path
+            .trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        self.files
+            .iter()
+            .any(|pattern| wildcard_match(pattern, &name))
+    }
+}
+
+/// Match `text` against a pattern where `*` stands for any run of characters and `?` for one.
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let (mut p, mut t) = (0, 0);
+    // Where the last `*` was, and the text position it is currently stretched to.
+    let mut star: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match pattern.get(p) {
+            Some('*') => {
+                star = Some((p, t));
+                p += 1;
+            }
+            Some(&ch) if ch == '?' || ch == text[t] => {
+                p += 1;
+                t += 1;
+            }
+            _ => match star {
+                Some((star_p, star_t)) => {
+                    p = star_p + 1;
+                    t = star_t + 1;
+                    star = Some((star_p, star_t + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    pattern[p..].iter().all(|&ch| ch == '*')
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

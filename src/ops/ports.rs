@@ -54,6 +54,9 @@ pub(crate) fn forward_request_for_link(
     url: &url::Url,
     destination: &OpenDestination,
 ) -> Option<LinkForwardRequest> {
+    if !state.config.remote.ports.auto_forward_links {
+        return None;
+    }
     let scheme = BrowserScheme::from_scheme(url.scheme())?;
     let remote_port = url.port_or_known_default().filter(|&port| port != 0)?;
     let remote_host = loopback_forward_host(url.host()?)?;
@@ -333,6 +336,10 @@ pub(crate) fn open_forwarded_link(
     )
 }
 
+fn unpinned_preferred_local_port(prefer_same_port: bool, remote_port: u16) -> Option<u16> {
+    prefer_same_port.then_some(remote_port)
+}
+
 fn try_build_started_entry(
     ctx: &mut Context<AppRoot>,
     key: ForwardKey,
@@ -344,9 +351,12 @@ fn try_build_started_entry(
         return Err("Client runtime is not ready".to_string());
     };
     let (local_port, pin_local_port, local_port_mode) = match local_request {
-        LocalPortRequest::Unpinned => preferred_local_port(Some(key.remote_port))
-            .map(|port| (port, false, LocalPortMode::Auto))
-            .map_err(|error| error.to_string())?,
+        LocalPortRequest::Unpinned => preferred_local_port(unpinned_preferred_local_port(
+            ctx.state.config.remote.ports.prefer_same_port,
+            key.remote_port,
+        ))
+        .map(|port| (port, false, LocalPortMode::Auto))
+        .map_err(|error| error.to_string())?,
         LocalPortRequest::Pinned(port) => (port, true, LocalPortMode::Auto),
         LocalPortRequest::Exact(port) => exact_local_port(port)
             .map(|port| (port, true, LocalPortMode::Exact))
@@ -3138,5 +3148,23 @@ mod tests {
                     .is_empty()
             );
         });
+    }
+
+    #[test]
+    fn remote_ports_config_controls_link_forwarding_and_local_port_preference() {
+        let (mut state, pane, _, _) = remote_state(RemoteTarget::Alias("workbox".into()));
+        let url = url::Url::parse("http://127.0.0.1:5173/").unwrap();
+        assert!(
+            forward_request_for_link(&state, pane, &url, &OpenDestination::System).is_some(),
+            "enabled by default"
+        );
+        state.config.remote.ports.auto_forward_links = false;
+        assert!(
+            forward_request_for_link(&state, pane, &url, &OpenDestination::System).is_none(),
+            "disabled when auto_forward_links = false"
+        );
+
+        assert_eq!(unpinned_preferred_local_port(true, 5173), Some(5173));
+        assert_eq!(unpinned_preferred_local_port(false, 5173), None);
     }
 }

@@ -104,7 +104,10 @@ const REMOTE_KEYS: &[&str] = &[
     "install",
     "batch_mode",
     "hosts",
+    "ports",
 ];
+
+const REMOTE_PORTS_KEYS: &[&str] = &["auto_forward_links", "prefer_same_port"];
 
 const REMOTE_HOST_KEYS: &[&str] = &[
     "host",
@@ -473,6 +476,7 @@ fn collect_remote(table: &Table, unknown: &mut Vec<String>) {
     let Some(remote) = named_table(table, "remote") else {
         return;
     };
+    collect_named_table(remote, "remote", "ports", REMOTE_PORTS_KEYS, unknown);
     let Some(hosts) = named_table(remote, "hosts") else {
         return;
     };

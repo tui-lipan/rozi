@@ -27,7 +27,7 @@ pub(crate) use args::{
     CliArgs, ExtensionsCommand, NewSession, ParsedCli, SessionCommand, SessionsCommand,
     parse_cli_args, print_agents_help, print_extensions_check_help, print_extensions_help,
     print_extensions_install_help, print_extensions_remove_help, print_extensions_update_help,
-    print_record_help, print_sessions_help, print_worktrees_help, usage_hint,
+    print_ports_help, print_record_help, print_sessions_help, print_worktrees_help, usage_hint,
 };
 pub(crate) use control::{
     run_control_cli, run_pick_cli, run_prompt_cli, run_publish_cli, run_subscribe_cli,

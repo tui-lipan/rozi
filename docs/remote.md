@@ -475,7 +475,10 @@ rozi, disconnecting from the host (`Ctrl+X`), or forgetting the host closes its 
 Run **Ports…** from the command palette (shown while attached to a remote session or while any
 forward exists) to inspect forwards, add a forward (`Remote host`, `Remote port`, and optional
 `Local port`), retry a failed forward, open a ready HTTP(S) forward in your browser, or close
-forwards; see [Ports](keybindings.md#ports).
+forwards; see [Ports](keybindings.md#ports). You can also manage forwards from scripts or another
+terminal with `rozi ports list`, `rozi ports forward <PORT>`, and `rozi ports close <PORT>`, or
+configure automatic link forwarding and port selection under
+[`[remote.ports]`](configuration.md#remoteports).
 
 ## Disconnect from a host
 

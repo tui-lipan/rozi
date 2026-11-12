@@ -191,6 +191,29 @@ impl ForwardHandle {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static SUSPEND_WORKER_SPAWN_FOR_TEST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) struct SuspendWorkerSpawnGuard;
+
+#[cfg(test)]
+impl Drop for SuspendWorkerSpawnGuard {
+    fn drop(&mut self) {
+        SUSPEND_WORKER_SPAWN_FOR_TEST.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn suspend_worker_spawn_for_test() -> SuspendWorkerSpawnGuard {
+    SUSPEND_WORKER_SPAWN_FOR_TEST.with(|depth| depth.set(depth.get() + 1));
+    SuspendWorkerSpawnGuard
+}
+
 impl Drop for ForwardHandle {
     fn drop(&mut self) {
         self.stop.request();
@@ -311,6 +334,14 @@ pub fn start_forward(
     #[cfg(test)]
     let pin_local_port = spec.pin_local_port;
     let stop = Arc::new(StopSignal::default());
+    #[cfg(test)]
+    if SUSPEND_WORKER_SPAWN_FOR_TEST.with(std::cell::Cell::get) > 0 {
+        return Ok(ForwardHandle {
+            stop,
+            thread: None,
+            pin_local_port,
+        });
+    }
     let worker_stop = stop.clone();
     let thread = thread::Builder::new()
         .name("rozi-port-forward".to_string())

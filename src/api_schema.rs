@@ -43,6 +43,9 @@ pub fn bundle() -> Value {
     add::<crate::control::GlobalAgentListPayload>(&mut generator, &mut roots);
     add::<crate::control::GlobalAgentInfo>(&mut generator, &mut roots);
     add::<crate::control::AgentLocationSpec>(&mut generator, &mut roots);
+    add::<crate::control::PortForwardListPayload>(&mut generator, &mut roots);
+    add::<crate::control::PortForwardInfo>(&mut generator, &mut roots);
+    add::<crate::control::PortForwardClosed>(&mut generator, &mut roots);
     add::<crate::control::ExtensionRuntimeReport>(&mut generator, &mut roots);
     add::<crate::control::SessionNotification>(&mut generator, &mut roots);
     add::<crate::control::ExtensionDeploymentReport>(&mut generator, &mut roots);

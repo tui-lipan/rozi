@@ -170,6 +170,31 @@ pub(crate) fn handle_control_request(
         ControlCommand::ExtensionRuntimeStatus => {
             ControlResponse::ok(crate::ops::placement::status_report(&ctx.state))
         }
+        ControlCommand::PortsList => {
+            ControlResponse::ok(crate::ops::ports::list_control_forwards(&ctx.state))
+        }
+        ControlCommand::PortsForward {
+            remote,
+            host,
+            port,
+            local_port,
+        } => {
+            let (response, update) = crate::ops::ports::control_forward(
+                ctx,
+                remote.as_deref(),
+                host.as_deref(),
+                port,
+                local_port,
+            );
+            let _ = envelope.reply.send(response);
+            return update;
+        }
+        ControlCommand::PortsClose { remote, host, port } => {
+            let (response, update) =
+                crate::ops::ports::control_close(ctx, remote.as_deref(), host.as_deref(), port);
+            let _ = envelope.reply.send(response);
+            return update;
+        }
         // A UI has no session server's deployment store. `extensions deploy`, `undeploy`, and a
         // status that named a session are routed there by the CLI; reaching these here means the
         // caller addressed a UI directly.

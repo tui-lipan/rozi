@@ -32,11 +32,12 @@ const TAGS: [&str; 4] = ["type", "kind", "step", "cmd"];
 /// The catch-all variant a tolerant vocabulary decodes unknown values into.
 const UNKNOWN: &str = "unknown";
 /// Vocabularies that stay closed in the schema, because the control API publishes them, but that
-/// the session wire decodes tolerantly through `session::protocol::tolerant`. Each needs an
-/// `UnknownValue` impl there; keep the two lists in step.
-const TOLERANT: [&str; 4] = [
+/// the session wire decodes tolerantly through `session::protocol::tolerant` (or Serde's
+/// `#[serde(other)]` on `ControlCommand`). Each entry's variants stay compatible across peers.
+const TOLERANT: [&str; 5] = [
     "AgentAuthority",
     "AgentState",
+    "ControlRequest",
     "DetectedAgentState",
     "PublisherKind",
 ];
@@ -240,6 +241,25 @@ fn tag_value(key: &str) -> &str {
     key.split_once('=').map_or(key, |(_, value)| value)
 }
 
+fn is_verified_client_only_command(cmd: &str) -> bool {
+    rozi::control::ControlCommand::CLIENT_ONLY_WIRE_NAMES
+        .iter()
+        .any(|&(name, build)| {
+            if name != cmd {
+                return false;
+            }
+            let built = build();
+            let serialized_cmd = serde_json::to_value(&built)
+                .ok()
+                .and_then(|v| v.get("cmd").and_then(Value::as_str).map(str::to_owned));
+            serialized_cmd.as_deref() == Some(cmd)
+                && built.required_session_capability().is_none()
+                && rozi::session::server::session_control_unsupported(&built).is_some()
+                && rozi::session::server::attached_control_refusal(&built, false).is_some()
+                && rozi::session::server::attached_control_refusal(&built, true).is_some()
+        })
+}
+
 fn definition_name(schema: &Value) -> Option<String> {
     schema
         .get("$ref")
@@ -315,7 +335,9 @@ impl Walk<'_> {
                         let gated = self.gated.iter().any(|(gated_in, gated_value)| {
                             Some(*gated_in) == vocabulary.as_deref() && *gated_value == value
                         });
-                        if !gated {
+                        let client_only_command = vocabulary.as_deref() == Some("ControlRequest")
+                            && is_verified_client_only_command(value);
+                        if !gated && !client_only_command {
                             self.flag(
                                 path,
                                 format!(

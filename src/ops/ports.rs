@@ -1289,8 +1289,6 @@ mod tests {
     fn check_reconnecting_forward_queues_click() {
         crate::test_support::isolate_user_dirs();
 
-        let scratch = tempfile::tempdir().expect("tempdir");
-        let out = scratch.path().join("opened-url");
         let mut backend = TestBackend::new(AppRoot::default());
         let workbox = RemoteTarget::Alias("workbox".into());
         let source = backend.state().current().workspaces[0].panes[0].id;
@@ -1315,11 +1313,13 @@ mod tests {
         let state = backend.state_mut();
         state.current_mut().remote_host = Some("workbox".into());
         state.current_mut().remote_target = Some(workbox);
+        state.scratch_visible = true;
         state.config.link_handlers = vec![crate::config::LinkHandler {
             schemes: vec!["http".into()],
             files: Vec::new(),
-            action: LinkAction::Inline(UserCommandAction::Exec {
-                command: format!("printf '%s\\n' \"$ROZI_URL\" > '{}'", out.display()),
+            action: LinkAction::Inline(UserCommandAction::Run {
+                command: "echo \"$ROZI_URL\"".into(),
+                keep_open: false,
             }),
         }];
 
@@ -1360,21 +1360,14 @@ mod tests {
             }))
             .unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        let opened = loop {
-            backend.pump().unwrap();
-            if let Ok(text) = std::fs::read_to_string(&out)
-                && !text.is_empty()
-            {
-                break text;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for queued link to open after reconnect"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        };
-        assert_eq!(opened.trim(), "http://localhost:49184/reconnected");
+        assert_eq!(backend.state().scratch.panes.len(), 1);
+        assert!(
+            backend.state().scratch.panes[0]
+                .identity
+                .env
+                .iter()
+                .any(|(k, v)| k == "ROZI_URL" && v == "http://localhost:49184/reconnected")
+        );
         let entry = backend.state().ports.get(&key_workbox).unwrap();
         assert_eq!(entry.state, ForwardState::Ready);
         assert_eq!(entry.local_port, 49184);
@@ -1393,8 +1386,6 @@ mod tests {
             std::net::TcpListener::bind("127.0.0.1:0").expect("bind occupied port");
         let occupied_port = occupied_listener.local_addr().expect("local addr").port();
 
-        let scratch = tempfile::tempdir().expect("tempdir");
-        let out = scratch.path().join("should-not-open");
         let mut backend = TestBackend::new(AppRoot::default());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while backend.state().command_link.is_none() {
@@ -1429,11 +1420,13 @@ mod tests {
         let state = backend.state_mut();
         state.current_mut().remote_host = Some("workbox".into());
         state.current_mut().remote_target = Some(workbox);
+        state.scratch_visible = true;
         state.config.link_handlers = vec![crate::config::LinkHandler {
             schemes: vec!["http".into()],
             files: Vec::new(),
-            action: LinkAction::Inline(UserCommandAction::Exec {
-                command: format!("printf '%s\\n' \"$ROZI_URL\" > '{}'", out.display()),
+            action: LinkAction::Inline(UserCommandAction::Run {
+                command: "echo \"$ROZI_URL\"".into(),
+                keep_open: false,
             }),
         }];
 
@@ -1498,7 +1491,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(
-            !out.exists(),
+            backend.state().scratch.panes.is_empty(),
             "pinned restart must never emit Ready or open on a different local port"
         );
     }

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use super::AttachmentId;
 use crate::config::LinkAction;
 use crate::pane::id::PaneId;
+use crate::session::protocol::SessionInstanceId;
 use crate::session::remote::RemoteTarget;
 use crate::session::remote::forward::{ForwardHandle, ForwardKey};
 
@@ -22,12 +24,43 @@ pub enum OpenDestination {
     Handler(LinkAction),
 }
 
+/// Originating attachment context pinned when a link activation waits on a tunnel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingLinkContext {
+    pub epoch: AttachmentId,
+    pub target: RemoteTarget,
+    pub source_pane: PaneId,
+    pub source_session: Option<SessionInstanceId>,
+    pub source_session_name: Option<String>,
+    pub remote_host: Option<String>,
+}
+
+/// Client-side destination resolved at link activation time so async tunnel readiness never
+/// re-evaluates placement, scratchpad visibility, or session identity against newer state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolvedLinkDestination {
+    System,
+    Exec {
+        command: String,
+        env: Vec<(String, String)>,
+    },
+    ExecDirect {
+        argv: Vec<String>,
+        env: Vec<(String, String)>,
+    },
+    ScratchRun {
+        command: String,
+        keep_open: bool,
+        env: Vec<(String, String)>,
+    },
+}
+
 /// A link activation waiting for its tunnel to become ready.
 #[derive(Clone, Debug)]
 pub struct PendingLinkOpen {
-    pub source: PaneId,
     pub original_url: String,
-    pub destination: OpenDestination,
+    pub context: PendingLinkContext,
+    pub destination: ResolvedLinkDestination,
 }
 
 /// One active or recently failed client-owned port forward.

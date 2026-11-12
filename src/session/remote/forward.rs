@@ -5,7 +5,7 @@
 //! deterministically without affecting any session attachment.
 
 use std::io::{self, Read};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::process::{ChildStderr, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -28,9 +28,13 @@ const STDERR_CAPTURE_CAP: usize = 16 * 1024;
 /// Which host the remote `sshd` connects to at the far end of a tunnel.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ForwardHost {
-    /// Remote loopback (`127.0.0.1`). Covers `localhost`, `127.0.0.1`, `0.0.0.0`, and `::`.
-    Loopback,
-    /// An explicit remote host (for example `::1`, `127.0.0.2`, or `database.internal`).
+    /// Remote `localhost`, letting the remote host's resolver pick IPv4 or IPv6 loopback.
+    Localhost,
+    /// Remote IPv4 loopback (`127.0.0.1`). Covers `127.0.0.1` and `0.0.0.0`.
+    Ipv4Loopback,
+    /// Remote IPv6 loopback (`::1`). Covers `::1` and `::`.
+    Ipv6Loopback,
+    /// An explicit remote host (for example `127.0.0.2` or `database.internal`).
     Host(String),
 }
 
@@ -38,7 +42,9 @@ impl ForwardHost {
     /// Host token passed to `ssh -L` on the remote side.
     pub fn connect_host(&self) -> &str {
         match self {
-            Self::Loopback => "127.0.0.1",
+            Self::Localhost => "localhost",
+            Self::Ipv4Loopback => "127.0.0.1",
+            Self::Ipv6Loopback => "::1",
             Self::Host(host) => host.as_str(),
         }
     }
@@ -46,8 +52,34 @@ impl ForwardHost {
     /// Compact host label for UI display.
     pub fn display_label(&self) -> &str {
         match self {
-            Self::Loopback => "localhost",
+            Self::Localhost => "localhost",
+            Self::Ipv4Loopback => "127.0.0.1",
+            Self::Ipv6Loopback => "::1",
             Self::Host(host) => host.as_str(),
+        }
+    }
+
+    /// Classify a loopback or wildcard IP address into its remote forward target.
+    pub fn from_loopback_ip(ip: IpAddr) -> Option<Self> {
+        match ip {
+            IpAddr::V4(ip) => {
+                if ip == Ipv4Addr::LOCALHOST || ip.is_unspecified() {
+                    Some(Self::Ipv4Loopback)
+                } else if ip.is_loopback() {
+                    Some(Self::Host(ip.to_string()))
+                } else {
+                    None
+                }
+            }
+            IpAddr::V6(ip) => {
+                if ip.is_unspecified() || ip == Ipv6Addr::LOCALHOST {
+                    Some(Self::Ipv6Loopback)
+                } else if let Some(v4) = ip.to_ipv4_mapped() {
+                    Self::from_loopback_ip(IpAddr::V4(v4))
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -55,15 +87,15 @@ impl ForwardHost {
     pub fn parse(raw: &str) -> Result<Self, String> {
         let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
         validate_connect_host(trimmed)?;
-        if trimmed.eq_ignore_ascii_case("localhost")
-            || trimmed == "127.0.0.1"
-            || trimmed == "0.0.0.0"
-            || trimmed == "::"
-        {
-            Ok(Self::Loopback)
-        } else {
-            Ok(Self::Host(trimmed.to_string()))
+        if trimmed.eq_ignore_ascii_case("localhost") {
+            return Ok(Self::Localhost);
         }
+        if let Ok(ip) = trimmed.parse::<IpAddr>()
+            && let Some(loopback) = Self::from_loopback_ip(ip)
+        {
+            return Ok(loopback);
+        }
+        Ok(Self::Host(trimmed.to_string()))
     }
 }
 
@@ -256,13 +288,35 @@ pub fn start_forward(
 }
 
 fn run_forward_loop(
-    mut spec: ForwardSpec,
+    spec: ForwardSpec,
     config: RemoteConfig,
     interactive: bool,
     stop: &StopSignal,
     report: &impl Fn(ForwardEvent),
 ) {
-    let mut has_been_ready = false;
+    run_forward_loop_with(
+        spec,
+        config,
+        interactive,
+        stop,
+        report,
+        retry_delay,
+        |spec, attempt_config, stop, on_ready| {
+            run_single_attempt(spec, attempt_config, stop, on_ready)
+        },
+    );
+}
+
+fn run_forward_loop_with(
+    mut spec: ForwardSpec,
+    config: RemoteConfig,
+    interactive: bool,
+    stop: &StopSignal,
+    report: &impl Fn(ForwardEvent),
+    delay_for_attempt: fn(u32) -> Duration,
+    mut run_attempt: impl FnMut(&ForwardSpec, &RemoteConfig, &StopSignal, &dyn Fn()) -> AttemptOutcome,
+) {
+    let has_been_ready = std::cell::Cell::new(false);
     let mut reconnect_attempt: u32 = 0;
     let mut bind_retries: u32 = 0;
 
@@ -270,23 +324,63 @@ fn run_forward_loop(
         if stop.is_stopped() {
             return;
         }
-        let attempt_config = if !has_been_ready && interactive {
+        // Check local port availability before spawning ssh:
+        // - Before the first Ready, a bind conflict can still remap to a fresh ephemeral port.
+        // - Once Ready has been emitted, the local port is pinned for the tunnel's lifetime so
+        //   existing URLs/tabs never silently point at a different service or port. Checking here
+        //   also avoids mistaking a thief's listener for ssh during its handshake.
+        if let Err(error) = TcpListener::bind(("127.0.0.1", spec.local_port)) {
+            if !has_been_ready.get()
+                && bind_retries < MAX_BIND_RETRIES
+                && let Ok(next_port) = preferred_local_port(None)
+            {
+                bind_retries += 1;
+                spec.local_port = next_port;
+                continue;
+            }
+            let message = format!("Local port {} is already in use: {error}", spec.local_port);
+            if !has_been_ready.get() {
+                report(ForwardEvent::Failed { error: message });
+                return;
+            }
+            if wait_reconnect_backoff(
+                message,
+                &mut reconnect_attempt,
+                stop,
+                report,
+                delay_for_attempt,
+            ) {
+                return;
+            }
+            continue;
+        }
+
+        let attempt_config = if !has_been_ready.get() && interactive {
             config.clone()
         } else {
             config.unattended()
         };
 
-        match run_single_attempt(&spec, &attempt_config, stop, || {
+        let on_ready = || {
+            has_been_ready.set(true);
             report(ForwardEvent::Ready {
                 local_port: spec.local_port,
             });
-        }) {
+        };
+        match run_attempt(&spec, &attempt_config, stop, &on_ready) {
             AttemptOutcome::Stopped => return,
             AttemptOutcome::ReadyThenExited(stderr) => {
-                has_been_ready = true;
+                has_been_ready.set(true);
                 reconnect_attempt = 0;
                 bind_retries = 0;
-                if handle_disconnect(&stderr, &mut spec, &mut reconnect_attempt, stop, report) {
+                if handle_disconnect(
+                    &stderr,
+                    &spec.target,
+                    &mut reconnect_attempt,
+                    stop,
+                    report,
+                    delay_for_attempt,
+                ) {
                     return;
                 }
             }
@@ -294,7 +388,8 @@ fn run_forward_loop(
                 stderr,
                 spawn_not_found,
             } => {
-                if !spawn_not_found
+                if !has_been_ready.get()
+                    && !spawn_not_found
                     && is_local_bind_race(&stderr)
                     && bind_retries < MAX_BIND_RETRIES
                     && let Ok(next_port) = preferred_local_port(None)
@@ -309,11 +404,17 @@ fn run_forward_loop(
                     report(ForwardEvent::AuthRequired { error: message });
                     return;
                 }
-                if !has_been_ready {
+                if !has_been_ready.get() {
                     report(ForwardEvent::Failed { error: message });
                     return;
                 }
-                if wait_reconnect_backoff(message, &mut reconnect_attempt, stop, report) {
+                if wait_reconnect_backoff(
+                    message,
+                    &mut reconnect_attempt,
+                    stop,
+                    report,
+                    delay_for_attempt,
+                ) {
                     return;
                 }
             }
@@ -323,22 +424,18 @@ fn run_forward_loop(
 
 fn handle_disconnect(
     stderr: &str,
-    spec: &mut ForwardSpec,
+    target: &RemoteTarget,
     reconnect_attempt: &mut u32,
     stop: &StopSignal,
     report: &impl Fn(ForwardEvent),
+    delay_for_attempt: fn(u32) -> Duration,
 ) -> bool {
-    let message = format_forward_error(stderr, &spec.target);
+    let message = format_forward_error(stderr, target);
     if crate::session::discovery::ssh_failure_needs_user(stderr) {
         report(ForwardEvent::AuthRequired { error: message });
         return true;
     }
-    // Re-check local port availability before reconnecting so a port stolen while down does not
-    // block recovery.
-    if let Ok(port) = preferred_local_port(Some(spec.local_port)) {
-        spec.local_port = port;
-    }
-    wait_reconnect_backoff(message, reconnect_attempt, stop, report)
+    wait_reconnect_backoff(message, reconnect_attempt, stop, report, delay_for_attempt)
 }
 
 fn wait_reconnect_backoff(
@@ -346,9 +443,10 @@ fn wait_reconnect_backoff(
     attempt: &mut u32,
     stop: &StopSignal,
     report: &impl Fn(ForwardEvent),
+    delay_for_attempt: fn(u32) -> Duration,
 ) -> bool {
     report(ForwardEvent::Reconnecting { error: message });
-    let delay = retry_delay(*attempt);
+    let delay = delay_for_attempt(*attempt);
     *attempt = attempt.saturating_add(1);
     stop.wait_timeout(delay)
 }
@@ -600,10 +698,14 @@ mod tests {
     }
 
     #[test]
-    fn ipv6_connect_host_is_bracketed_in_forward_spec() {
+    fn ipv6_and_localhost_connect_hosts_are_preserved_in_forward_spec() {
         assert_eq!(
-            format_local_forward(3000, "::1", 3000),
+            format_local_forward(3000, ForwardHost::Ipv6Loopback.connect_host(), 3000),
             "127.0.0.1:3000:[::1]:3000"
+        );
+        assert_eq!(
+            format_local_forward(3000, ForwardHost::Localhost.connect_host(), 3000),
+            "127.0.0.1:3000:localhost:3000"
         );
     }
 
@@ -623,25 +725,115 @@ mod tests {
     }
 
     #[test]
-    fn forward_host_normalizes_loopback_and_rejects_whitespace() {
+    fn forward_host_distinguishes_localhost_ipv4_and_ipv6_loopbacks() {
         assert_eq!(
             ForwardHost::parse("localhost").unwrap(),
-            ForwardHost::Loopback
+            ForwardHost::Localhost
         );
+        assert_eq!(ForwardHost::Localhost.connect_host(), "localhost");
         assert_eq!(
             ForwardHost::parse("127.0.0.1").unwrap(),
-            ForwardHost::Loopback
+            ForwardHost::Ipv4Loopback
         );
         assert_eq!(
             ForwardHost::parse("0.0.0.0").unwrap(),
-            ForwardHost::Loopback
+            ForwardHost::Ipv4Loopback
         );
-        assert_eq!(ForwardHost::parse("::").unwrap(), ForwardHost::Loopback);
+        assert_eq!(ForwardHost::Ipv4Loopback.connect_host(), "127.0.0.1");
+        assert_eq!(ForwardHost::parse("::").unwrap(), ForwardHost::Ipv6Loopback);
         assert_eq!(
             ForwardHost::parse("[::1]").unwrap(),
-            ForwardHost::Host("::1".into())
+            ForwardHost::Ipv6Loopback
+        );
+        assert_eq!(ForwardHost::Ipv6Loopback.connect_host(), "::1");
+        assert_eq!(
+            ForwardHost::parse("127.0.0.2").unwrap(),
+            ForwardHost::Host("127.0.0.2".into())
         );
         assert!(ForwardHost::parse("bad host").is_err());
         assert!(ForwardHost::parse("").is_err());
+    }
+
+    #[test]
+    fn forward_loop_remaps_before_first_ready_and_pins_local_port_after_ready() {
+        let stop = StopSignal::default();
+        let initial_port = preferred_local_port(None).unwrap();
+        let spec = ForwardSpec {
+            target: RemoteTarget::Alias("workbox".into()),
+            connect_host: "127.0.0.1".into(),
+            remote_port: 5173,
+            local_port: initial_port,
+        };
+
+        let events = std::sync::Mutex::new(Vec::new());
+        let thief = std::sync::Mutex::new(None::<TcpListener>);
+        let mut pinned_port = None;
+        let mut step = 0_u32;
+
+        run_forward_loop_with(
+            spec,
+            RemoteConfig::default(),
+            false,
+            &stop,
+            &|event| {
+                if let ForwardEvent::Reconnecting { error } = &event
+                    && error.contains("already in use")
+                {
+                    *thief.lock().unwrap() = None;
+                }
+                events.lock().unwrap().push(event);
+            },
+            |_| Duration::from_millis(1),
+            |spec, _cfg, stop, on_ready| {
+                step += 1;
+                match step {
+                    // 1. Pre-Ready bind race migrates to a free ephemeral port.
+                    1 => AttemptOutcome::ExitedBeforeReady {
+                        stderr: "bind [127.0.0.1]: Address already in use".into(),
+                        spawn_not_found: false,
+                    },
+                    // 2. First Ready locks in `spec.local_port`, then disconnects while another
+                    //    local service steals that port.
+                    2 => {
+                        assert_ne!(spec.local_port, initial_port);
+                        pinned_port = Some(spec.local_port);
+                        on_ready();
+                        *thief.lock().unwrap() =
+                            Some(TcpListener::bind(("127.0.0.1", spec.local_port)).unwrap());
+                        AttemptOutcome::ReadyThenExited("connection reset".into())
+                    }
+                    // 3. Even after the thief releases the port and an in-attempt bind race
+                    //    happens, post-Ready recovery must keep the pinned port.
+                    3 => {
+                        assert_eq!(Some(spec.local_port), pinned_port);
+                        AttemptOutcome::ExitedBeforeReady {
+                            stderr: "Address already in use".into(),
+                            spawn_not_found: false,
+                        }
+                    }
+                    4 => {
+                        assert_eq!(Some(spec.local_port), pinned_port);
+                        on_ready();
+                        stop.request();
+                        AttemptOutcome::Stopped
+                    }
+                    other => panic!("unexpected attempt {other}"),
+                }
+            },
+        );
+
+        let pinned = pinned_port.expect("first ready port");
+        let events = events.into_inner().unwrap();
+        assert_eq!(
+            events.first(),
+            Some(&ForwardEvent::Ready { local_port: pinned })
+        );
+        assert!(events.iter().any(
+            |event| matches!(event, ForwardEvent::Reconnecting { error } if error.contains("already in use"))
+        ));
+        assert_eq!(
+            events.last(),
+            Some(&ForwardEvent::Ready { local_port: pinned })
+        );
     }
 }

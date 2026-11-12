@@ -506,7 +506,7 @@ fn forwards_http_traffic_over_ssh_to_localhost_and_closes_on_drop() {
     let handle = start_forward(
         ForwardSpec {
             target,
-            connect_host: ForwardHost::Loopback.connect_host().to_string(),
+            connect_host: ForwardHost::Ipv4Loopback.connect_host().to_string(),
             remote_port,
             local_port: 0,
         },
@@ -598,7 +598,7 @@ fn port_forward_reports_failure_when_ssh_port_is_unreachable() {
     let handle = start_forward(
         ForwardSpec {
             target,
-            connect_host: ForwardHost::Loopback.connect_host().to_string(),
+            connect_host: ForwardHost::Ipv4Loopback.connect_host().to_string(),
             remote_port: 8080,
             local_port: 0,
         },

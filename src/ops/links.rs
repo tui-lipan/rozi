@@ -70,16 +70,6 @@ pub(crate) fn open(ctx: &mut Context<AppRoot>, source: PaneId, text: &str) -> Up
     }
 }
 
-pub(crate) fn open_destination(
-    ctx: &mut Context<AppRoot>,
-    source: PaneId,
-    destination: &crate::state::OpenDestination,
-    hint_text: &str,
-    url_to_open: &str,
-) -> Update {
-    open_destination_with_file(ctx, source, destination, hint_text, url_to_open, "")
-}
-
 fn open_destination_with_file(
     ctx: &mut Context<AppRoot>,
     source: PaneId,
@@ -395,40 +385,32 @@ pub(crate) struct LinkTarget<'a> {
     pub column: Option<u32>,
 }
 
-pub(crate) fn execute(
-    ctx: &mut Context<AppRoot>,
+pub(crate) fn resolve_link_command(
+    state: &State,
+    id: &str,
+) -> std::result::Result<crate::config::NamedCommand, String> {
+    match state
+        .config
+        .commands
+        .iter()
+        .find(|command| command.id == id)
+        .cloned()
+    {
+        Some(command) if !matches!(command.action, UserCommandAction::Send(_)) => Ok(command),
+        _ => Err(format!(
+            "Link command `{id}` is unavailable or does not launch a process"
+        )),
+    }
+}
+
+pub(crate) fn link_env(
     source: PaneId,
-    action: &LinkAction,
+    source_session: Option<&crate::session::protocol::SessionInstanceId>,
+    remote_host: Option<&str>,
     text: &str,
     target: LinkTarget<'_>,
-) -> Update {
-    let named = match action {
-        LinkAction::Inline(_) => None,
-        LinkAction::Command(id) => match ctx
-            .state
-            .config
-            .commands
-            .iter()
-            .find(|command| &command.id == id)
-            .cloned()
-        {
-            Some(command) if !matches!(command.action, UserCommandAction::Send(_)) => Some(command),
-            _ => {
-                return failed(
-                    ctx,
-                    format!("Link command `{id}` is unavailable or does not launch a process"),
-                );
-            }
-        },
-    };
-    let action = match (&named, action) {
-        (Some(command), _) => &command.action,
-        (None, LinkAction::Inline(action)) => action,
-        _ => unreachable!(),
-    };
-    if text.contains('\0') || target.file.contains('\0') {
-        return failed(ctx, "Link contains a NUL character");
-    }
+    include_pane: bool,
+) -> Vec<(String, String)> {
     let mut env = vec![
         ("ROZI_HINT".into(), text.into()),
         ("ROZI_URL".into(), target.uri.into()),
@@ -447,24 +429,54 @@ pub(crate) fn execute(
         ("ROZI_SOURCE_PANE".into(), source.to_string()),
         (
             "ROZI_SOURCE_SESSION".into(),
-            ctx.state
-                .current()
-                .session_instance
-                .as_ref()
+            source_session
                 .map(|instance| instance.as_str().to_string())
                 .unwrap_or_default(),
         ),
         (
             "ROZI_REMOTE_HOST".into(),
-            ctx.state.current().remote_host.clone().unwrap_or_default(),
+            remote_host.unwrap_or_default().to_string(),
         ),
     ];
-    if matches!(
-        action,
-        UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. }
-    ) {
+    if include_pane {
         env.push(("ROZI_PANE".into(), source.to_string()));
     }
+    env
+}
+
+pub(crate) fn execute(
+    ctx: &mut Context<AppRoot>,
+    source: PaneId,
+    action: &LinkAction,
+    text: &str,
+    target: LinkTarget<'_>,
+) -> Update {
+    let named = match action {
+        LinkAction::Inline(_) => None,
+        LinkAction::Command(id) => match resolve_link_command(&ctx.state, id) {
+            Ok(command) => Some(command),
+            Err(error) => return failed(ctx, error),
+        },
+    };
+    let action = match (&named, action) {
+        (Some(command), _) => &command.action,
+        (None, LinkAction::Inline(action)) => action,
+        _ => unreachable!(),
+    };
+    if text.contains('\0') || target.file.contains('\0') {
+        return failed(ctx, "Link contains a NUL character");
+    }
+    let env = link_env(
+        source,
+        ctx.state.current().session_instance.as_ref(),
+        ctx.state.current().remote_host.as_deref(),
+        text,
+        target,
+        matches!(
+            action,
+            UserCommandAction::Exec { .. } | UserCommandAction::ExecDirect { .. }
+        ),
+    );
     if let Some(command) = named {
         if let Some((placements, placed)) =
             super::placement::placed_command(&ctx.state, &command.id)
@@ -490,7 +502,7 @@ pub(crate) fn execute(
     super::user_command::execute_with_env_from_pane(ctx, action, env, Some(source))
 }
 
-fn failed(ctx: &mut Context<AppRoot>, error: impl Into<String>) -> Update {
+pub(crate) fn failed(ctx: &mut Context<AppRoot>, error: impl Into<String>) -> Update {
     crate::pane::pty_events::notify_error(ctx, "Could not open link", error.into());
     Update::full()
 }

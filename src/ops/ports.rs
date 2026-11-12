@@ -1,16 +1,20 @@
 //! Client-owned SSH port-forward lifecycle, URL policy, and delayed link opening.
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 
 use tui_lipan::prelude::*;
 
 use crate::AppRoot;
+use crate::config::{LinkAction, UserCommandAction};
 use crate::pane::id::PaneId;
 use crate::session::remote::RemoteTarget;
 use crate::session::remote::forward::{
     ForwardEvent, ForwardHost, ForwardKey, ForwardSpec, preferred_local_port, start_forward,
 };
-use crate::state::{ForwardState, OpenDestination, PendingLinkOpen, PortForwardEntry, State};
+use crate::state::{
+    ForwardState, OpenDestination, PendingLinkContext, PendingLinkOpen, PortForwardEntry,
+    ResolvedLinkDestination, State,
+};
 
 use super::links::{Machine, PanePlace};
 
@@ -66,33 +70,9 @@ fn loopback_forward_host(host: url::Host<&str>) -> Option<ForwardHost> {
     match host {
         url::Host::Domain(domain) => domain
             .eq_ignore_ascii_case("localhost")
-            .then_some(ForwardHost::Loopback),
-        url::Host::Ipv4(ip) => {
-            if ip == Ipv4Addr::LOCALHOST || ip.is_unspecified() {
-                Some(ForwardHost::Loopback)
-            } else if ip.is_loopback() {
-                Some(ForwardHost::Host(ip.to_string()))
-            } else {
-                None
-            }
-        }
-        url::Host::Ipv6(ip) => {
-            if ip.is_unspecified() {
-                Some(ForwardHost::Loopback)
-            } else if ip.is_loopback() {
-                Some(ForwardHost::Host(ip.to_string()))
-            } else if let Some(v4) = ip.to_ipv4_mapped() {
-                if v4 == Ipv4Addr::LOCALHOST || v4.is_unspecified() {
-                    Some(ForwardHost::Loopback)
-                } else if v4.is_loopback() {
-                    Some(ForwardHost::Host(v4.to_string()))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
+            .then_some(ForwardHost::Localhost),
+        url::Host::Ipv4(ip) => ForwardHost::from_loopback_ip(IpAddr::V4(ip)),
+        url::Host::Ipv6(ip) => ForwardHost::from_loopback_ip(IpAddr::V6(ip)),
     }
 }
 
@@ -102,7 +82,7 @@ pub(crate) fn rewrite_forwarded_url(original: &str, local_port: u16) -> Option<S
     let mut url = url::Url::parse(original).ok()?;
     let keep_host = match url.host() {
         Some(url::Host::Domain(domain)) if domain.eq_ignore_ascii_case("localhost") => true,
-        Some(url::Host::Ipv4(ip)) if ip == Ipv4Addr::LOCALHOST => true,
+        Some(url::Host::Ipv4(ip)) if ip == std::net::Ipv4Addr::LOCALHOST => true,
         _ => false,
     };
     if !keep_host {
@@ -110,6 +90,165 @@ pub(crate) fn rewrite_forwarded_url(original: &str, local_port: u16) -> Option<S
     }
     url.set_port(Some(local_port)).ok()?;
     Some(url.into())
+}
+
+fn resolve_pending_open(
+    state: &State,
+    source: PaneId,
+    target: RemoteTarget,
+    original_url: &str,
+    destination: OpenDestination,
+) -> std::result::Result<PendingLinkOpen, String> {
+    if original_url.contains('\0') {
+        return Err("Link contains a NUL character".to_string());
+    }
+    let current = state.current();
+    let context = PendingLinkContext {
+        epoch: state.runtime_epoch,
+        target,
+        source_pane: source,
+        source_session: current.session_instance.clone(),
+        source_session_name: current.session_name.clone(),
+        remote_host: current.remote_host.clone(),
+    };
+    let resolved = match destination {
+        OpenDestination::System => ResolvedLinkDestination::System,
+        OpenDestination::Handler(action) => {
+            let (user_action, command_env) = match action {
+                LinkAction::Inline(action) => (action, Vec::new()),
+                LinkAction::Command(id) => {
+                    if super::placement::placed_command(state, &id).is_some() {
+                        return Err(format!("Link command `{id}` is placed on the session host"));
+                    }
+                    let command = super::links::resolve_link_command(state, &id)?;
+                    (command.action, command.env)
+                }
+            };
+            match user_action {
+                UserCommandAction::Exec { command } => ResolvedLinkDestination::Exec {
+                    command,
+                    env: command_env,
+                },
+                UserCommandAction::ExecDirect { argv } => ResolvedLinkDestination::ExecDirect {
+                    argv,
+                    env: command_env,
+                },
+                UserCommandAction::Run { command, keep_open } if state.scratch_visible => {
+                    ResolvedLinkDestination::ScratchRun {
+                        command,
+                        keep_open,
+                        env: command_env,
+                    }
+                }
+                _ => {
+                    return Err("Link command does not launch a client-side process".to_string());
+                }
+            }
+        }
+    };
+    Ok(PendingLinkOpen {
+        original_url: original_url.to_string(),
+        context,
+        destination: resolved,
+    })
+}
+
+fn context_is_live(state: &State, context: &PendingLinkContext) -> bool {
+    state
+        .attachment_for_epoch(context.epoch)
+        .is_some_and(|attachment| {
+            attachment.remote_target.as_ref() == Some(&context.target)
+                && attachment.session_instance == context.source_session
+        })
+}
+
+fn combine_client_link_env(
+    mut command_env: Vec<(String, String)>,
+    link_vars: Vec<(String, String)>,
+    context: &PendingLinkContext,
+) -> Vec<(String, String)> {
+    if command_env.iter().any(|(key, _)| key == "ROZI_EXTENSION") {
+        command_env.push((
+            crate::config::SESSION_NAME_ENV.to_string(),
+            context.source_session_name.clone().unwrap_or_default(),
+        ));
+    }
+    command_env.extend(link_vars);
+    command_env
+}
+
+fn execute_resolved_open(
+    ctx: &mut Context<AppRoot>,
+    open: PendingLinkOpen,
+    local_port: u16,
+) -> Update {
+    if !context_is_live(&ctx.state, &open.context) {
+        return Update::none();
+    }
+    let rewritten = rewrite_forwarded_url(&open.original_url, local_port)
+        .unwrap_or_else(|| open.original_url.clone());
+    let include_pane = matches!(
+        open.destination,
+        ResolvedLinkDestination::Exec { .. } | ResolvedLinkDestination::ExecDirect { .. }
+    );
+    let link_vars = super::links::link_env(
+        open.context.source_pane,
+        open.context.source_session.as_ref(),
+        open.context.remote_host.as_deref(),
+        &open.original_url,
+        super::links::LinkTarget {
+            uri: &rewritten,
+            ..Default::default()
+        },
+        include_pane,
+    );
+    match open.destination {
+        ResolvedLinkDestination::System => match tui_lipan::utils::open_url(&rewritten) {
+            Ok(()) => Update::none(),
+            Err(error) => super::links::failed(ctx, error.to_string()),
+        },
+        ResolvedLinkDestination::Exec { command, env } => {
+            let full_env = combine_client_link_env(env, link_vars, &open.context);
+            super::user_command::execute_client_exec(
+                ctx,
+                &UserCommandAction::Exec { command },
+                full_env,
+                None,
+            )
+        }
+        ResolvedLinkDestination::ExecDirect { argv, env } => {
+            let full_env = combine_client_link_env(env, link_vars, &open.context);
+            super::user_command::execute_client_exec(
+                ctx,
+                &UserCommandAction::ExecDirect { argv },
+                full_env,
+                None,
+            )
+        }
+        ResolvedLinkDestination::ScratchRun {
+            command,
+            keep_open,
+            env,
+        } => {
+            let full_env = combine_client_link_env(env, link_vars, &open.context);
+            if let Err(update) = super::user_command::prepare_client_command_env(ctx, &full_env) {
+                return update;
+            }
+            let identity = crate::state::PaneIdentity {
+                launch: Some(crate::pane::launch::PaneLaunch::shell(command)),
+                keep_open,
+                cwd: None,
+                env: full_env,
+                ..crate::state::PaneIdentity::default()
+            };
+            crate::pane::lifecycle::spawn_pane_in_scratch(
+                ctx,
+                ctx.state.scratch.focused_pane,
+                identity,
+            )
+            .1
+        }
+    }
 }
 
 /// Open a remote loopback URL by reusing a ready tunnel, queueing behind one starting up, or
@@ -121,37 +260,30 @@ pub(crate) fn open_forwarded_link(
     request: LinkForwardRequest,
     destination: OpenDestination,
 ) -> Update {
+    let pending = match resolve_pending_open(
+        &ctx.state,
+        source,
+        request.key.target.clone(),
+        original_url,
+        destination,
+    ) {
+        Ok(pending) => pending,
+        Err(error) => return super::links::failed(ctx, error),
+    };
     if let Some(entry) = ctx.state.ports.get_mut(&request.key) {
         match entry.state {
             ForwardState::Ready => {
                 let local_port = entry.local_port;
-                let rewritten = rewrite_forwarded_url(original_url, local_port)
-                    .unwrap_or_else(|| original_url.to_string());
-                return super::links::open_destination(
-                    ctx,
-                    source,
-                    &destination,
-                    original_url,
-                    &rewritten,
-                );
+                return execute_resolved_open(ctx, pending, local_port);
             }
             ForwardState::Starting => {
-                entry.pending_opens.push(PendingLinkOpen {
-                    source,
-                    original_url: original_url.to_string(),
-                    destination,
-                });
+                entry.pending_opens.push(pending);
                 return Update::none();
             }
             ForwardState::Reconnecting | ForwardState::AuthRequired | ForwardState::Failed => {}
         }
     }
 
-    let pending = PendingLinkOpen {
-        source,
-        original_url: original_url.to_string(),
-        destination,
-    };
     start_forward_entry(ctx, request.key, None, true, Some(pending))
 }
 
@@ -246,15 +378,7 @@ pub(crate) fn handle_event(
                 );
             }
             for open in pending {
-                let rewritten = rewrite_forwarded_url(&open.original_url, local_port)
-                    .unwrap_or_else(|| open.original_url.clone());
-                update = update.merge(super::links::open_destination(
-                    ctx,
-                    open.source,
-                    &open.destination,
-                    &open.original_url,
-                    &rewritten,
-                ));
+                update = update.merge(execute_resolved_open(ctx, open, local_port));
             }
             update
         }
@@ -356,7 +480,7 @@ mod tests {
             ),
             Some(ForwardKey {
                 target: workbox.clone(),
-                remote_host: ForwardHost::Loopback,
+                remote_host: ForwardHost::Localhost,
                 remote_port: 5173,
             })
         );
@@ -369,7 +493,7 @@ mod tests {
             ),
             Some(ForwardKey {
                 target: workbox.clone(),
-                remote_host: ForwardHost::Loopback,
+                remote_host: ForwardHost::Ipv4Loopback,
                 remote_port: 5173,
             })
         );
@@ -382,7 +506,7 @@ mod tests {
             ),
             Some(ForwardKey {
                 target: workbox.clone(),
-                remote_host: ForwardHost::Host("::1".into()),
+                remote_host: ForwardHost::Ipv6Loopback,
                 remote_port: 5173,
             })
         );
@@ -395,9 +519,36 @@ mod tests {
             ),
             Some(ForwardKey {
                 target: workbox.clone(),
-                remote_host: ForwardHost::Loopback,
+                remote_host: ForwardHost::Ipv4Loopback,
                 remote_port: 8000,
             })
+        );
+        assert_eq!(
+            request(
+                &state,
+                remote_pane,
+                "http://[::]:8000",
+                OpenDestination::System
+            ),
+            Some(ForwardKey {
+                target: workbox.clone(),
+                remote_host: ForwardHost::Ipv6Loopback,
+                remote_port: 8000,
+            })
+        );
+        assert_ne!(
+            request(
+                &state,
+                remote_pane,
+                "http://0.0.0.0:8000",
+                OpenDestination::System
+            ),
+            request(
+                &state,
+                remote_pane,
+                "http://[::]:8000",
+                OpenDestination::System
+            )
         );
         assert_eq!(
             request(
@@ -408,7 +559,7 @@ mod tests {
             ),
             Some(ForwardKey {
                 target: workbox.clone(),
-                remote_host: ForwardHost::Loopback,
+                remote_host: ForwardHost::Localhost,
                 remote_port: 443,
             })
         );
@@ -550,6 +701,10 @@ mod tests {
             Some("http://127.0.0.1:3000/home")
         );
         assert_eq!(
+            rewrite_forwarded_url("http://[::]:3000/home", 49187).as_deref(),
+            Some("http://127.0.0.1:49187/home")
+        );
+        assert_eq!(
             rewrite_forwarded_url("https://localhost/login", 49186).as_deref(),
             Some("https://localhost:49186/login")
         );
@@ -560,10 +715,21 @@ mod tests {
         crate::test_support::on_large_stack(check_registry_and_delayed_open);
     }
 
+    #[test]
+    fn delayed_scratch_run_stays_on_client_after_scratchpad_closes() {
+        crate::test_support::on_large_stack(check_delayed_scratch_run_stays_on_client);
+    }
+
     #[cfg(unix)]
     #[test]
     fn ready_drains_queued_link_handlers_with_rewritten_urls_and_original_hints() {
         crate::test_support::on_large_stack(check_ready_drains_exec_handlers);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delayed_exec_pins_originating_session_across_switch_and_cancels_when_closed() {
+        crate::test_support::on_large_stack(check_delayed_exec_session_pinning);
     }
 
     fn check_registry_and_delayed_open() {
@@ -576,12 +742,12 @@ mod tests {
 
         let key_workbox = ForwardKey {
             target: workbox.clone(),
-            remote_host: ForwardHost::Loopback,
+            remote_host: ForwardHost::Ipv4Loopback,
             remote_port: 5173,
         };
         let key_prod = ForwardKey {
             target: prod.clone(),
-            remote_host: ForwardHost::Loopback,
+            remote_host: ForwardHost::Ipv4Loopback,
             remote_port: 5173,
         };
 
@@ -610,6 +776,15 @@ mod tests {
         // Configure a non-spawning http handler so Ready drains pending opens offline on all OSes.
         backend.state_mut().current_mut().remote_host = Some("workbox".into());
         backend.state_mut().current_mut().remote_target = Some(workbox.clone());
+        backend.state_mut().config.commands.push(NamedCommand {
+            id: "test.noop".into(),
+            label: None,
+            action: UserCommandAction::ExecDirect { argv: Vec::new() },
+            category: "Test".into(),
+            env: Vec::new(),
+            default_key: None,
+            hidden: false,
+        });
         backend.state_mut().config.link_handlers = vec![crate::config::LinkHandler {
             schemes: vec!["http".into()],
             files: Vec::new(),
@@ -621,7 +796,7 @@ mod tests {
             .dispatch(crate::Msg::PaneLinkActivate(
                 source,
                 TerminalLinkKind::Url,
-                "http://localhost:5173/first".into(),
+                "http://0.0.0.0:5173/first".into(),
             ))
             .unwrap();
         backend
@@ -690,6 +865,96 @@ mod tests {
         assert!(backend.state().ports.is_empty());
     }
 
+    fn check_delayed_scratch_run_stays_on_client() {
+        crate::test_support::isolate_user_dirs();
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let source = backend.state().current().workspaces[0].panes[0].id;
+        let key_workbox = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+        let gen1 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: 5173,
+            state: ForwardState::Starting,
+            generation: gen1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        let state = backend.state_mut();
+        state.current_mut().session_attached = true;
+        state.current_mut().remote_host = Some("workbox".into());
+        state.current_mut().remote_target = Some(workbox);
+        state.current_mut().session_instance = Some(
+            crate::session::protocol::SessionInstanceId::for_test("remote-inst"),
+        );
+        state.current_mut().workspaces[0].panes[0].terminal.cwd = Some("/remote/project".into());
+        state.scratch_visible = true;
+        state.config.link_handlers = vec![crate::config::LinkHandler {
+            schemes: vec!["http".into()],
+            files: Vec::new(),
+            action: LinkAction::Inline(UserCommandAction::Run {
+                command: "echo \"$ROZI_URL\"".into(),
+                keep_open: false,
+            }),
+        }];
+
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/app".into(),
+            ))
+            .unwrap();
+        assert_eq!(
+            backend
+                .state()
+                .ports
+                .get(&key_workbox)
+                .unwrap()
+                .pending_opens
+                .len(),
+            1
+        );
+
+        // Close the scratchpad before the tunnel finishes connecting.
+        backend.state_mut().scratch_visible = false;
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox,
+                generation: gen1,
+                event: ForwardEvent::Ready { local_port: 49184 },
+            }))
+            .unwrap();
+
+        // Must spawn in client scratchpad, never on the remote session host.
+        assert!(backend.state().current().pending_spawns.is_empty());
+        assert_eq!(backend.state().scratch.panes.len(), 1);
+        let scratch_pane = &backend.state().scratch.panes[0];
+        assert_eq!(scratch_pane.identity.cwd, None);
+        assert!(
+            scratch_pane
+                .identity
+                .env
+                .iter()
+                .any(|(k, v)| k == "ROZI_URL" && v == "http://localhost:49184/app")
+        );
+        assert!(
+            scratch_pane
+                .identity
+                .env
+                .iter()
+                .any(|(k, v)| k == "ROZI_SOURCE_SESSION" && v == "remote-inst")
+        );
+    }
+
     #[cfg(unix)]
     fn check_ready_drains_exec_handlers() {
         crate::test_support::isolate_user_dirs();
@@ -706,17 +971,32 @@ mod tests {
 
         let workbox = RemoteTarget::Alias("workbox".into());
         let source = backend.state().current().workspaces[0].panes[0].id;
-        let key_workbox = ForwardKey {
+        let key_localhost = ForwardKey {
             target: workbox.clone(),
-            remote_host: ForwardHost::Loopback,
+            remote_host: ForwardHost::Localhost,
             remote_port: 5173,
         };
-        let gen1 = backend.state_mut().ports.mint_generation();
+        let key_ipv4 = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Ipv4Loopback,
+            remote_port: 5173,
+        };
+        let gen_localhost = backend.state_mut().ports.mint_generation();
         backend.state_mut().ports.insert(PortForwardEntry {
-            key: key_workbox.clone(),
+            key: key_localhost.clone(),
             local_port: 5173,
             state: ForwardState::Starting,
-            generation: gen1,
+            generation: gen_localhost,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+        let gen_ipv4 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_ipv4.clone(),
+            local_port: 5173,
+            state: ForwardState::Starting,
+            generation: gen_ipv4,
             handle: Some(ForwardHandle::dormant()),
             error: None,
             pending_opens: Vec::new(),
@@ -753,9 +1033,16 @@ mod tests {
 
         backend
             .dispatch(crate::Msg::Ports(PortMsg::Event {
-                key: key_workbox,
-                generation: gen1,
+                key: key_localhost,
+                generation: gen_localhost,
                 event: ForwardEvent::Ready { local_port: 49184 },
+            }))
+            .unwrap();
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_ipv4,
+                generation: gen_ipv4,
+                event: ForwardEvent::Ready { local_port: 49185 },
             }))
             .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -774,9 +1061,191 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "http://127.0.0.1:5173/second\thttp://127.0.0.1:49184/second",
+                "http://127.0.0.1:5173/second\thttp://127.0.0.1:49185/second",
                 "http://localhost:5173/first\thttp://localhost:49184/first",
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    fn check_delayed_exec_session_pinning() {
+        crate::test_support::isolate_user_dirs();
+        let scratch = tempfile::tempdir().unwrap();
+        let out = scratch.path().join("pinned");
+
+        let mut backend = TestBackend::new(AppRoot::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(std::time::Instant::now() < deadline);
+            backend.pump().unwrap();
+            std::thread::yield_now();
+        }
+
+        let workbox = RemoteTarget::Alias("workbox".into());
+        let source = backend.state().current().workspaces[0].panes[0].id;
+        let key_workbox = ForwardKey {
+            target: workbox.clone(),
+            remote_host: ForwardHost::Localhost,
+            remote_port: 5173,
+        };
+        let gen1 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: 5173,
+            state: ForwardState::Starting,
+            generation: gen1,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+
+        {
+            let state = backend.state_mut();
+            state.runtime_epoch = 10;
+            state.current_mut().epoch = 10;
+            state.current_mut().session_attached = true;
+            state.current_mut().session_name = Some("workbox-dev".into());
+            state.current_mut().session_instance = Some(
+                crate::session::protocol::SessionInstanceId::for_test("inst-workbox"),
+            );
+            state.current_mut().remote_host = Some("workbox".into());
+            state.current_mut().remote_target = Some(workbox.clone());
+            state.config.commands.push(NamedCommand {
+                id: "ext.open".into(),
+                label: None,
+                action: UserCommandAction::Exec {
+                    command: format!(
+                        "printf '%s\\t%s\\t%s\\t%s\\n' \"$ROZI_URL\" \"$ROZI_SOURCE_SESSION\" \"$ROZI_REMOTE_HOST\" \"$ROZI_SESSION_NAME\" > '{}'",
+                        out.display()
+                    ),
+                },
+                category: "Test".into(),
+                env: vec![("ROZI_EXTENSION".into(), "ext".into())],
+                default_key: None,
+                hidden: false,
+            });
+            state.config.link_handlers = vec![crate::config::LinkHandler {
+                schemes: vec!["http".into()],
+                files: Vec::new(),
+                action: LinkAction::Command("ext.open".into()),
+            }];
+        }
+
+        // Queue one open while attached to `workbox-dev` (epoch 10).
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                source,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/parked".into(),
+            ))
+            .unwrap();
+
+        // Park epoch 10 and switch to a different local session at epoch 11.
+        {
+            let state = backend.state_mut();
+            let mut local = crate::state::Attachment::new();
+            local.epoch = 11;
+            local.session_attached = true;
+            local.session_name = Some("local-shell".into());
+            local.session_instance = Some(crate::session::protocol::SessionInstanceId::for_test(
+                "inst-local",
+            ));
+            state.park_current(10, local);
+            state.runtime_epoch = 11;
+        }
+
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox.clone(),
+                generation: gen1,
+                event: ForwardEvent::Ready { local_port: 49184 },
+            }))
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let output = loop {
+            backend.pump().unwrap();
+            if let Ok(text) = std::fs::read_to_string(&out)
+                && text.ends_with('\n')
+            {
+                break text;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert_eq!(
+            output.trim_end(),
+            "http://localhost:49184/parked\tinst-workbox\tworkbox\tworkbox-dev"
+        );
+        std::fs::remove_file(&out).unwrap();
+
+        // Now queue another open on epoch 12 (`workbox`), then drop epoch 12 before Ready.
+        let gen2 = backend.state_mut().ports.mint_generation();
+        backend.state_mut().ports.insert(PortForwardEntry {
+            key: key_workbox.clone(),
+            local_port: 5173,
+            state: ForwardState::Starting,
+            generation: gen2,
+            handle: Some(ForwardHandle::dormant()),
+            error: None,
+            pending_opens: Vec::new(),
+        });
+        {
+            let state = backend.state_mut();
+            let mut other_remote = crate::state::Attachment::new();
+            other_remote.epoch = 12;
+            other_remote.session_attached = true;
+            other_remote.session_name = Some("workbox-ephemeral".into());
+            other_remote.session_instance = Some(
+                crate::session::protocol::SessionInstanceId::for_test("inst-ephemeral"),
+            );
+            other_remote.remote_host = Some("workbox".into());
+            other_remote.remote_target = Some(workbox);
+            other_remote.workspaces[0]
+                .panes
+                .push(Pane::new(99, 100, Default::default()));
+            state.attachment = other_remote;
+            state.runtime_epoch = 12;
+        }
+        backend
+            .dispatch(crate::Msg::PaneLinkActivate(
+                99,
+                TerminalLinkKind::Url,
+                "http://localhost:5173/closed".into(),
+            ))
+            .unwrap();
+        assert_eq!(
+            backend
+                .state()
+                .ports
+                .get(&key_workbox)
+                .unwrap()
+                .pending_opens
+                .len(),
+            1
+        );
+
+        // Close epoch 12 without parking it, leaving epoch 13 active.
+        {
+            let state = backend.state_mut();
+            state.attachment = crate::state::Attachment::new();
+            state.runtime_epoch = 13;
+            state.current_mut().epoch = 13;
+        }
+        backend
+            .dispatch(crate::Msg::Ports(PortMsg::Event {
+                key: key_workbox,
+                generation: gen2,
+                event: ForwardEvent::Ready { local_port: 49185 },
+            }))
+            .unwrap();
+        for _ in 0..20 {
+            backend.pump().unwrap();
+            std::thread::yield_now();
+        }
+        assert!(
+            !out.exists(),
+            "delayed handler must cancel when its originating session no longer exists"
         );
     }
 }

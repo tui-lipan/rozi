@@ -40,11 +40,9 @@ pub(crate) fn execute_with_env_from_pane(
     if remote_pane {
         env.retain(|(key, _)| key != crate::config::STATE_DIR_ENV);
     } else if !matches!(action, UserCommandAction::Send(_))
-        && let Err(error) =
-            crate::config::prepare_state_dir(env.iter().map(|(key, value)| (key, value)))
+        && let Err(update) = prepare_client_command_env(ctx, &env)
     {
-        crate::pane::pty_events::notify_error(ctx, "Command failed", error);
-        return Update::full();
+        return update;
     }
     let spawn_cwd = match source {
         Some(id) => crate::pane::lifecycle::find_pane(&ctx.state, id)
@@ -135,6 +133,37 @@ pub(crate) fn execute_with_env_from_pane(
             crate::pane::pty_events::notify_error(ctx, "Popup failed", error);
             Update::full()
         }),
+    }
+}
+
+/// Prepare any extension state directory advertised in `env`, notifying on failure.
+pub(crate) fn prepare_client_command_env(
+    ctx: &mut Context<AppRoot>,
+    env: &[(String, String)],
+) -> std::result::Result<(), Update> {
+    if let Err(error) =
+        crate::config::prepare_state_dir(env.iter().map(|(key, value)| (key, value)))
+    {
+        crate::pane::pty_events::notify_error(ctx, "Command failed", error);
+        return Err(Update::full());
+    }
+    Ok(())
+}
+
+/// Run a client-side `Exec` or `ExecDirect` command with an already-resolved environment and cwd.
+pub(crate) fn execute_client_exec(
+    ctx: &mut Context<AppRoot>,
+    action: &UserCommandAction,
+    env: Vec<(String, String)>,
+    cwd: Option<String>,
+) -> Update {
+    if let Err(update) = prepare_client_command_env(ctx, &env) {
+        return update;
+    }
+    match action {
+        UserCommandAction::Exec { command } => exec_shell(ctx, command, env, cwd),
+        UserCommandAction::ExecDirect { argv } => exec_direct(ctx, argv, env, cwd),
+        _ => Update::none(),
     }
 }
 

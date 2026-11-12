@@ -9,6 +9,7 @@ pub(crate) mod binary;
 mod bootstrap;
 mod connect;
 pub mod control;
+pub mod forward;
 pub(crate) mod json_transport;
 pub(crate) mod monitor;
 mod preamble;
@@ -21,8 +22,8 @@ pub use askpass::AskpassKind;
 pub use bootstrap::ensure_remote_binary;
 pub(crate) use bootstrap::ensure_remote_binary_in_ui;
 pub(crate) use bootstrap::{
-    SshDeadline, append_remote_rozi_command, append_ssh_destination, run_ssh_command_capturing,
-    ssh_base_command,
+    SshDeadline, SshMultiplexing, append_remote_rozi_command, append_ssh_destination,
+    run_ssh_command_capturing, ssh_base_command, ssh_base_command_with,
 };
 pub use connect::RemoteConnectError;
 pub(crate) use connect::connect_remote_within;

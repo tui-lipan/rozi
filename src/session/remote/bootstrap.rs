@@ -1372,6 +1372,13 @@ fn configure_batch_mode(command: &mut Command, config: &RemoteConfig) {
     });
 }
 
+/// Whether `ssh` should multiplex over Rozi's shared `ControlMaster` socket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SshMultiplexing {
+    Shared,
+    Disabled,
+}
+
 /// Common ssh argv for probe, install, attach, list, and kill, including the UI askpass redirect.
 pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     ssh_base_command_with_connect_timeout(resolved, config, config.connection_timeout_secs)
@@ -1384,10 +1391,36 @@ pub(crate) fn ssh_base_command_with_connect_timeout(
     config: &RemoteConfig,
     connection_timeout_secs: u64,
 ) -> Command {
+    ssh_base_command_with(
+        resolved,
+        config,
+        connection_timeout_secs,
+        SshMultiplexing::Shared,
+    )
+}
+
+/// Build the base `ssh` command with explicit timeout and multiplexing policy.
+pub(crate) fn ssh_base_command_with(
+    resolved: &ResolvedRemote,
+    config: &RemoteConfig,
+    connection_timeout_secs: u64,
+    multiplexing: SshMultiplexing,
+) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
     super::askpass::configure(&mut command);
-    apply_multiplexing(&mut command);
+    match multiplexing {
+        SshMultiplexing::Shared => apply_multiplexing(&mut command),
+        SshMultiplexing::Disabled => {
+            // Explicit CLI options override any `ControlMaster` in the user's `~/.ssh/config` so
+            // independently owned forwards never attach to a shared multiplex master.
+            command
+                .arg("-o")
+                .arg("ControlMaster=no")
+                .arg("-o")
+                .arg("ControlPath=none");
+        }
+    }
     // On every invocation, not just the attach: with multiplexing the *first* connection to a host
     // becomes the master that all the others ride on, and a client's keepalive settings are ignored
     // in favour of the master's. Setting them only on the attach would leave a session whose
